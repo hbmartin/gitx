@@ -922,8 +922,22 @@ final class GitXSwiftFeatureTests: XCTestCase {
                 for document in documentController.documents
                     where document.fileURL?.standardizedFileURL == normalizedWorktree
                 {
-                    document.windowControllers.forEach { $0.window?.orderOut(nil) }
-                    documentController.removeDocument(document)
+                    let controllers = document.windowControllers
+                    let windows = controllers.compactMap { $0.isWindowLoaded ? $0.window : nil }
+                    // Close while the document is retained so window delegates
+                    // and repository presenters receive their normal teardown.
+                    document.close()
+                    for controller in controllers {
+                        document.removeWindowController(controller)
+                        XCTAssertNil(controller.document, "CLI fixture controllers must release their document association")
+                    }
+                    for window in windows {
+                        window.windowController = nil
+                        XCTAssertNil(window.windowController, "Closed CLI fixture windows must not retain a controller association")
+                        XCTAssertFalse(window.isVisible)
+                    }
+                    XCTAssertTrue(document.windowControllers.isEmpty)
+                    XCTAssertFalse(documentController.documents.contains { $0 === document })
                 }
                 PBRecentRepositoryStore.shared.remove(normalizedWorktree)
             }
