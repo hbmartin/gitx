@@ -60,7 +60,7 @@
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
     "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8847,
     "Classes/Controllers/RepositoryForgeRemoteDescriptorLoader.swift": 0.9871,
-    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7743,
+    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7752,
     "Classes/Controllers/RepositoryPullRequestGitOperations.swift": 0.9777,
     "Classes/Controllers/RepositoryPullRequestMutationPreferenceStore.swift": 0.9492,
     "Classes/Controllers/RepositoryPullRequestReviewComposition.swift": 0.903,
