@@ -33,6 +33,7 @@ Use `scripts/dev_workflow.py` as the local coordinator. Existing entrypoints rem
 - A successful full post-commit verification, including Debug staging, automatically prunes eligible output. `cleanup run --receipt WORKFLOW.json` uses the same evidence gate. Partial, failed, stale, or incomplete verification cannot trigger deletion.
 - Protect current warm caches, the staged app, referenced verification and recovery evidence, the newest failed run and previous-app backup, active resources, and other checkouts. Unknown directories remain untouched. Cleanup skips or failures retain pending state for a later successful verification; compact reports under the common Git directory retain the latest 20 runs.
 - Tracked diagnostic provenance protects explicit artifact paths and run citations. Use JSON `runId`, `runIds`, or `runs` fields, or prose such as `Verified run ID: my-run` (comma-separated IDs are supported). Literal `artifacts/verification/my-run/receipt.json` paths also protect their runs. Ordinary words matching a run ID are not citations. Binary diagnostic attachments do not supply prose references; malformed JSON or expected textual provenance still blocks deletion.
+- Live output and byte-accounting uncertainty are retained without blocking unrelated authorized candidates. Protection discovery failures still block deletion. Reports keep incomplete accounting explicit, and completed deletion journals retain the latest 20 entries while unfinished journals remain recoverable.
 
 ## Work ownership and recovery
 
