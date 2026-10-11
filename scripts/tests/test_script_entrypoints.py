@@ -7,6 +7,7 @@ import plistlib
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -17,6 +18,7 @@ from support import ROOT
 class ScriptEntrypointTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
         self.root = pathlib.Path(self.temporary_directory.name).resolve()
         self.scripts = self.root / "scripts"
         self.scripts.mkdir()
@@ -72,9 +74,6 @@ class ScriptEntrypointTests(unittest.TestCase):
             "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
             "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false", "GCM_INTERACTIVE": "never", "LC_ALL": "C",
         }
-
-    def tearDown(self) -> None:
-        self.temporary_directory.cleanup()
 
     def install_script(self, name: str) -> pathlib.Path:
         destination = self.scripts / name
@@ -184,7 +183,10 @@ class ScriptEntrypointTests(unittest.TestCase):
         (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
         calls = self.root / "lint-calls.txt"
         tool = self.scripts / "run_pinned_tool.sh"
-        tool.write_text(f"#!/bin/bash\nprintf '%s\\n' \"$*\" >>'{calls}'\n")
+        tool.write_text(f"#!/bin/bash\nprintf '%s\\n' \"$PWD|$*\" >>'{calls}'\n"
+                        'if [[ " $* " == *" --benchmark "* ]]; then\n'
+                        '  for kind in files rules; do printf report >"benchmark_${kind}_2026_10_11_00_00_00.txt"; done\n'
+                        'fi\n')
         tool.chmod(0o755)
         subprocess.run([script, "--profile-rules", "--run-id", "profile", "analyze"],
                        check=True, capture_output=True, text=True, env=self.environment)
@@ -193,10 +195,26 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertNotIn("--only-rule", invocations[0])
         self.assertIn("--only-rule unused_declaration --benchmark", invocations[1])
         self.assertIn("--only-rule unused_import --benchmark", invocations[2])
-        self.assertIn(str(self.root / "artifacts/verification/profile/Results/Profiling"), invocations[1])
+        for invocation in invocations:
+            self.assertTrue(invocation.startswith(str(self.root) + "|"))
+            self.assertNotIn("--working-directory", invocation)
+        for rule in ("unused_declaration", "unused_import"):
+            output = self.root / "artifacts/verification/profile/Results/Profiling" / rule
+            self.assertEqual(len(list(output.glob("benchmark_*.txt"))), 2)
+        self.assertFalse(list(self.root.glob("benchmark_*.txt")))
         receipt = self.receipt("profile")
         self.assertTrue(receipt["invocation"]["analysisProfiling"])
         self.assertFalse(receipt["deliveryEligible"])
+
+    def test_cache_policy_failure_allocates_no_analyzer_output(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "compilation_cache.py").write_text('import sys\nsys.exit(2)\n')
+        result = subprocess.run([script, "--run-id", "rejected-policy", "analyze"],
+                                capture_output=True, text=True, env=self.environment)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse((self.root / "artifacts/verification/rejected-policy").exists())
+        self.assertFalse(list((self.root / "build").glob("AnalyzerDerivedData.*")))
 
     def test_analyzer_resume_requires_products_and_reruns_semantic_checks(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -544,10 +562,56 @@ class ScriptEntrypointTests(unittest.TestCase):
 
     @staticmethod
     def terminate_pid(pid: int) -> None:
+        # These are fixture-owned PIDs. Wait for observable exit, escalating
+        # only while the same process still owns the PID.
+        birth = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "lstart="],
+                               capture_output=True, text=True).stdout.strip()
+        if not birth:
+            return
+        for termination_signal in (signal.SIGTERM, signal.SIGKILL):
+            current = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "lstart="],
+                                     capture_output=True, text=True).stdout.strip()
+            if current != birth or not ScriptEntrypointTests.process_is_running(pid):
+                return
+            try:
+                os.kill(pid, termination_signal)
+            except ProcessLookupError:
+                return
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if not ScriptEntrypointTests.process_is_running(pid):
+                    return
+                current = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "lstart="],
+                                         capture_output=True, text=True).stdout.strip()
+                if current != birth:
+                    return
+                time.sleep(0.02)
+        raise AssertionError(f"Fixture process {pid} did not terminate")
+
+    @staticmethod
+    def terminate_pid_file(path: pathlib.Path) -> None:
         try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+            pid = int(path.read_text().strip())
+        except (FileNotFoundError, ValueError):
+            return
+        ScriptEntrypointTests.terminate_pid(pid)
+
+    def test_owned_process_cleanup_waits_and_escalates_when_term_is_ignored(self) -> None:
+        ready = self.root / "ignoring-term-ready"
+        code = ("import pathlib, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"pathlib.Path({str(ready)!r}).write_text('ready'); time.sleep(30)")
+        process = subprocess.Popen([sys.executable, "-c", code])
+        self.addCleanup(process.wait, timeout=5)
+        self.addCleanup(self.terminate_pid, process.pid)
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertTrue(ready.exists(), "The owned process must install its TERM handler")
+        started = time.monotonic()
+        self.terminate_pid(process.pid)
+        self.assertFalse(self.process_is_running(process.pid))
+        self.assertEqual(process.wait(timeout=1), -signal.SIGKILL)
+        self.assertLess(time.monotonic() - started, 5)
 
     def test_xcodebuild_wrapper_injects_the_documented_defaults(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -1036,6 +1100,23 @@ class ScriptEntrypointTests(unittest.TestCase):
                                capture_output=True, text=True, env=self.environment)
                 self.assertNotIn("-instrprof-atomic-counter-update-all", captured.read_text())
                 self.assertNotIn("-fprofile-update=atomic", captured.read_text())
+
+    def test_performance_lane_enables_only_its_explicit_release_test_support(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        subprocess.run([script, "--run-id", "performance-support", "test", "performance"],
+                       check=True, capture_output=True, text=True, env=self.environment)
+        invocations = [value.splitlines() for value in captured.read_text().split("__INVOCATION__")
+                       if "\nbuild-for-testing\n" in value]
+        self.assertTrue(invocations)
+        for arguments in invocations:
+            self.assertIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) GITX_PERFORMANCE_TEST_SUPPORT", arguments)
+            self.assertIn("GCC_PREPROCESSOR_DEFINITIONS=$(inherited) GITX_PERFORMANCE_TEST_SUPPORT=1", arguments)
+            self.assertNotIn("SWIFT_OPTIMIZATION_LEVEL=-Onone", arguments)
+        captured.write_text("")
+        subprocess.run([script, "--configuration", "Release", "--run-id", "ordinary-release", "build"],
+                       check=True, capture_output=True, text=True, env=self.environment)
+        self.assertNotIn("GITX_PERFORMANCE_TEST_SUPPORT", captured.read_text())
 
     def test_ui_preflight_forwards_non_selection_extras_only(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -1577,10 +1658,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             )
             for session in sessions:
                 for key in ("app_pid", "log_pid"):
-                    try:
-                        os.kill(int(session[key]), signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
+                    self.terminate_pid(int(session[key]))
 
         homes = [session["isolated_home"] for session in sessions]
         roots = forge_roots.read_text().splitlines()
@@ -1801,7 +1879,7 @@ class ScriptEntrypointTests(unittest.TestCase):
 
     def test_run_app_removes_home_when_log_exits_before_identity_can_be_recorded(self) -> None:
         script = self.install_script("run_app.sh")
-        temporary_root = self.root / "runtime-tmp"
+        temporary_root = self.root / "python"
         temporary_root.mkdir()
         repository = self.root / "fixture-repo"
         repository.mkdir()
@@ -1815,11 +1893,13 @@ class ScriptEntrypointTests(unittest.TestCase):
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         log = self.bin / "log"
         log_pid = self.root / "exiting-log.pid"
+        self.addCleanup(self.terminate_pid_file, log_pid)
         identity_probe = self.root / "log-identity-probed"
         log.write_text(
             "#!/bin/bash\n"
             f"printf '%s\\n' \"$$\" >'{log_pid}'\n"
-            f"while [[ ! -e '{identity_probe}' ]]; do sleep 0.01; done\n"
+            f"for _ in {{1..200}}; do [[ -e '{identity_probe}' ]] && break; sleep 0.01; done\n"
+            f"[[ -e '{identity_probe}' ]] || {{ echo 'Identity fixture handshake timed out' >&2; exit 2; }}\n"
             "exit 0\n"
         )
         log.chmod(0o755)
@@ -1830,7 +1910,8 @@ class ScriptEntrypointTests(unittest.TestCase):
             # Owner identity queries must remain real. This fixture controls
             # only the log's exit-before-identity race, with a marker handshake.
             "  command=$(/bin/ps -p \"$2\" -o command= 2>/dev/null)\n"
-            "  [[ \"$command\" == *python* || \"$command\" == *Python* ]] && exec /bin/ps \"$@\"\n"
+            "  executable=${command%% *}\n"
+            "  case \"${executable##*/}\" in bash|sh) ;; *) exec /bin/ps \"$@\" ;; esac\n"
             f"  if [[ \"$command\" != *'{log}'* && \"$command\" != *'{script}'* ]]; then exec /bin/ps \"$@\"; fi\n"
             f"  for _ in {{1..200}}; do [[ -s '{log_pid}' ]] && break; sleep 0.01; done\n"
             f"  [[ -s '{log_pid}' && \"$(cat '{log_pid}')\" == \"$2\" ]] || exec /bin/ps \"$@\"\n"
@@ -1851,10 +1932,10 @@ class ScriptEntrypointTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=self.environment | {"TMPDIR": str(temporary_root)},
-            timeout=10,
+            timeout=30,
         )
 
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertTrue(identity_probe.exists(), "The fixture must exercise the log identity failure")
         self.assertIn("Could not record the log stream process identity.", result.stderr)
         self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])

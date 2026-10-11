@@ -245,19 +245,6 @@ logs="$run_dir/Logs"
 results="$run_dir/Results"
 products="$run_dir/Products"
 analyzer_derived_data=
-mkdir -p "$root/build"
-if [[ "$command" == "analyze" ]]; then
-	mkdir -p "${GITX_DERIVED_DATA%/*}"
-	analyzer_derived_data=$(mktemp -d "${GITX_DERIVED_DATA%/*}/AnalyzerDerivedData.XXXXXX") || exit 2
-	derived_data="$analyzer_derived_data"
-else
-	derived_data=${GITX_DERIVED_DATA:-"$root/$derived_data_cache"}
-fi
-swiftpm_build_root=${GITX_SWIFTPM_BUILD_ROOT:-"$root/$swiftpm_build_cache"}
-source_package_cache=${GITX_SOURCE_PACKAGE_CACHE:-"$root/$source_package_cache"}
-export GITX_DERIVED_DATA="$derived_data" GITX_SWIFTPM_BUILD_ROOT="$swiftpm_build_root" GITX_SOURCE_PACKAGE_CACHE="$source_package_cache"
-mkdir -p "$logs" "$results" "$products" "$derived_data" "$swiftpm_build_root" "$source_package_cache"
-echo "Build paths: DerivedData=$derived_data; SwiftPM=$swiftpm_build_root; SourcePackages=$source_package_cache"
 receipt="$run_dir/receipt.json"
 
 signing_allowed=YES
@@ -348,6 +335,20 @@ if [[ "$preset" != "test:core" && "$preset" != "test:forgekit" ]]; then
 	[[ "$cache_enabled" != "YES" ]] || cache_arguments+=(COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES)
 fi
 echo "Compilation cache: $cache_policy"
+# Policy rejection must happen before creating any owned output or scratch.
+mkdir -p "$root/build"
+if [[ "$command" == "analyze" ]]; then
+	mkdir -p "${GITX_DERIVED_DATA%/*}"
+	analyzer_derived_data=$(mktemp -d "${GITX_DERIVED_DATA%/*}/AnalyzerDerivedData.XXXXXX") || exit 2
+	derived_data="$analyzer_derived_data"
+else
+	derived_data=${GITX_DERIVED_DATA:-"$root/$derived_data_cache"}
+fi
+swiftpm_build_root=${GITX_SWIFTPM_BUILD_ROOT:-"$root/$swiftpm_build_cache"}
+source_package_cache=${GITX_SOURCE_PACKAGE_CACHE:-"$root/$source_package_cache"}
+export GITX_DERIVED_DATA="$derived_data" GITX_SWIFTPM_BUILD_ROOT="$swiftpm_build_root" GITX_SOURCE_PACKAGE_CACHE="$source_package_cache"
+mkdir -p "$logs" "$results" "$products" "$derived_data" "$swiftpm_build_root" "$source_package_cache"
+echo "Build paths: DerivedData=$derived_data; SwiftPM=$swiftpm_build_root; SourcePackages=$source_package_cache"
 if [[ "$command" == "test" ]]; then
 	case "${command_arguments[0]:-}" in
 		correctness) coverage_gate=enforced ;;
@@ -684,10 +685,8 @@ case "$command" in
 			for rule in unused_declaration unused_import; do
 				profile_dir="$results/Profiling/$rule"
 				mkdir -p "$profile_dir"
-				run_step "swiftlint-profile:$rule" "$logs/profile-$rule.log" "" scripts/run_pinned_tool.sh swiftlint analyze \
-					--strict --only-rule "$rule" --benchmark --force-exclude --working-directory "$profile_dir" \
-					--config "$root/.swiftlint.yml" --baseline "$root/.swiftlint-baseline.json" \
-					--compiler-log-path "$analyzer_log" "$root/Classes" "$root/GitXTests" "$root/GitXUITests" "$root/GitXCore" "$root/ForgeKit" || exit $?
+				run_step "swiftlint-profile:$rule" "$logs/profile-$rule.log" "" python3 "$support" swiftlint-profile \
+					--rule "$rule" --output "$profile_dir" --compiler-log "$analyzer_log" || exit $?
 			done
 		fi
 		;;
@@ -755,20 +754,26 @@ case "$command" in
 				;;
 			address-undefined|thread-sanitizer|performance)
 				plan=$(config "testPlans.$test_preset")
+				if [[ "$test_preset" == "performance" ]]; then
+					extra+=(
+						"SWIFT_ACTIVE_COMPILATION_CONDITIONS=\$(inherited) GITX_PERFORMANCE_TEST_SUPPORT"
+						"GCC_PREPROCESSOR_DEFINITIONS=\$(inherited) GITX_PERFORMANCE_TEST_SUPPORT=1"
+					)
+				fi
 				xcode_test "$test_preset" "$plan" ${extra[@]+"${extra[@]}"} || exit $?
 				;;
 			core)
 				package=$(config packages.core)
 				scratch="$swiftpm_build_root/GitXCore"
-				run_step test:core "$logs/core.log" "" "$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
-				codecov=$("$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --show-codecov-path) || exit $?
+				run_step test:core "$logs/core.log" "" "$xcrun" swift test --only-use-versions-from-resolved-file --package-path "$package" --scratch-path "$scratch" --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
+				codecov=$("$xcrun" swift test --only-use-versions-from-resolved-file --package-path "$package" --scratch-path "$scratch" --show-codecov-path) || exit $?
 				run_step coverage:core "$logs/core-coverage.log" "$codecov" python3 scripts/check_core_coverage.py "$codecov" || exit $?
 				;;
 			forgekit)
 				package=$(config packages.forgekit)
 				scratch="$swiftpm_build_root/ForgeKit"
 				combined="$results/ForgeKitCombinedCoverage.json"
-				run_step test:forgekit "$logs/forgekit.log" "" "$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --build-system swiftbuild --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
+				run_step test:forgekit "$logs/forgekit.log" "" "$xcrun" swift test --only-use-versions-from-resolved-file --package-path "$package" --scratch-path "$scratch" --build-system swiftbuild --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
 				run_step coverage:forgekit "$logs/forgekit-coverage.log" "$combined" python3 scripts/check_forgekit_coverage.py --swiftpm-scratch-path "$scratch" --combined-output "$combined" || exit $?
 				;;
 			*)

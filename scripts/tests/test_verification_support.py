@@ -15,6 +15,72 @@ from support import ROOT, load_script, fixture_git_environment
 verification = load_script("verification_support.py")
 
 
+class SwiftLintProfileTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = pathlib.Path(directory.name).resolve()
+        self.output = self.root / "artifacts/verification/profile/rule"
+        self.arguments = argparse.Namespace(rule="unused_import", output=self.output,
+                                            compiler_log=self.root / "compiler.log")
+        leases = mock.MagicMock()
+        leases.__enter__.return_value.environment.return_value = dict(os.environ)
+        for patch in (mock.patch.object(verification, "ROOT", self.root),
+                      mock.patch.object(verification.session, "Leases", return_value=leases),
+                      mock.patch.object(verification.session, "verification_artifact_root",
+                                        return_value=self.root / "artifacts/verification")):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write_reports(self):
+        for kind in ("files", "rules"):
+            (self.root / f"benchmark_{kind}_2026_10_11_01_02_03.txt").write_text(kind)
+
+    def test_refuses_existing_root_files_directories_and_symlinks(self):
+        path = self.root / "benchmark_existing.txt"
+        with mock.patch.object(verification.session, "supervise") as supervise:
+            for kind in ("file", "directory", "symlink"):
+                with self.subTest(kind=kind):
+                    if kind == "file": path.write_text("existing")
+                    elif kind == "directory": path.mkdir()
+                    else: path.symlink_to(self.root / "missing")
+                    with self.assertRaisesRegex(ValueError, "must be moved"):
+                        verification.command_swiftlint_profile(self.arguments)
+                    self.assertTrue(path.exists() or path.is_symlink())
+                    if kind == "directory": path.rmdir()
+                    else: path.unlink()
+            supervise.assert_not_called()
+
+    def test_collects_reports_after_failure_and_interruption_from_checkout(self):
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                def run(command, **options):
+                    self.assertEqual(options["cwd"], self.root)
+                    self.assertNotIn("--working-directory", command)
+                    self.write_reports()
+                    if interrupted: raise KeyboardInterrupt
+                    return 9
+                with mock.patch.object(verification.session, "supervise", side_effect=run):
+                    if interrupted:
+                        with self.assertRaises(KeyboardInterrupt):
+                            verification.command_swiftlint_profile(self.arguments)
+                    else:
+                        self.assertEqual(verification.command_swiftlint_profile(self.arguments), 9)
+                self.assertEqual(len(list(self.output.glob("benchmark_*.txt"))), 2)
+                self.assertEqual(list(self.root.glob("benchmark_*.txt")), [])
+                for path in self.output.glob("benchmark_*.txt"): path.unlink()
+
+    def test_preserves_a_colliding_destination(self):
+        self.output.mkdir(parents=True)
+        destination = self.output / "benchmark_files_2026_10_11_01_02_03.txt"
+        destination.write_text("existing destination")
+        def run(*args, **kwargs):
+            self.write_reports()
+            return 0
+        with mock.patch.object(verification.session, "supervise", side_effect=run):
+            self.assertEqual(verification.command_swiftlint_profile(self.arguments), 2)
+        self.assertEqual(destination.read_text(), "existing destination")
+        self.assertEqual((self.root / destination.name).read_text(), "files")
 
 
 class VersionTests(unittest.TestCase):

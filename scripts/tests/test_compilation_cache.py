@@ -24,6 +24,14 @@ class CompilationCacheTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.policy(value)
 
+    def test_developer_paths_and_incomplete_version_output_do_not_establish_support(self):
+        for value in ("/Applications/Xcode 27.app/Contents/Developer", "Xcode 27.0",
+                      "unavailable Xcode 27.0\nBuild version 27A1", "Xcode 27.0\nBuild version unknown"):
+            with self.subTest(toolchain=value):
+                self.assertFalse(self.policy(toolchain=value)["supported"])
+                with self.assertRaises(ValueError):
+                    self.policy("on", value)
+
     def test_validated_context_is_exact_and_package_tests_are_not_applicable(self):
         context = {"xcodeBuild": "27A266a", "architecture": "arm64", "configuration": "Debug", "instrumentation": "plain", "action": "build"}
         self.assertTrue(self.policy(validated=[context])["enabled"])

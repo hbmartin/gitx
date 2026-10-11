@@ -16,11 +16,11 @@ import workflow_session as session
 def policy(mode, toolchain, architecture, configuration, instrumentation, action, config):
     if mode not in {"auto", "on", "off"}:
         raise ValueError("Compilation cache must be auto, on, or off")
-    version = re.search(r"Xcode (\d+)(?:\.(\d+))?", toolchain)
-    build = re.search(r"Build version (\S+)", toolchain)
+    version = re.search(r"^Xcode (\d+)(?:\.\d+)*\s*$", toolchain, re.MULTILINE)
+    build = re.search(r"^Build version ([A-Za-z0-9]+)\s*$", toolchain, re.MULTILINE)
     context = {"xcodeBuild": build[1] if build else None, "architecture": architecture,
                "configuration": configuration, "instrumentation": instrumentation, "action": action}
-    supported = bool(version and int(version[1]) >= 26)
+    supported = bool(version and build and build[1] != "unknown" and int(version[1]) >= 26)
     if action in {"test:core", "test:forgekit"}:
         enabled, reason = False, "not-applicable-package"
     elif mode == "off":

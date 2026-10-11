@@ -791,6 +791,53 @@ def command_normalize_developer_dir(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def command_swiftlint_profile(arguments: argparse.Namespace) -> int:
+    """Keep baseline matching rooted in the checkout and collect owned reports."""
+    output = arguments.output.resolve()
+    artifact_root = session.verification_artifact_root(ROOT)
+    if not output.is_relative_to(artifact_root) or arguments.output.is_symlink():
+        raise ValueError("SwiftLint profiling output must be an owned verification directory")
+    resource = str(ROOT / "artifacts/verification/.swiftlint-profile-output")
+    owner = {"runId": os.environ.get("GITX_SESSION_ID", "swiftlint-profile"), "pid": os.getpid(),
+             "receipt": str(output), "producer": session.producer_identity()}
+    patterns = re.compile(r"benchmark_(files|rules)_\d{4}(?:_\d{2}){5}\.txt\Z")
+    with session.Leases([resource], owner) as leases:
+        existing = sorted(path.name for path in ROOT.iterdir()
+                          if path.name.startswith("benchmark_") and path.name.endswith(".txt"))
+        if existing:
+            raise ValueError("Existing SwiftLint benchmark output must be moved before profiling: " + ", ".join(existing))
+        output.mkdir(parents=True, exist_ok=True)
+        command = [str(ROOT / "scripts/run_pinned_tool.sh"), "swiftlint", "analyze", "--strict",
+                   "--only-rule", arguments.rule, "--benchmark", "--force-exclude",
+                   "--config", str(ROOT / ".swiftlint.yml"), "--baseline", str(ROOT / ".swiftlint-baseline.json"),
+                   "--compiler-log-path", str(arguments.compiler_log),
+                   *[str(ROOT / name) for name in ("Classes", "GitXTests", "GitXUITests", "GitXCore", "ForgeKit")]]
+        status = 2
+        collected = set()
+        failures = []
+        try:
+            status = session.supervise(command, directory=output / "Diagnostics", env=leases.environment(), cwd=ROOT)
+        finally:
+            for path in ROOT.iterdir():
+                match = patterns.fullmatch(path.name)
+                if not match:
+                    continue
+                destination = output / path.name
+                try:
+                    if path.is_symlink() or not path.is_file() or destination.exists() or destination.is_symlink():
+                        raise ValueError("Refusing unsafe or colliding benchmark output: " + str(path))
+                    # Exclusive creation preserves any destination appearing concurrently.
+                    os.link(path, destination)
+                    path.unlink()
+                    collected.add(match[1])
+                except (OSError, ValueError) as error:
+                    failures.append(str(error))
+        for error in failures:
+            print(error, file=sys.stderr)
+        if status == 0 and (failures or collected != {"files", "rules"}):
+            print("SwiftLint profiling did not produce both benchmark reports.", file=sys.stderr)
+            return 2
+        return status
 
 
 def parser() -> argparse.ArgumentParser:
@@ -852,6 +899,11 @@ def parser() -> argparse.ArgumentParser:
     resume_analysis.add_argument("current", type=pathlib.Path)
     resume_analysis.add_argument("--allow-fresh", action="store_true")
     resume_analysis.set_defaults(handler=command_resume_analyzer)
+    profile = subparsers.add_parser("swiftlint-profile")
+    profile.add_argument("--rule", choices=("unused_declaration", "unused_import"), required=True)
+    profile.add_argument("--output", type=pathlib.Path, required=True)
+    profile.add_argument("--compiler-log", type=pathlib.Path, required=True)
+    profile.set_defaults(handler=command_swiftlint_profile)
     return result
 
 
@@ -859,6 +911,9 @@ def main() -> int:
     arguments = parser().parse_args()
     try:
         return arguments.handler(arguments)
+    except session.ResourceBusy as error:
+        print(error, file=sys.stderr)
+        return 75
     except (KeyError, OSError, ValueError, json.JSONDecodeError) as error:
         print(error, file=sys.stderr)
         return 2
