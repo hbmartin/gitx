@@ -396,9 +396,9 @@ final nonisolated class IndexReferenceTransaction {
     /// Exercise the production pipe owner with controlled peers, never a second implementation.
     @objc(PBIndexReferenceTransactionTestHarness)
     final nonisolated class IndexReferenceTransactionTestHarness: NSObject {
-        @objc(exerciseIndependentDeadlineInDirectory:error:)
-        static func exerciseIndependentDeadline(directory: String) throws -> [String: Any] {
-            let transaction = IndexReferenceTransaction(timeout: 1)
+        @objc(exerciseIndependentDeadlineInDirectory:timeout:error:)
+        static func exerciseIndependentDeadline(directory: String, timeout: TimeInterval) throws -> [String: Any] {
+            let transaction = IndexReferenceTransaction(timeout: timeout)
             defer { transaction.abortAndClose() }
             let script = "printf '%s' \"$$\" > peer.pid; read command; read release; exec /bin/sleep 30"
             try transaction.launch(context: PBTaskExecutionContext(launchPath: "/bin/sh", arguments: ["-c", script], environment: ["PATH": "/usr/bin:/bin"], workingDirectory: directory))
