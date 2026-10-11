@@ -63,7 +63,16 @@ private final nonisolated class StagingImageLookup: @unchecked Sendable {
     func data() -> Data? {
         NSLog("[GitX] Reading staging image data on %@", Thread.isMainThread ? "main" : "renderer queue")
         if let workingFileURL {
-            return try? StagingImageReader.shared.read(workingFileURL, shouldCancel: { self.cancellation.isCancelled }).data
+            do {
+                return try StagingImageReader.shared.read(workingFileURL, shouldCancel: { self.cancellation.isCancelled }).data
+            } catch {
+                guard StagingImageReader.isAbsent(workingFileURL, afterReadFailure: error, shouldCancel: { self.cancellation.isCancelled }) else {
+                    let failure = error as NSError
+                    NSLog("[GitX] Worktree image is unavailable without an index fallback (%@:%ld)", failure.domain, failure.code)
+                    return nil
+                }
+                NSLog("[GitX] Missing worktree image; reading its indexed bytes")
+            }
         }
         let data = try? StagingImageBlobReader(task: indexTask).read(cancellation: cancellation)
         return data?.isEmpty == false ? data : nil
@@ -859,7 +868,7 @@ final class StagingDiffPaneController: NSObject {
         let task = repository.task(withArguments: ["show", ":0:" + path])
         task.separatesStandardError = true
         return StagingImageLookup(
-            workingFileURL: displayedRequests[sectionIndex].staged || displayedRequests[sectionIndex].status == PBChangedFileStatus.DELETED.rawValue ? nil : repository.workingDirectoryURL()?.appendingPathComponent(path),
+            workingFileURL: displayedRequests[sectionIndex].staged ? nil : repository.workingDirectoryURL()?.appendingPathComponent(path),
             indexTask: task, cancellation: imageCancellation
         )
     }

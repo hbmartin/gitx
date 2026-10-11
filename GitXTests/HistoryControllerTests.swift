@@ -467,6 +467,79 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(native.delegate?.nativeContentView?(native, imageDataForPath: path, section: 0, imageSource: [:]), bytes)
     }
 
+    func testModifiedImagePreviewFallsBackWhenItsWorktreePathDisappears() throws {
+        let (_, native, url, indexed) = try prepareImageLookupFixture(path: "vanished-preview.png", deleted: false)
+        try FileManager.default.removeItem(at: url)
+        XCTAssertEqual(native.delegate?.nativeContentView?(native, imageDataForPath: "vanished-preview.png", section: 0, imageSource: [:]), indexed)
+    }
+
+    func testDeletedImagePreviewReadsRecreatedWorktreeBytesAndRefusesUnreadableFiles() throws {
+        let (pane, native, url, _) = try prepareImageLookupFixture(path: "recreated-preview.png", deleted: true)
+        let recreated = Data("recreated worktree image".utf8)
+        try recreated.write(to: url)
+        XCTAssertEqual(native.delegate?.nativeContentView?(native, imageDataForPath: "recreated-preview.png", section: 0, imageSource: [:]), recreated)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path) }
+        XCTAssertEqual(access(url.path, R_OK), -1, "The fixture must be unreadable before testing fallback refusal")
+        XCTAssertNil(native.delegate?.nativeContentView?(native, imageDataForPath: "recreated-preview.png", section: 0, imageSource: [:]))
+        withExtendedLifetime(pane) {}
+    }
+
+    func testImageIndexFallbackRefusesDanglingLinksAndNonRegularPaths() throws {
+        let path = "image-parent/preview.png"
+        let (pane, native, url, indexed) = try prepareImageLookupFixture(path: path, deleted: false)
+        func image() -> Data? {
+            native.delegate?.nativeContentView?(native, imageDataForPath: path, section: 0, imageSource: [:])
+        }
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createSymbolicLink(at: url, withDestinationURL: url.appendingPathExtension("missing"))
+        XCTAssertNil(image(), "An existing dangling final symlink must not display old index bytes")
+        try FileManager.default.removeItem(at: url)
+        XCTAssertEqual(mkfifo(url.path, 0o600), 0)
+        XCTAssertNil(image(), "An existing FIFO must not display old index bytes")
+        let parent = url.deletingLastPathComponent()
+        try FileManager.default.removeItem(at: parent)
+        try Data("blocking ancestor".utf8).write(to: parent)
+        XCTAssertNil(image(), "A non-directory ancestor must not be interpreted as an absent image")
+        try FileManager.default.removeItem(at: parent)
+        try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: parent.appendingPathExtension("missing"))
+        XCTAssertNil(image(), "A dangling parent symlink must not be interpreted as an absent image")
+        try FileManager.default.removeItem(at: parent)
+        let existingDirectory = URL(fileURLWithPath: fixture.path).appendingPathComponent("valid-image-parent")
+        try FileManager.default.createDirectory(at: existingDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: existingDirectory)
+        XCTAssertEqual(image(), indexed, "A valid parent symlink with a missing child still identifies an absent image")
+        withExtendedLifetime(pane) {}
+    }
+
+    func testCancelledImagePreviewDoesNotFallBackAfterItsWorktreePathDisappears() throws {
+        let (pane, native, url, _) = try prepareImageLookupFixture(path: "cancelled-preview.png", deleted: false)
+        try FileManager.default.removeItem(at: url)
+        pane.closeView()
+        XCTAssertNil(native.delegate?.nativeContentView?(native, imageDataForPath: "cancelled-preview.png", section: 0, imageSource: [:]))
+    }
+
+    private func prepareImageLookupFixture(path: String, deleted: Bool) throws -> (PBStagingViewController, PBNativeContentView, URL, Data) {
+        let indexed = Data("indexed image bytes".utf8)
+        let url = URL(fileURLWithPath: fixture.path).appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try indexed.write(to: url)
+        try fixture.git(["add", "--", path])
+        try fixture.git(["commit", "-qm", "Track image lookup fixture"])
+        if deleted {
+            try FileManager.default.removeItem(at: url)
+        } else {
+            try Data("modified worktree image".utf8).write(to: url)
+        }
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
+        XCTAssertEqual(file.worktreeStatus, deleted ? .DELETED : .MODIFIED)
+        try selectDiffFile(file, staged: false, in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Unstaged — " + path) })
+        return (pane, native, url, indexed)
+    }
+
     func testUnmergedAndDanglingSymlinkImagesRetainUsableDiffSections() throws {
         let conflict = "conflict-preview.png"
         let blob = try fixture.git(["rev-parse", "HEAD:nested/tracked.txt"]).trimmingCharacters(in: .newlines)

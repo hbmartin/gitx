@@ -94,6 +94,35 @@ final nonisolated class StagingImageReader: @unchecked Sendable {
         return Snapshot(data: bytes, identity: identity.finalize().map { String(format: "%02x", $0) }.joined())
     }
 
+    /// Only genuine path absence permits an unstaged preview to use index bytes.
+    /// ENOENT from a dangling final or parent symlink is an unreadable object,
+    /// so inspect each existing ancestor before accepting an absent component.
+    static func isAbsent(_ url: URL, afterReadFailure error: Error, shouldCancel: () -> Bool) -> Bool {
+        let failure = error as NSError
+        guard failure.domain == NSPOSIXErrorDomain, failure.code == Int(ENOENT), !shouldCancel() else { return false }
+        var path = "/"
+        let components = url.path.components(separatedBy: "/").filter { !$0.isEmpty }
+        for (index, name) in components.enumerated() {
+            guard !shouldCancel() else { return false }
+            if name == "." {
+                continue
+            }
+            if name == ".." {
+                path = (path as NSString).deletingLastPathComponent
+                continue
+            }
+            path = path == "/" ? path + name : path + "/" + name
+            var metadata = stat()
+            guard lstat(path, &metadata) == 0 else { return errno == ENOENT && !shouldCancel() }
+            guard index < components.count - 1 else { return false }
+            if metadata.st_mode & S_IFMT == S_IFLNK {
+                guard stat(path, &metadata) == 0 else { return false }
+            }
+            guard metadata.st_mode & S_IFMT == S_IFDIR else { return false }
+        }
+        return false
+    }
+
     private struct Resolved {
         let path: String
         let links: [(String, String, Data)]
