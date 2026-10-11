@@ -32,6 +32,14 @@ import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOCK_ROOT = pathlib.Path.home() / "Library/Caches/GitX/Verification/Locks"
+RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PRODUCER_START_FORMAT = "ps-lstart-utc-c-v1"
+BLOCKED_RECEIPT_CATEGORIES = {75: {"resource-busy"},
+                              2: {"resource-definition-unavailable", "resource-definition-changed"}}
+
+
+def valid_run_id(value):
+    return isinstance(value, str) and RUN_ID.fullmatch(value) is not None
 
 
 def atomic_json(path, value):
@@ -54,11 +62,11 @@ def digest(value):
     return hashlib.sha256(value).hexdigest()
 
 
-def git_environment():
+def git_environment(environment=None):
     """Inspect the requested checkout while retaining caller configuration."""
     selectors = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
                  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH", "GIT_NAMESPACE"}
-    return {key: value for key, value in os.environ.items() if key not in selectors}
+    return {key: value for key, value in (os.environ if environment is None else environment).items() if key not in selectors}
 
 
 def git(root, *args):
@@ -207,15 +215,29 @@ def receipt_artifact_problems(payload, root=ROOT, mutable_caches=None, identity=
     return problems
 
 
-def workflow_cache_snapshots(payload, root=ROOT):
+def active_workflow_steps(payload):
+    """Retain historical evidence, but validate only the current attempt's checks."""
+    selected = payload.get("selectedChecks")
+    return [step for step in payload.get("steps", [])
+            if selected is None or step.get("name") in selected]
+
+
+def workflow_cache_snapshots(payload, root=ROOT, receipt_reader=None):
     """Use completion provenance, never array position, to select each cache owner."""
     candidates = {"products": {}, "packages": {}, "dependencies": {}}
-    for step in payload.get("steps", []):
+    for step in active_workflow_steps(payload):
         if not step.get("receipt"):
             continue
         path = pathlib.Path(step["receipt"])
-        child = json.loads((path if path.is_absolute() else pathlib.Path(root) / path).read_text())
+        path = path if path.is_absolute() else pathlib.Path(root) / path
+        child = receipt_reader(path) if receipt_reader else json.loads(path.read_text())
+        if not isinstance(child, dict):
+            raise ValueError("Child receipt must be an object: " + str(path))
         paths, evidence = child.get("buildPaths", {}), child.get("evidence", {})
+        if not isinstance(paths, dict) or not isinstance(evidence, dict):
+            raise ValueError("Child receipt paths and evidence must be objects: " + str(path))
+        if not isinstance(child.get("invocation", {}), dict):
+            raise ValueError("Child receipt invocation must be an object: " + str(path))
         stamp = child.get("finishedAt") or step.get("finishedAt") or ""
         for kind, field, cache in (("products", "products", paths.get("derivedData")),
                                    ("packages", "packageProducts", paths.get("swiftPM")),
@@ -250,29 +272,39 @@ def workflow_cache_snapshots(payload, root=ROOT):
     return snapshots
 
 
-def final_cache_problems(payload, root=ROOT):
+def final_cache_problems(payload, root=ROOT, *, derived=None, identity=None):
     try:
-        derived = workflow_cache_snapshots(payload, root)
+        if derived is None:
+            derived = workflow_cache_snapshots(payload, root)
     except (OSError, ValueError, TypeError, KeyError) as error:
         return ["Final cache ownership cannot be validated: " + str(error)]
     snapshots = payload.get("finalCacheProducts", derived)
     if not isinstance(snapshots, dict) or snapshots != derived:
         return ["Final cache ownership is incomplete or ambiguous"]
     problems = []
-    for kind, reader in (("products", product_identity), ("packages", package_products), ("dependencies", dependency_products)):
+    readers = {"products": product_identity, "packages": package_products, "dependencies": dependency_products}
+    identity = identity or (lambda kind, path: readers[kind](path))
+    for kind in readers:
+        if not isinstance(snapshots.get(kind, {}), dict):
+            return ["Final cache ownership is incomplete or ambiguous"]
         for path, expected in snapshots.get(kind, {}).items():
-            if expected is None or reader(path) != expected:
+            if expected is None or identity(kind, path) != expected:
                 problems.append("Final cache products changed: " + path)
     return problems
 
 
 def process_started(pid):
-    result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True)
+    environment = dict(os.environ) | {"LC_ALL": "C", "LANG": "C", "TZ": "UTC"}
+    try:
+        result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True,
+                                text=True, env=environment, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
     return result.stdout.strip() if result.returncode == 0 else None
 
 
 def producer_identity():
-    return {"pid": os.getpid(), "started": process_started(os.getpid())}
+    return {"pid": os.getpid(), "started": process_started(os.getpid()), "startedFormat": PRODUCER_START_FORMAT}
 
 
 def producer_state(producer):
@@ -283,6 +315,10 @@ def producer_state(producer):
     except ProcessLookupError:
         return "abandoned"
     except (PermissionError, OSError):
+        return "uncertain"
+    if producer.get("startedFormat") != PRODUCER_START_FORMAT:
+        # Legacy lstart strings contain no timezone. A live PID alone cannot
+        # establish either ownership or abandonment across caller environments.
         return "uncertain"
     current = process_started(producer["pid"])
     return "uncertain" if not current else "live" if current == producer["started"] else "abandoned"
@@ -328,14 +364,32 @@ def verification_artifact_root(root=ROOT):
     return root / config["artifactRoot"]
 
 
+class ResourceDefinitionError(ValueError):
+    def __init__(self, message, category="resource-definition-unavailable"):
+        self.category = category
+        super().__init__(message)
+
+
+def toolchain_identity(developer=None):
+    developer = developer or os.environ.get("GITX_DEVELOPER_DIR") or os.environ.get("DEVELOPER_DIR") or "/Applications/Xcode.app/Contents/Developer"
+    try:
+        value = subprocess.check_output([str(pathlib.Path(developer) / "usr/bin/xcodebuild"), "-version"], timeout=15).decode().strip()
+        match = re.fullmatch(r"Xcode [0-9]+(?:\.[0-9]+)*\nBuild version ([A-Za-z0-9]+)", value)
+        if match is None or match[1].lower() == "unknown":
+            raise ValueError("Incomplete or malformed Xcode version output")
+        return value
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        raise ResourceDefinitionError("Cannot determine verification toolchain: " + str(error)) from error
+
+
 def cache_paths(root=ROOT, configuration="Debug", instrumentation="plain", developer=None, toolchain=None):
     root = pathlib.Path(root).resolve()
     developer = developer or os.environ.get("GITX_DEVELOPER_DIR") or os.environ.get("DEVELOPER_DIR")
     developer = developer or "/Applications/Xcode.app/Contents/Developer"
     if toolchain is None:
         try:
-            toolchain = subprocess.check_output([str(pathlib.Path(developer) / "usr/bin/xcodebuild"), "-version"], timeout=15).decode().strip()
-        except (OSError, subprocess.SubprocessError):
+            toolchain = toolchain_identity(developer)
+        except ResourceDefinitionError:
             toolchain = str(developer)
     base = verification_cache_root(root)
     base = base / digest(str(root).encode())[:16] / digest(toolchain.encode())[:16]
@@ -680,9 +734,9 @@ def diagnostics(directory, group, category, detached=()):
                     (directory / f"capture-{pid}.log").write_bytes(capture.stdout + capture.stderr)
 
 
-def supervise(command, timeout=7200, startup_timeout=None, desktop=False, directory=None, env=None, pass_fds=(), merge_stderr=True):
+def supervise(command, timeout=7200, startup_timeout=None, desktop=False, directory=None, env=None, pass_fds=(), merge_stderr=True, cwd=None):
     """Bound a process group, retaining diagnostics and killing only that group."""
-    directory = pathlib.Path(directory or ROOT / "artifacts/verification/diagnostics")
+    directory = pathlib.Path(directory) if directory is not None else verification_artifact_root(ROOT) / "diagnostics" / ("owned-" + uuid.uuid4().hex)
     keeper = None
     child_env = dict(env or os.environ)
     tag = child_env.get("GITX_SESSION_ID", uuid.uuid4().hex)
@@ -710,7 +764,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                  "status": "running", "startedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
     atomic_json(manifest, ownership)
     child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge_stderr else None,
-                             start_new_session=True, env=child_env, pass_fds=pass_fds)
+                             start_new_session=True, env=child_env, pass_fds=pass_fds, cwd=cwd)
     if desktop and platform.system() == "Darwin":
         keeper = subprocess.Popen(["/usr/bin/caffeinate", "-di", "-w", str(child.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     started, host_started, interrupted = time.monotonic(), False, None
@@ -807,6 +861,12 @@ def uses_atomic_coverage(arguments):
 
 
 def entry_resources(entry, arguments, root=ROOT, toolchain=None):
+    if arguments in (["--help"], ["-h"], ["--version"]):
+        return [], {}
+    if entry == "verify_static.sh" and toolchain is None:
+        return [], {}
+    if entry == "observe_app.sh" or (entry == "run_app.sh" and any(value in arguments for value in ("--no-build", "--stop"))):
+        return [str(pathlib.Path(root) / "build/GitX.app"), f"desktop:{os.getuid()}"], {}
     configuration = "Release" if "archive" in arguments and "raw" not in arguments else "Debug"
     for index, value in enumerate(arguments[:-1]):
         if value in {"--configuration", "-configuration"}:
@@ -832,6 +892,7 @@ def entry_resources(entry, arguments, root=ROOT, toolchain=None):
             developer = arguments[index + 1]
             if pathlib.Path(developer).suffix.lower() == ".app":
                 developer = str(pathlib.Path(developer) / "Contents/Developer")
+    toolchain = toolchain if toolchain is not None else toolchain_identity(developer)
     paths = cache_paths(root, configuration, instrumentation, developer, toolchain=toolchain)
     resources = [] if entry == "verify_static.sh" else [paths["derivedData"], paths["swiftPM"], paths["sourcePackages"]]
     if entry == "check_test_build_contracts.py":
@@ -841,13 +902,18 @@ def entry_resources(entry, arguments, root=ROOT, toolchain=None):
     for index, arg in enumerate(arguments[:-1]):
         if arg == "--resume-analysis":
             value = arguments[index + 1]
-            if not value or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in value):
+            if not valid_run_id(value):
                 raise ValueError("Invalid prior analyzer run ID")
             resources.append(str(verification_artifact_root(root) / value))
             receipt = verification_artifact_root(root) / value / "receipt.json"
             if receipt.is_file():
-                prior = json.loads(receipt.read_text())
-                scratch = prior.get("evidence", {}).get("analyzerScratch", {}).get("path")
+                try:
+                    prior = json.loads(receipt.read_text())
+                    evidence = prior.get("evidence", {}) if isinstance(prior, dict) else {}
+                    scratch = evidence.get("analyzerScratch", {}) if isinstance(evidence, dict) else {}
+                    scratch = scratch.get("path") if isinstance(scratch, dict) else None
+                except (OSError, ValueError):
+                    scratch = None
                 if scratch:
                     resources.append(scratch)
         if arg in {"-derivedDataPath", "-clonedSourcePackagesDirPath", "--scratch-path"}:
@@ -863,6 +929,8 @@ def entry_resources(entry, arguments, root=ROOT, toolchain=None):
                 resources.append(paths[key])
     if entry == "run_app.sh" or "--stage-app" in arguments:
         resources.append(str(pathlib.Path(root) / "build/GitX.app"))
+    if entry == "xcodebuild.sh" and "--profile-rules" in arguments:
+        resources.append(str(pathlib.Path(root).resolve() / "artifacts/verification/.swiftlint-profile-output"))
     if entry == "run_app.sh" or (any(v in arguments for v in ("test", "test-without-building")) and not any(v in arguments for v in ("core", "forgekit"))):
         resources.append(f"desktop:{os.getuid()}")
     return resources, paths
@@ -874,52 +942,76 @@ def guard(entry, arguments):
     for index, arg in enumerate(arguments[:-1]):
         if arg == "--run-id":
             run_id = arguments[index + 1]
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_id) is None:
+    if not valid_run_id(run_id):
         print("Run IDs may contain only letters, numbers, dots, underscores, and hyphens.", file=sys.stderr)
         return 2
     receipt = verification_artifact_root(root) / "Coordination" / f"{run_id}.json"
     if receipt.exists():
         receipt = receipt.with_name(f"{run_id}-{uuid.uuid4().hex[:8]}.json")
     owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(receipt), "entry": str(entry), "schemaVersion": 2, "producer": producer_identity(), "startedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
-    resources, paths = entry_resources(pathlib.Path(entry).name, arguments, root)
-    if pathlib.Path(entry).name == "xcodebuild.sh":
-        resources.append(str(verification_artifact_root(root) / run_id))
     try:
-        with Leases(resources, owner, wait_seconds=float(os.environ.get("GITX_RESOURCE_WAIT_SECONDS", "0"))) as leases:
-            refreshed_resources, refreshed_paths = entry_resources(pathlib.Path(entry).name, arguments, root)
+        wait = float(os.environ.get("GITX_RESOURCE_WAIT_SECONDS", "0"))
+        if not math.isfinite(wait) or wait < 0:
+            raise ValueError("Resource wait must be finite and nonnegative")
+        deadline = time.monotonic() + wait
+        while True:
+            resources, paths = entry_resources(pathlib.Path(entry).name, arguments, root)
             if pathlib.Path(entry).name == "xcodebuild.sh":
-                refreshed_resources.append(str(verification_artifact_root(root) / run_id))
-            if {canonical_resource(value) for value in refreshed_resources} != set(leases.held):
-                raise ValueError("Required resources changed while waiting; retry to acquire the current resources")
-            paths = refreshed_paths
-            env = leases.environment() | {"GITX_GUARDED_ENTRY": str(pathlib.Path(entry).resolve()),
-                  "GITX_DERIVED_DATA": paths["derivedData"], "GITX_SWIFTPM_BUILD_ROOT": paths["swiftPM"],
-                  "GITX_SOURCE_PACKAGE_CACHE": paths["sourcePackages"]}
-            if pathlib.Path(entry).name == "check_test_build_contracts.py":
-                # This command probes two configurations. Preserve explicit
-                # overrides, but do not turn its Debug default into a Release
-                # override for the second probe.
-                for variable in ("GITX_DERIVED_DATA", "GITX_SWIFTPM_BUILD_ROOT", "GITX_SOURCE_PACKAGE_CACHE"):
-                    if variable not in os.environ:
-                        env.pop(variable, None)
-            before = inputs(root)
-            atomic_json(receipt, owner | {"status": "running", "resources": resources, "paths": paths,
-                                         "resourceWaitSeconds": round(leases.wait_seconds, 3), "deliveryEligible": False,
-                                         "evidence": {"status": "pending", "inputsBefore": before}})
-            interpreter = sys.executable if pathlib.Path(entry).suffix == ".py" else "bash"
-            status = supervise([interpreter, str(pathlib.Path(entry).resolve()), *arguments], env=env, desktop=pathlib.Path(entry).name == "run_app.sh",
-                               pass_fds=leases.descriptors(), timeout=float(os.environ.get("GITX_COMMAND_TIMEOUT", "7200")), directory=receipt.parent / "Diagnostics" / receipt.stem, merge_stderr=False)
-            after = inputs(root)
-            changed = changed_inputs(before, after)
-            if changed and status == 0:
-                status = 76
-            atomic_json(receipt, owner | {"status": "invalid" if changed else "passed" if status == 0 else "failed", "exitCode": status, "resources": resources, "paths": paths, "resourceWaitSeconds": round(leases.wait_seconds, 3), "deliveryEligible": False, "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-                "evidence": {"status": "invalid" if changed else "valid", "inputsBefore": before, "inputsAfter": after, "changedInputs": changed}})
-            return status
+                resources.append(str(verification_artifact_root(root) / run_id))
+            with Leases(resources, owner, wait_seconds=max(0, deadline - time.monotonic())) as leases:
+                refreshed_resources, refreshed_paths = entry_resources(pathlib.Path(entry).name, arguments, root)
+                if pathlib.Path(entry).name == "xcodebuild.sh":
+                    refreshed_resources.append(str(verification_artifact_root(root) / run_id))
+                changed = ({canonical_resource(value) for value in refreshed_resources} != set(leases.held) or
+                           paths.get("toolchain") != refreshed_paths.get("toolchain"))
+                if changed:
+                    if time.monotonic() >= deadline:
+                        raise ResourceDefinitionError("Required resources changed while waiting; retry with stable inputs",
+                                                      "resource-definition-changed")
+                else:
+                    return execute_guarded(entry, arguments, root, receipt, owner, resources, refreshed_paths, leases)
+            time.sleep(min(.2, max(0, deadline - time.monotonic())))
     except ResourceBusy as error:
-        atomic_json(receipt, owner | {"status": "blocked", "exitCode": 75, "category": "resource-busy", "owner": error.owner, "resource": error.resource})
+        atomic_json(receipt, owner | {"status": "blocked", "exitCode": 75, "category": "resource-busy",
+                    "owner": error.owner, "resource": error.resource, "deliveryEligible": False,
+                    "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
         print(error, file=sys.stderr)
         return 75
+    except ResourceDefinitionError as error:
+        atomic_json(receipt, owner | {"status": "blocked", "exitCode": 2, "category": error.category,
+                    "problem": str(error), "deliveryEligible": False,
+                    "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
+        print(error, file=sys.stderr)
+        return 2
+
+
+def execute_guarded(entry, arguments, root, receipt, owner, resources, paths, leases):
+    # Keep execution inside the acquired context; its return releases all
+    # leases only after final evidence has been published.
+    env = leases.environment() | {"GITX_GUARDED_ENTRY": str(pathlib.Path(entry).resolve()),
+          **{variable: paths[key] for variable, key in (("GITX_DERIVED_DATA", "derivedData"),
+             ("GITX_SWIFTPM_BUILD_ROOT", "swiftPM"), ("GITX_SOURCE_PACKAGE_CACHE", "sourcePackages")) if key in paths}}
+    if pathlib.Path(entry).name == "check_test_build_contracts.py":
+        # This command probes two configurations. Preserve explicit
+        # overrides, but do not turn its Debug default into a Release
+        # override for the second probe.
+        for variable in ("GITX_DERIVED_DATA", "GITX_SWIFTPM_BUILD_ROOT", "GITX_SOURCE_PACKAGE_CACHE"):
+            if variable not in os.environ:
+                env.pop(variable, None)
+    before = inputs(root)
+    atomic_json(receipt, owner | {"status": "running", "resources": resources, "paths": paths,
+                                 "resourceWaitSeconds": round(leases.wait_seconds, 3), "deliveryEligible": False,
+                                 "evidence": {"status": "pending", "inputsBefore": before}})
+    interpreter = sys.executable if pathlib.Path(entry).suffix == ".py" else "bash"
+    status = supervise([interpreter, str(pathlib.Path(entry).resolve()), *arguments], env=env, desktop=pathlib.Path(entry).name == "run_app.sh",
+                       pass_fds=leases.descriptors(), timeout=float(os.environ.get("GITX_COMMAND_TIMEOUT", "7200")), directory=receipt.parent / "Diagnostics" / receipt.stem, merge_stderr=False)
+    after = inputs(root)
+    changed = changed_inputs(before, after)
+    if changed and status == 0:
+        status = 76
+    atomic_json(receipt, owner | {"status": "invalid" if changed else "passed" if status == 0 else "failed", "exitCode": status, "resources": resources, "paths": paths, "resourceWaitSeconds": round(leases.wait_seconds, 3), "deliveryEligible": False, "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "evidence": {"status": "invalid" if changed else "valid", "inputsBefore": before, "inputsAfter": after, "changedInputs": changed}})
+    return status
 
 
 def main():

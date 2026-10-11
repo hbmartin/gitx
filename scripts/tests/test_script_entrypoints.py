@@ -686,12 +686,12 @@ class ScriptEntrypointTests(unittest.TestCase):
             env=self.environment,
         )
 
-        self.assertNotEqual(result.returncode, 0)
-        receipt = self.receipt("invalid-explicit-toolchain")
-        self.assertEqual(
-            receipt["toolchain"]["developerDir"],
-            str(self.root / "Missing-Xcode.app" / "Contents" / "Developer"),
-        )
+        self.assertEqual(result.returncode, 2)
+        receipt = json.loads((self.root / "artifacts/verification/Coordination/invalid-explicit-toolchain.json").read_text())
+        self.assertEqual(receipt["status"], "blocked")
+        self.assertEqual(receipt["category"], "resource-definition-unavailable")
+        self.assertIn(str(self.root / "Missing-Xcode.app"), receipt["problem"])
+        self.assertFalse((self.root / "artifacts/verification/invalid-explicit-toolchain").exists())
 
     def test_xcodebuild_wrapper_matches_options_as_exact_arguments(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -1461,6 +1461,7 @@ class ScriptEntrypointTests(unittest.TestCase):
 
     def test_run_app_documents_explicit_git_environment_mode(self) -> None:
         script = self.install_script("run_app.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
         result = subprocess.run([script, "--help"], check=True, capture_output=True, text=True, env=self.environment)
         self.assertIn("--preserve-git-environment", result.stdout)
         for arguments in ([], ["--repo", "/tmp/existing", "--m2", "push-create"], ["--repo", "/tmp/existing", "--m3", "review"]):

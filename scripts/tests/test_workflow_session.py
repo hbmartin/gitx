@@ -69,7 +69,7 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertTrue(session.receipt_artifact_problems(payload, root))
 
     def test_producer_pid_and_start_identity_distinguish_live_abandoned_and_uncertain(self):
-        identity = {'pid': 123, 'started': 'birth'}
+        identity = {'pid': 123, 'started': 'birth', 'startedFormat': session.PRODUCER_START_FORMAT}
         with mock.patch.object(os, 'kill'), mock.patch.object(session, 'process_started', return_value='birth'):
             self.assertEqual(session.producer_state(identity), 'live')
         with mock.patch.object(os, 'kill'), mock.patch.object(session, 'process_started', return_value='reused'):
@@ -228,7 +228,7 @@ class WorkflowSessionTests(unittest.TestCase):
                 owner.stdout.close()
 
     def test_partitioned_paths_and_explicit_alias(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode Test"):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode 26.6\nBuild version Test"):
             first = session.cache_paths(pathlib.Path(directory) / "first", "Debug", "plain")
             other = session.cache_paths(pathlib.Path(directory) / "second", "Debug", "plain")
             sanitized = session.cache_paths(pathlib.Path(directory) / "first", "Debug", "thread-sanitizer")
@@ -238,7 +238,7 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual(session.cache_paths()["derivedData"], str(pathlib.Path(directory).resolve()))
 
     def test_raw_test_execution_owns_desktop_but_compilation_does_not(self):
-        with mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode Test"):
+        with mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode 26.6\nBuild version Test"):
             for action in ("test", "test-without-building"):
                 resources, _ = session.entry_resources("xcodebuild.sh", ["raw", "--", action])
                 self.assertIn(f"desktop:{os.getuid()}", resources)
@@ -246,7 +246,7 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertNotIn(f"desktop:{os.getuid()}", resources)
 
     def test_cache_root_override_preserves_partitions_and_individual_overrides(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode Test"):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode 26.6\nBuild version Test"):
             root = pathlib.Path(directory).resolve()
             cache = root / "protected"
             cache.mkdir()
@@ -266,7 +266,7 @@ class WorkflowSessionTests(unittest.TestCase):
                     self.assertEqual(session.cache_paths(root)["derivedData"], str(root / "explicit"))
 
     def test_relative_cache_root_is_resolved_against_checkout(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"GITX_VERIFICATION_CACHE_ROOT": "verification-cache"}, clear=True), mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode Test"):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"GITX_VERIFICATION_CACHE_ROOT": "verification-cache"}, clear=True), mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode 26.6\nBuild version Test"):
             root = pathlib.Path(directory).resolve()
             result = session.cache_paths(root)
             self.assertTrue(pathlib.Path(result["derivedData"]).is_relative_to(root / "verification-cache"))
