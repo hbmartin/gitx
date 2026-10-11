@@ -274,6 +274,20 @@ final class IndexReferenceTransactionTests: XCTestCase {
             XCTAssertThrowsError(try exercise("read command; /bin/sleep 30", commands: ["start\n"], acknowledgements: ["start: ok"], timeout: 0.1))
         }
 
+        func testIndependentDeadlineTerminatesAndReapsThePeerBeforeWorkerCleanup() throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXBackstop-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let result = try PBIndexReferenceTransactionTestHarness.exerciseIndependentDeadline(directory: directory.path)
+            XCTAssertEqual(result["reapedBeforeAbort"] as? Bool, true, "The independent deadline must release leader retention and finish ownership before abort/deinit")
+            XCTAssertEqual(result["supervisionError"] as? String, "")
+            let status = try XCTUnwrap(result["status"] as? NSNumber).int32Value
+            XCTAssertTrue([SIGTERM, SIGKILL].contains(status & 0x7F), "The stalled peer must terminate from the owned backstop signal: \(status)")
+            let pid = try XCTUnwrap(Int32(String(contentsOf: directory.appendingPathComponent("peer.pid"), encoding: .utf8)))
+            XCTAssertEqual(kill(pid, 0), -1, "The process must already be reaped when the harness returns")
+            XCTAssertEqual(errno, ESRCH)
+        }
+
         func testCancellationAfterPreparationStopsTheOwnedPeer() {
             XCTAssertThrowsError(try exercise("while read command; do printf '%s: ok\\n' \"$command\"; done", commands: ["prepare\n", "commit\n"], acknowledgements: ["prepare: ok", "commit: ok"], cancelAfter: 0)) { error in
                 XCTAssertEqual((error as NSError).code, 3)

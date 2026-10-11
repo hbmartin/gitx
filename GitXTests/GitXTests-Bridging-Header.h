@@ -45,6 +45,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)clearCapturedMergeStateInDirectory:(NSString *)directory replacementMessage:(nullable NSString *)replacementMessage error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(clearCapturedMergeState(directory:replacementMessage:));
 @end
 @interface PBIndexReferenceTransactionTestHarness : NSObject
++ (nullable NSDictionary<NSString *, id> *)exerciseIndependentDeadlineInDirectory:(NSString *)directory error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseIndependentDeadline(directory:));
 + (BOOL)exerciseCommitWriteWithAcceptedByteCount:(NSInteger)acceptedByteCount error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseCommitWrite(acceptedByteCount:));
 + (BOOL)exerciseTerminalReadRaceWithAcknowledgement:(BOOL)acknowledgement error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseTerminalReadRace(acknowledgement:));
 + (BOOL)exerciseWithLaunchPath:(NSString *)launchPath arguments:(NSArray<NSString *> *)arguments workingDirectory:(nullable NSString *)workingDirectory commands:(NSArray<NSString *> *)commands acknowledgements:(NSArray<NSString *> *)acknowledgements timeout:(NSTimeInterval)timeout cancelAfterAcknowledgement:(NSInteger)cancelAfter error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exercise(launchPath:arguments:workingDirectory:commands:acknowledgements:timeout:cancelAfterAcknowledgement:));

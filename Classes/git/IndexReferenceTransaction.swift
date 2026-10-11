@@ -78,6 +78,13 @@ final nonisolated class IndexReferenceTransaction {
                 throw failure("The controlled peer did not exit.")
             }
         }
+
+        fileprivate func independentDeadlineExitForTesting() -> [String: Any] {
+            let completed = exit.semaphore.wait(timeout: .now() + 2) == .success
+            let result = exit.value
+            return ["reapedBeforeAbort": completed && result != nil, "status": NSNumber(value: result?.0 ?? 0),
+                    "supervisionError": result?.1?.localizedDescription ?? ""]
+        }
     #endif
 
     init(timeout: TimeInterval = 30, checkCancellation: @escaping () throws -> Void = {}) {
@@ -389,6 +396,19 @@ final nonisolated class IndexReferenceTransaction {
     /// Exercise the production pipe owner with controlled peers, never a second implementation.
     @objc(PBIndexReferenceTransactionTestHarness)
     final nonisolated class IndexReferenceTransactionTestHarness: NSObject {
+        @objc(exerciseIndependentDeadlineInDirectory:error:)
+        static func exerciseIndependentDeadline(directory: String) throws -> [String: Any] {
+            let transaction = IndexReferenceTransaction(timeout: 1)
+            defer { transaction.abortAndClose() }
+            let script = "printf '%s' \"$$\" > peer.pid; read command; read release; exec /bin/sleep 30"
+            try transaction.launch(context: PBTaskExecutionContext(launchPath: "/bin/sh", arguments: ["-c", script], environment: ["PATH": "/usr/bin:/bin"], workingDirectory: directory))
+            try transaction.send("start\n")
+            // Hold the commit worker on the owned peer's exit instead of polling
+            // its own deadline, which could cancel the backstop during cleanup.
+            try transaction.releasePeerAndObserveExit()
+            return transaction.independentDeadlineExitForTesting()
+        }
+
         @objc(exerciseCommitWriteWithAcceptedByteCount:error:)
         static func exerciseCommitWrite(acceptedByteCount: Int) throws {
             let transaction = IndexReferenceTransaction(timeout: 2)
