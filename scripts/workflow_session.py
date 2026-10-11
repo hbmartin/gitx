@@ -308,7 +308,8 @@ def producer_identity():
 
 
 def producer_state(producer):
-    if not isinstance(producer, dict) or type(producer.get("pid")) is not int or producer["pid"] <= 0 or not producer.get("started"):
+    if not isinstance(producer, dict) or type(producer.get("pid")) is not int or producer["pid"] <= 0 or \
+            not isinstance(producer.get("started"), str) or not producer["started"]:
         return "uncertain"
     try:
         os.kill(producer["pid"], 0)
@@ -914,8 +915,16 @@ def entry_resources(entry, arguments, root=ROOT, toolchain=None):
                     scratch = scratch.get("path") if isinstance(scratch, dict) else None
                 except (OSError, ValueError):
                     scratch = None
-                if scratch:
-                    resources.append(scratch)
+                if isinstance(scratch, str) and scratch:
+                    try:
+                        pathlib.Path(scratch).expanduser().resolve(strict=True)
+                        canonical_resource(scratch)
+                    except (OSError, ValueError, RuntimeError):
+                        # Admission must reach the wrapper's fresh fallback
+                        # even when prior provenance names an invalid path.
+                        pass
+                    else:
+                        resources.append(scratch)
         if arg in {"-derivedDataPath", "-clonedSourcePackagesDirPath", "--scratch-path"}:
             resources.append(arguments[index + 1])
             if arg == "-derivedDataPath":

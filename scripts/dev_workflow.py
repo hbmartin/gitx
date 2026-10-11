@@ -202,8 +202,6 @@ def verify(args):
         payload = json.loads(path.read_text())
         if payload.get("schemaVersion") != 2:
             raise ValueError("Historical workflow receipts lack reuse evidence")
-        payload["resumeHistory"] = payload.get("resumeHistory", []) + [{"resumedAt": records.now(), "previousInputs": payload.get("inputsBefore")}]
-        payload["inputsBefore"] = session.inputs(root)
     else:
         if path.exists():
             raise ValueError("Run already exists; use --resume or a fresh run ID")
@@ -211,15 +209,20 @@ def verify(args):
                    "steps": [], "status": "running", "inputsBefore": session.inputs(root)}
     owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(path), "producer": session.producer_identity()}
     previous_caches = None
-    if args.resume and payload.get("status") == "passed":
-        try:
-            previous_caches = previous_cache_snapshots(payload, root)
-        except (OSError, ValueError, TypeError, KeyError) as error:
-            payload["finalCacheProducts"] = {}
-            return finish_invalid(path, payload, ["Prior cache ownership cannot be validated: " + str(error)], attempt_started)
-    session.atomic_json(path, payload)
+    owned_directory = False
     try:
         with selected_leases(args, root, directory, owner) as (leases, commands, selection):
+            owned_directory = True
+            if args.resume:
+                # A previous producer may have finished while this attempt
+                # waited. Read and mutate its receipt only after ownership.
+                payload = json.loads(path.read_text())
+                if payload.get("schemaVersion") != 2:
+                    raise ValueError("Historical workflow receipts lack reuse evidence")
+                previous_payload = dict(payload)
+                payload["resumeHistory"] = payload.get("resumeHistory", []) + [{"resumedAt": records.now(), "previousInputs": payload.get("inputsBefore")}]
+            elif path.exists():
+                raise ValueError("Run already exists; use --resume or a fresh run ID")
             env = leases.environment() | {"GITX_SESSION_ID": run_id, "GITX_COMMAND_TIMEOUT": str(args.timeout),
                                           "GITX_RESOURCE_WAIT_SECONDS": str(getattr(args, "wait_for_resources", 0))}
             for key in ("category", "problem", "owner", "resource", "exitCode", "finishedAt", "evidenceProblems"):
@@ -229,6 +232,12 @@ def verify(args):
                            selectedChecks=selection["selectedChecks"], inputsBefore=session.inputs(root),
                            resourceWaitSeconds=round(leases.wait_seconds, 3), executedChecks=[], reusedChecks=[])
             session.atomic_json(path, payload)
+            if args.resume and previous_payload.get("status") == "passed":
+                try:
+                    previous_caches = previous_cache_snapshots(previous_payload, root)
+                except (OSError, ValueError, TypeError, KeyError) as error:
+                    payload["finalCacheProducts"] = {}
+                    return finish_invalid(path, payload, ["Prior cache ownership cannot be validated: " + str(error)], attempt_started)
             previous = {step["name"]: step for step in payload["steps"]}
             for name, command in commands:
                 current = session.inputs(root)
@@ -332,6 +341,20 @@ def verify(args):
     except (session.ResourceBusy, session.ResourceDefinitionError) as error:
         busy = isinstance(error, session.ResourceBusy)
         status = 75 if busy else 2
+        if not owned_directory and (args.resume or path.exists() or
+                (busy and session.canonical_resource(error.resource) == session.canonical_resource(str(directory)))):
+            blocker = session.verification_artifact_root(root) / "Coordination" / f"{run_id}-{uuid.uuid4().hex[:8]}.json"
+            blocked = owner | {"schemaVersion": 2, "receipt": str(blocker), "entry": str(root / "scripts/dev_workflow.py"),
+                "workflowReceipt": str(path), "status": "blocked", "exitCode": status,
+                "category": "resource-busy" if busy else error.category, "problem": str(error),
+                "selectedChecks": selection["selectedChecks"], "resources": [], "deliveryEligible": False,
+                "startedAt": records.now(), "finishedAt": records.now(),
+                "attemptDurationSeconds": round(time.monotonic() - attempt_started, 3)}
+            if busy:
+                blocked.update(owner=error.owner, resource=error.resource)
+            session.atomic_json(blocker, blocked)
+            print(f"{error}\nBlocker receipt: {blocker}", file=sys.stderr)
+            return status
         payload.update(status="blocked", exitCode=status, category="resource-busy" if busy else error.category,
                        problem=str(error), producer=owner["producer"], deliveryEligible=False,
                        finishedAt=records.now(), attemptDurationSeconds=round(time.monotonic() - attempt_started, 3))

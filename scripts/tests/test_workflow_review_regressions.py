@@ -213,6 +213,69 @@ class WorkflowAttemptRegressionTests(unittest.TestCase):
         self.assertEqual(value["executedChecks"], ["correctness"])
         self.assertIn("artifacts-unreadable", value["steps"][0]["executionReason"])
 
+    def test_same_run_contention_preserves_owned_receipt_and_records_separate_blocker(self):
+        self.assertEqual(self.run_verification((0,), "correctness")[0], 0)
+        path = self.root / "artifacts/verification/fixture/workflow.json"
+        original = json.loads(path.read_text())
+        original["producer"] = {"pid": 999, "started": "owner birth", "startedFormat": session.PRODUCER_START_FORMAT}
+        owner = {"runId": "fixture", "pid": 999, "receipt": str(path)}
+        for prior_status in ("running", "passed"):
+            with self.subTest(prior_status=prior_status):
+                original["status"] = prior_status
+                path.write_text(json.dumps(original))
+                before = path.read_bytes()
+                coordination = path.parent.parent / "Coordination"
+                for resource in (str(path.parent.resolve()), str(self.root / "cache")):
+                    with self.subTest(resource=resource):
+                        existing = set(coordination.glob("*.json"))
+                        session.Leases.return_value.__enter__.side_effect = session.ResourceBusy(resource, owner)
+                        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "correctness"])
+                        with mock.patch.object(session, "supervise") as execute, \
+                                mock.patch.object(session, "workflow_cache_snapshots", side_effect=AssertionError("Cannot read owned evidence before acquiring its lease")):
+                            self.assertEqual(workflow.verify(args), 75)
+                        self.assertEqual(path.read_bytes(), before)
+                        blockers = set(coordination.glob("*.json")) - existing
+                        self.assertEqual(len(blockers), 1)
+                        blocker_path = blockers.pop()
+                        blocker = json.loads(blocker_path.read_text())
+                        self.assertEqual(blocker["schemaVersion"], 2)
+                        self.assertEqual(blocker["status"], "blocked")
+                        self.assertEqual(blocker["exitCode"], 75)
+                        self.assertEqual(blocker["category"], "resource-busy")
+                        self.assertEqual(blocker["owner"], owner)
+                        self.assertEqual(blocker["receipt"], str(blocker_path.resolve()))
+                        self.assertEqual(blocker["workflowReceipt"], str(path.resolve()))
+                        self.assertEqual(blocker["selectedChecks"], ["correctness"])
+                        self.assertEqual(blocker["entry"], str(self.root / "scripts/dev_workflow.py"))
+                        self.assertTrue(blocker["finishedAt"])
+                        self.assertFalse(blocker["deliveryEligible"])
+                        self.assertEqual(blocker["producer"]["pid"], os.getpid())
+                        self.assertNotIn("evidence", blocker)
+                        execute.assert_not_called()
+
+    def test_resume_resource_definition_failure_preserves_prior_receipt(self):
+        self.assertEqual(self.run_verification((0,), "correctness")[0], 0)
+        path = self.root / "artifacts/verification/fixture/workflow.json"
+        before = path.read_bytes()
+        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "correctness"])
+        with mock.patch.object(session, "supervise") as execute, \
+                mock.patch.object(workflow, "resources_for", side_effect=session.ResourceDefinitionError("toolchain unavailable")):
+            self.assertEqual(workflow.verify(args), 2)
+        self.assertEqual(path.read_bytes(), before)
+        blockers = list((path.parent.parent / "Coordination").glob("*.json"))
+        self.assertEqual(len(blockers), 1)
+        blocker = json.loads(blockers[0].read_text())
+        self.assertEqual(blocker["schemaVersion"], 2)
+        self.assertEqual(blocker["status"], "blocked")
+        self.assertEqual(blocker["category"], "resource-definition-unavailable")
+        self.assertEqual(blocker["exitCode"], 2)
+        self.assertEqual(blocker["workflowReceipt"], str(path.resolve()))
+        self.assertEqual(blocker["selectedChecks"], ["correctness"])
+        self.assertTrue(blocker["finishedAt"])
+        self.assertFalse(blocker["deliveryEligible"])
+        self.assertNotIn("owner", blocker)
+        execute.assert_not_called()
+
 
 class WorkflowGuardRegressionTests(unittest.TestCase):
     setUp = characterization.WorkflowGuardCharacterizationTests.setUp
@@ -249,6 +312,37 @@ class WorkflowGuardRegressionTests(unittest.TestCase):
 
 
 class WorkflowResourceRegressionTests(unittest.TestCase):
+    def test_malformed_prior_scratch_does_not_enter_resource_definitions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / "scripts").mkdir()
+            (root / "scripts/verification-config.json").write_text((ROOT / "scripts/verification-config.json").read_text())
+            prior = root / "artifacts/verification/prior/receipt.json"
+            prior.parent.mkdir(parents=True)
+            toolchain = "Xcode 26.6\nBuild version Fixture"
+            for path in (["/scratch"], {"path": "/scratch"}, 1, True, ""):
+                with self.subTest(path=path):
+                    prior.write_text(json.dumps({"evidence": {"analyzerScratch": {"path": path}}}))
+                    resources, _ = session.entry_resources("xcodebuild.sh", ["analyze", "--resume-analysis", "prior"], root, toolchain=toolchain)
+                    self.assertTrue(all(isinstance(resource, str) and resource for resource in resources))
+
+    def test_uncanonicalizable_prior_scratch_can_reach_fresh_analysis_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / "scripts").mkdir()
+            (root / "scripts/verification-config.json").write_text((ROOT / "scripts/verification-config.json").read_text())
+            prior = root / "artifacts/verification/prior/receipt.json"
+            prior.parent.mkdir(parents=True)
+            loop = root / "loop"
+            loop.symlink_to(loop)
+            for scratch in ("/scratch\0bad", str(loop)):
+                with self.subTest(scratch=scratch):
+                    prior.write_text(json.dumps({"evidence": {"analyzerScratch": {"path": scratch}}}))
+                    resources, _ = session.entry_resources("xcodebuild.sh", ["analyze", "--resume-analysis", "prior", "--fresh-on-stale-analysis"], root,
+                                                          toolchain="Xcode 26.6\nBuild version Fixture")
+                    self.assertNotIn(scratch, resources)
+                    self.assertTrue(all(session.canonical_resource(resource) for resource in resources))
+
     def test_multi_command_selection_probes_toolchain_once(self):
         commands = workflow.full_profile(ROOT)
         with mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode 26.6\nBuild version Fixture") as probe:
@@ -329,6 +423,13 @@ class WorkflowResourceRegressionTests(unittest.TestCase):
 
 
 class WorkflowOwnershipRegressionTests(unittest.TestCase):
+    def test_live_malformed_birth_metadata_is_uncertain(self):
+        for birth in (["birth"], {"birth": True}, 1, True, "", None):
+            with self.subTest(birth=birth), mock.patch.object(os, "kill"), \
+                    mock.patch.object(session, "process_started", return_value="birth"):
+                self.assertEqual(session.producer_state({"pid": 123, "started": birth,
+                                                         "startedFormat": session.PRODUCER_START_FORMAT}), "uncertain")
+
     def test_producer_identity_is_invariant_and_marks_its_format(self):
         def ps(command, **kwargs):
             environment = kwargs.get("env", os.environ)
