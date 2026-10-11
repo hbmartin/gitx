@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import pathlib
+import subprocess
+import tempfile
 
-from support import load_script
+from support import load_script, fixture_git_environment
 
 
 class BuildBenchmarkTests(unittest.TestCase):
@@ -37,6 +40,63 @@ class BuildBenchmarkTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_cache_hits_count_diagnostic_hits_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = pathlib.Path(directory) / "build.log"
+            log.write_text("remark: cache hit for key 123\nremark: CACHE HIT for key 456\ncache miss\n")
+            self.assertEqual(self.module.cache_hits(log), 2)
+
+    def test_short_cache_experiments_cannot_qualify(self):
+        with self.assertRaisesRegex(ValueError, "five paired"):
+            self.module.compare_cache(pathlib.Path("missing"), pathlib.Path("unused.json"), 4)
+
+    def test_edit_probes_use_an_independent_snapshot_with_current_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "original"
+            root.mkdir()
+            environment = fixture_git_environment()
+            def git(*arguments):
+                subprocess.run(["git", "-C", str(root), *arguments], check=True,
+                               capture_output=True, env=environment)
+            git("init", "-q")
+            git("config", "user.name", "Fixture")
+            git("config", "user.email", "fixture@example.invalid")
+            (root / "Classes").mkdir()
+            (root / "Classes/old.swift").write_text("old\n")
+            (root / ".gitignore").write_text("*.a\n*.stamp\n")
+            git("add", ".")
+            git("commit", "-qm", "Fixture")
+            git("mv", "Classes/old.swift", "Classes/renamed.swift")
+            (root / "Classes/renamed.swift").write_text("current\n")
+            (root / "Classes/new.swift").write_text("new\n")
+            libraries = root / "External/objective-git/External"
+            libraries.mkdir(parents=True)
+            for name in ("libgit2.a", "libssh2.a", "libcrypto.a", ".libgit2-build.stamp"):
+                (libraries / name).write_text("dependency\n")
+            destination = pathlib.Path(directory) / "snapshot"
+            self.module.snapshot_checkout(root, destination)
+            self.assertFalse((destination / "Classes/old.swift").exists())
+            self.assertEqual((destination / "Classes/renamed.swift").read_text(), "current\n")
+            self.assertEqual((destination / "Classes/new.swift").read_text(), "new\n")
+            (destination / "Classes/renamed.swift").write_text("probe\n")
+            self.assertEqual((root / "Classes/renamed.swift").read_text(), "current\n")
+
+    def test_fresh_products_preserve_the_owned_native_compilation_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = pathlib.Path(directory).resolve()
+            derived = workspace / "DerivedData"
+            cache = derived / "CompilationCache.noindex/builtin"
+            cache.mkdir(parents=True)
+            (cache / "cached-result").write_text("cache\n")
+            products = derived / "Build/Products"
+            products.mkdir(parents=True)
+            (products / "app").write_text("product\n")
+            self.module.reset_products(derived, workspace)
+            self.assertEqual((cache / "cached-result").read_text(), "cache\n")
+            self.assertFalse(products.exists())
+            with self.assertRaises(ValueError):
+                self.module.reset_products(workspace.parent, workspace)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ class WorkflowCompletionTests(unittest.TestCase):
         leases = mock.MagicMock()
         leases.__enter__.return_value.environment.return_value = os.environ.copy()
         leases.__enter__.return_value.descriptors.return_value = ()
+        leases.__enter__.return_value.wait_seconds = 0
         for patch in (
             mock.patch.object(session, "ROOT", self.root),
             mock.patch.object(session, "inputs", return_value=self.current),
@@ -65,6 +66,33 @@ class WorkflowCompletionTests(unittest.TestCase):
         self.assertEqual(receipt["scope"], "partial")
         self.assertEqual(execute.call_count, 1)
 
+    def test_resume_records_why_matching_checks_are_reused_without_execution(self):
+        app = self.root / "build/GitX.app"
+        app.mkdir(parents=True)
+        (app / "binary").write_bytes(b"fixture")
+        self.assertEqual(self.run_verification()[0], 0)
+        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--cleanup-mode", "preview"])
+        with mock.patch.object(session, "supervise") as execute:
+            self.assertEqual(workflow.verify(args), 0)
+        execute.assert_not_called()
+        receipt = json.loads((self.root / "artifacts/verification/fixture/workflow.json").read_text())
+        self.assertEqual(receipt["reusedChecks"], ["correctness", "stage-debug"])
+        for step in receipt["steps"]:
+            self.assertEqual(step["lastAttempt"], {"action": "reused", "reason": "matching-passed-evidence"})
+
+    def test_feedback_reports_selected_and_executed_checks_without_delivery(self):
+        args = workflow.parser().parse_args(["verify", "--profile", "feedback", "--run-id", "fixture"])
+        with mock.patch.object(workflow.feedback, "changed_paths", return_value=("base", ["Classes/View.swift"])), \
+                mock.patch.object(session, "supervise", return_value=0):
+            self.assertEqual(workflow.verify(args), 0)
+        receipt = json.loads((self.root / "artifacts/verification/fixture/workflow.json").read_text())
+        self.assertFalse(receipt["deliveryEligible"])
+        self.assertEqual(receipt["scope"], "partial")
+        self.assertEqual(receipt["selectedChecks"], ["correctness"])
+        self.assertEqual(receipt["executedChecks"], ["correctness"])
+        self.assertEqual(receipt["reusedChecks"], [])
+        self.assertGreaterEqual(receipt["steps"][0]["durationSeconds"], 0)
+
     def test_failed_check_preserves_failure_and_stops_before_staging(self):
         code, receipt, execute = self.run_verification((9,))
         self.assertEqual(code, 9)
@@ -74,9 +102,11 @@ class WorkflowCompletionTests(unittest.TestCase):
         self.assertNotIn("finishedAt", receipt)
 
     def test_commit_during_verification_invalidates_success(self):
-        with mock.patch.object(session, "inputs", side_effect=[self.current, self.current,
-                               self.current | {"head": "new-commit"}]):
-            code, receipt, execute = self.run_verification((0,))
+        def statuses():
+            self.current = self.current | {"head": "new-commit"}
+            yield 0
+        with mock.patch.object(session, "inputs", side_effect=lambda root: self.current):
+            code, receipt, execute = self.run_verification(statuses())
         self.assertEqual(code, 76)
         self.assertEqual(receipt["steps"][0]["evidenceStatus"], "invalid")
         self.assertEqual(execute.call_count, 1)

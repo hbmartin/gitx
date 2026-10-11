@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -17,6 +18,38 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_wait_acquires_only_after_the_owner_releases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            resource = str(pathlib.Path(directory) / "resource")
+            owner = {"runId": "first", "pid": os.getpid(), "receipt": "receipt"}
+            first = session.Leases([resource], owner, directory, inherited={})
+            first.__enter__()
+            release = threading.Timer(.15, first.__exit__)
+            release.start()
+            self.addCleanup(release.join)
+            try:
+                with session.Leases([resource], owner | {"runId": "next"}, directory,
+                                    inherited={}, wait_seconds=2) as waiting:
+                    self.assertGreaterEqual(waiting.wait_seconds, .1)
+                    self.assertEqual(set(waiting.held), {session.canonical_resource(resource)})
+            finally:
+                release.join()
+
+    def test_resource_wait_is_bounded_and_invalid_waits_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owner = {"runId": "first", "pid": os.getpid(), "receipt": "receipt"}
+            resource = str(pathlib.Path(directory) / "resource")
+            with session.Leases([resource], owner, pathlib.Path(directory) / "locks", inherited={}):
+                started = time.monotonic()
+                with self.assertRaises(session.ResourceBusy):
+                    with session.Leases([resource], owner, pathlib.Path(directory) / "locks", inherited={}, wait_seconds=.1):
+                        pass
+                self.assertGreaterEqual(time.monotonic() - started, .1)
+                self.assertLess(time.monotonic() - started, 2)
+            for value in (-1, float("nan"), float("inf")):
+                with self.assertRaises(ValueError):
+                    session.Leases([], owner, wait_seconds=value)
+
     def test_analyzer_requires_retained_identities_for_every_referenced_log(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

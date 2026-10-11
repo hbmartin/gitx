@@ -22,6 +22,19 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.scripts.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # These entrypoint tests model their own desktop. A fixture named GitX
+        # from a concurrent suite must not become a competing real application.
+        pgrep = self.bin / "pgrep"
+        pgrep.write_text(
+            '#!/bin/bash\n'
+            'if [[ "$*" == "-x GitX" ]]; then\n'
+            '  [[ -n "${GITX_TEST_COMPETING_PIDS:-}" ]] || exit 1\n'
+            '  printf "%s\\n" "$GITX_TEST_COMPETING_PIDS"\n'
+            '  exit 0\n'
+            'fi\n'
+            'exec /usr/bin/pgrep "$@"\n'
+        )
+        pgrep.chmod(0o755)
         self.developer_directory = self.root / "Xcode.app" / "Contents" / "Developer"
         self.developer_directory.mkdir(parents=True)
         workspace_data = self.root / "GitX.xcworkspace" / "xcshareddata" / "swiftpm"
@@ -42,7 +55,10 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.environment = os.environ.copy()
         self.environment["PATH"] = f"{self.bin}:{self.environment['PATH']}"
         self.environment["GITX_DEVELOPER_DIR"] = str(self.developer_directory)
-        for key in ("GITX_RESOURCE_LEASES", "GITX_SESSION_ID", "GITX_GUARDED_ENTRY"):
+        # Fixture ownership and fail-fast probes must not inherit a waiting
+        # parent coordinator's leases or wait policy.
+        for key in ("GITX_RESOURCE_LEASES", "GITX_SESSION_ID", "GITX_GUARDED_ENTRY",
+                    "GITX_RESOURCE_WAIT_SECONDS"):
             self.environment.pop(key, None)
         self.environment["GITX_DERIVED_DATA"] = str(self.root / "build/DerivedData")
         self.environment["GITX_SWIFTPM_BUILD_ROOT"] = str(self.root / "build/SwiftPM")
@@ -64,7 +80,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         destination = self.scripts / name
         shutil.copy2(ROOT / "scripts" / name, destination)
         if name == "run_app.sh":
-            destination.write_text(destination.read_text().replace("/usr/bin/codesign", "/usr/bin/true"))
+            destination.write_text(destination.read_text().replace("/usr/bin/codesign", "/usr/bin/true")
+                                   .replace("/MacOS/GitX", "/MacOS/GitXFixture")
+                                   .replace('stop_pid_file "$app_pid_file" GitX', 'stop_pid_file "$app_pid_file" GitXFixture'))
+        if name == "observe_app.sh":
+            destination.write_text(destination.read_text().replace("GitX | */GitX)", "GitXFixture | */GitXFixture)"))
         shutil.copy2(ROOT / "scripts/workflow_session.py", self.scripts / "workflow_session.py")
         shutil.copy2(ROOT / "scripts/verification-config.json", self.scripts / "verification-config.json")
         # Controlled desktop probe in the copied fixture, never in production.
@@ -72,7 +92,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         session_path.write_text(session_path.read_text().replace("checks = desktop_checks()", "checks = []").replace("def desktop_checks():", "def desktop_checks():\n    return []\n\ndef real_desktop_checks():"))
         session_path.write_text(session_path.read_text().replace('LOCK_ROOT = pathlib.Path.home() / "Library/Caches/GitX/Verification/Locks"', 'LOCK_ROOT = ROOT / "fixture-locks"'))
         if name == "xcodebuild.sh":
-            for dependency in ("doctor.sh", "verification_support.py", "check_test_build_contracts.py"):
+            for dependency in ("doctor.sh", "verification_support.py", "verification-config.json", "check_test_build_contracts.py", "compilation_cache.py"):
                 shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
         return destination
 
@@ -140,6 +160,163 @@ class ScriptEntrypointTests(unittest.TestCase):
         evidence = json.loads(coordination.read_text())["evidence"]
         self.assertEqual(evidence["status"], "invalid")
         self.assertIn("source", evidence["changedInputs"])
+
+    def test_compilation_cache_mode_is_managed_and_recorded(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        for mode in ("auto", "on", "off"):
+            subprocess.run([script, "--compilation-cache", mode, "--run-id", mode, "build"],
+                           check=True, capture_output=True, text=True, env=self.environment)
+            invocation = captured.read_text().split("__INVOCATION__")[-1]
+            enabled = mode == "on"
+            self.assertIn("COMPILATION_CACHE_ENABLE_CACHING=" + ("YES" if enabled else "NO"), invocation)
+            policy = self.receipt(mode)["invocation"]["compilationCache"]
+            self.assertEqual(policy["requested"], mode)
+            self.assertEqual(policy["enabled"], enabled)
+        rejected = subprocess.run([script, "build", "COMPILATION_CACHE_ENABLE_CACHING=YES"],
+                                  capture_output=True, text=True, env=self.environment)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("Use --compilation-cache", rejected.stderr)
+
+    def test_analyzer_profiling_preserves_full_analysis_and_is_partial_evidence(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        calls = self.root / "lint-calls.txt"
+        tool = self.scripts / "run_pinned_tool.sh"
+        tool.write_text(f"#!/bin/bash\nprintf '%s\\n' \"$*\" >>'{calls}'\n")
+        tool.chmod(0o755)
+        subprocess.run([script, "--profile-rules", "--run-id", "profile", "analyze"],
+                       check=True, capture_output=True, text=True, env=self.environment)
+        invocations = calls.read_text().splitlines()
+        self.assertEqual(len(invocations), 3)
+        self.assertNotIn("--only-rule", invocations[0])
+        self.assertIn("--only-rule unused_declaration --benchmark", invocations[1])
+        self.assertIn("--only-rule unused_import --benchmark", invocations[2])
+        self.assertIn(str(self.root / "artifacts/verification/profile/Results/Profiling"), invocations[1])
+        receipt = self.receipt("profile")
+        self.assertTrue(receipt["invocation"]["analysisProfiling"])
+        self.assertFalse(receipt["deliveryEligible"])
+
+    def test_analyzer_resume_requires_products_and_reruns_semantic_checks(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        tool = self.scripts / "run_pinned_tool.sh"
+        # Keep this input stable across the failed and resumed runs.
+        tool.write_text('#!/bin/bash\nexit "${GITX_TEST_LINT_STATUS:-0}"\n')
+        tool.chmod(0o755)
+        failed = subprocess.run([script, "--run-id", "prior", "analyze"], capture_output=True,
+                                text=True, env=self.environment | {"GITX_TEST_LINT_STATUS": "9"})
+        self.assertEqual(failed.returncode, 9, failed.stderr)
+        prior = self.receipt("prior")
+        scratch = pathlib.Path(prior["evidence"]["analyzerScratch"]["path"])
+        self.assertTrue(scratch.is_dir())
+        subprocess.run([script, "--resume-analysis", "prior", "--run-id", "resumed", "analyze"],
+                       check=True, capture_output=True, text=True, env=self.environment)
+        receipt = self.receipt("resumed")
+        self.assertEqual([step["name"] for step in receipt["steps"]],
+                         ["doctor", "analyze", "analyzer-policy", "swiftlint-analyze"])
+        self.assertEqual(receipt["steps"][1]["executionReason"], "matching-compiler-evidence")
+        native = [call for call in captured.read_text().split("__INVOCATION__") if "\nanalyze\n" in call]
+        self.assertEqual(len(native), 1)
+        shutil.rmtree(scratch)
+        stale = subprocess.run([script, "--resume-analysis", "prior", "--run-id", "stale", "analyze"],
+                               capture_output=True, text=True, env=self.environment)
+        self.assertEqual(stale.returncode, 2)
+        self.assertIn("compiler products are missing or changed", stale.stderr)
+
+    def test_optional_analyzer_recovery_runs_fresh_when_strong_evidence_is_stale(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        tool = self.scripts / "run_pinned_tool.sh"
+        tool.write_text('#!/bin/bash\nexit "${GITX_TEST_LINT_STATUS:-0}"\n')
+        tool.chmod(0o755)
+        for kind in ("toolchain", "invocation", "scratch", "diagnostics", "missing-log", "malformed-log"):
+            with self.subTest(kind=kind):
+                prior_id = "prior-" + kind
+                failed = subprocess.run([script, "--run-id", prior_id, "analyze"], capture_output=True,
+                                        text=True, env=self.environment | {"GITX_TEST_LINT_STATUS": "9"})
+                self.assertEqual(failed.returncode, 9, failed.stderr)
+                prior_path = self.root / "artifacts/verification" / prior_id / "receipt.json"
+                prior = json.loads(prior_path.read_text())
+                if kind == "toolchain":
+                    prior["toolchain"]["xcodeBuild"] = "old-build"
+                elif kind == "invocation":
+                    prior["invocation"]["scheme"] = "old-scheme"
+                elif kind == "scratch":
+                    shutil.rmtree(prior["evidence"]["analyzerScratch"]["path"])
+                elif kind == "missing-log":
+                    next(step for step in prior["steps"] if step["name"] == "analyze").pop("log")
+                elif kind == "malformed-log":
+                    next(step for step in prior["steps"] if step["name"] == "analyze")["log"] = None
+                else:
+                    log = next(step["log"] for step in prior["steps"] if step["name"] == "analyze")
+                    (self.root / log).write_text("changed diagnostics")
+                prior_path.write_text(json.dumps(prior))
+                if kind in ("missing-log", "malformed-log"):
+                    strict = subprocess.run([script, "--resume-analysis", prior_id,
+                                             "--run-id", "strict-" + kind, "analyze"],
+                                            capture_output=True, text=True, env=self.environment)
+                    self.assertEqual(strict.returncode, 2, strict.stderr)
+                    self.assertIn("analysis log is missing or malformed", strict.stderr)
+                    self.assertNotIn("Running fresh analysis", strict.stderr)
+                resumed = subprocess.run([script, "--resume-analysis", prior_id, "--fresh-on-stale-analysis",
+                                          "--run-id", "fresh-" + kind, "analyze"], capture_output=True,
+                                         text=True, env=self.environment)
+                self.assertEqual(resumed.returncode, 0, resumed.stderr)
+                receipt = self.receipt("fresh-" + kind)
+                self.assertEqual(receipt["analyzerRecovery"]["status"], "rejected")
+                self.assertEqual([step["name"] for step in receipt["steps"]],
+                                 ["doctor", "analyze", "analyzer-policy", "swiftlint-analyze"])
+                self.assertNotIn("reusedFrom", receipt["steps"][1])
+                self.assertEqual(receipt["status"], "passed")
+        native = [call for call in captured.read_text().split("__INVOCATION__") if "\nanalyze\n" in call]
+        self.assertEqual(len(native), 12, "each rejected recovery must perform fresh compiler analysis")
+        failed_fresh = subprocess.run([script, "analyze", "--resume-analysis", "prior-diagnostics",
+                                       "--fresh-on-stale-analysis", "--run-id", "fresh-failure"],
+                                      capture_output=True, text=True,
+                                      env=self.environment | {"GITX_TEST_LINT_STATUS": "9"})
+        self.assertEqual(failed_fresh.returncode, 9, failed_fresh.stderr)
+        failed_receipt = self.receipt("fresh-failure")
+        self.assertEqual(failed_receipt["status"], "failed")
+        self.assertEqual(failed_receipt["steps"][-1]["name"], "swiftlint-analyze")
+        self.assertFalse(failed_receipt["deliveryEligible"])
+
+    def test_workflow_resume_falls_back_to_fresh_after_toolchain_recovery_rejection(self) -> None:
+        self.install_script("xcodebuild.sh")
+        coordinator = self.install_script("dev_workflow.py")
+        for dependency in ("workflow_records.py", "workflow_cleanup.py", "workflow_feedback.py"):
+            shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        tool = self.scripts / "run_pinned_tool.sh"
+        tool.write_text('#!/bin/bash\nexit "${GITX_TEST_LINT_STATUS:-0}"\n')
+        tool.chmod(0o755)
+        command = ["python3", str(coordinator), "verify", "--check", "analyze"]
+        failed = subprocess.run(command + ["--run-id", "coordinator"], capture_output=True,
+                                text=True, env=self.environment | {"GITX_TEST_LINT_STATUS": "9"})
+        self.assertEqual(failed.returncode, 9, failed.stderr)
+        workflow_path = self.root / "artifacts/verification/coordinator/workflow.json"
+        prior_workflow = json.loads(workflow_path.read_text())
+        child_path = pathlib.Path(prior_workflow["steps"][0]["receipt"])
+        child = json.loads(child_path.read_text())
+        child["toolchain"]["xcodeBuild"] = "old-build"
+        child_path.write_text(json.dumps(child))
+        resumed = subprocess.run(command + ["--resume", "coordinator"], capture_output=True,
+                                 text=True, env=self.environment)
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        workflow = json.loads(workflow_path.read_text())
+        receipt = json.loads(pathlib.Path(workflow["steps"][0]["receipt"]).read_text())
+        self.assertEqual(receipt["analyzerRecovery"]["status"], "rejected")
+        self.assertIn("toolchain", receipt["analyzerRecovery"]["reason"])
+        self.assertEqual(workflow["status"], "passed")
+        self.assertEqual(workflow["executedChecks"], ["analyze"])
+        self.assertFalse(workflow["deliveryEligible"])
+        self.assertNotIn("reusedFrom", next(step for step in receipt["steps"] if step["name"] == "analyze"))
+        native = [call for call in captured.read_text().split("__INVOCATION__") if "\nanalyze\n" in call]
+        self.assertEqual(len(native), 2)
 
     def test_canonical_release_tests_allow_locally_signed_framework_loading(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -273,7 +450,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         session_directory.mkdir(parents=True)
         repository = self.root / "fixture-repo"
         repository.mkdir()
-        executable = self.root / "GitX"
+        executable = self.root / "GitXFixture"
         executable.symlink_to("/bin/sleep")
         process = subprocess.Popen([executable, "60"])
         self.addCleanup(self._terminate_process, process)
@@ -329,7 +506,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitXFixture")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")
@@ -864,7 +1041,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
 
-        subprocess.run(
+        result = subprocess.run(
             [
                 script,
                 "--raw",
@@ -882,11 +1059,12 @@ class ScriptEntrypointTests(unittest.TestCase):
                 "-maximum-test-execution-time-allowance",
                 "888",
             ],
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             env=self.environment,
         )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         invocations = captured.read_text().split("__INVOCATION__")
         preflight = next(value for value in invocations if "GitXUIPreflight" in value)
@@ -909,6 +1087,28 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertIn("CALLER_TIMEOUTS", full_ui)
         self.assertIn("-default-test-execution-time-allowance=777", full_ui)
         self.assertIn("888", full_ui)
+
+    def test_mock_ui_checks_use_a_distinct_process_name(self) -> None:
+        foreign = self.root / "another-suite" / "GitXFixture"
+        self.install_sleeping_executable(foreign)
+        marker = self.root / "foreign-ready.pid"
+        process = subprocess.Popen([foreign], env=self.environment | {"GITX_TEST_APP_PID_FILE": str(marker)})
+        self.addCleanup(self._terminate_process, process)
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertTrue(marker.exists(), "Foreign fixture did not start")
+        real = subprocess.run(["/usr/bin/pgrep", "-x", "GitX"], capture_output=True, text=True)
+        self.assertNotIn(str(process.pid), real.stdout.splitlines())
+        self.test_ui_preflight_forwards_non_selection_extras_only()
+
+    def test_ui_preflight_still_rejects_a_controlled_competing_process(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        result = subprocess.run([script, "test", "ui"], capture_output=True, text=True,
+                                env=self.environment | {"GITX_TEST_COMPETING_PIDS": "12345"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("running GitX pid(s): 12345", result.stdout + result.stderr)
 
     def test_wrapper_rejects_caller_owned_workspace_scheme_and_test_plan(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -985,7 +1185,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         script = self.install_script("run_app.sh")
         session_directory = self.root / "build" / "Logs" / "run-app"
         session_directory.mkdir(parents=True)
-        executable = self.root / "GitX"
+        executable = self.root / "GitXFixture"
         executable.symlink_to("/bin/sleep")
         process = subprocess.Popen([executable, "60"])
         self.addCleanup(self._terminate_process, process)
@@ -1041,7 +1241,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         script = self.install_script("run_app.sh")
         session_directory = self.root / "build" / "Logs" / "run-app"
         session_directory.mkdir(parents=True)
-        executable = self.root / "GitX"
+        executable = self.root / "GitXFixture"
         executable.symlink_to("/bin/sleep")
         process = subprocess.Popen([executable, "60"])
         self.addCleanup(self._terminate_process, process)
@@ -1092,7 +1292,7 @@ class ScriptEntrypointTests(unittest.TestCase):
     def test_run_app_stop_preserves_home_when_identity_file_names_another_live_app(self) -> None:
         script = self.install_script("run_app.sh")
         identity_process, session_directory = self.create_live_run_app_session()
-        recorded_process = subprocess.Popen([self.root / "GitX", "60"])
+        recorded_process = subprocess.Popen([self.root / "GitXFixture", "60"])
         self.addCleanup(self._terminate_process, recorded_process)
         temporary_root = self.root / "runtime-tmp"
         temporary_root.mkdir()
@@ -1293,7 +1493,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             "GIT_QUARANTINE_PATH": str(foreign / ".git" / "objects"), "GIT_NAMESPACE": "inherited-namespace",
         }
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary = app_contents / "MacOS" / "GitXFixture"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
@@ -1424,7 +1624,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary = app_contents / "MacOS" / "GitXFixture"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
@@ -1567,7 +1767,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitXFixture")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")
@@ -1606,7 +1806,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary = app_contents / "MacOS" / "GitXFixture"
         app_binary.parent.mkdir(parents=True)
         app_binary.write_text("#!/bin/bash\nexit 0\n")
         app_binary.chmod(0o755)
@@ -1669,7 +1869,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitXFixture")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")

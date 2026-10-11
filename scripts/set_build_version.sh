@@ -28,7 +28,17 @@ echo "BUILD VERSION: $build_version"
 echo "SHORT VERSION: $short_version"
 echo "BUNDLE VERSION: $bundle_version"
 
-/usr/libexec/PlistBuddy -c "Add :CFBundleBuildVersion string $build_version" "$info_plist" 2>/dev/null \
-	|| /usr/libexec/PlistBuddy -c "Set :CFBundleBuildVersion $build_version" "$info_plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $build_version" "$info_plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$info_plist"
+set_if_changed() {
+	local key=$1 value=$2 current
+	if current=$(/usr/libexec/PlistBuddy -c "Print :$key" "$info_plist" 2>/dev/null); then
+		if [[ "$current" != "$value" ]]; then
+			/usr/libexec/PlistBuddy -c "Set :$key $value" "$info_plist"
+		fi
+	else
+		/usr/libexec/PlistBuddy -c "Add :$key string $value" "$info_plist"
+	fi
+}
+
+set_if_changed CFBundleBuildVersion "$build_version"
+set_if_changed CFBundleShortVersionString "$build_version"
+set_if_changed CFBundleVersion "$bundle_version"
