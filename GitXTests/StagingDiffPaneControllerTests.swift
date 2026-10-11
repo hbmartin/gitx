@@ -286,6 +286,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                     let alert = NSAlert()
                     alert.messageText = "Index operation failed"
                     alert.informativeText = error.localizedDescription
+                    alert.layout()
                     try attachScreenshot(of: alert.window, named: "Discard-Blocking-Parent-Refusal")
                 }
                 XCTAssertEqual(try Data(contentsOf: blocker), Data("keep this ancestor".utf8))

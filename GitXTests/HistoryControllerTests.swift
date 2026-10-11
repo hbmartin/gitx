@@ -3153,6 +3153,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(try fixture.git(["rev-parse", "refs/heads/feature"]), original)
             let error = try XCTUnwrap(stub.shownErrors.last)
             let alert = NSAlert(error: error)
+            alert.layout()
             try attachScreenshot(of: alert.window, named: "Reference-Confirmed-Busy-Refusal")
             XCTAssertTrue(waitForCondition { self.indexIsQuiescent(self.repository.index) })
             XCTAssertTrue(stub.validateMenuItem(menu))
