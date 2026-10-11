@@ -17,6 +17,201 @@ import test_workflow_completion as completion
 import test_workflow_guard_characterization as characterization
 
 
+class WorkflowAttemptRegressionTests(unittest.TestCase):
+    setUp = completion.WorkflowCompletionTests.setUp
+    run_verification = completion.WorkflowCompletionTests.run_verification
+
+    def test_partial_resume_preserves_unselected_evidence_without_validating_it(self):
+        app = self.root / "build/GitX.app"
+        app.mkdir(parents=True)
+        (app / "binary").write_text("fixture")
+        self.assertEqual(self.run_verification()[0], 0)
+        path = self.root / "artifacts/verification/fixture/workflow.json"
+        original = json.loads(path.read_text())
+        original["steps"].append({"name": "analyze", "status": "failed", "receipt": str(self.root / "missing.json")})
+        path.write_text(json.dumps(original))
+        (app / "binary").write_text("changed unselected output")
+        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "correctness"])
+        with mock.patch.object(session, "supervise") as execute:
+            self.assertEqual(workflow.verify(args), 0)
+        execute.assert_not_called()
+        value = json.loads(path.read_text())
+        self.assertEqual({step["name"] for step in value["steps"]}, {"correctness", "stage-debug", "analyze"})
+        self.assertEqual(value["selectedChecks"], ["correctness"])
+        self.assertEqual(value["scope"], "partial")
+        self.assertFalse(value["deliveryEligible"])
+        self.assertEqual(value["reusedChecks"], ["correctness"])
+
+    def test_unreadable_or_malformed_prior_analysis_executes_fresh(self):
+        command = [str(self.root / "scripts/xcodebuild.sh"), "analyze"]
+        receipt = self.root / "artifacts/verification/prior/receipt.json"
+        receipt.parent.mkdir(parents=True)
+        workflow_path = self.root / "artifacts/verification/fixture/workflow.json"
+        prior = {"name": "analyze", "status": "passed", "evidenceStatus": "valid", "command": command,
+                 "toolchain": "fixture", "inputsAfter": self.current, "receipt": str(receipt)}
+        malformed = ['{truncated', '[]', 'null', json.dumps({
+            "evidence": {"status": "valid", "inputsAfter": self.current, "analyzerScratch": {"path": "/scratch"}},
+            "steps": [{"name": "analyze", "status": "passed"}]})]
+        for prior_status, contents in [(status, value) for status in ("failed", "passed") for value in malformed]:
+            with self.subTest(contents=contents, prior_status=prior_status):
+                receipt.write_text(contents)
+                session.atomic_json(workflow_path, {"schemaVersion": 2, "runId": "fixture", "status": prior_status,
+                    "steps": [prior], "inputsBefore": self.current})
+                args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "analyze"])
+                with mock.patch.object(workflow, "full_profile", return_value=[("analyze", command)]), \
+                        mock.patch.object(session, "entry_resources", return_value=([], {"toolchain": "fixture"})), \
+                        mock.patch.object(session, "supervise", return_value=0) as execute:
+                    self.assertEqual(workflow.verify(args), 0)
+                actual = execute.call_args.args[0]
+                self.assertNotIn("--resume-analysis", actual)
+                self.assertNotIn("--fresh-on-stale-analysis", actual)
+                value = json.loads(workflow_path.read_text())
+                self.assertEqual(value["status"], "passed")
+
+    def test_ambiguous_final_cache_ownership_publishes_finished_invalid_receipt(self):
+        args = workflow.parser().parse_args(["verify", "--run-id", "fixture", "--check", "correctness"])
+        with mock.patch.object(session, "supervise", return_value=0), \
+                mock.patch.object(session, "workflow_cache_snapshots", side_effect=ValueError("ambiguous cache ownership")), \
+                mock.patch.object(workflow.cleanup, "run_cleanup") as cleanup:
+            self.assertEqual(workflow.verify(args), 76)
+        value = json.loads((self.root / "artifacts/verification/fixture/workflow.json").read_text())
+        self.assertEqual(value["status"], "invalid")
+        self.assertEqual(value["evidenceStatus"], "invalid")
+        self.assertEqual(value["finalCacheProducts"], {})
+        self.assertTrue(value["finishedAt"])
+        self.assertFalse(value["deliveryEligible"])
+        self.assertIn("ambiguous cache ownership", " ".join(value["evidenceProblems"]))
+        cleanup.assert_not_called()
+
+    def test_run_ids_cannot_admit_artifact_container_or_parent(self):
+        for run_id in [".", "..", ".hidden", "-leading", "../outside", ""]:
+            with self.subTest(run_id=run_id):
+                args = workflow.parser().parse_args(["verify", "--check", "correctness"])
+                args.run_id = run_id
+                with mock.patch.object(session, "supervise", return_value=0) as execute:
+                    with self.assertRaisesRegex(ValueError, "run ID"):
+                        workflow.verify(args)
+                execute.assert_not_called()
+
+    def test_resource_probe_failure_finishes_blocked_workflow_before_execution(self):
+        args = workflow.parser().parse_args(["verify", "--run-id", "fixture", "--check", "correctness"])
+        with mock.patch.object(workflow, "resources_for", side_effect=session.ResourceDefinitionError("toolchain timed out")), \
+                mock.patch.object(session, "supervise") as execute:
+            self.assertEqual(workflow.verify(args), 2)
+        value = json.loads((self.root / "artifacts/verification/fixture/workflow.json").read_text())
+        self.assertEqual(value["category"], "resource-definition-unavailable")
+        self.assertEqual(value["status"], "blocked")
+        self.assertTrue(value["finishedAt"])
+        self.assertFalse(value["deliveryEligible"])
+        execute.assert_not_called()
+
+    def test_successful_resume_clears_the_previous_blocker_outcome(self):
+        self.assertEqual(self.run_verification((0,), "correctness")[0], 0)
+        path = self.root / "artifacts/verification/fixture/workflow.json"
+        value = json.loads(path.read_text())
+        value.update(status="blocked", category="resource-busy", owner={"runId": "other"},
+                     resource="/cache", problem="prior blocker", exitCode=75, evidenceProblems=["old problem"])
+        path.write_text(json.dumps(value))
+        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "correctness"])
+        with mock.patch.object(session, "supervise") as execute:
+            self.assertEqual(workflow.verify(args), 0)
+        execute.assert_not_called()
+        value = json.loads(path.read_text())
+        self.assertEqual(value["status"], "passed")
+        for key in ("category", "owner", "resource", "problem", "exitCode", "evidenceProblems"):
+            self.assertNotIn(key, value)
+        self.assertTrue(value["finishedAt"])
+
+    def test_refresh_retries_release_leases_and_back_off_before_execution(self):
+        args = workflow.parser().parse_args(["verify", "--run-id", "fixture", "--check", "correctness", "--wait-for-resources", "1"])
+        with mock.patch.object(workflow, "resources_for", side_effect=[["first"], ["next"], ["next"], ["next"]]), \
+                mock.patch.object(workflow.time, "sleep") as pause:
+            with workflow.selected_leases(args, self.root, self.root / "fixture", {}) as (_, commands, _):
+                self.assertEqual(commands, self.commands[:1])
+        self.assertEqual(session.Leases.return_value.__exit__.call_count, 2)
+        pause.assert_called_once()
+        self.assertGreater(pause.call_args.args[0], 0)
+        self.assertLessEqual(pause.call_args.args[0], .2)
+
+    def test_resume_cache_admission_errors_finish_invalid_without_execution(self):
+        for failure in ("validation-read", "ownership-derivation"):
+            with self.subTest(failure=failure):
+                path = self.root / "artifacts/verification/fixture/workflow.json"
+                if path.exists():
+                    path.unlink()
+                self.assertEqual(self.run_verification((0,), "correctness")[0], 0)
+                value = json.loads(path.read_text())
+                if failure == "ownership-derivation":
+                    value.pop("finalCacheProducts")
+                    path.write_text(json.dumps(value))
+                args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "correctness"])
+                validate = mock.patch.object(session, "final_cache_problems", side_effect=OSError("cache unreadable")) if failure == "validation-read" else mock.patch.object(session, "final_cache_problems", return_value=[])
+                derive = mock.patch.object(session, "workflow_cache_snapshots", side_effect=ValueError("ownership ambiguous")) if failure == "ownership-derivation" else mock.patch.object(session, "workflow_cache_snapshots", wraps=session.workflow_cache_snapshots)
+                with validate, derive, mock.patch.object(session, "supervise") as execute, \
+                        mock.patch.object(workflow.cleanup, "run_cleanup") as cleanup:
+                    self.assertEqual(workflow.verify(args), 76)
+                value = json.loads(path.read_text())
+                self.assertEqual(value["status"], "invalid")
+                self.assertEqual(value["evidenceStatus"], "invalid")
+                self.assertTrue(value["finishedAt"])
+                self.assertFalse(value["deliveryEligible"])
+                self.assertTrue(value["evidenceProblems"])
+                execute.assert_not_called()
+                cleanup.assert_not_called()
+
+    def test_output_capture_and_validation_errors_finish_invalid_after_command_success(self):
+        for failure in ("capture", "validation"):
+            with self.subTest(failure=failure):
+                path = self.root / "artifacts/verification/fixture/workflow.json"
+                if path.exists():
+                    path.unlink()
+                args = workflow.parser().parse_args(["verify", "--run-id", "fixture", "--check", "stage-debug"])
+                values = OSError("output unreadable") if failure == "capture" else [{"file": "identity"}, OSError("output unreadable")]
+                with mock.patch.object(session, "tree_identity", side_effect=values), \
+                        mock.patch.object(session, "supervise", return_value=0) as execute, \
+                        mock.patch.object(workflow.cleanup, "run_cleanup") as cleanup:
+                    self.assertEqual(workflow.verify(args), 76)
+                value = json.loads(path.read_text())
+                self.assertEqual(value["status"], "invalid")
+                self.assertTrue(value["finishedAt"])
+                self.assertFalse(value["deliveryEligible"])
+                self.assertIn("output unreadable", " ".join(value["evidenceProblems"]))
+                self.assertEqual(value["executedChecks"], ["stage-debug"])
+                self.assertEqual(value["steps"][0]["exitCode"], 0)
+                execute.assert_called_once()
+                cleanup.assert_not_called()
+
+    def test_unreadable_prior_workflow_output_runs_the_check_fresh(self):
+        self.assertEqual(self.run_verification((0,), "correctness")[0], 0)
+        path = self.root / "artifacts/verification/fixture/workflow.json"
+        value = json.loads(path.read_text())
+        value["steps"][0]["outputs"] = {"/prior/output": {"file": "identity"}}
+        path.write_text(json.dumps(value))
+        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "correctness"])
+        with mock.patch.object(session, "tree_identity", side_effect=OSError("prior output unreadable")), \
+                mock.patch.object(session, "supervise", return_value=0) as execute:
+            self.assertEqual(workflow.verify(args), 0)
+        execute.assert_called_once()
+        value = json.loads(path.read_text())
+        self.assertEqual(value["executedChecks"], ["correctness"])
+        self.assertIn("unreadable", value["steps"][0]["executionReason"])
+
+    def test_unreadable_prior_child_artifact_runs_the_check_fresh(self):
+        self.assertEqual(self.run_verification((0,), "correctness")[0], 0)
+        path = self.root / "artifacts/verification/fixture/workflow.json"
+        child = self.root / "prior.json"
+        child.write_text(json.dumps({"status": "passed", "evidence": {"status": "valid"}}))
+        value = json.loads(path.read_text())
+        value["steps"][0]["receipt"] = str(child)
+        path.write_text(json.dumps(value))
+        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "correctness"])
+        with mock.patch.object(session, "receipt_artifact_problems", side_effect=OSError("prior artifact unreadable")), \
+                mock.patch.object(session, "supervise", return_value=0) as execute:
+            self.assertEqual(workflow.verify(args), 0)
+        execute.assert_called_once()
+        value = json.loads(path.read_text())
+        self.assertEqual(value["executedChecks"], ["correctness"])
+        self.assertIn("artifacts-unreadable", value["steps"][0]["executionReason"])
 
 
 class WorkflowGuardRegressionTests(unittest.TestCase):
@@ -54,6 +249,11 @@ class WorkflowGuardRegressionTests(unittest.TestCase):
 
 
 class WorkflowResourceRegressionTests(unittest.TestCase):
+    def test_multi_command_selection_probes_toolchain_once(self):
+        commands = workflow.full_profile(ROOT)
+        with mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode 26.6\nBuild version Fixture") as probe:
+            workflow.resources_for(commands, ROOT / "artifacts/verification/fixture", ROOT)
+        probe.assert_called_once()
 
     def test_static_only_resources_need_no_native_toolchain_probe(self):
         command = [("static", [str(ROOT / "scripts/verify_static.sh")])]

@@ -23,7 +23,6 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PATH = pathlib.Path(__file__).with_name("verification-config.json")
 SECRET_ARGUMENT = re.compile(r"(?i)(password|secret|token|api[_-]?key)=")
-RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def load_config(path: pathlib.Path = CONFIG_PATH) -> dict[str, Any]:
@@ -33,7 +32,8 @@ def load_config(path: pathlib.Path = CONFIG_PATH) -> dict[str, Any]:
     return payload
 
 
-def run(arguments: list[str], *, cwd: pathlib.Path = ROOT, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+def run(arguments: list[str], *, cwd: pathlib.Path = ROOT, timeout: int = 30,
+        environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         arguments,
         cwd=cwd,
@@ -41,6 +41,7 @@ def run(arguments: list[str], *, cwd: pathlib.Path = ROOT, timeout: int = 30) ->
         text=True,
         timeout=timeout,
         check=False,
+        env=environment,
     )
 
 
@@ -103,7 +104,7 @@ def resolve_developer_dir(config: dict[str, Any]) -> pathlib.Path | None:
 
 def git_output(*arguments: str, cwd: pathlib.Path = ROOT) -> str:
     try:
-        result = run(["git", *arguments], cwd=cwd, timeout=15)
+        result = run(["git", *arguments], cwd=cwd, timeout=15, environment=session.git_environment())
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return result.stdout.strip() if result.returncode == 0 else ""
@@ -118,6 +119,7 @@ def untracked_content_fingerprint(root: pathlib.Path) -> str:
             capture_output=True,
             timeout=15,
             check=False,
+            env=session.git_environment(),
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         digest.update(f"untracked-list-error:{type(error).__name__}".encode())
@@ -615,8 +617,24 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
             analyzer_output = arguments.path.parent / "Results/Analyzer"
             if analyzer_output.exists():
                 evidence["analysisArtifacts"][str(analyzer_output)] = session.tree_identity(analyzer_output)
-            if payload["status"] != "passed" and any(step["name"] == "analyze" and step["status"] == "passed" for step in payload["steps"]):
-                evidence["analyzerScratch"] = payload.get("reusedAnalyzerScratch") or {"path": product_path, "identity": session.tree_identity(product_path)}
+            if evidence["status"] == "valid" and payload["status"] != "passed" and any(
+                    step["name"] == "analyze" and step["status"] == "passed" for step in payload["steps"]):
+                borrowed = payload.get("reusedAnalyzerScratch")
+                if borrowed:
+                    try:
+                        unchanged = session.tree_identity(borrowed["path"]) == borrowed["identity"]
+                    except (OSError, ValueError):
+                        unchanged = False
+                    if unchanged:
+                        evidence["analyzerScratch"] = borrowed
+                    else:
+                        payload["analyzerRecovery"] = {
+                            "status": "unavailable", "reason": "Borrowed compiler products changed or became unreadable; run fresh analysis.",
+                            "scratch": borrowed["path"],
+                        }
+                        evidence.pop("analyzerScratch", None)
+                else:
+                    evidence["analyzerScratch"] = {"path": product_path, "identity": session.tree_identity(product_path)}
     run_directory = arguments.path.parent
     bundle_suffixes = {".app", ".xcarchive", ".xcresult"}
     discovered: set[str | None] = set()
@@ -681,15 +699,30 @@ def command_resume_analyzer(arguments: argparse.Namespace) -> int:
 
 def resume_analyzer(prior_path, current_path, current) -> int:
     prior = json.loads(prior_path.read_text())
+    if not isinstance(prior, dict) or not isinstance(prior.get("evidence"), dict):
+        raise ValueError("Prior analyzer receipt is malformed; run fresh analysis")
     if prior_path.resolve() == current_path.resolve():
         raise ValueError("Analyzer resume requires a separate prior run")
     evidence = prior.get("evidence", {})
+    if not isinstance(prior.get("buildPaths", {}), dict) or any(
+            not isinstance(evidence.get(key, {}), dict) for key in ("results", "analysisArtifacts")):
+        raise ValueError("Prior analyzer artifact evidence is malformed; run fresh analysis")
+    if any(not isinstance(value, str) or not value for key, value in prior.get("buildPaths", {}).items()
+           if key in {"derivedData", "swiftPM", "sourcePackages"}):
+        raise ValueError("Prior analyzer artifact paths are malformed; run fresh analysis")
+    if not isinstance(prior.get("invocation"), dict) or not isinstance(prior.get("steps"), list) or any(
+            not isinstance(step, dict) for step in prior["steps"]):
+        raise ValueError("Prior analyzer invocation or steps are malformed; run fresh analysis")
+    if any(not isinstance(evidence.get(key), dict) for key in ("inputsBefore", "inputsAfter")):
+        raise ValueError("Prior analyzer input evidence is malformed; run fresh analysis")
     if prior.get("schemaVersion") != 2 or evidence.get("status") != "valid" or \
             evidence.get("inputsAfter", {}).get("root") != str(ROOT) or \
             session.changed_inputs(evidence.get("inputsAfter", {}), session.inputs(ROOT)) or \
             session.changed_inputs(evidence.get("inputsBefore", {}), evidence.get("inputsAfter", {})):
         raise ValueError("Analyzer resume inputs or evidence no longer match")
     scratch = evidence.get("analyzerScratch", {})
+    if not isinstance(scratch, dict) or not isinstance(scratch.get("path"), str) or not scratch["path"] or not isinstance(scratch.get("identity"), dict):
+        raise ValueError("Prior analyzer compiler products are malformed; run fresh analysis")
     if not scratch.get("path") or scratch.get("identity") is None or session.tree_identity(scratch["path"]) != scratch["identity"]:
         raise ValueError("Analyzer compiler products are missing or changed; run fresh analysis")
     if prior.get("toolchain") != current.get("toolchain"):
@@ -726,7 +759,7 @@ def resume_analyzer(prior_path, current_path, current) -> int:
 
 def command_run_id(arguments: argparse.Namespace) -> int:
     if arguments.value:
-        if RUN_ID.fullmatch(arguments.value) is None:
+        if not session.valid_run_id(arguments.value):
             print("Run IDs may contain only letters, numbers, dots, underscores, and hyphens.", file=sys.stderr)
             return 2
         print(arguments.value)
@@ -756,6 +789,8 @@ def command_developer_dir(arguments: argparse.Namespace) -> int:
 def command_normalize_developer_dir(arguments: argparse.Namespace) -> int:
     print(normalize_developer_directory(arguments.path))
     return 0
+
+
 
 
 def parser() -> argparse.ArgumentParser:

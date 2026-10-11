@@ -155,9 +155,10 @@ def static_feedback(root, reference=None):
         elif path.endswith(".xctestplan"):
             json.loads((root / path).read_text())
     if any(path.startswith("scripts/") for path in paths):
+        script_environment = os.environ | {"PYTHONPYCACHEPREFIX": str(pathlib.Path(os.environ.get("TMPDIR", "/tmp")) / "gitx-pycache")}
         execute([sys.executable, "-m", "py_compile", *[str(path) for path in sorted((root / "scripts").glob("*.py"))], *[str(path) for path in sorted((root / "scripts/tests").glob("*.py"))]], root,
-                os.environ | {"PYTHONPYCACHEPREFIX": str(pathlib.Path(os.environ.get("TMPDIR", "/tmp")) / "gitx-pycache")})
-        execute([sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-v"], root)
+                script_environment)
+        execute([sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-v"], root, script_environment)
         for path in sorted((root / "scripts").glob("*.sh")):
             execute(["bash", "-n", str(path)], root)
         if shutil.which("shellcheck"):

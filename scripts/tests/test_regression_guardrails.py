@@ -254,6 +254,45 @@ class RegressionGuardrailTests(unittest.TestCase):
         self.assertEqual(records[0]["status"], "failed")
         self.assertEqual(records[0]["validity"], "invalid")
 
+    def test_static_coordination_does_not_require_native_toolchain_discovery(self):
+        payload = {"schemaVersion": 2, "entry": str(self.root / "scripts/verify_static.sh"),
+                   "status": "passed", "exitCode": 0, "paths": {},
+                   "evidence": {"status": "valid", "inputsBefore": self.context.inputs,
+                                "inputsAfter": self.context.inputs}}
+        path = self.save("static.json", payload)
+        self.assertEqual(guard.inspect_receipt(path, self.context)["reasons"], [])
+        payload["entry"] = str(self.root / "scripts/check_test_build_contracts.py")
+        self.save(path.name, payload)
+        self.assertIn("Coordination receipt lacks matching toolchain provenance",
+                      guard.inspect_receipt(path, self.context)["reasons"])
+
+    def test_workflow_stored_cache_snapshots_do_not_eagerly_evaluate_fallback(self):
+        commands = dict(guard.dev_workflow.full_profile(self.root))
+        workflow = {"schemaVersion": 2, "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
+                    "evidenceStatus": "valid", "finalCacheProducts": {}, "steps": [
+                        {"name": "static", "command": commands["static"], "status": "passed", "exitCode": 0,
+                         "evidenceStatus": "valid", "inputsBefore": self.context.inputs,
+                         "inputsAfter": self.context.inputs, "toolchain": "not-required"}]}
+        with mock.patch.object(session, "final_cache_problems", return_value=[]), mock.patch.object(
+                session, "workflow_cache_snapshots", side_effect=ValueError("ambiguous")) as fallback:
+            records = guard.inspect_workflow(self.root / "workflow.json", workflow, self.context)
+        fallback.assert_not_called()
+        self.assertEqual(records[0]["reasons"], [])
+
+    def test_cache_read_failures_preserve_current_checks_and_ignore_historical_checks(self):
+        commands = dict(guard.dev_workflow.full_profile(self.root))
+        workflow = {"schemaVersion": 2, "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
+                    "selectedChecks": ["static", "interop"], "evidenceStatus": "valid", "steps": [
+                        {"name": name, "command": commands[name], "status": "failed", "exitCode": 2}
+                        for name in ("static", "interop", "correctness")]}
+        with mock.patch.object(session, "final_cache_problems", side_effect=OSError("unreadable cache")):
+            records = guard.inspect_workflow(self.root / "workflow.json", workflow, self.context)
+        self.assertEqual([record["check"] for record in records], ["static", "interop"])
+        for record in records:
+            self.assertEqual(record["status"], "failed")
+            self.assertEqual(record["validity"], "invalid")
+            self.assertTrue(any("unreadable cache" in reason for reason in record["reasons"]))
+
     def test_known_python_command_identity_survives_interpreter_relocation(self):
         command = dict(guard.dev_workflow.full_profile(self.root))["interop"]
         step = {"command": ["/retired/python", *command[1:]], "commandIdentity": session.command_identity(command)}
@@ -297,6 +336,19 @@ class RegressionGuardrailTests(unittest.TestCase):
                    "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs, "toolchain": self.context.toolchain}]}
         record = guard.inspect_workflow(self.root / "workflow.json", payload, self.context)[0]
         self.assertEqual(record["reasons"], [])
+        self.assertEqual(guard.assess_checks(["static"], [], [record])[0], "blocked")
+
+    def test_blocked_resume_cannot_publish_a_historical_pass_as_current(self):
+        payload = {"schemaVersion": 2, "status": "blocked", "category": "resource-busy", "exitCode": 75,
+                   "finishedAt": "2026-10-11T12:00:00Z", "inputsBefore": self.context.inputs,
+                   "inputsAfter": self.context.inputs, "evidenceStatus": "valid", "selectedChecks": ["static"],
+                   "steps": [{"name": "static", "command": dict(guard.dev_workflow.full_profile(self.root))["static"],
+                              "status": "passed", "exitCode": 0, "evidenceStatus": "valid",
+                              "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
+                              "toolchain": "not-required"}]}
+        record = guard.inspect_workflow(self.root / "workflow.json", payload, self.context)[0]
+        self.assertEqual(record["status"], "blocked")
+        self.assertEqual(record["finishedAt"], guard.timestamp(payload))
         self.assertEqual(guard.assess_checks(["static"], [], [record])[0], "blocked")
 
     def test_changed_head_source_dependencies_plans_and_checkout_are_invalid(self):

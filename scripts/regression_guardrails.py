@@ -32,7 +32,7 @@ ROLES = {"valid", "failure", "boundary", "compatibility", "performance"}
 BLOCKERS = {"resource-busy", "console-unavailable", "display-unavailable", "desktop-locked",
             "signature-invalid", "signature-incompatible", "host-probe-missing",
             "host-startup-timeout", "unknown-host-startup-timeout", "test-infrastructure",
-            "dependency-unavailable", "test-evidence-missing", "test-selection-empty"}
+            "dependency-unavailable", "test-evidence-missing", "test-selection-empty"} | set().union(*session.BLOCKED_RECEIPT_CATEGORIES.values())
 
 
 def finding(code, detail, contract=None):
@@ -390,7 +390,7 @@ def inspect_receipt(path, context, expected_check=None, mutable_caches=None):
                     record["reasons"].append("Package coverage gate did not pass")
         else:
             record["reasons"] = input_problems(payload.get("evidence"), context)
-            if payload.get("paths", {}).get("toolchain") != context.toolchain:
+            if actual_check not in {"static", "whitespace"} and payload.get("paths", {}).get("toolchain") != context.toolchain:
                 record["reasons"].append("Coordination receipt lacks matching toolchain provenance")
         if not record["finishedAt"] and not payload.get("entry"):
             record["reasons"].append("Receipt did not finish")
@@ -420,10 +420,17 @@ def inspect_workflow(path, payload, context):
         "inputsBefore": payload.get("inputsBefore"), "inputsAfter": payload.get("inputsAfter")}, context)
     if payload.get("schemaVersion") != 2:
         global_problems.append("Historical workflow schema")
-    cache_problems = session.final_cache_problems(payload, context.root)
-    global_problems.extend(cache_problems)
-    mutable_caches = None if cache_problems else payload.get("finalCacheProducts", session.workflow_cache_snapshots(payload, context.root))
-    for step in payload.get("steps", []):
+    mutable_caches = None
+    try:
+        cache_problems = session.final_cache_problems(payload, context.root)
+        global_problems.extend(cache_problems)
+        if not cache_problems:
+            mutable_caches = payload.get("finalCacheProducts")
+            if mutable_caches is None:
+                mutable_caches = session.workflow_cache_snapshots(payload, context.root)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as error:
+        global_problems.append("Final cache evidence unavailable: " + str(error))
+    for step in session.active_workflow_steps(payload):
         name = step.get("name")
         if step.get("receipt"):
             child = inspect_receipt(result_path(context, step["receipt"]), context, name, mutable_caches)
@@ -434,7 +441,7 @@ def inspect_workflow(path, payload, context):
             "inputsBefore": step.get("inputsBefore"), "inputsAfter": step.get("inputsAfter")}, context)
         if name not in commands or not session.command_matches(step, commands.get(name, [])):
             problems.append("Workflow command does not match its canonical check")
-        if step.get("toolchain") != context.toolchain:
+        if name not in {"static", "whitespace"} and step.get("toolchain") != context.toolchain:
             problems.append("Workflow toolchain changed")
         if step.get("status") == "passed" and step.get("exitCode") != 0:
             problems.append("Passed workflow step disagrees with command exit")
@@ -449,6 +456,8 @@ def inspect_workflow(path, payload, context):
             child["status"] = step.get("status", "unknown")
         if step.get("status") in {"failed", "blocked", "interrupted"} and child["status"] == "passed":
             child["status"] = step["status"]
+        if observed_status(payload) == "blocked":
+            child.update(status="blocked", finishedAt=timestamp(payload))
         records.append(child)
     return records
 
