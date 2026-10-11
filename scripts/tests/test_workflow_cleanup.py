@@ -11,13 +11,158 @@ import time
 import unittest
 from unittest import mock
 
-from support import ROOT
+from support import ROOT, load_script
 import dev_workflow as workflow
 import workflow_cleanup as cleanup
 import workflow_session as session
 
 
 class CleanupTests(unittest.TestCase):
+    def test_binary_attachment_without_known_extension_does_not_block_cleanup(self):
+        old = self.run_directory('old')
+        attachment = self.root / 'docs/diagnostics/capture.data'
+        attachment.parent.mkdir(parents=True)
+        attachment.write_bytes(b'\xff\xfe\x00capture')
+        self.git('add', 'docs'); self.git('commit', '-qm', 'binary diagnostic attachment')
+        cleanup.queue_commit(self.root)
+        report = cleanup.run_cleanup(self.root, self.valid_receipt())
+        self.assertEqual(report['status'], 'complete')
+        self.assertFalse(old.exists())
+        self.assertFalse(report['discoveryErrors'])
+
+
+    def test_incidental_words_do_not_protect_run_ids_but_explicit_citations_do(self):
+        run = self.run_directory('test')
+        review = self.root / 'REVIEW.md'
+        for text, protected in [('The test suite passed.\n', False),
+                                ('Verified run ID: test\n', True),
+                                (f'Build receipt `{run}/receipt.json` passed.\n', True)]:
+            review.write_text(text)
+            self.git('add', 'REVIEW.md'); self.git('commit', '-qm', 'diagnostic citation fixture')
+            report = cleanup.preview(self.root, now=self.now)
+            self.assertEqual(str(run) not in self.candidate_paths(report), protected)
+
+
+    def test_live_run_is_protected_before_recursive_fingerprinting(self):
+        live = self.run_directory('live', status='running')
+        old = self.run_directory('old')
+        original = cleanup.fingerprint
+        def inspect(path):
+            if pathlib.Path(path) == live:
+                raise ValueError('live output changed during discovery')
+            return original(path)
+        with mock.patch.object(session, 'producer_state', return_value='live'), mock.patch.object(
+                cleanup, 'fingerprint', side_effect=inspect):
+            cleanup.queue_commit(self.root)
+            report = cleanup.run_cleanup(self.root, self.valid_receipt())
+        self.assertEqual(report['status'], 'complete')
+        self.assertTrue(live.exists())
+        self.assertFalse(old.exists())
+        self.assertFalse(report['discoveryErrors'])
+        self.assertFalse(report['diagnosticBytesComplete'])
+
+
+    def test_accounting_only_failure_does_not_block_unrelated_candidates(self):
+        old = self.run_directory('old')
+        container = self.artifact / 'diagnostics'
+        (container / 'unknown').mkdir(parents=True)
+        original = cleanup.fingerprint
+        def inspect(path):
+            if pathlib.Path(path) == container:
+                raise ValueError('diagnostic log changed during accounting')
+            return original(path)
+        cleanup.queue_commit(self.root)
+        with mock.patch.object(cleanup, 'fingerprint', side_effect=inspect):
+            report = cleanup.run_cleanup(self.root, self.valid_receipt())
+        self.assertEqual(report['status'], 'complete')
+        self.assertFalse(old.exists())
+        self.assertFalse(report['discoveryErrors'])
+        self.assertTrue(report['accountingErrors'])
+        self.assertFalse(report['diagnosticBytesComplete'])
+
+
+    def test_candidate_fingerprint_failure_retains_only_that_entry(self):
+        broken = self.run_directory('broken')
+        old = self.run_directory('old')
+        original = cleanup.fingerprint
+        def inspect(path):
+            if pathlib.Path(path) == broken:
+                raise ValueError('candidate changed during discovery')
+            return original(path)
+        cleanup.queue_commit(self.root)
+        with mock.patch.object(cleanup, 'fingerprint', side_effect=inspect):
+            report = cleanup.run_cleanup(self.root, self.valid_receipt())
+        self.assertTrue(broken.exists())
+        self.assertFalse(old.exists())
+        self.assertFalse(report['discoveryErrors'])
+        self.assertTrue(report['entryErrors'])
+        self.assertEqual(report['status'], 'partial')
+
+
+    def test_invalid_and_produced_blocked_coordination_receipts_are_managed(self):
+        paths = []
+        for name, status, extra in [
+                ('invalid', 'invalid', {'evidence': {'inputsBefore': {'root': str(self.root)}}}),
+                ('busy', 'blocked', {'schemaVersion': 2, 'exitCode': 75, 'category': 'resource-busy'}),
+                ('changed', 'blocked', {'schemaVersion': 2, 'exitCode': 2, 'category': 'resource-definition-changed'}),
+                ('unavailable', 'blocked', {'schemaVersion': 2, 'exitCode': 2, 'category': 'resource-definition-unavailable'})]:
+            path = self.artifact / f'Coordination/{name}.json'
+            self.write(path, {'runId': name, 'receipt': str(path),
+                             'entry': str(self.root / 'scripts/dev_workflow.py'), 'status': status} | extra)
+            paths.append(path)
+        unknown = self.artifact / 'Coordination/unknown.json'
+        self.write(unknown, {'runId': 'unknown', 'receipt': str(unknown),
+                            'entry': str(self.root / 'scripts/dev_workflow.py'), 'status': 'blocked'})
+        self.stamp(self.artifact, 10)
+        report = cleanup.preview(self.root, now=self.now)
+        # The newest invalid receipt is deliberately protected as the newest failure.
+        self.assertTrue(set(map(str, paths[1:])).issubset(self.candidate_paths(report)))
+        self.assertFalse(any(str(paths[0]) in item['paths'] and 'unmanaged' in item['reason']
+                             for item in report['retained']))
+        self.assertNotIn(str(unknown), self.candidate_paths(report))
+
+
+    def test_linked_build_root_and_cache_leaves_are_not_candidates(self):
+        legacy = self.legacy_cache('legacy')
+        outside = self.base / 'outside-build'
+        (self.root / 'build').rename(outside)
+        (self.root / 'build').symlink_to(outside, target_is_directory=True)
+        leaf = pathlib.Path(self.cache_paths()['derivedData']).parents[3] / ('b' * 16) / 'Debug/plain/DerivedData'
+        leaf.parent.mkdir(parents=True)
+        leaf.symlink_to(outside, target_is_directory=True)
+        when = self.now - 10 * 86400
+        os.utime(leaf, (when, when), follow_symlinks=False)
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertNotIn(str(legacy), self.candidate_paths(report))
+        self.assertNotIn(str(leaf), self.candidate_paths(report))
+
+
+    def test_real_full_profile_inventory_uses_an_explicit_toolchain_for_static_and_native_checks(self):
+        self.commands[:] = load_script('dev_workflow.py').full_profile(self.root)
+        old = self.run_directory('old')
+        warm = pathlib.Path(self.cache_paths()['derivedData'])
+        warm.mkdir(parents=True)
+        self.stamp(warm, 10)
+        with mock.patch.object(session, 'entry_resources', wraps=session.entry_resources) as entries, \
+                mock.patch.object(session, 'toolchain_identity', side_effect=AssertionError('unexpected probe')):
+            report = cleanup.preview(self.root, now=self.now)
+        self.assertIn(str(old), self.candidate_paths(report))
+        self.assertNotIn(str(warm), self.candidate_paths(report))
+        self.assertTrue(any(call.args[0] == 'verify_static.sh' for call in entries.call_args_list))
+        self.assertTrue(all(call.kwargs.get('toolchain') == 'fixture' for call in entries.call_args_list))
+
+
+    def test_protection_boundary_reads_duplicate_metadata_only_once(self):
+        path = self.artifact / 'diagnostics/diagnostic-owner.json'
+        self.write(path, {'schemaVersion': 1, 'kind': 'gitx-diagnostics', 'runId': 'legacy',
+                          'checkout': str(self.root), 'status': 'passed'})
+        with mock.patch.object(cleanup, 'read_json', wraps=cleanup.read_json) as reads, \
+                mock.patch.object(session, 'tree_identity', wraps=session.tree_identity) as hashes:
+            cleanup.protection_token(self.root)
+        self.assertEqual(sum(pathlib.Path(call.args[0]) == path for call in reads.call_args_list), 1)
+        self.assertEqual(sum(pathlib.Path(call.args[0]) == path for call in hashes.call_args_list), 1)
+
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -192,7 +337,8 @@ class CleanupTests(unittest.TestCase):
         with mock.patch.object(cleanup, 'fingerprint', side_effect=inspect):
             report = cleanup.preview(self.root, now=self.now)
         self.assertIn(str(remaining), self.candidate_paths(report))
-        self.assertTrue(report['discoveryErrors'])
+        self.assertFalse(report['discoveryErrors'])
+        self.assertTrue(report['entryErrors'])
         self.assertTrue(any(str(broken) in item['paths'] for item in report['retained']))
 
     def test_conclusively_abandoned_run_enters_retention(self):
@@ -201,10 +347,10 @@ class CleanupTests(unittest.TestCase):
         value['producer'] = {'pid': 999999999, 'started': 'old identity'}
         self.write(abandoned / 'receipt.json', value)
         self.stamp(abandoned, 10)
-        with mock.patch.object(session, 'producer_state', return_value='abandoned', create=True):
+        with mock.patch.object(session, 'producer_state', return_value='abandoned'):
             self.assertIn(str(abandoned), self.candidate_paths(cleanup.preview(self.root, now=self.now)))
         for state in ['live', 'uncertain']:
-            with mock.patch.object(session, 'producer_state', return_value=state, create=True):
+            with mock.patch.object(session, 'producer_state', return_value=state):
                 self.assertNotIn(str(abandoned), self.candidate_paths(cleanup.preview(self.root, now=self.now)))
 
     def test_discovery_holds_no_desktop_product_or_ledger_lease(self):
@@ -528,7 +674,8 @@ class CleanupTests(unittest.TestCase):
         with mock.patch.object(cleanup, 'directory_identity', side_effect=inspect):
             report = cleanup.preview(self.root, now=self.now)
         self.assertIn(str(remaining), self.candidate_paths(report))
-        self.assertTrue(report['discoveryErrors'])
+        self.assertFalse(report['discoveryErrors'])
+        self.assertTrue(report['entryErrors'])
 
     def test_tracked_binary_screenshots_do_not_create_false_discovery_failures(self):
         old = self.run_directory('old')
@@ -839,6 +986,7 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue(old.exists())
 
     def test_commit_verify_cleanup_flow_and_report_retention(self):
+        self.commands[:] = [('check', ['fixture-check.sh']), ('stage-debug', ['fixture-stage.sh'])]
         old = self.run_directory('old')
         cleanup.install_hook(self.root)
         self.git('commit', '--allow-empty', '-qm', 'verified work')
@@ -847,13 +995,14 @@ class CleanupTests(unittest.TestCase):
             self.write(reports / f'20000101-{i:02}.json', {'old': True, 'status': 'complete'})
         def execute(command, **kwargs):
             self.assertTrue(old.exists())
-            if command == ['fixture-stage']:
+            if command == ['fixture-stage.sh']:
                 app = self.root / 'build/GitX.app'
                 app.mkdir(parents=True)
                 (app / 'binary').write_bytes(b'verified app')
             return 0
         args = workflow.parser().parse_args(['verify', '--run-id', 'end-to-end'])
-        with mock.patch.object(session, 'supervise', side_effect=execute):
+        with mock.patch.object(session, 'supervise', side_effect=execute), \
+                mock.patch.object(session, 'toolchain_identity', return_value='fixture'):
             self.assertEqual(workflow.verify(args), 0)
         self.assertFalse(old.exists())
         self.assertFalse(cleanup.pending_path(self.root).exists())
