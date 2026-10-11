@@ -1606,6 +1606,7 @@ NS_ASSUME_NONNULL_END
 NS_ASSUME_NONNULL_BEGIN
 @interface PBStagingImageReaderTestHarness : NSObject
 + (nullable NSData *)readURL:(NSURL *)url maximumBytes:(NSInteger)maximumBytes cancelled:(BOOL)cancelled timeout:(double)timeout whileReading:(void (^)(void))whileReading error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(read(url:maximumBytes:cancelled:timeout:whileReading:));
++ (nullable NSData *)readDefaultURL:(NSURL *)url elapsedDuringRead:(double)elapsedDuringRead error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(readDefault(url:elapsedDuringRead:));
 + (nullable NSString *)identityForURL:(NSURL *)url error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(identity(url:));
 + (nullable NSData *)readBlobTask:(PBTask *)task maximumBytes:(NSInteger)maximumBytes error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(readBlob(task:maximumBytes:));
 @end

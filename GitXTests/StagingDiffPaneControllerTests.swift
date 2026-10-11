@@ -91,6 +91,14 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             }))
         }
 
+        func testImageDefaultBudgetAcceptsSlowReadsAndStillHasAFiniteLimit() throws {
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try Data("image".utf8).write(to: file)
+            defer { try? FileManager.default.removeItem(at: file) }
+            XCTAssertEqual(try PBStagingImageReaderTestHarness.readDefault(url: file, elapsedDuringRead: 3), Data("image".utf8))
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.readDefault(url: file, elapsedDuringRead: 31))
+        }
+
         func testImageReaderRefusesDevicesFIFOsLimitsCancellationAndReplacement() throws {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -52,18 +52,20 @@ private final class StagingDiffPaneDelegateAdapter: NSObject, PBNativeContentVie
 private final nonisolated class StagingImageLookup: @unchecked Sendable {
     private let workingFileURL: URL?
     private let indexTask: PBTask
+    private let cancellation: StagingReadCancellation
 
-    init(workingFileURL: URL?, indexTask: PBTask) {
+    init(workingFileURL: URL?, indexTask: PBTask, cancellation: StagingReadCancellation) {
         self.workingFileURL = workingFileURL
         self.indexTask = indexTask
+        self.cancellation = cancellation
     }
 
     func data() -> Data? {
         NSLog("[GitX] Reading staging image data on %@", Thread.isMainThread ? "main" : "renderer queue")
         if let workingFileURL {
-            return try? StagingImageReader.shared.read(workingFileURL).data
+            return try? StagingImageReader.shared.read(workingFileURL, shouldCancel: { self.cancellation.isCancelled }).data
         }
-        let data = try? StagingImageBlobReader(task: indexTask).read()
+        let data = try? StagingImageBlobReader(task: indexTask).read(cancellation: cancellation)
         return data?.isEmpty == false ? data : nil
     }
 }
@@ -471,6 +473,7 @@ final class StagingDiffPaneController: NSObject {
     private var displayedRequests: [StagingDiffLoadRequest] = []
     private let delegateAdapter = StagingDiffPaneDelegateAdapter()
     private let loadCoordinator: StagingDiffLoadCoordinator
+    private var imageCancellation = StagingReadCancellation()
 
     @objc var contextLines: UInt {
         didSet {
@@ -505,7 +508,8 @@ final class StagingDiffPaneController: NSObject {
     func render(_ requests: [StagingDiffRequest]) {
         // Update selection authority immediately, then merge publications and
         // selection callbacks arriving in the same main-queue turn.
-        currentRequests = requests
+        updateSelectionAuthority(requests)
+        imageCancellation.cancel(); imageCancellation = StagingReadCancellation()
         if requests.isEmpty {
             renderPending = false
             loadCoordinator.invalidate()
@@ -560,8 +564,23 @@ final class StagingDiffPaneController: NSObject {
         }
     }
 
-    func updateSelection(_ requests: [StagingDiffRequest]) {
+    private func updateSelectionAuthority(_ requests: [StagingDiffRequest]) {
+        func identity(_ requests: [StagingDiffRequest]) -> [String] {
+            requests.map { ($0.staged ? "s:" : "u:") + $0.file.rawPath.base64EncodedString() }
+        }
+        if identity(currentRequests) != identity(requests) {
+            imageCancellation.cancel(); imageCancellation = StagingReadCancellation()
+        }
         currentRequests = requests
+    }
+
+    @objc func close() {
+        imageCancellation.cancel()
+        loadCoordinator.invalidate()
+    }
+
+    func updateSelection(_ requests: [StagingDiffRequest]) {
+        updateSelectionAuthority(requests)
         if requests.isEmpty {
             render(requests)
         }
@@ -573,6 +592,7 @@ final class StagingDiffPaneController: NSObject {
 
     @objc(showStateMessage:)
     func showStateMessage(_ message: String) {
+        imageCancellation.cancel()
         renderPending = false
         displayedContexts = []
         currentRequests = []
@@ -702,8 +722,8 @@ final class StagingDiffPaneController: NSObject {
         let task = repository.task(withArguments: ["show", ":0:" + path])
         task.separatesStandardError = true
         return StagingImageLookup(
-            workingFileURL: displayedRequests[sectionIndex].staged ? nil : repository.workingDirectoryURL()?.appendingPathComponent(path),
-            indexTask: task
+            workingFileURL: displayedRequests[sectionIndex].staged || displayedRequests[sectionIndex].status == PBChangedFileStatus.DELETED.rawValue ? nil : repository.workingDirectoryURL()?.appendingPathComponent(path),
+            indexTask: task, cancellation: imageCancellation
         )
     }
 }

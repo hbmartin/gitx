@@ -2,6 +2,20 @@ import Foundation
 import XCTest
 
 final class PBTaskDiagnosticRedactorTests: XCTestCase {
+    func testOrdinaryAuthorityStopsBeforeFollowingDiagnosticCredentials() throws {
+        let input = "https://example.com error: failed for user@example.net"
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), input)
+        let bytes = Data(input.utf8)
+        let source = PBTaskDiagnosticByteSource(length: Int64(bytes.count)) { offset, count in
+            Data(bytes[Int(offset) ..< Int(offset) + count])
+        }
+        for size in [1, 7, 64] {
+            var result = Data()
+            try PBTaskDiagnosticRedactor.redact(source: source, incomplete: false, bufferSize: size) { result.append($0) }
+            XCTAssertEqual(String(decoding: result, as: UTF8.self), input)
+        }
+    }
+
     func testDottedUsernameAndNumericPasswordRemainPrivate() throws {
         let input = Data("https://first.last:2024 Spring!@git.example.com/repo".utf8)
         for size in 1 ... input.count {

@@ -237,8 +237,8 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
                 let token = StagingDiffActionContext(request: request, diff: diff, parentTree: parentTree, visualIdentity: visualIdentity)
                 sections.append(successfulSection(for: request, diff: diff, actionContext: token))
             case let .readOnly(diff, detail):
-                sections.append(StagingDiffSectionDescriptor(title: "Actions unavailable — " + request.path, path: request.path,
-                                                             text: diff, context: "read-only", stagingChrome: false))
+                sections.append(StagingDiffSectionDescriptor(title: String(format: NSLocalizedString("Actions unavailable — %@", comment: "Read-only staging diff section title"), request.path), path: request.path,
+                                                             text: diff, context: "readOnly", stagingChrome: false))
                 NSLog("[GitX] Staging image actions unavailable: %@", detail)
             case let .failure(detail):
                 NSLog(

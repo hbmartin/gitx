@@ -94,6 +94,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             amendButton.unbind(.value)
         }
         fileListController.close()
+        diffPaneController.close()
     }
 
     override func loadView() {

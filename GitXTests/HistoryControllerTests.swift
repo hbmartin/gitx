@@ -426,6 +426,22 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testDeletedWorktreeImagePreviewReadsItsIndexedBytes() throws {
+        let path = "deleted-preview.png"
+        let bytes = Data("indexed image bytes".utf8)
+        let url = URL(fileURLWithPath: fixture.path).appendingPathComponent(path)
+        try bytes.write(to: url)
+        try fixture.git(["add", "--", path])
+        try fixture.git(["commit", "-qm", "Track image"])
+        try FileManager.default.removeItem(at: url)
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
+        try selectDiffFile(file, staged: false, in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Unstaged — " + path) })
+        XCTAssertEqual(native.delegate?.nativeContentView?(native, imageDataForPath: path, section: 0, imageSource: [:]), bytes)
+    }
+
     func testUnmergedAndDanglingSymlinkImagesRetainUsableDiffSections() throws {
         let conflict = "conflict-preview.png"
         let blob = try fixture.git(["rev-parse", "HEAD:nested/tracked.txt"]).trimmingCharacters(in: .newlines)
