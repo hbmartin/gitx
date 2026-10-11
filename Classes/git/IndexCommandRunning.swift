@@ -261,7 +261,7 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
     }
 
     static func busyError() -> NSError {
-        NSError(domain: "PBGitIndexMutationError", code: 6, userInfo: [NSLocalizedDescriptionKey: "Another operation owns the Git index. Use the asynchronous operation or try again after it finishes."])
+        NSError(domain: "PBGitIndexMutationError", code: 6, userInfo: [NSLocalizedDescriptionKey: "Another operation owns the Git index. Wait for it to finish, then try again."])
     }
 
     static func writesIndex(_ arguments: [String]) -> Bool {

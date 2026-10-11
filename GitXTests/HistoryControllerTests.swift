@@ -3152,6 +3152,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             }
             XCTAssertEqual(try fixture.git(["rev-parse", "refs/heads/feature"]), original)
             let error = try XCTUnwrap(stub.shownErrors.last)
+            XCTAssertTrue(error.localizedDescription.contains("Wait for it to finish, then try again."), error.localizedDescription)
+            XCTAssertFalse(error.localizedDescription.localizedCaseInsensitiveContains("asynchronous"), "The retry message must describe an action available to the user")
             let alert = NSAlert(error: error)
             alert.layout()
             try attachScreenshot(of: alert.window, named: "Reference-Confirmed-Busy-Refusal")
