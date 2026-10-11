@@ -1481,8 +1481,18 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
                 defaultBranch: ForgeRefName("main")
             )
         }
+        defer {
+            task.cancel()
+            runner.releaseFirstCommand()
+        }
 
-        XCTAssertTrue(runner.waitUntilFirstCommandStarts(timeout: 2))
+        guard runner.waitUntilFirstCommandStarts(timeout: 2) else {
+            task.cancel()
+            runner.releaseFirstCommand()
+            _ = try? await task.value
+            XCTFail("Local Git preparation did not enter the controlled command")
+            return
+        }
         task.cancel()
         runner.releaseFirstCommand()
         do {
