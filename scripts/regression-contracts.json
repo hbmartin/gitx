@@ -278,6 +278,12 @@
           "identifier": "GitXTests/StagingDiffLoadCoordinatorTests/testUnavailableImageIdentityRetainsDiffWithoutMutationAuthority",
           "role": "failure",
           "oracle": "Diff remains visible with no mutation token when image identity is unavailable."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testUnstageHunkPreservesOtherStagedHunksAndWorktree",
+          "role": "valid",
+          "oracle": "Unstage exactly the selected hunk while retaining the other staged hunk and all worktree bytes."
         }
       ]
     },
@@ -289,7 +295,12 @@
       "sourcePaths": [
         "Classes/git/IndexMutation*",
         "Classes/git/IndexCommit*",
-        "Classes/Controllers/Staging*"
+        "Classes/Controllers/Staging*",
+        "Classes/git/GitCommandRunning.swift",
+        "Classes/git/IndexCommandRunning.swift",
+        "Classes/Controllers/PBGitWindowController.swift",
+        "Classes/Controllers/RepositoryReferenceActionCoordinator.swift",
+        "Classes/Controllers/RepositoryStashActionCoordinator.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -326,6 +337,24 @@
           "identifier": "GitXTests/IndexMutationCoordinatorTests/testRepositoryCheckoutCannotOverlapAnIndexWriter",
           "role": "failure",
           "oracle": "A synchronous checkout is refused while the shared repository writer owns a staging operation."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWriterActionsRejectStaleInvocationsDuringReconciliationAndRecoverAfterward",
+          "role": "boundary",
+          "oracle": "Busy menus and stale reference/stash invocations preserve HEAD, worktree and stashes; a real Git failure still presents its error after admission recovers."
+        },
+        {
+          "source": "GitXTests/IndexMutationServiceTests.swift",
+          "identifier": "GitXTests/IndexMutationServiceTests/testQueuedWriterRejectsOvertakingSynchronousWorkAndRemainsReusable",
+          "role": "boundary",
+          "oracle": "Hold the writer queue before execution; synchronous work is refused without running, queued completion releases ownership, and the coordinator accepts the next write."
+        },
+        {
+          "source": "GitXTests/IndexMutationServiceTests.swift",
+          "identifier": "GitXTests/IndexMutationServiceTests/testGeneralCommandRunnerRejectsWritersDuringReconciliationAndSubmissionButAllowsReads",
+          "role": "failure",
+          "oracle": "Reconciliation and submission each reject a main-thread writer without launching it while read output remains available."
         }
       ]
     },
@@ -673,6 +702,48 @@
           "role": "compatibility",
           "oracle": "Exercise the imported task and configuration-dependent runtime surface in Release.",
           "check": "release-contracts"
+        }
+      ]
+    },
+    {
+      "id": "ENV-002",
+      "family": "Finder metadata in UI fixtures",
+      "invariant": "UI fixture repositories ignore untracked Finder metadata while preserving real untracked files, explicitly tracked metadata and existing exclusion rules.",
+      "rootCause": "Finder-created .DS_Store files alter first-file selection, dirty counts and before/after status oracles.",
+      "sourcePaths": [
+        "GitXUITests/GitXUITestFixtureWorkspace.swift",
+        "GitXUITests/GitXScreenshotTests.m",
+        "GitXUITests/GitXUIActivationPreflightTests.swift",
+        "GitXUITests/Milestone2WorkflowUITests.swift",
+        "GitXUITests/Milestone3WorkflowUITests.swift"
+      ],
+      "requiredChecks": [
+        "ui",
+        "debug-test-build",
+        "release-test-build",
+        "static"
+      ],
+      "tests": [
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureKeepsRealUntrackedFilesAndExplicitlyTrackedFinderMetadata",
+          "role": "valid",
+          "oracle": "Real Git status still reports a modified tracked .DS_Store and ordinary untracked source.",
+          "check": "ui"
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureIgnoresUntrackedFinderMetadataWithoutHidingRealFiles",
+          "role": "boundary",
+          "oracle": "Inject root and nested Finder metadata; real Git status retains only real files, including a similarly named notes file.",
+          "check": "ui"
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureMetadataExclusionPreservesExistingRulesAndIsIdempotent",
+          "role": "boundary",
+          "oracle": "Preserve existing rule bytes and Git ignore/negation behavior; repeated setup keeps the same exclusion file.",
+          "check": "ui"
         }
       ]
     }

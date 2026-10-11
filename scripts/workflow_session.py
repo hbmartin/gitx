@@ -536,17 +536,22 @@ def console_session_locked(properties, uid):
     except (ValueError, plistlib.InvalidFileException):
         return True
     sessions = []
-    def visit(value):
+    def visit(value, registry_locked=False):
         if isinstance(value, dict):
+            registry_locked = value.get("IOConsoleLocked", registry_locked)
             if value.get("CGSSessionUserID", value.get("kCGSSessionUserIDKey")) == uid and value.get("CGSSessionOnConsole", value.get("kCGSSessionOnConsoleKey")) is True:
-                sessions.append(value)
+                sessions.append((value, registry_locked))
             for child in value.values():
-                visit(child)
+                visit(child, registry_locked)
         elif isinstance(value, list):
             for child in value:
-                visit(child)
+                visit(child, registry_locked)
     visit(tree)
-    return len(sessions) != 1 or sessions[0].get("CGSSessionScreenIsLocked", False) is not False
+    if len(sessions) != 1:
+        return True
+    value, registry_locked = sessions[0]
+    locked = value.get("CGSSessionScreenIsLocked", value.get("kCGSSessionScreenIsLockedKey", False))
+    return registry_locked is not False or locked is not False
 
 
 def verify_signatures(derived_data):

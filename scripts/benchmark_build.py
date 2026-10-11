@@ -83,6 +83,7 @@ def build_command(
     return [
         "xcodebuild",
         "build",
+        "-onlyUsePackageVersionsFromResolvedFile",
         "-workspace",
         str(root / "GitX.xcworkspace"),
         "-scheme",
@@ -121,6 +122,7 @@ def main() -> int:
     resolve_command = [
         "xcodebuild",
         "-resolvePackageDependencies",
+        "-onlyUsePackageVersionsFromResolvedFile",
         "-workspace",
         str(root / "GitX.xcworkspace"),
         "-scheme",
