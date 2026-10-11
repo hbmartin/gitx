@@ -6,10 +6,11 @@ final class StagingDiffPaneControllerTests: XCTestCase {
     // swift6-safety-justification: Immutable status fixtures and lock-protected command counts are shared only with the serial producer/writer queues.
     private final nonisolated class StatusRunner: NSObject, PBIndexRawOutputCommandRunning, @unchecked Sendable {
         let paths: [String]
+        let rawPaths: [Data]
         let status: String
         let indexOutput: Data?
-        init(paths: [String], status: String = "M", indexOutput: Data? = nil) {
-            self.paths = paths; self.status = status; self.indexOutput = indexOutput; super.init()
+        init(paths: [String], rawPaths: [Data]? = nil, status: String = "M", indexOutput: Data? = nil) {
+            self.paths = paths; self.rawPaths = rawPaths ?? paths.map { Data($0.utf8) }; self.status = status; self.indexOutput = indexOutput; super.init()
         }
 
         private let lock = NSLock()
@@ -19,6 +20,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         private var indexObject = String(repeating: "a", count: 40)
         private var treeObject = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
         private var staged = false
+        private var capturedArguments: [[String]] = []
 
         func changeIndex() {
             lock.lock(); indexObject = String(repeating: "b", count: 40); lock.unlock()
@@ -37,17 +39,37 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             return [statusCommands, diffCommands, treeCommands]
         }
 
+        var rawArguments: [[String]] {
+            lock.lock(); defer { lock.unlock() }
+            return capturedArguments
+        }
+
         func rawOutput(withArguments arguments: [String], environment: [String: Any]?) throws -> Data {
             XCTAssertEqual(environment?["GIT_OPTIONAL_LOCKS"] as? String, "0")
-            lock.lock(); statusCommands += 1; let object = indexObject; let hasStaged = staged; lock.unlock()
+            lock.lock(); statusCommands += 1; capturedArguments.append(arguments); let object = indexObject; let hasStaged = staged; lock.unlock()
+            let selected: [Data]
+            if let separator = arguments.firstIndex(of: "--") {
+                let names = Set(arguments.suffix(from: separator + 1).map { Data($0.utf8) })
+                selected = rawPaths.filter { names.contains($0) }
+            } else {
+                selected = rawPaths
+            }
+            func records(_ header: String, separated: Bool) -> Data {
+                var result = Data()
+                for path in selected {
+                    result.append(Data(header.utf8)); result.append(separated ? 0 : 9)
+                    result.append(path); result.append(0)
+                }
+                return result
+            }
             if arguments.contains("diff-files") {
-                return Data(paths.map { ":100644 100644 \(object) \(String(repeating: "0", count: 40)) \(status)\0\($0)\0" }.joined().utf8)
+                return records(":100644 100644 \(object) \(String(repeating: "0", count: 40)) \(status)", separated: true)
             }
             if arguments.contains("ls-files") {
-                return indexOutput ?? Data(paths.map { "100644 \(object) 0\t\($0)\0" }.joined().utf8)
+                return indexOutput ?? records("100644 \(object) 0", separated: false)
             }
             if arguments.contains("diff-index"), hasStaged {
-                return Data(paths.map { ":100644 100644 \(String(repeating: "a", count: 40)) \(object) M\0\($0)\0" }.joined().utf8)
+                return records(":100644 100644 \(String(repeating: "a", count: 40)) \(object) M", separated: true)
             }
             return Data()
         }
@@ -246,6 +268,100 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                 try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: [file])
                 XCTFail("A missing worktree was authorized")
             } catch { XCTAssertEqual((error as NSError).code, 8) }
+        }
+
+        func testDiscardRefusesABlockingAncestorWithoutOverwritingIt() async throws {
+            try await snapshotFixture { directory, repository, _ in
+                let blocker = directory.appendingPathComponent("blocked")
+                try Data("keep this ancestor".utf8).write(to: blocker)
+                let file = PBChangedFile(path: "blocked/deleted.txt")
+                file.status = .DELETED; file.hasUnstagedChanges = true
+                do {
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path], status: "D"), files: [file])
+                    XCTFail("Discard cannot replace an uncaptured ancestor")
+                } catch {
+                    XCTAssertEqual((error as NSError).code, 8)
+                    XCTAssertTrue(error.localizedDescription.contains("blocked"), error.localizedDescription)
+                    XCTAssertTrue(error.localizedDescription.contains("Move or remove"), error.localizedDescription)
+                    let alert = NSAlert()
+                    alert.messageText = "Index operation failed"
+                    alert.informativeText = error.localizedDescription
+                    try attachScreenshot(of: alert.window, named: "Discard-Blocking-Parent-Refusal")
+                }
+                XCTAssertEqual(try Data(contentsOf: blocker), Data("keep this ancestor".utf8))
+            }
+        }
+
+        func testClosedPaneCancelsConfirmedDiscardBeforeCheckingEligibility() async throws {
+            try await snapshotFixture { _, repository, file in
+                var checkedEligibility = false
+                do {
+                    try await PBStagingDiffRevalidationTestHarness.prepareCloseAndValidate(repository: repository, runner: StatusRunner(paths: [file.path]), files: [file], eligibility: {
+                        checkedEligibility = true
+                        return true
+                    })
+                    XCTFail("A closed pane cannot authorize its confirmed discard")
+                } catch {
+                    XCTAssertEqual((error as NSError).code, 8)
+                    XCTAssertTrue(error.localizedDescription.contains("cancelled"))
+                }
+                XCTAssertFalse(checkedEligibility, "Closing the pane invalidates lifetime before calling back into its controller")
+            }
+        }
+
+        func testDiscardCaptureHasOneBudgetAndChecksCancellationWhileHashing() async throws {
+            try await snapshotFixture { _, repository, file in
+                for (timeout, checks) in [(0.0, -1), (30.0, 0), (30.0, 9)] {
+                    do {
+                        try await PBStagingDiffRevalidationTestHarness.capture(repository: repository, runner: StatusRunner(paths: [file.path]), files: [file], timeout: timeout, cancelAfterChecks: checks)
+                        XCTFail("Expired or cancelled discard capture must fail")
+                    } catch {
+                        XCTAssertEqual((error as NSError).code, 8)
+                        XCTAssertTrue(error.localizedDescription.contains("cancelled") || error.localizedDescription.contains("time limit"))
+                    }
+                }
+            }
+        }
+
+        func testDiscardCaptureBoundsSelectedPathBatchesAndPreservesRawFallback() async throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let repository = LifetimeRepository(directory: directory, onDeinit: {})
+            let paths = (0 ..< 200).map { "\(String(repeating: "p", count: 170))-\($0).txt" }
+            let files = try paths.map { path in
+                try Data("selected\n".utf8).write(to: directory.appendingPathComponent(path))
+                let file = PBChangedFile(path: path); file.status = .MODIFIED; file.hasUnstagedChanges = true
+                return file
+            }
+            let runner = StatusRunner(paths: paths)
+            try await PBStagingDiffRevalidationTestHarness.capture(repository: repository, runner: runner, files: files, timeout: 30, cancelAfterChecks: -1)
+            let calls = runner.rawArguments
+            XCTAssertEqual(calls.count, 6, "Three queries each use two bounded batches")
+            for command in ["diff-index", "diff-files", "ls-files"] {
+                let batches = calls.filter { $0.contains(command) }.map { arguments -> [String] in
+                    guard let separator = arguments.firstIndex(of: "--") else { XCTFail("UTF-8 selection must narrow each query"); return [] }
+                    return Array(arguments.suffix(from: separator + 1))
+                }
+                XCTAssertEqual(batches.flatMap { $0 }, paths)
+                XCTAssertTrue(batches.allSatisfy { $0.reduce(0) { $0 + $1.utf8.count + 1 } <= 32 * 1024 })
+            }
+            let rawPath = Data([0xFF]) + Data("-deleted.txt".utf8)
+            let rawFile = PBChangedFile(path: "unrepresentable-deleted.txt", rawPath: rawPath); rawFile.status = .DELETED; rawFile.hasUnstagedChanges = true
+            let rawRunner = StatusRunner(paths: [], rawPaths: [rawPath], status: "D")
+            try await PBStagingDiffRevalidationTestHarness.capture(repository: repository, runner: rawRunner, files: [rawFile], timeout: 30, cancelAfterChecks: -1)
+            XCTAssertEqual(rawRunner.rawArguments.count, 3)
+            XCTAssertTrue(rawRunner.rawArguments.allSatisfy { !$0.contains("--") }, "Non-UTF-8 names retain whole-index byte output")
+        }
+
+        func testDiscardCaptureRefusesASubmoduleWithASpecificExplanation() async throws {
+            try await snapshotFixture { _, repository, file in
+                let record = Data("160000 \(String(repeating: "a", count: 40)) 0\tselected.txt\0".utf8)
+                do {
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path], indexOutput: record), files: [file])
+                    XCTFail("Submodule discard requires a separate operation")
+                } catch { XCTAssertTrue(error.localizedDescription.contains("submodule")) }
+            }
         }
 
         func testDiscardSnapshotReportsAnInvalidWorkingDirectory() async throws {

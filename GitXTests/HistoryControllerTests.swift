@@ -314,6 +314,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testWholeFileDiscardKeepsItsAuthorizedPathsWhenAnUntrackedRowBecomesTracked() throws {
+        let controller = try XCTUnwrap(windowController as? HistoryWindowController)
+        controller.automaticallyConfirms = false
+        let tracked = "nested/tracked.txt"
+        let original = try fixture.git(["show", "HEAD:" + tracked])
+        try fixture.write("discard this tracked edit\n", to: tracked)
+        try fixture.write("initial untracked bytes\n", to: "newly-tracked.txt")
+        let pane = try openStagingPane()
+        let selected = repository.index.indexChanges.filter { $0.path == tracked || $0.path == "newly-tracked.txt" }
+        XCTAssertEqual(selected.count, 2)
+        pane.fileListController.unstagedFilesController.setSelectedObjects(selected)
+        let confirmations = controller.confirmationCount
+        pane.perform(NSSelectorFromString("discardFiles:"), with: self)
+        XCTAssertTrue(waitForCondition { controller.confirmationCount > confirmations })
+        try fixture.git(["add", "newly-tracked.txt"])
+        try fixture.write("preserve uncaptured edit\n", to: "newly-tracked.txt")
+        waitForIndexUpdate { repository.index.refresh() }
+        controller.confirmPendingAction()
+        XCTAssertTrue(waitForCondition {
+            !self.repository.index.mutationReconciliationPending &&
+                (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent(tracked), encoding: .utf8)) == original
+        })
+        XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("newly-tracked.txt"), encoding: .utf8), "preserve uncaptured edit\n")
+    }
+
     func testWholeFileDiscardAuthorizesOnlyTrackedFilesInAMixedBinarySelection() throws {
         let path = "nested/tracked.txt"
         let original = try fixture.git(["show", "HEAD:" + path])

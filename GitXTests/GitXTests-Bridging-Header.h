@@ -1032,8 +1032,12 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 									  error:(NSError *_Nullable *_Nullable)error;
 @end
 
-#if DEBUG
+#if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
 @interface PBStagingDiffRevalidationTestHarness : NSObject
+#if DEBUG
++ (void)prepareCloseAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files eligibility:(BOOL (^)(void))eligibility completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareCloseAndValidate(repository:runner:files:eligibility:completion:));
++ (void)captureWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files timeout:(double)timeout cancelAfterChecks:(NSInteger)cancelAfterChecks completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(capture(repository:runner:files:timeout:cancelAfterChecks:completion:));
+#endif
 + (void)prepareAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files beforeValidation:(void (^)(void))beforeValidation completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareAndValidate(repository:runner:files:beforeValidation:completion:));
 + (void)prepareAndValidateWithRepository:(PBGitRepository *)repository
 								  runner:(id<PBIndexCommandRunning>)runner
