@@ -99,7 +99,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(index.mutationReconciliationPending)
         XCTAssertEqual(completions, 0)
         wait(for: [staged], timeout: 10)
-        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending && index.writerPendingCount == 0 && index.writerActiveCount == 0 })
+        XCTAssertTrue(waitForCondition { self.indexIsQuiescent(index) })
         XCTAssertEqual(completions, 1)
         XCTAssertEqual(try fixture.git(["show", ":nested/tracked.txt"]), "asynchronous mutation fixture\n")
         let unstaged = expectation(description: "asynchronous unstaging completes")
@@ -243,8 +243,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let sheet = try XCTUnwrap(window.attachedSheet)
         window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
         XCTAssertTrue(waitForCondition(timeout: 20) {
-            !self.repository.index.mutationReconciliationPending &&
-                self.repository.index.writerPendingCount == 0 && self.repository.index.writerActiveCount == 0 &&
+            self.indexIsQuiescent(self.repository.index) &&
                 (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent(path), encoding: .utf8)) == "original unicode\n"
         })
     }
@@ -2361,21 +2360,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    private func indexIsQuiescent(_ index: PBGitIndex) -> Bool {
+        guard !index.mutationReconciliationPending, !index.submissionActive else { return false }
+        return !IndexRepositoryCommandRunner(repository: repository).isWriterBusy
+    }
+
     private func waitForIndexUpdate(during block: () throws -> Void) rethrows {
-        XCTAssertTrue(waitForCondition(timeout: 20) {
-            !self.repository.index.mutationReconciliationPending &&
-                self.repository.index.writerPendingCount == 0 && self.repository.index.writerActiveCount == 0
-        }, "index actions wait for reconciliation and all queued writers")
-        let updated = expectation(
-            forNotification: NSNotification.Name(PBGitIndexIndexUpdated),
-            object: repository.index
-        )
+        guard waitForCondition(timeout: 20, { self.indexIsQuiescent(self.repository.index) }) else {
+            XCTFail("Index actions wait for reconciliation and all queued writers")
+            return
+        }
+        let updated = expectation(forNotification: NSNotification.Name(PBGitIndexIndexUpdated), object: repository.index)
         try block()
         wait(for: [updated], timeout: 20)
-        XCTAssertTrue(waitForCondition(timeout: 20) {
-            !self.repository.index.mutationReconciliationPending &&
-                self.repository.index.writerPendingCount == 0 && self.repository.index.writerActiveCount == 0
-        })
+        XCTAssertTrue(waitForCondition(timeout: 20) { self.indexIsQuiescent(self.repository.index) })
         pumpRunLoop()
     }
 
@@ -3047,8 +3045,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             NotificationCenter.default.removeObserver(self, name: Notification.Name(PBGitIndexFinishedCommit), object: index)
             XCTAssertEqual((index.value(forKey: "mutationGeneration") as? NSNumber)?.uintValue, generation + 1)
             XCTAssertTrue(waitForCondition(timeout: 20) {
-                !index.mutationReconciliationPending && index.writerPendingCount == 0 &&
-                    index.writerActiveCount == 0 && index.indexChanges.isEmpty
+                self.indexIsQuiescent(index) && index.indexChanges.isEmpty
             })
             XCTAssertEqual(try fixture.git(["show", "HEAD:" + path]), "created commit\n")
         }
@@ -3111,7 +3108,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         defer { repository.index.setValue(false, forKey: "mutationReconciliationPending") }
         for selector in ["checkout:", "merge:", "rebase:", "rebaseHeadBranch:", "cherryPick:", "resetSoft:",
                          "stashSave:", "stashSaveWithKeepIndex:", "stashPop:", "stashApply:", "stashDrop:",
-                         "pullRemote:", "pullDefaultRemote:", "pullRebaseRemote:", "pullRebaseDefaultRemote:", "toolbarPull:"]
+                         "pullRemote:", "pullDefaultRemote:", "pullRebaseRemote:", "pullRebaseDefaultRemote:", "toolbarPull:",
+                         "deleteRef:", "createBranch:", "createTag:"]
         {
             XCTAssertFalse(stub.validateMenuItem(NSMenuItem(title: selector, action: NSSelectorFromString(selector), keyEquivalent: "")), selector)
         }
@@ -3135,6 +3133,36 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), beforeHead)
         XCTAssertEqual(try fixture.git(["status", "--porcelain=v1"]), beforeStatus)
     }
+
+    #if DEBUG
+        func testConfirmedReferenceDeletionReportsBusyWriterAndCanBeRetriedAfterIdle() throws {
+            let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+            stub.automaticallyConfirms = false
+            let menu = NSMenuItem(title: "Delete Branch", action: NSSelectorFromString("deleteRef:"), keyEquivalent: "")
+            menu.representedObject = PBGitRef(string: "refs/heads/feature")
+            let original = try fixture.git(["rev-parse", "refs/heads/feature"])
+            let confirmations = stub.confirmationCount
+            stub.perform(NSSelectorFromString("deleteRef:"), with: menu)
+            XCTAssertEqual(stub.confirmationCount, confirmations + 1)
+            let errors = stub.shownErrors.count
+            PBIndexWriterCommandTestHarness.holdWriter(repository: repository) {
+                stub.confirmPendingAction()
+                XCTAssertEqual(stub.shownErrors.count, errors + 1)
+                XCTAssertEqual(stub.shownErrors.last?.code, 6)
+            }
+            XCTAssertEqual(try fixture.git(["rev-parse", "refs/heads/feature"]), original)
+            let error = try XCTUnwrap(stub.shownErrors.last)
+            let alert = NSAlert(error: error)
+            try attachScreenshot(of: alert.window, named: "Reference-Confirmed-Busy-Refusal")
+            XCTAssertTrue(waitForCondition { self.indexIsQuiescent(self.repository.index) })
+            XCTAssertTrue(stub.validateMenuItem(menu))
+            stub.perform(NSSelectorFromString("deleteRef:"), with: menu)
+            XCTAssertEqual(stub.confirmationCount, confirmations + 2)
+            stub.confirmPendingAction()
+            XCTAssertEqual(stub.shownErrors.count, errors + 1)
+            XCTAssertThrowsError(try fixture.git(["show-ref", "--verify", "refs/heads/feature"]))
+        }
+    #endif
 
     func testUnstageHunkPreservesOtherStagedHunksAndWorktree() throws {
         let path = "nested/tracked.txt"
@@ -4274,6 +4302,55 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
         XCTAssertFalse(repository.index.isAmend)
     }
+
+    #if DEBUG
+        func testQueuedWriterObservationsDoNotRefreshClosedStagingControls() throws {
+            try fixture.write("staged writer fixture\n", to: "nested/tracked.txt")
+            try fixture.git(["add", "nested/tracked.txt"])
+            try fixture.write("staged writer fixture\nworking edit\n", to: "nested/tracked.txt")
+            let pane = try openStagingPane()
+            pane.fileListController.setListLayout(.sectionedList)
+            let table = pane.fileListController.sectionedTable
+            let headers = (0 ..< table.numberOfRows).compactMap {
+                table.view(atColumn: 0, row: $0, makeIfNecessary: true) as? PBStagingSectionHeaderView
+            }
+            let unstaged = try XCTUnwrap(headers.first { $0.masterCheckbox.tag == 0 }).masterCheckbox
+            let amend = try XCTUnwrap(controls(in: pane.view).compactMap { $0 as? NSButton }.first { $0.title == "Amend" })
+            XCTAssertTrue(waitForCondition { amend.isEnabled && unstaged.isEnabled })
+            PBIndexWriterCommandTestHarness.holdWriter(repository: repository) {
+                // Scheduling has queued both pending and active observations,
+                // but this main-thread closure has not delivered either yet.
+                pane.closeView()
+                XCTAssertTrue(amend.isEnabled)
+                XCTAssertTrue(unstaged.isEnabled)
+                self.pumpRunLoop()
+                XCTAssertTrue(amend.isEnabled, "A queued delivery must not refresh the closed composer")
+                XCTAssertTrue(unstaged.isEnabled, "A queued delivery must not refresh the closed file list")
+            }
+            XCTAssertTrue(waitForCondition { self.indexIsQuiescent(self.repository.index) })
+        }
+
+        func testStagingControlsRecoverAfterAWriterWithoutAnIndexPublication() throws {
+            try fixture.write("staged writer fixture\n", to: "nested/tracked.txt")
+            try fixture.git(["add", "nested/tracked.txt"])
+            let pane = try openStagingPane()
+            let buttons = controls(in: pane.view).compactMap { $0 as? NSButton }
+            let amend = try XCTUnwrap(buttons.first { $0.title == "Amend" })
+            let commit = try XCTUnwrap(buttons.first { $0.title == "Commit" })
+            XCTAssertTrue(waitForCondition { amend.isEnabled && commit.isEnabled })
+            XCTAssertTrue(PBIndexWriterCommandTestHarness.allowsMutation(index: repository.index), "Idle admission must agree with the enabled staging controls")
+            PBIndexWriterCommandTestHarness.holdWriter(repository: repository) {
+                XCTAssertFalse(self.indexIsQuiescent(self.repository.index), "Admission reads the writer directly, including before async KVO counts arrive")
+                XCTAssertFalse(PBIndexWriterCommandTestHarness.allowsMutation(index: self.repository.index), "Admission must reject an owned writer before its queued UI observations arrive")
+                XCTAssertTrue(self.waitForCondition { !amend.isEnabled && !commit.isEnabled })
+                do { try self.attachScreenshot(of: pane.view, named: "Staging-Writer-Controls-Busy") }
+                catch { XCTFail("Busy staging diagnostic capture failed: \(error)") }
+            }
+            XCTAssertTrue(waitForCondition { amend.isEnabled && commit.isEnabled })
+            XCTAssertTrue(PBIndexWriterCommandTestHarness.allowsMutation(index: repository.index), "Writer release must restore admission without an index publication")
+            try attachScreenshot(of: pane.view, named: "Staging-Writer-Controls-Recovered")
+        }
+    #endif
 
     func testStagingPaneTeardownUnbindsAmendAndSuccessfulCompletionClearsBusyState() throws {
         try fixture.write("lifecycle\n", to: "lifecycle.txt")

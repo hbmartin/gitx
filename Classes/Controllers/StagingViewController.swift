@@ -25,6 +25,8 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     private var pendingCreatePullRequestAfterPush = false
     private var submissionObservation: NSKeyValueObservation?
     private var pendingMutationObservation: NSKeyValueObservation?
+    private let writer: IndexWriterCoordinator
+    private var writerObservation: UUID?
 
     /// A local filesystem seam keeps filename-target tests away from Trash.
     @objc var trashItemHandler: (URL) -> Bool = { url in
@@ -60,12 +62,17 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     @objc(initWithRepository:hostController:)
     init(repository: PBGitRepository, hostController: PBGitHistoryController) {
         self.repository = repository
+        writer = IndexWriterCoordinator.coordinator(for: repository)
         host = hostController
         fileListController = StagingFileListController(repository: repository, index: repository.index)
         diffPaneController = StagingDiffPaneController(repository: repository)
         repositoryUISettings = RepositoryUISettings(repository: repository)
         commitMessageView = PBCommitMessageView(frame: .zero)
         super.init(nibName: nil, bundle: nil)
+        writerObservation = writer.observe { [weak self] _ in
+            guard let self, writerObservation != nil else { return }
+            refreshOperationControls()
+        }
 
         let center = NotificationCenter.default
         let index = repository.index
@@ -86,6 +93,11 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc func closeView() {
+        if let writerObservation {
+            writer.removeObserver(writerObservation)
+        }
+        writerObservation = nil
+        submissionObservation = nil
         NotificationCenter.default.removeObserver(self)
         pendingMutationObservation = nil
         selectionCoalescer?.cancel()

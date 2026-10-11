@@ -333,8 +333,21 @@ final class GitXPerformanceTests: XCTestCase {
                 }
                 capture.append(duration)
             }
+            var admission: [TimeInterval] = []
+            for _ in 0 ..< 5 {
+                var accepted = 0
+                admission.append(elapsed {
+                    for _ in 0 ..< 10000 {
+                        if PBIndexWriterCommandTestHarness.allowsMutation(index: repository.index) {
+                            accepted += 1
+                        }
+                    }
+                })
+                XCTAssertEqual(accepted, 10000)
+            }
             attachMeasurements("Discard capture and revalidation among 2001 tracked paths", samples: capture)
-            print("REVIEW_BENCHMARK discard p95_ms=\(percentile95(capture) * 1000)")
+            attachMeasurements("10000 cached writer admission decisions", samples: admission)
+            print("REVIEW_BENCHMARK discard p95_ms=\(percentile95(capture) * 1000) admission10000_p95_ms=\(percentile95(admission) * 1000)")
         }
     #endif
 

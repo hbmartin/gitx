@@ -889,7 +889,7 @@ final class StagingDiffPaneController: NSObject {
                                            hasStagedChanges: file.hasStagedChanges, staged: false, parentTree: repository.index.parentTree,
                                            contextLines: 3, workingDirectoryURL: repository.workingDirectoryURL(), syntheticUntracked: false)
                 }
-                IndexRepositoryCommandRunner(repository: repository).writerCoordinator.schedule("test discard budget", work: { () -> NSError? in
+                IndexWriterCoordinator.coordinator(for: repository).schedule("test discard budget", work: { () -> NSError? in
                     do { try producer.captureDiscardForTesting(requests, timeout: timeout, cancelAfterChecks: cancelAfterChecks); return nil }
                     catch { return error as NSError }
                 }, completion: { error in DispatchQueue.main.async { completion(error) } })

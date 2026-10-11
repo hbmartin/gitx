@@ -40,11 +40,14 @@ final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexBinaryComma
     }
 
     let writerCoordinator: IndexWriterCoordinator
+    @objc var isWriterBusy: Bool {
+        writerCoordinator.isBusy
+    }
 
     @objc(initWithRepository:)
     init(repository: PBGitRepository) {
         self.repository = repository
-        writerCoordinator = IndexWriterRegistry.shared.coordinator(for: repository)
+        writerCoordinator = IndexWriterCoordinator.coordinator(for: repository)
         super.init()
     }
 
@@ -145,10 +148,15 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private let stateLock = NSLock()
     private let queue = DispatchQueue(label: "org.gitx.index-writer", qos: .userInitiated)
+    private let queueIdentity = DispatchSpecificKey<Bool>()
     private var ordinal: UInt = 0
     private var pending = 0
     private var depth = 0
     private var observers: [UUID: Observer] = [:]
+
+    init() {
+        queue.setSpecific(key: queueIdentity, value: true)
+    }
 
     var isBusy: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
@@ -190,16 +198,31 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
         stateLock.unlock()
     }
 
+    static func coordinator(for repository: PBGitRepository) -> IndexWriterCoordinator {
+        IndexWriterRegistry.shared.coordinator(for: repository)
+    }
+
     func perform<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
-        guard lock.try() else { throw Self.busyError() }
-        stateLock.lock()
-        let queuedOwner = depth == 0 && pending > 0
-        stateLock.unlock()
-        if queuedOwner {
+        let onWriterQueue = DispatchQueue.getSpecific(key: queueIdentity) == true
+        if lock.try() {
+            stateLock.lock()
+            let nested = depth > 0
+            let queuedOwner = pending > 0
+            stateLock.unlock()
+            if nested || ((Thread.isMainThread || onWriterQueue) && !queuedOwner) {
+                return try withOwnedState(operation, scheduled: false, body)
+            }
             lock.unlock()
-            throw Self.busyError()
         }
-        return try withOwnedState(operation, scheduled: false, body)
+        guard !Thread.isMainThread, !onWriterQueue else { throw Self.busyError() }
+        // Background commit work joins the same FIFO as scheduled staging.
+        // Its nonescaping body cannot outlive this call: wait completes before
+        // withoutActuallyEscaping returns, including when the body throws.
+        return try withoutActuallyEscaping(body) { work in
+            let transfer = SynchronousIndexWriterWork(work)
+            schedule(operation, work: { transfer.run() }, completion: { _ in transfer.signalCompletion() })
+            return try transfer.wait()
+        }
     }
 
     private func withOwnedState<Value>(_ operation: String, scheduled: Bool, _ body: () throws -> Value) rethrows -> Value {
@@ -270,14 +293,71 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
         }
     }
 
+#endif
+
+#if GITX_APP_TARGET && (DEBUG || GITX_PERFORMANCE_TEST_SUPPORT)
     // SwiftLint cannot follow XCTest's Objective-C bridge declarations.
     // swiftlint:disable unused_declaration
     @objc(PBIndexWriterCommandTestHarness)
     final nonisolated class IndexWriterCommandTestHarness: NSObject {
-        @objc(writesIndexWithArguments:)
-        static func writesIndex(arguments: [String]) -> Bool {
-            IndexWriterCoordinator.writesIndex(arguments)
+        @objc(allowsMutationForIndex:)
+        static func allowsMutation(index: PBGitIndex) -> Bool {
+            CommitSubmissionEligibility.allowsMutation(index)
         }
+
+        #if DEBUG
+            @objc(exerciseSynchronousResultLifetimeAndReturnError:)
+            static func exerciseSynchronousResultLifetime() throws -> NSNumber {
+                var source: NSObject? = NSObject()
+                weak let observed = source
+                let transfer = SynchronousIndexWriterWork { source! }
+                transfer.run()
+                transfer.signalCompletion()
+                source = nil
+                try autoreleasepool { _ = try transfer.wait() }
+                return withExtendedLifetime(transfer) { NSNumber(value: observed == nil) }
+            }
+
+            @objc(performFromCompletionForRepository:pendingWriter:completion:)
+            @MainActor static func performFromCompletion(repository: PBGitRepository, pendingWriter: Bool,
+                                                         completion: @escaping @MainActor @Sendable (NSError?) -> Void)
+            {
+                let writer = IndexWriterCoordinator.coordinator(for: repository)
+                let task = IndexCommandTask(repository.task(withArguments: ["update-index"]))
+                writer.schedule("test completion boundary", work: {
+                    if pendingWriter {
+                        writer.schedule("test pending completion writer") {}
+                    }
+                }, completion: { _ in
+                    let error: NSError?
+                    do {
+                        try writer.perform("test completion command") { try task.task.launch() }
+                        error = nil
+                    } catch let failure { error = failure as NSError }
+                    writer.schedule("test completion drained", work: {}, completion: { _ in
+                        DispatchQueue.main.async { completion(error) }
+                    })
+                })
+            }
+
+            @objc(holdWriterForRepository:duringOwnership:)
+            @MainActor static func holdWriter(repository: PBGitRepository, duringOwnership: @MainActor () -> Void) {
+                let entered = DispatchSemaphore(value: 0)
+                let release = DispatchSemaphore(value: 0)
+                IndexWriterCoordinator.coordinator(for: repository).schedule("test held writer") {
+                    entered.signal(); _ = release.wait(timeout: .now() + 10)
+                }
+                if entered.wait(timeout: .now() + 3) == .success {
+                    duringOwnership()
+                }
+                release.signal()
+            }
+
+            @objc(writesIndexWithArguments:)
+            static func writesIndex(arguments: [String]) -> Bool {
+                IndexWriterCoordinator.writesIndex(arguments)
+            }
+        #endif
     }
     // swiftlint:enable unused_declaration
 #endif
@@ -294,8 +374,16 @@ private final nonisolated class IndexWriterRegistry: @unchecked Sendable {
     static let shared = IndexWriterRegistry()
     private let lock = NSLock()
     private var coordinators: [String: WeakIndexWriter] = [:]
+    private var repositories: [ObjectIdentifier: WeakRepositoryIndexWriter] = [:]
 
     func coordinator(for repository: PBGitRepository) -> IndexWriterCoordinator {
+        let identity = ObjectIdentifier(repository)
+        lock.lock()
+        if let cached = repositories[identity], cached.repository === repository, let writer = cached.writer {
+            lock.unlock()
+            return writer
+        }
+        lock.unlock()
         let directory = repository.gitURL()?.standardizedFileURL.resolvingSymlinksInPath()
         let attributes = directory.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path) }
         let key: String
@@ -306,12 +394,15 @@ private final nonisolated class IndexWriterRegistry: @unchecked Sendable {
         }
         lock.lock()
         defer { lock.unlock() }
+        repositories = repositories.filter { $0.value.repository != nil && $0.value.writer != nil }
         if let existing = coordinators[key]?.value {
+            repositories[identity] = WeakRepositoryIndexWriter(repository: repository, writer: existing)
             return existing
         }
         coordinators = coordinators.filter { $0.value.value != nil }
         let coordinator = IndexWriterCoordinator()
         coordinators[key] = WeakIndexWriter(coordinator)
+        repositories[identity] = WeakRepositoryIndexWriter(repository: repository, writer: coordinator)
         return coordinator
     }
 }
@@ -321,5 +412,43 @@ private final nonisolated class IndexCommandTask: @unchecked Sendable {
     let task: PBTask
     init(_ task: PBTask) {
         self.task = task
+    }
+}
+
+private final nonisolated class WeakRepositoryIndexWriter {
+    weak var repository: PBGitRepository?
+    weak var writer: IndexWriterCoordinator?
+    init(repository: PBGitRepository, writer: IndexWriterCoordinator) {
+        self.repository = repository; self.writer = writer
+    }
+}
+
+// swift6-safety-justification: The body is transferred to one serial writer. The semaphore publishes its result and guarantees both body and result are released before the synchronous caller returns.
+private final nonisolated class SynchronousIndexWriterWork<Value>: @unchecked Sendable {
+    private var body: (() throws -> Value)?
+    private let completed = DispatchSemaphore(value: 0)
+    private var result: Result<Value, Error>?
+    init(_ body: @escaping () throws -> Value) {
+        self.body = body
+    }
+
+    func run() {
+        executeAndReleaseBody()
+    }
+
+    func signalCompletion() {
+        completed.signal()
+    }
+
+    private func executeAndReleaseBody() {
+        result = Result(catching: body!)
+        body = nil
+    }
+
+    func wait() throws -> Value {
+        completed.wait()
+        let delivered = result!
+        result = nil
+        return try delivered.get()
     }
 }

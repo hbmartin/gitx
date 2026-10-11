@@ -44,9 +44,6 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)requireWithTask:(PBTask *)task cancelled:(BOOL)cancelled error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(require(task:cancelled:));
 + (BOOL)clearCapturedMergeStateInDirectory:(NSString *)directory replacementMessage:(nullable NSString *)replacementMessage error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(clearCapturedMergeState(directory:replacementMessage:));
 @end
-@interface PBIndexWriterCommandTestHarness : NSObject
-+ (BOOL)writesIndexWithArguments:(NSArray<NSString *> *)arguments NS_SWIFT_NAME(writesIndex(arguments:));
-@end
 @interface PBIndexReferenceTransactionTestHarness : NSObject
 + (BOOL)exerciseCommitWriteWithAcceptedByteCount:(NSInteger)acceptedByteCount error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseCommitWrite(acceptedByteCount:));
 + (BOOL)exerciseTerminalReadRaceWithAcknowledgement:(BOOL)acknowledgement error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseTerminalReadRace(acknowledgement:));
@@ -58,6 +55,17 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 #endif
 
+#if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
+@interface PBIndexWriterCommandTestHarness : NSObject
++ (BOOL)allowsMutationForIndex:(PBGitIndex *)index NS_SWIFT_NAME(allowsMutation(index:));
+#if DEBUG
++ (nullable NSNumber *)exerciseSynchronousResultLifetimeAndReturnError:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseSynchronousResultLifetime());
++ (void)performFromCompletionForRepository:(PBGitRepository *)repository pendingWriter:(BOOL)pendingWriter completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(performFromCompletion(repository:pendingWriter:completion:));
++ (void)holdWriterForRepository:(PBGitRepository *)repository duringOwnership:(void (^)(void))duringOwnership NS_SWIFT_NAME(holdWriter(repository:duringOwnership:));
++ (BOOL)writesIndexWithArguments:(NSArray<NSString *> *)arguments NS_SWIFT_NAME(writesIndex(arguments:));
+#endif
+@end
+#endif
 
 @interface PBCommitRecoveryRepository : PBGitRepository
 @property (nonatomic, copy, nullable) NSString *recoveryPatchOutput;
@@ -1049,6 +1057,7 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 
 __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 @interface IndexRepositoryCommandRunner : NSObject<PBIndexBinaryCommandRunning>
+@property (nonatomic, readonly) BOOL isWriterBusy;
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 @end
 
