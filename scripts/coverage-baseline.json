@@ -166,7 +166,7 @@
     "Classes/git/IndexCommitService.swift": 0.9692,
     "Classes/git/IndexMutationCoordinator.swift": 1.0,
     "Classes/git/IndexMutationService.swift": 0.9795,
-    "Classes/git/IndexReferenceTransaction.swift": 0.9764,
+    "Classes/git/IndexReferenceTransaction.swift": 0.9774,
     "Classes/git/IndexRefreshCoordinator.swift": 1.0,
     "Classes/git/IndexSnapshot.swift": 0.9859,
     "Classes/git/PBGitBinary.m": 0.99,
