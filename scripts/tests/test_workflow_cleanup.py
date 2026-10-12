@@ -18,6 +18,26 @@ import workflow_session as session
 
 
 class CleanupTests(unittest.TestCase):
+    def test_inline_citations_retain_old_runs_during_actual_cleanup(self):
+        cited = self.run_directory('cited')
+        double = self.run_directory('double')
+        unrelated = self.run_directory('unrelated')
+        (self.root / 'REVIEW.md').write_text('Verified with `cited` and ``double``.\n')
+        self.git('add', 'REVIEW.md')
+        self.git('commit', '-qm', 'inline citation fixture')
+        cleanup.queue_commit(self.root)
+        report = cleanup.run_cleanup(self.root, self.valid_receipt())
+        self.assertEqual(report['status'], 'complete')
+        self.assertTrue(cited.exists())
+        self.assertTrue(double.exists())
+        self.assertFalse(unrelated.exists())
+
+    def test_legacy_active_steps_accept_missing_or_null_selection(self):
+        steps = [{'name': 'correctness'}, {'name': 'historical'}]
+        for payload in ({'steps': steps}, {'steps': steps, 'selectedChecks': None}):
+            self.assertEqual(session.active_workflow_steps(payload), steps)
+        self.assertEqual(session.active_workflow_steps({'steps': steps, 'selectedChecks': ['correctness']}), steps[:1])
+
     def test_binary_attachment_without_known_extension_does_not_block_cleanup(self):
         old = self.run_directory('old')
         attachment = self.root / 'docs/diagnostics/capture.data'
