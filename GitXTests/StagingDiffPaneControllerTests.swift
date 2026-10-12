@@ -2,7 +2,8 @@ import Darwin
 import XCTest
 
 @MainActor
-final class StagingDiffPaneControllerTests: XCTestCase {
+// swift6-safety-justification: XCTest owns the case lifetime; mutable fixture state and assertions remain on the main actor.
+final class StagingDiffPaneControllerTests: XCTestCase, @unchecked Sendable {
     // swift6-safety-justification: Immutable status fixtures and lock-protected command counts are shared only with the serial producer/writer queues.
     private final nonisolated class StatusRunner: NSObject, PBIndexRawOutputCommandRunning, @unchecked Sendable {
         let paths: [String]
@@ -13,13 +14,15 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         let diffOutput: String
         let captureEntered: XCTestExpectation?
         let captureRelease: DispatchSemaphore?
+        let captureTimeout: TimeInterval
         init(paths: [String], rawPaths: [Data]? = nil, status: String = "M", indexOutput: Data? = nil,
              indexedImageSize: String? = nil, diffOutput: String = "diff --git a/selected.txt b/selected.txt\n",
-             captureEntered: XCTestExpectation? = nil, captureRelease: DispatchSemaphore? = nil)
+             captureEntered: XCTestExpectation? = nil, captureRelease: DispatchSemaphore? = nil, captureTimeout: TimeInterval = 5)
         {
             self.paths = paths; self.rawPaths = rawPaths ?? paths.map { Data($0.utf8) }; self.status = status; self.indexOutput = indexOutput
             self.indexedImageSize = indexedImageSize; self.diffOutput = diffOutput
             self.captureEntered = captureEntered; self.captureRelease = captureRelease
+            self.captureTimeout = captureTimeout
             super.init()
         }
 
@@ -31,6 +34,17 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         private var treeObject = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
         private var staged = false
         private var capturedArguments: [[String]] = []
+        private var violations: [String] = []
+        private var gateOutcomes: [Bool] = []
+
+        var diagnostics: (violations: [String], gateOutcomes: [Bool]) {
+            lock.lock(); defer { lock.unlock() }
+            return (violations, gateOutcomes)
+        }
+
+        func releaseGate() {
+            captureRelease?.signal()
+        }
 
         func changeIndex() {
             lock.lock(); indexObject = String(repeating: "b", count: 40); lock.unlock()
@@ -55,12 +69,19 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         }
 
         func rawOutput(withArguments arguments: [String], environment: [String: Any]?) throws -> Data {
-            XCTAssertEqual(environment?["GIT_OPTIONAL_LOCKS"] as? String, "0")
-            lock.lock(); statusCommands += 1; capturedArguments.append(arguments); let object = indexObject; let hasStaged = staged
+            lock.lock()
+            if environment?["GIT_OPTIONAL_LOCKS"] as? String != "0" {
+                violations.append("Read commands must disable optional Git locks")
+            }
+            statusCommands += 1; capturedArguments.append(arguments); let object = indexObject; let hasStaged = staged
             let firstCapture = statusCommands == 1; lock.unlock()
             if firstCapture, let captureRelease {
                 captureEntered?.fulfill()
-                XCTAssertEqual(captureRelease.wait(timeout: .now() + 5), .success)
+                let released = captureRelease.wait(timeout: .now() + captureTimeout) == .success
+                lock.lock(); gateOutcomes.append(released); lock.unlock()
+                if !released {
+                    throw NSError(domain: "GitXStatusRunner", code: 1, userInfo: [NSLocalizedDescriptionKey: "Test capture gate timed out"])
+                }
             }
             let selected: [Data]
             if let separator = arguments.firstIndex(of: "--") {
@@ -91,13 +112,17 @@ final class StagingDiffPaneControllerTests: XCTestCase {
 
         func output(withArguments arguments: [String], input _: String?, environment _: [String: Any]?) throws -> String {
             lock.lock(); defer { lock.unlock() }
-            XCTAssertFalse(arguments.contains("-z"), "Status must use the runner's byte output")
+            if arguments.contains("-z") {
+                violations.append("Status must use the runner's byte output")
+            }
             if arguments.first == "rev-parse" {
                 treeCommands += 1
                 return treeObject + "\n"
             }
             if arguments.first == "cat-file", let indexedImageSize {
-                XCTAssertEqual(arguments, ["cat-file", "-s", treeObject])
+                if arguments != ["cat-file", "-s", treeObject] {
+                    violations.append("Indexed image size must query the captured tree object")
+                }
                 return indexedImageSize
             }
             if arguments == ["--literal-pathspecs", "--version"] {
@@ -108,9 +133,80 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         }
 
         func data(withArguments _: [String], completion: @escaping (Data?, Error?) -> Void) {
-            XCTFail("Revalidation must use the synchronous command boundary")
+            lock.lock(); violations.append("Revalidation must use the synchronous command boundary"); lock.unlock()
             completion(nil, nil)
         }
+    }
+
+    private var fixtureDirectories: [URL] = []
+    private var trackedRepositories: [PBGitRepository] = []
+    private var trackedPanes: [(repository: PBGitRepository, pane: PBStagingDiffPaneController)] = []
+    private var trackedRunners: [(runner: StatusRunner, expectsGateTimeout: Bool)] = []
+    private var retainFixtures = false
+
+    private func makeRunner(paths: [String], rawPaths: [Data]? = nil, status: String = "M", indexOutput: Data? = nil,
+                            indexedImageSize: String? = nil, diffOutput: String = "diff --git a/selected.txt b/selected.txt\n",
+                            captureEntered: XCTestExpectation? = nil, captureRelease: DispatchSemaphore? = nil,
+                            captureTimeout: TimeInterval = 5, expectsGateTimeout: Bool = false) -> StatusRunner
+    {
+        let runner = StatusRunner(paths: paths, rawPaths: rawPaths, status: status, indexOutput: indexOutput,
+                                  indexedImageSize: indexedImageSize, diffOutput: diffOutput,
+                                  captureEntered: captureEntered, captureRelease: captureRelease, captureTimeout: captureTimeout)
+        trackedRunners.append((runner, expectsGateTimeout))
+        return runner
+    }
+
+    private func makePane(repository: PBGitRepository, diffRunner: (any PBIndexCommandRunning)? = nil) -> PBStagingDiffPaneController {
+        let pane = PBStagingDiffPaneController(repository: repository, diffRunner: diffRunner)
+        trackedRepositories.append(repository)
+        trackedPanes.append((repository, pane))
+        return pane
+    }
+
+    override nonisolated func tearDown() async throws {
+        await cleanupResources()
+        try await super.tearDown()
+    }
+
+    private func cleanupResources() async {
+        guard await drainResources(timeout: 10) else {
+            retainFixtures = true
+            XCTFail("Staging queues did not drain; retaining fixtures: \(fixtureDirectories.map(\.path))")
+            return
+        }
+    }
+
+    /// Returns false without deleting fixtures when the bounded backstop expires.
+    private func drainResources(timeout: TimeInterval) async -> Bool {
+        trackedPanes.forEach { $0.pane.close() }
+        trackedRunners.forEach { $0.runner.releaseGate() }
+        #if DEBUG
+            var seen: Set<ObjectIdentifier> = []
+            for repository in trackedRepositories where seen.insert(ObjectIdentifier(repository)).inserted {
+                let drained = XCTestExpectation(description: "staging writer and diff queues drained")
+                let panes = trackedPanes.filter { $0.repository === repository }.map(\.pane)
+                PBStagingDiffRevalidationTestHarness.closeAndDrain(repository: repository, panes: panes) { drained.fulfill() }
+                guard await XCTWaiter.fulfillment(of: [drained], timeout: timeout) == .completed else { return false }
+            }
+        #endif
+        for (runner, expectsTimeout) in trackedRunners {
+            let diagnostics = runner.diagnostics
+            XCTAssertTrue(diagnostics.violations.isEmpty, diagnostics.violations.joined(separator: "; "))
+            if expectsTimeout {
+                XCTAssertEqual(diagnostics.gateOutcomes, [false])
+            } else {
+                XCTAssertTrue(diagnostics.gateOutcomes.allSatisfy { $0 }, "Capture gate timed out")
+            }
+        }
+        trackedRunners = []; trackedPanes = []; trackedRepositories = []
+        if !retainFixtures {
+            for directory in fixtureDirectories {
+                do { try FileManager.default.removeItem(at: directory) }
+                catch { XCTFail("Fixture cleanup failed at \(directory.path): \(error)") }
+            }
+        }
+        fixtureDirectories = []
+        return true
     }
 
     #if DEBUG
@@ -255,11 +351,85 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         private func snapshotFixture(_ body: (URL, LifetimeRepository, PBChangedFile) async throws -> Void) async throws {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            defer { try? FileManager.default.removeItem(at: directory) }
+            fixtureDirectories.append(directory)
             try Data("contents\n".utf8).write(to: directory.appendingPathComponent("selected.txt"))
             let file = PBChangedFile(path: "selected.txt")
             file.status = .MODIFIED; file.hasUnstagedChanges = true
-            try await body(directory, LifetimeRepository(directory: directory, onDeinit: {}), file)
+            let repository = LifetimeRepository(directory: directory, onDeinit: {})
+            trackedRepositories.append(repository)
+            do {
+                try await body(directory, repository, file)
+            } catch {
+                await cleanupResources()
+                throw error
+            }
+            await cleanupResources()
+        }
+
+        func testCloseCancelsPendingCoalescedRendering() async {
+            let repository = LifetimeRepository(onDeinit: {})
+            let runner = makeRunner(paths: ["selected.txt"])
+            let pane = makePane(repository: repository, diffRunner: runner)
+            let file = PBChangedFile(path: "selected.txt")
+            file.status = .MODIFIED; file.hasUnstagedChanges = true
+            pane.renderRequests([PBStagingDiffRequest(file: file, staged: false)])
+            pane.close()
+            let drained = await drainResources(timeout: 2)
+            XCTAssertTrue(drained)
+            XCTAssertEqual(runner.counts, [0, 0, 0], "Closing before the coalesced render runs must prevent production")
+        }
+
+        func testCaptureGateTimeoutIsReportedAndAssertedOnMain() async throws {
+            try await snapshotFixture { _, repository, file in
+                let runner = makeRunner(paths: [file.path], captureRelease: DispatchSemaphore(value: 0),
+                                        captureTimeout: 0, expectsGateTimeout: true)
+                do {
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: [file])
+                    XCTFail("A timed-out gate must report an error")
+                } catch {
+                    XCTAssertTrue(Thread.isMainThread)
+                    XCTAssertTrue(error.localizedDescription.contains("gate timed out"))
+                    XCTAssertEqual(runner.diagnostics.gateOutcomes, [false])
+                }
+            }
+        }
+
+        func testFixtureCleanupDrainsRevalidationEnqueuedByEarlierMainCallbacks() async throws {
+            var completed = false
+            try await snapshotFixture { _, repository, file in
+                let entered = expectation(description: "capture gate entered")
+                let runner = makeRunner(paths: [file.path], captureEntered: entered, captureRelease: DispatchSemaphore(value: 0))
+                PBStagingDiffRevalidationTestHarness.startValidation(repository: repository, runner: runner, files: [file]) { error in
+                    XCTAssertNil(error)
+                    completed = true
+                }
+                await fulfillment(of: [entered], timeout: 2)
+                // Shared cleanup releases capture and waits for the main
+                // callback to enqueue and finish its subsequent validation.
+            }
+            XCTAssertTrue(completed)
+        }
+
+        func testBoundedDrainRetainsFixtureUntilQueuesFinish() async throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            fixtureDirectories.append(directory)
+            let entered = expectation(description: "diff producer blocked")
+            let runner = BlockingIndexCommandRunner(producerStarted: entered,
+                                                    producerFinished: XCTestExpectation(description: "producer finished"),
+                                                    parentResolved: XCTestExpectation(description: "parent resolved"))
+            let pane = makePane(repository: LifetimeRepository(directory: directory, onDeinit: {}), diffRunner: runner)
+            let file = PBChangedFile(path: "queued.txt")
+            file.status = .MODIFIED; file.hasUnstagedChanges = true
+            pane.renderRequests([PBStagingDiffRequest(file: file, staged: false)])
+            await fulfillment(of: [entered], timeout: 2)
+            let blocked = await drainResources(timeout: 0)
+            XCTAssertFalse(blocked)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.path))
+            runner.releaseProduction()
+            let drained = await drainResources(timeout: 2)
+            XCTAssertTrue(drained)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
         }
 
         func testDiscardCaptureFinishesWithStableSelectionAndCancelsOnUserDeselection() async throws {
@@ -268,8 +438,8 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                     let entered = expectation(description: "capture entered")
                     let completed = expectation(description: "capture completed once")
                     let release = DispatchSemaphore(value: 0)
-                    let runner = StatusRunner(paths: [file.path], captureEntered: entered, captureRelease: release)
-                    let pane = PBStagingDiffPaneController(repository: repository, diffRunner: runner)
+                    let runner = makeRunner(paths: [file.path], captureEntered: entered, captureRelease: release)
+                    let pane = makePane(repository: repository, diffRunner: runner)
                     let requests = [PBStagingDiffRequest(file: file, staged: false)]
                     PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: requests)
                     PBStagingDiffRevalidationTestHarness.prepare(pane: pane, files: [file]) { error in
@@ -288,53 +458,93 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             }
         }
 
-        func testDiscardCaptureIgnoresIntermediatePublicationAndComparesItsFinalSelection() async throws {
-            for transition in 0 ..< 6 {
-                try await snapshotFixture { _, repository, file in
-                    let entered = expectation(description: "capture entered")
-                    let completed = expectation(description: "capture completed once")
-                    let settled = expectation(description: "coalesced render settled")
-                    let release = DispatchSemaphore(value: 0)
-                    let runner = StatusRunner(paths: [file.path], captureEntered: entered, captureRelease: release)
-                    let pane = PBStagingDiffPaneController(repository: repository, diffRunner: runner)
-                    let selected = [PBStagingDiffRequest(file: file, staged: false)]
-                    PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: selected)
-                    PBStagingDiffRevalidationTestHarness.prepare(pane: pane, files: [file]) { error in
-                        if transition == 0 {
-                            XCTAssertNil(error)
-                        } else {
-                            XCTAssertTrue(error?.localizedDescription.contains("cancelled") == true)
+        func testDiscardCaptureUsesFinalListCallbacksAcrossRefreshAndUserChanges() async throws {
+            for layout in [PBStagingListLayout.splitTables, .sectionedList] {
+                for transition in 0 ..< 7 {
+                    try await snapshotFixture { _, repository, file in
+                        let entered = expectation(description: "capture entered")
+                        let completed = expectation(description: "capture completed once")
+                        let release = DispatchSemaphore(value: 0)
+                        let runner = makeRunner(paths: [file.path], captureEntered: entered, captureRelease: release)
+                        let pane = makePane(repository: repository, diffRunner: runner)
+                        let source = try XCTUnwrap(repository.index.value(forKey: "files") as? NSMutableArray)
+                        source.setArray([file])
+                        let list = PBStagingFileListController(repository: repository, index: repository.index)
+                        defer { list.close() }
+                        list.setListLayout(layout)
+                        list.onSelectionChange = {
+                            PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: list.currentDiffRequests)
                         }
-                        completed.fulfill()
+                        list.unstagedFilesController.setSelectedObjects([file])
+                        PBStagingDiffRevalidationTestHarness.prepare(pane: pane, files: [file]) { error in
+                            if transition == 0 {
+                                XCTAssertNil(error)
+                            } else {
+                                XCTAssertTrue(error?.localizedDescription.contains("cancelled") == true)
+                            }
+                            completed.fulfill()
+                        }
+                        await fulfillment(of: [entered], timeout: 2)
+                        switch transition {
+                        case 0:
+                            let replacement = PBChangedFile(path: file.path, rawPath: file.rawPath)
+                            replacement.status = .MODIFIED; replacement.hasUnstagedChanges = true
+                            source.setArray([replacement])
+                            list.rearrange()
+                        case 1:
+                            list.unstagedFilesController.setSelectedObjects([])
+                        case 2:
+                            let staged = PBChangedFile(path: file.path)
+                            staged.status = .MODIFIED; staged.hasStagedChanges = true
+                            source.setArray([staged])
+                            list.rearrange()
+                            list.stagedFilesController.setSelectedObjects([staged])
+                        case 3:
+                            let changed = PBChangedFile(path: file.path, rawPath: Data([0xFF]))
+                            changed.status = .MODIFIED; changed.hasUnstagedChanges = true
+                            source.setArray([changed])
+                            list.rearrange()
+                            list.unstagedFilesController.setSelectedObjects([changed])
+                        case 4: pane.close()
+                        case 5: pane.showStateMessage("Repository state changed")
+                        default:
+                            list.unstagedFilesController.setSelectedObjects([])
+                            list.unstagedFilesController.setSelectedObjects([file])
+                        }
+                        release.signal()
+                        await fulfillment(of: [completed], timeout: 3)
                     }
-                    await fulfillment(of: [entered], timeout: 2)
-                    switch transition {
-                    case 0, 1, 2:
-                        repository.index.setValue(true, forKey: "publishingSnapshot")
-                        PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: [])
-                        let final = transition == 0 ? selected : transition == 1 ? [] : [PBStagingDiffRequest(file: file, staged: true)]
-                        PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: final)
-                        repository.index.setValue(false, forKey: "publishingSnapshot")
-                        pane.renderRequests(final)
-                    case 3: pane.close()
-                    case 4: pane.showStateMessage("Repository state changed")
-                    default:
-                        PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: [])
-                        PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: selected)
-                    }
-                    DispatchQueue.main.async { settled.fulfill() }
-                    await fulfillment(of: [settled], timeout: 2)
-                    release.signal()
-                    await fulfillment(of: [completed], timeout: 3)
-                    pane.close()
                 }
+            }
+        }
+
+        func testDiscardCaptureCancelsWhenSelectionOrderChanges() async throws {
+            try await snapshotFixture { _, repository, file in
+                let entered = expectation(description: "ordered capture entered")
+                let completed = expectation(description: "ordered capture cancelled")
+                let release = DispatchSemaphore(value: 0)
+                let runner = makeRunner(paths: [file.path], captureEntered: entered, captureRelease: release)
+                runner.changeStaging()
+                file.hasStagedChanges = true
+                let pane = makePane(repository: repository, diffRunner: runner)
+                let staged = PBStagingDiffRequest(file: file, staged: true)
+                let unstaged = PBStagingDiffRequest(file: file, staged: false)
+                PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: [staged, unstaged])
+                PBStagingDiffRevalidationTestHarness.prepare(pane: pane, files: [file]) { error in
+                    XCTAssertTrue(error?.localizedDescription.contains("cancelled") == true)
+                    completed.fulfill()
+                }
+                await fulfillment(of: [entered], timeout: 2)
+                PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: [unstaged, staged])
+                release.signal()
+                await fulfillment(of: [completed], timeout: 3)
             }
         }
 
         func testDiscardSnapshotRejectsSameSizedContentPermissionsIndexTreeAndStagingChanges() async throws {
             for change in 0 ..< 5 {
                 try await snapshotFixture { directory, repository, file in
-                    let runner = StatusRunner(paths: [file.path])
+                    let runner = makeRunner(paths: [file.path])
                     let url = directory.appendingPathComponent(file.path)
                     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
                     let date = try XCTUnwrap(attributes[.modificationDate] as? Date)
@@ -361,7 +571,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
 
         func testDiscardSnapshotAcceptsBinaryContentsAndRejectsAChangedSymlinkTarget() async throws {
             try await snapshotFixture { directory, repository, file in
-                let runner = StatusRunner(paths: [file.path])
+                let runner = makeRunner(paths: [file.path])
                 let url = directory.appendingPathComponent(file.path)
                 try Data([0, 255, 1, 0]).write(to: url)
                 try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: [file])
@@ -382,7 +592,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
 
         func testDiscardSnapshotAcceptsDeletionButRejectsAReappearingFile() async throws {
             try await snapshotFixture { directory, repository, file in
-                let runner = StatusRunner(paths: [file.path], status: "D")
+                let runner = makeRunner(paths: [file.path], status: "D")
                 let url = directory.appendingPathComponent(file.path)
                 try FileManager.default.removeItem(at: url)
                 file.status = .DELETED
@@ -401,7 +611,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             for record in [Data("malformed\0".utf8), Data("invalid metadata\tselected.txt\0".utf8), Data()] {
                 try await snapshotFixture { _, repository, file in
                     do {
-                        try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path], indexOutput: record), files: [file])
+                        try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: makeRunner(paths: [file.path], indexOutput: record), files: [file])
                         XCTFail("Malformed or missing index entry was authorized")
                     } catch { XCTAssertEqual((error as NSError).code, 8) }
                 }
@@ -411,7 +621,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                 try FileManager.default.removeItem(at: url)
                 XCTAssertEqual(mkfifo(url.path, 0o600), 0)
                 do {
-                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path]), files: [file])
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: makeRunner(paths: [file.path]), files: [file])
                     XCTFail("A FIFO cannot authorize a tracked-file discard")
                 } catch { XCTAssertEqual((error as NSError).code, 8) }
             }
@@ -419,7 +629,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
 
         func testDiscardSnapshotSkipsUntrackedAndStagedOnlyRowsAndRequiresAWorkingDirectory() async throws {
             let repository = LifetimeRepository(onDeinit: {})
-            let runner = StatusRunner(paths: ["selected.txt"])
+            let runner = makeRunner(paths: ["selected.txt"])
             let file = PBChangedFile(path: "selected.txt")
             file.status = .MODIFIED; file.hasStagedChanges = true
             try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: [file])
@@ -442,7 +652,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                     let file = PBChangedFile(path: blockerPath + "/deleted.txt")
                     file.status = .DELETED; file.hasUnstagedChanges = true
                     do {
-                        try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path], status: "D"), files: [file])
+                        try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: makeRunner(paths: [file.path], status: "D"), files: [file])
                         XCTFail("Discard cannot replace an uncaptured ancestor")
                     } catch {
                         XCTAssertEqual((error as NSError).code, 8)
@@ -463,7 +673,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             try await snapshotFixture { _, repository, file in
                 var checkedEligibility = false
                 do {
-                    try await PBStagingDiffRevalidationTestHarness.prepareCloseAndValidate(repository: repository, runner: StatusRunner(paths: [file.path]), files: [file], eligibility: {
+                    try await PBStagingDiffRevalidationTestHarness.prepareCloseAndValidate(repository: repository, runner: makeRunner(paths: [file.path]), files: [file], eligibility: {
                         checkedEligibility = true
                         return true
                     })
@@ -480,7 +690,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             try await snapshotFixture { _, repository, file in
                 for (timeout, checks) in [(0.0, -1), (30.0, 0), (30.0, 9)] {
                     do {
-                        try await PBStagingDiffRevalidationTestHarness.capture(repository: repository, runner: StatusRunner(paths: [file.path]), files: [file], timeout: timeout, cancelAfterChecks: checks)
+                        try await PBStagingDiffRevalidationTestHarness.capture(repository: repository, runner: makeRunner(paths: [file.path]), files: [file], timeout: timeout, cancelAfterChecks: checks)
                         XCTFail("Expired or cancelled discard capture must fail")
                     } catch {
                         XCTAssertEqual((error as NSError).code, 8)
@@ -501,7 +711,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                 let file = PBChangedFile(path: path); file.status = .MODIFIED; file.hasUnstagedChanges = true
                 return file
             }
-            let runner = StatusRunner(paths: paths)
+            let runner = makeRunner(paths: paths)
             try await PBStagingDiffRevalidationTestHarness.capture(repository: repository, runner: runner, files: files, timeout: 30, cancelAfterChecks: -1)
             let calls = runner.rawArguments
             XCTAssertEqual(calls.count, 6, "Three queries each use two bounded batches")
@@ -516,7 +726,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             }
             let rawPath = Data([0xFF]) + Data("-deleted.txt".utf8)
             let rawFile = PBChangedFile(path: "unrepresentable-deleted.txt", rawPath: rawPath); rawFile.status = .DELETED; rawFile.hasUnstagedChanges = true
-            let rawRunner = StatusRunner(paths: [], rawPaths: [rawPath], status: "D")
+            let rawRunner = makeRunner(paths: [], rawPaths: [rawPath], status: "D")
             try await PBStagingDiffRevalidationTestHarness.capture(repository: repository, runner: rawRunner, files: [rawFile], timeout: 30, cancelAfterChecks: -1)
             XCTAssertEqual(rawRunner.rawArguments.count, 3)
             XCTAssertTrue(rawRunner.rawArguments.allSatisfy { !$0.contains("--") }, "Non-UTF-8 names retain whole-index byte output")
@@ -526,7 +736,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             try await snapshotFixture { _, repository, file in
                 let record = Data("160000 \(String(repeating: "a", count: 40)) 0\tselected.txt\0".utf8)
                 do {
-                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path], indexOutput: record), files: [file])
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: makeRunner(paths: [file.path], indexOutput: record), files: [file])
                     XCTFail("Submodule discard requires a separate operation")
                 } catch { XCTAssertTrue(error.localizedDescription.contains("submodule")) }
             }
@@ -536,7 +746,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             try await snapshotFixture { directory, _, file in
                 let repository = LifetimeRepository(directory: directory.appendingPathComponent(file.path), onDeinit: {})
                 do {
-                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path]), files: [file])
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: makeRunner(paths: [file.path]), files: [file])
                     XCTFail("A regular file cannot be the discard working directory")
                 } catch {
                     XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain)
@@ -554,7 +764,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                 try Data("contents\n".utf8).write(to: directory.appendingPathComponent(path))
             }
             let repository = LifetimeRepository(directory: directory, onDeinit: {})
-            let runner = StatusRunner(paths: paths)
+            let runner = makeRunner(paths: paths)
             let files = (0 ..< 300).map { index in
                 let file = PBChangedFile(path: "selected-\(index).txt")
                 file.status = .MODIFIED
@@ -659,7 +869,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
 
     func testUntrackedDiffWithoutAWorkingDirectoryShowsTheFailure() {
         let repository = PBGitRepository()
-        let pane = PBStagingDiffPaneController(repository: repository)
+        let pane = makePane(repository: repository)
         let file = PBChangedFile(path: "untracked.txt")
         file.status = .NEW
         file.hasUnstagedChanges = true
@@ -685,12 +895,12 @@ final class StagingDiffPaneControllerTests: XCTestCase {
     func testUnsupportedUntrackedObjectShowsAReadOnlyFailureWithoutReadingIt() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        fixtureDirectories.append(directory)
         let path = "untracked-pipe.txt"
         let fifo = directory.appendingPathComponent(path)
         XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
         let repository = LifetimeRepository(directory: directory, onDeinit: {})
-        let pane = PBStagingDiffPaneController(repository: repository, diffRunner: StatusRunner(paths: [path]))
+        let pane = makePane(repository: repository, diffRunner: makeRunner(paths: [path]))
         defer { pane.renderRequests([]) }
         let file = PBChangedFile(path: path)
         file.status = .NEW; file.hasUnstagedChanges = true
@@ -717,8 +927,8 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         """
         for size in [String(64 * 1024 * 1024 + 1), "invalid size"] {
             let repository = LifetimeRepository(onDeinit: {})
-            let runner = StatusRunner(paths: [path], indexedImageSize: size, diffOutput: diff)
-            let pane = PBStagingDiffPaneController(repository: repository, diffRunner: runner)
+            let runner = makeRunner(paths: [path], indexedImageSize: size, diffOutput: diff)
+            let pane = makePane(repository: repository, diffRunner: runner)
             defer { pane.renderRequests([]) }
             let file = PBChangedFile(path: path)
             file.status = .MODIFIED; file.hasStagedChanges = true

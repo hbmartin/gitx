@@ -20,6 +20,44 @@ final class GitXPerformanceTests: XCTestCase {
         return ProcessInfo.processInfo.systemUptime - start
     }
 
+    #if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
+        func testSelectionIdentityConstructionCost() {
+            struct LegacyEntry: Equatable {
+                let staged: Bool
+                let rawPath: Data
+            }
+            let requests = (0 ..< 64).map { number in
+                let bytes = Data(("path-\(number)-" + String(repeating: "x", count: 4096)).utf8)
+                return PBStagingDiffRequest(file: PBChangedFile(path: "diagnostic-\(number)", rawPath: bytes), staged: number % 2 == 0)
+            }
+            /// Retain the previous copying strategy only as a diagnostic
+            /// benchmark reference. Correctness tests have no timing threshold.
+            func legacyIdentity() -> [LegacyEntry] {
+                requests.map { LegacyEntry(staged: $0.staged, rawPath: $0.file.rawPath.withUnsafeBytes { Data($0) }) }
+            }
+            var legacy: [TimeInterval] = []
+            var current: [TimeInterval] = []
+            var identitiesEqual = true
+            for _ in 0 ..< 5 {
+                legacy.append(elapsed {
+                    for _ in 0 ..< 1000 {
+                        let first = legacyIdentity()
+                        let second = legacyIdentity()
+                        identitiesEqual = identitiesEqual && first == second
+                    }
+                })
+                current.append(elapsed {
+                    for _ in 0 ..< 1000 {
+                        identitiesEqual = identitiesEqual && PBStagingDiffRevalidationTestHarness.selectionIdentity(requests, equals: requests)
+                    }
+                })
+            }
+            XCTAssertTrue(identitiesEqual)
+            attachMeasurements("Selection identity: previous copying (64 paths, 1000 comparisons)", samples: legacy)
+            attachMeasurements("Selection identity: immutable values (64 paths, 1000 comparisons)", samples: current)
+        }
+    #endif
+
     private func elapsedThrowing(_ work: () throws -> Void) rethrows -> TimeInterval {
         let start = ProcessInfo.processInfo.systemUptime
         try work()

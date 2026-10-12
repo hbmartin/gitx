@@ -25,7 +25,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         for layout in [PBStagingListLayout.splitTables, .sectionedList] {
             list.setListLayout(layout)
             let files = try XCTUnwrap(list.unstagedFilesController.arrangedObjects as? [PBChangedFile])
-            list.unstagedFilesController.setSelectedObjects([try XCTUnwrap(files.first { $0.rawPath == path })])
+            try list.unstagedFilesController.setSelectedObjects([XCTUnwrap(files.first { $0.rawPath == path })])
             for sort in [PBStagingFileSortOrder.path, .status] {
                 list.viewModel.sortOrder = sort
                 list.viewModel.searchText = "selection"
@@ -39,6 +39,76 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             XCTAssertTrue(list.selectedFiles(forStagedContext: false).isEmpty)
             list.viewModel.searchText = ""
             list.applyFilterAndSort()
+        }
+    }
+
+    func testStagingListCallbacksPublishCompleteSelectionsInBothLayouts() throws {
+        try fixture.write("indexed\n", to: "callback-staged.txt")
+        try fixture.git(["add", "callback-staged.txt"])
+        try fixture.write("working\n", to: "callback-unstaged.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        struct Entry: Equatable {
+            let path: Data
+            let staged: Bool
+        }
+        func identity() -> [Entry] {
+            list.currentDiffRequests.map { Entry(path: $0.file.rawPath, staged: $0.staged) }
+        }
+        let original = list.onSelectionChange
+        var callbacks: [[Entry]] = []
+        list.onSelectionChange = {
+            callbacks.append(identity())
+            original?()
+        }
+        defer { list.onSelectionChange = original }
+        let unstaged = Entry(path: Data("callback-unstaged.txt".utf8), staged: false)
+        let staged = Entry(path: Data("callback-staged.txt".utf8), staged: true)
+        for layout in [PBStagingListLayout.splitTables, .sectionedList] {
+            list.setListLayout(layout)
+            list.stagedFilesController.setSelectedObjects([])
+            let file = try XCTUnwrap((list.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first { $0.rawPath == unstaged.path })
+            list.unstagedFilesController.setSelectedObjects([file])
+            for sort in [PBStagingFileSortOrder.path, .status] {
+                list.viewModel.sortOrder = sort
+                list.viewModel.searchText = "callback"
+                callbacks = []
+                list.applyFilterAndSort()
+                XCTAssertEqual(callbacks, [[unstaged]], "One complete selection after presentation replacement")
+                callbacks = []
+                waitForIndexUpdate { repository.index.refresh() }
+                XCTAssertFalse(callbacks.isEmpty)
+                XCTAssertTrue(callbacks.allSatisfy { $0 == [unstaged] }, "Refresh must not expose transient deselection")
+            }
+            callbacks = []
+            list.viewModel.searchText = "callback-staged"
+            list.applyFilterAndSort()
+            XCTAssertEqual(callbacks, [[]])
+            list.viewModel.searchText = ""
+            list.applyFilterAndSort()
+            let restored = try XCTUnwrap((list.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first { $0.rawPath == unstaged.path })
+            list.unstagedFilesController.setSelectedObjects([restored])
+            callbacks = []
+            if layout == .sectionedList {
+                let table = list.sectionedTable
+                let rows = (0 ..< table.numberOfRows).filter { row in
+                    let path = (table.view(atColumn: 0, row: row, makeIfNecessary: true) as? PBStagingFileCellView)?.pathField.stringValue
+                    return path == "callback-staged.txt" || path == "callback-unstaged.txt"
+                }
+                XCTAssertEqual(rows.count, 2)
+                table.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+                XCTAssertEqual(callbacks, [[staged, unstaged]], "Both section controllers are synchronized before notification")
+                try attachScreenshot(of: pane.view, named: "Staging-Complete-Selection-Sectioned")
+                callbacks = []
+                list.setListLayout(.splitTables)
+                XCTAssertEqual(callbacks, [[staged]], "Layout switch enforces exclusivity before notification")
+            } else {
+                let file = try XCTUnwrap((list.stagedFilesController.arrangedObjects as? [PBChangedFile])?.first { $0.rawPath == staged.path })
+                list.stagedFilesController.setSelectedObjects([file])
+                XCTAssertFalse(callbacks.isEmpty)
+                XCTAssertTrue(callbacks.allSatisfy { $0 == [staged] }, "Split-table callbacks cannot expose both sides")
+            }
+            try attachScreenshot(of: pane.view, named: "Staging-Complete-Selection-\(layout == .splitTables ? "Split" : "Sectioned")")
         }
     }
 

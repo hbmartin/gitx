@@ -216,6 +216,15 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
         return generation
     }
 
+    #if DEBUG
+        /// A FIFO marker also waits for deliveries already enqueued on main.
+        func drainForTesting(completion: @escaping @MainActor @Sendable () -> Void) {
+            queue.async {
+                DispatchQueue.main.async { completion() }
+            }
+        }
+    #endif
+
     private func load(
         _ requests: [StagingDiffLoadRequest],
         generation: UInt

@@ -97,30 +97,10 @@ nonisolated struct StagingSelectionIdentity: Equatable, Sendable {
 
     let entries: [Entry]
     init(_ requests: [StagingDiffRequest] = []) {
+        // PBChangedFile owns copied, immutable NSData; Data can retain those bytes.
         entries = requests.map { request in
-            Entry(staged: request.staged, rawPath: request.file.rawPath.withUnsafeBytes { Data($0) })
+            Entry(staged: request.staged, rawPath: request.file.rawPath)
         }
-    }
-}
-
-/// Publication callbacks may expose intermediate selections. Only the final
-/// selection, or a user change outside publication, advances discard authority.
-nonisolated struct StagingSelectionAuthority {
-    struct Change {
-        let selectionChanged: Bool
-        let discardChanged: Bool
-    }
-
-    private var published = StagingSelectionIdentity()
-    private var stable = StagingSelectionIdentity()
-
-    mutating func update(_ identity: StagingSelectionIdentity, publishing: Bool) -> Change {
-        let change = Change(selectionChanged: published != identity, discardChanged: !publishing && stable != identity)
-        published = identity
-        if !publishing {
-            stable = identity
-        }
-        return change
     }
 }
 

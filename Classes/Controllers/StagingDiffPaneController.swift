@@ -622,7 +622,7 @@ final class StagingDiffPaneController: NSObject {
     private var displayedAmend = false
     private let producer: IndexMutationStagingDiffProducer
     private var currentRequests: [StagingDiffRequest] = []
-    private var selectionAuthority = StagingSelectionAuthority()
+    private var selectionIdentity = StagingSelectionIdentity()
     private var displayedRequests: [StagingDiffLoadRequest] = []
     private let delegateAdapter = StagingDiffPaneDelegateAdapter()
     private let loadCoordinator: StagingDiffLoadCoordinator
@@ -684,7 +684,6 @@ final class StagingDiffPaneController: NSObject {
 
     private func produceCurrentRequests() {
         let requests = currentRequests
-        _ = updateSelectionAuthority(requests)
         let index = repository.index
         let parentTree = index.parentTree
         let workingDirectoryURL = repository.workingDirectoryURL()
@@ -721,29 +720,29 @@ final class StagingDiffPaneController: NSObject {
     }
 
     @discardableResult
-    private func updateSelectionAuthority(_ requests: [StagingDiffRequest]) -> StagingSelectionAuthority.Change {
-        let publishing = repository.index.publishingSnapshot
-        let change = selectionAuthority.update(StagingSelectionIdentity(requests), publishing: publishing)
-        if change.discardChanged {
-            NSLog("[GitX] Cancelling discard capture: stable selection changed to %ld requests", requests.count)
+    private func updateSelectionAuthority(_ requests: [StagingDiffRequest]) -> Bool {
+        let identity = StagingSelectionIdentity(requests)
+        let changed = selectionIdentity != identity
+        selectionIdentity = identity
+        if changed {
+            NSLog("[GitX] Cancelling discard capture: selection changed to %ld requests", requests.count)
             discardCancellation.cancel(); discardCancellation = StagingReadCancellation()
-        } else if publishing, change.selectionChanged {
-            NSLog("[GitX] Retaining discard capture during intermediate index publication (%ld requests)", requests.count)
         }
         currentRequests = requests
-        return change
+        return changed
     }
 
     @objc func close() {
         NSLog("[GitX] Cancelling staging reads and discard capture: pane closed")
         imageCancellation.cancel(); discardCancellation.cancel(); lifetimeCancellation.cancel()
+        renderPending = false
         loadCoordinator.invalidate()
     }
 
     func updateSelection(_ requests: [StagingDiffRequest]) {
         if requests.isEmpty {
             render(requests)
-        } else if updateSelectionAuthority(requests).selectionChanged {
+        } else if updateSelectionAuthority(requests) {
             imageCancellation.cancel(); imageCancellation = StagingReadCancellation()
         }
     }
@@ -752,11 +751,17 @@ final class StagingDiffPaneController: NSObject {
         render(currentRequests)
     }
 
+    #if DEBUG
+        fileprivate func drainLoadsForTesting(completion: @escaping @MainActor @Sendable () -> Void) {
+            loadCoordinator.drainForTesting(completion: completion)
+        }
+    #endif
+
     @objc(showStateMessage:)
     func showStateMessage(_ message: String) {
         NSLog("[GitX] Cancelling staging reads and discard capture: state message")
         imageCancellation.cancel(); discardCancellation.cancel()
-        selectionAuthority = StagingSelectionAuthority()
+        selectionIdentity = StagingSelectionIdentity()
         renderPending = false
         displayedContexts = []
         currentRequests = []
@@ -822,8 +827,7 @@ final class StagingDiffPaneController: NSObject {
         let producer = producer
         let writer = IndexWriterCoordinator.coordinator(for: repository)
         let cancellation = discardCancellation
-        // Index publication can briefly clear and restore the same selection.
-        // Capture stops when the stable selection changes; revalidation uses
+        // List transactions publish complete selection. Revalidation uses
         // final eligibility plus the pane lifetime instead of that spent token.
         let validationCancellation = lifetimeCancellation
         writer.schedule("capture discard confirmation", work: { [producer] () -> (PBIndexPatchAuthorization?, NSError?) in
@@ -902,17 +906,49 @@ final class StagingDiffPaneController: NSObject {
     /// Drive the actual capture and writer revalidation without presenting a sheet.
     @objc(PBStagingDiffRevalidationTestHarness)
     final class StagingDiffRevalidationTestHarness: NSObject {
+        @objc(selectionIdentityWithRequests:equalsRequests:)
+        static func selectionIdentity(_ requests: [StagingDiffRequest], equals other: [StagingDiffRequest]) -> Bool {
+            StagingSelectionIdentity(requests) == StagingSelectionIdentity(other)
+        }
+
         #if DEBUG
+            @objc(startValidationWithRepository:runner:files:completion:)
+            static func startValidation(repository: PBGitRepository, runner: IndexCommandRunning, files: [PBChangedFile],
+                                        completion: @escaping @MainActor @Sendable (NSError?) -> Void)
+            {
+                prepareAndValidate(repository: repository, runner: runner, files: files, beforeValidation: {}, completion: completion)
+            }
+
+            @objc(closeAndDrainWithRepository:panes:completion:)
+            static func closeAndDrain(repository: PBGitRepository, panes: [StagingDiffPaneController],
+                                      completion: @escaping @MainActor @Sendable () -> Void)
+            {
+                panes.forEach { $0.close() }
+                let writer = IndexWriterCoordinator.coordinator(for: repository)
+                writer.drainForTesting {
+                    let group = DispatchGroup()
+                    for pane in panes {
+                        group.enter()
+                        pane.drainLoadsForTesting { group.leave() }
+                    }
+                    group.notify(queue: .main) {
+                        // swift6-safety-justification: DispatchGroup delivers this notification on the explicitly selected main queue.
+                        MainActor.assumeIsolated {
+                            if writer.isBusy {
+                                closeAndDrain(repository: repository, panes: panes, completion: completion)
+                            } else {
+                                completion()
+                            }
+                        }
+                    }
+                }
+            }
+
             @objc(imageDataWithPane:path:beforeReading:)
             static func imageData(pane: StagingDiffPaneController, path: String, beforeReading: @MainActor () -> Void) -> Data? {
                 let lookup = pane.imageLookup(forPath: path, sectionIndex: 0)
                 beforeReading()
                 return lookup?.data()
-            }
-
-            @objc(selectionIdentityWithRequests:equalsRequests:)
-            static func selectionIdentity(_ requests: [StagingDiffRequest], equals other: [StagingDiffRequest]) -> Bool {
-                StagingSelectionIdentity(requests) == StagingSelectionIdentity(other)
             }
 
             @objc(prepareWithPane:files:completion:)

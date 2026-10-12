@@ -20,8 +20,8 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     init(stagePaths: [Data], unstagePaths: [Data], parentTree: String) {
         authorization = nil
         operation = .paths
-        self.stagePaths = stagePaths.map(Self.copy)
-        self.unstagePaths = unstagePaths.map(Self.copy)
+        self.stagePaths = stagePaths.map(Self.detachedPathBytes)
+        self.unstagePaths = unstagePaths.map(Self.detachedPathBytes)
         self.parentTree = parentTree
         patch = ""; stage = false; reverse = false
         super.init()
@@ -36,7 +36,7 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     init(discardPaths: [Data], authorization: PBIndexPatchAuthorization?) {
         self.authorization = authorization
         operation = .discard
-        stagePaths = discardPaths.map(Self.copy); unstagePaths = []
+        stagePaths = discardPaths.map(Self.detachedPathBytes); unstagePaths = []
         parentTree = ""; patch = ""; stage = false; reverse = false
         super.init()
     }
@@ -55,7 +55,9 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
         super.init()
     }
 
-    private static func copy(_ data: Data) -> Data {
+    /// Mutation inputs may bridge externally mutable NSData. Copy the bytes so
+    /// later caller mutations cannot change queued requests or authorizations.
+    fileprivate static func detachedPathBytes(_ data: Data) -> Data {
         data.withUnsafeBytes { Data($0) }
     }
 
@@ -181,7 +183,7 @@ final nonisolated class PBIndexPatchAuthorization: NSObject, @unchecked Sendable
     private let validation: @Sendable () throws -> Void
     let authorizedDiscardPaths: [Data]?
     init(discardPaths: [Data]? = nil, validation: @escaping @Sendable () throws -> Void) {
-        authorizedDiscardPaths = discardPaths?.map { $0.withUnsafeBytes { Data($0) } }
+        authorizedDiscardPaths = discardPaths?.map(IndexMutationRequest.detachedPathBytes)
         self.validation = validation; super.init()
     }
 

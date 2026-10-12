@@ -25,12 +25,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     @objc let interactionCoordinator: CommitTableInteractionCoordinator
     @objc private(set) var layout: StagingListLayout
 
-    /// Fired (coalesced upstream) whenever either list's selection changes.
+    /// Fired once with complete selection after a list transaction or user action.
     @objc var onSelectionChange: (() -> Void)?
-
-    // swift6-safety-justification: The value is never read or written; only its
-    // stable address distinguishes this class's KVO registrations.
-    private nonisolated(unsafe) static var selectionContext = 0
 
     @objc private dynamic var presentedStagedFiles: [PBChangedFile] = []
     @objc private dynamic var presentedUnstagedFiles: [PBChangedFile] = []
@@ -43,8 +39,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     private let sectionedScroll = NSScrollView()
     private var sectionedRows: [StagingListRow] = []
     private var syncingSectionedSelection = false
-    private var syncingExclusiveSelection = false
-    private var observingSelections = false
+    private var selectionTransactionDepth = 0
+    private var selectionObservations: [NSKeyValueObservation] = []
     private var submissionObservation: NSKeyValueObservation?
     private var pendingObservation: NSKeyValueObservation?
     private let writer: IndexWriterCoordinator
@@ -139,10 +135,16 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
 
         applyFilterAndSort()
 
-        for controller in [unstagedFilesController, stagedFilesController] {
-            controller.addObserver(self, forKeyPath: "selectionIndexes", options: [], context: &Self.selectionContext)
+        selectionObservations = [unstagedFilesController, stagedFilesController].map { controller in
+            let staged = controller === stagedFilesController
+            return controller.observe(\.selectionIndexes, options: []) { [weak self] _, _ in
+                // swift6-safety-justification: Cocoa selection bindings mutate on main; the callback captures only a side value and its main-actor owner.
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.selectionChanged(in: staged ? self.stagedFilesController : self.unstagedFilesController)
+                }
+            }
         }
-        observingSelections = true
         writerObservation = writer.observe { [weak self] _ in
             guard let self, writerObservation != nil else { return }
             refreshMutationControls()
@@ -157,20 +159,39 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         }
     }
 
-    override nonisolated func observeValue(
-        forKeyPath keyPath: String?,
-        of object: Any?,
-        change: [NSKeyValueChangeKey: Any]?,
-        context: UnsafeMutableRawPointer?
-    ) {
-        guard context == &Self.selectionContext else {
-            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
-            return
+    /// Cocoa bindings may publish temporary selection indexes while replacing
+    /// content. Keep those callbacks inside a nestable main-actor transaction.
+    private func withSelectionTransaction(_ body: () -> Void) {
+        selectionTransactionDepth += 1
+        defer {
+            if selectionTransactionDepth == 1 {
+                if layout == .splitTables,
+                   !stagedFilesController.selectionIndexes.isEmpty,
+                   !unstagedFilesController.selectionIndexes.isEmpty
+                {
+                    unstagedFilesController.setSelectionIndexes(IndexSet())
+                }
+                if layout == .sectionedList {
+                    restoreSectionedSelectionFromControllers()
+                }
+            }
+            selectionTransactionDepth -= 1
+            if selectionTransactionDepth == 0 {
+                NSLog("[GitX] Publishing complete staging selection (%ld staged, %ld unstaged)",
+                      stagedFilesController.selectionIndexes.count, unstagedFilesController.selectionIndexes.count)
+                onSelectionChange?()
+            }
         }
-        // swift6-safety-justification: NSArrayController selection only mutates
-        // on the main thread, so this KVO callback always arrives there.
-        MainActor.assumeIsolated {
-            onSelectionChange?()
+        body()
+    }
+
+    private func selectionChanged(in controller: NSArrayController?) {
+        guard selectionTransactionDepth == 0 else { return }
+        withSelectionTransaction {
+            if layout == .splitTables, let controller, !controller.selectionIndexes.isEmpty {
+                let other = controller === stagedFilesController ? unstagedFilesController : stagedFilesController
+                other.setSelectionIndexes(IndexSet())
+            }
         }
     }
 
@@ -180,12 +201,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         }
         writerObservation = nil
         submissionObservation = nil
-        if observingSelections {
-            for controller in [unstagedFilesController, stagedFilesController] {
-                controller.removeObserver(self, forKeyPath: "selectionIndexes", context: &Self.selectionContext)
-            }
-            observingSelections = false
-        }
+        selectionObservations = []
         pendingObservation = nil
         onSelectionChange = nil
         interactionCoordinator.close()
@@ -205,22 +221,21 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc func rearrange() {
-        let stagedSelection = Set((stagedFilesController.selectedObjects as? [PBChangedFile] ?? []).map(\.rawPath))
-        let unstagedSelection = Set((unstagedFilesController.selectedObjects as? [PBChangedFile] ?? []).map(\.rawPath))
-        let wasSyncingSelection = syncingExclusiveSelection
-        syncingExclusiveSelection = true
-        defer { syncingExclusiveSelection = wasSyncingSelection }
-        presentation = viewModel.presentation(from: index.indexChanges)
-        presentedStagedFiles = presentation.staged
-        presentedUnstagedFiles = presentation.unstaged
-        NSLog("[GitX] Published staging presentation for index revision %llu", UInt64(index.snapshotRevision))
-        unstagedFilesController.rearrangeObjects()
-        stagedFilesController.rearrangeObjects()
-        stagedFilesController.setSelectedObjects(presentation.staged.filter { stagedSelection.contains($0.rawPath) })
-        unstagedFilesController.setSelectedObjects(presentation.unstaged.filter { unstagedSelection.contains($0.rawPath) })
-        rebuildSectionedRows()
-        refreshHeaders()
-        refreshMutationControls()
+        withSelectionTransaction {
+            let stagedSelection = Set((stagedFilesController.selectedObjects as? [PBChangedFile] ?? []).map(\.rawPath))
+            let unstagedSelection = Set((unstagedFilesController.selectedObjects as? [PBChangedFile] ?? []).map(\.rawPath))
+            presentation = viewModel.presentation(from: index.indexChanges)
+            presentedStagedFiles = presentation.staged
+            presentedUnstagedFiles = presentation.unstaged
+            NSLog("[GitX] Published staging presentation for index revision %llu", UInt64(index.snapshotRevision))
+            unstagedFilesController.rearrangeObjects()
+            stagedFilesController.rearrangeObjects()
+            stagedFilesController.setSelectedObjects(presentation.staged.filter { stagedSelection.contains($0.rawPath) })
+            unstagedFilesController.setSelectedObjects(presentation.unstaged.filter { unstagedSelection.contains($0.rawPath) })
+            rebuildSectionedRows()
+            refreshHeaders()
+            refreshMutationControls()
+        }
     }
 
     // MARK: Layout switching
@@ -228,20 +243,20 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     @objc(setListLayout:)
     func setListLayout(_ newLayout: StagingListLayout) {
         guard newLayout != layout else { return }
-        layout = newLayout
-        ApplicationSettings.stagingListLayout = newLayout
-        if newLayout == .splitTables,
-           !stagedFilesController.selectionIndexes.isEmpty,
-           !unstagedFilesController.selectionIndexes.isEmpty
-        {
-            syncingExclusiveSelection = true
-            unstagedFilesController.setSelectionIndexes(IndexSet())
-            syncingExclusiveSelection = false
-            NSLog("[GitX] Preserved the staged side while restoring split-table selection exclusivity")
+        withSelectionTransaction {
+            layout = newLayout
+            ApplicationSettings.stagingListLayout = newLayout
+            if newLayout == .splitTables,
+               !stagedFilesController.selectionIndexes.isEmpty,
+               !unstagedFilesController.selectionIndexes.isEmpty
+            {
+                unstagedFilesController.setSelectionIndexes(IndexSet())
+                NSLog("[GitX] Preserved the staged side while restoring split-table selection exclusivity")
+            }
+            installLayoutView()
+            rearrange()
+            NSLog("[GitX] Staging file list layout switched to %@", newLayout == .sectionedList ? "sectioned list" : "split tables")
         }
-        installLayoutView()
-        rearrange()
-        NSLog("[GitX] Staging file list layout switched to %@", newLayout == .sectionedList ? "sectioned list" : "split tables")
     }
 
     private func installLayoutView() {
@@ -259,6 +274,9 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     private func rebuildSectionedRows() {
+        let wasSyncing = syncingSectionedSelection
+        syncingSectionedSelection = true
+        defer { syncingSectionedSelection = wasSyncing }
         sectionedRows = presentation.rows
         sectionedTable.reloadData()
         restoreSectionedSelectionFromControllers()
@@ -275,25 +293,28 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
                 indexes.insert(rowIndex)
             }
         }
+        let wasSyncing = syncingSectionedSelection
         syncingSectionedSelection = true
+        defer { syncingSectionedSelection = wasSyncing }
         sectionedTable.selectRowIndexes(indexes, byExtendingSelection: false)
-        syncingSectionedSelection = false
     }
 
     private func syncControllersFromSectionedSelection() {
-        var staged: [PBChangedFile] = []
-        var unstaged: [PBChangedFile] = []
-        for rowIndex in sectionedTable.selectedRowIndexes where sectionedRows.indices.contains(rowIndex) {
-            let row = sectionedRows[rowIndex]
-            guard let file = row.file else { continue }
-            if row.section == .staged {
-                staged.append(file)
-            } else {
-                unstaged.append(file)
+        withSelectionTransaction {
+            var staged: [PBChangedFile] = []
+            var unstaged: [PBChangedFile] = []
+            for rowIndex in sectionedTable.selectedRowIndexes where sectionedRows.indices.contains(rowIndex) {
+                let row = sectionedRows[rowIndex]
+                guard let file = row.file else { continue }
+                if row.section == .staged {
+                    staged.append(file)
+                } else {
+                    unstaged.append(file)
+                }
             }
+            stagedFilesController.setSelectedObjects(staged)
+            unstagedFilesController.setSelectedObjects(unstaged)
         }
-        stagedFilesController.setSelectedObjects(staged)
-        unstagedFilesController.setSelectedObjects(unstaged)
     }
 
     private func toggleSectionedSelection() {
@@ -318,22 +339,26 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc func clearSelections() {
-        unstagedFilesController.setSelectionIndexes(IndexSet())
-        stagedFilesController.setSelectionIndexes(IndexSet())
+        withSelectionTransaction {
+            unstagedFilesController.setSelectionIndexes(IndexSet())
+            stagedFilesController.setSelectionIndexes(IndexSet())
+        }
     }
 
     /// Selects the first pending file (unstaged first) so the diff pane has
     /// content the moment the pane appears.
     @objc func selectInitialFile() {
-        if let first = (unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first {
-            unstagedFilesController.setSelectedObjects([first])
-        } else if let first = (stagedFilesController.arrangedObjects as? [PBChangedFile])?.first {
-            stagedFilesController.setSelectedObjects([first])
-        } else {
-            return
-        }
-        if layout == .sectionedList {
-            restoreSectionedSelectionFromControllers()
+        withSelectionTransaction {
+            if let first = (unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first {
+                unstagedFilesController.setSelectedObjects([first])
+            } else if let first = (stagedFilesController.arrangedObjects as? [PBChangedFile])?.first {
+                stagedFilesController.setSelectedObjects([first])
+            } else {
+                return
+            }
+            if layout == .sectionedList {
+                restoreSectionedSelectionFromControllers()
+            }
         }
     }
 
@@ -570,17 +595,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             syncControllersFromSectionedSelection()
             return
         }
-        guard layout == .splitTables else { return }
-        // Selecting in one split table deselects the other so the diff pane
-        // shows exactly the side the user chose, like the reference design.
-        guard !syncingExclusiveSelection, table.numberOfSelectedRows > 0 else { return }
-        syncingExclusiveSelection = true
-        if table === stagedTable, !unstagedFilesController.selectionIndexes.isEmpty {
-            unstagedFilesController.setSelectionIndexes(IndexSet())
-        } else if table === unstagedTable, !stagedFilesController.selectionIndexes.isEmpty {
-            stagedFilesController.setSelectionIndexes(IndexSet())
-        }
-        syncingExclusiveSelection = false
+        // Split-table exclusivity is enforced by selection KVO before the
+        // complete-selection callback, regardless of binding notification order.
     }
 
     @objc func fileChangesTableViewDidRequestStagingToggle(_ tableView: PBFileChangesTableView) {

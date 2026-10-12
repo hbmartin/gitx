@@ -202,6 +202,46 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
         IndexWriterRegistry.shared.coordinator(for: repository)
     }
 
+    #if DEBUG
+        private typealias TestDrainCompletion = @MainActor @Sendable () -> Void
+        /// Protected by stateLock, including callers whose wait has timed out.
+        private var testDrainCompletions: [TestDrainCompletion] = []
+
+        func drainForTesting(completion: @escaping @MainActor @Sendable () -> Void) {
+            stateLock.lock()
+            let draining = !testDrainCompletions.isEmpty
+            testDrainCompletions.append(completion)
+            stateLock.unlock()
+            if !draining {
+                drainForTesting(after: nil)
+            }
+        }
+
+        private func drainForTesting(after previousSequence: UInt?) {
+            schedule("test fixture writer drainage", work: { [self] in
+                stateLock.lock(); defer { stateLock.unlock() }
+                return ordinal
+            }, completion: { [self] sequence in
+                DispatchQueue.main.async { [self] in
+                    stateLock.lock()
+                    let idle = ordinal == sequence && pending == 0 && depth == 0
+                    stateLock.unlock()
+                    // Adjacent markers with no intervening work ensure earlier
+                    // main deliveries also had a chance to enqueue validation.
+                    if idle, let previousSequence, sequence == previousSequence &+ 1 {
+                        stateLock.lock()
+                        let completions = testDrainCompletions
+                        testDrainCompletions = []
+                        stateLock.unlock()
+                        completions.forEach { $0() }
+                    } else {
+                        drainForTesting(after: idle ? sequence : nil)
+                    }
+                }
+            })
+        }
+    #endif
+
     /// Synchronous admission for user submissions. Rejected work never joins
     /// the FIFO, while calls made by the owning thread remain reentrant.
     func performIfAvailable<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
@@ -250,9 +290,9 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
         }
         depth += 1
         publishState()
-        stateLock.unlock()
         ordinal &+= 1
         let sequence = ordinal
+        stateLock.unlock()
         NSLog("[GitX] Index writer %llu began %@", UInt64(sequence), operation)
         defer {
             NSLog("[GitX] Index writer %llu completed %@", UInt64(sequence), operation)
