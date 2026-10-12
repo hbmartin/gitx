@@ -11,11 +11,16 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         let indexOutput: Data?
         let indexedImageSize: String?
         let diffOutput: String
+        let captureEntered: XCTestExpectation?
+        let captureRelease: DispatchSemaphore?
         init(paths: [String], rawPaths: [Data]? = nil, status: String = "M", indexOutput: Data? = nil,
-             indexedImageSize: String? = nil, diffOutput: String = "diff --git a/selected.txt b/selected.txt\n")
+             indexedImageSize: String? = nil, diffOutput: String = "diff --git a/selected.txt b/selected.txt\n",
+             captureEntered: XCTestExpectation? = nil, captureRelease: DispatchSemaphore? = nil)
         {
             self.paths = paths; self.rawPaths = rawPaths ?? paths.map { Data($0.utf8) }; self.status = status; self.indexOutput = indexOutput
-            self.indexedImageSize = indexedImageSize; self.diffOutput = diffOutput; super.init()
+            self.indexedImageSize = indexedImageSize; self.diffOutput = diffOutput
+            self.captureEntered = captureEntered; self.captureRelease = captureRelease
+            super.init()
         }
 
         private let lock = NSLock()
@@ -51,7 +56,12 @@ final class StagingDiffPaneControllerTests: XCTestCase {
 
         func rawOutput(withArguments arguments: [String], environment: [String: Any]?) throws -> Data {
             XCTAssertEqual(environment?["GIT_OPTIONAL_LOCKS"] as? String, "0")
-            lock.lock(); statusCommands += 1; capturedArguments.append(arguments); let object = indexObject; let hasStaged = staged; lock.unlock()
+            lock.lock(); statusCommands += 1; capturedArguments.append(arguments); let object = indexObject; let hasStaged = staged
+            let firstCapture = statusCommands == 1; lock.unlock()
+            if firstCapture, let captureRelease {
+                captureEntered?.fulfill()
+                XCTAssertEqual(captureRelease.wait(timeout: .now() + 5), .success)
+            }
             let selected: [Data]
             if let separator = arguments.firstIndex(of: "--") {
                 let names = Set(arguments.suffix(from: separator + 1).map { Data($0.utf8) })
@@ -90,6 +100,9 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                 XCTAssertEqual(arguments, ["cat-file", "-s", treeObject])
                 return indexedImageSize
             }
+            if arguments == ["--literal-pathspecs", "--version"] {
+                return "git version fixture"
+            }
             diffCommands += 1
             return diffOutput
         }
@@ -101,6 +114,22 @@ final class StagingDiffPaneControllerTests: XCTestCase {
     }
 
     #if DEBUG
+        func testSelectionIdentityPreservesRawBytesSidesAndOrder() {
+            let raw = PBChangedFile(path: "undecodable", rawPath: Data([0xFF]))
+            let otherRaw = PBChangedFile(path: "undecodable", rawPath: Data([0xFE]))
+            let decomposed = PBChangedFile(path: "e\u{301}.txt")
+            let composed = PBChangedFile(path: "é.txt")
+            let first = PBStagingDiffRequest(file: raw, staged: false)
+            let second = PBStagingDiffRequest(file: decomposed, staged: true)
+            XCTAssertTrue(PBStagingDiffRevalidationTestHarness.selectionIdentity([first, second], equals: [first, second]))
+            for changed in [[second, first], [PBStagingDiffRequest(file: otherRaw, staged: false), second],
+                            [PBStagingDiffRequest(file: raw, staged: true), second],
+                            [first, PBStagingDiffRequest(file: composed, staged: true)], []]
+            {
+                XCTAssertFalse(PBStagingDiffRevalidationTestHarness.selectionIdentity([first, second], equals: changed))
+            }
+        }
+
         func testImageReaderPreservesRegularSymlinksAndTracksChangedContent() throws {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -231,6 +260,75 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             let file = PBChangedFile(path: "selected.txt")
             file.status = .MODIFIED; file.hasUnstagedChanges = true
             try await body(directory, LifetimeRepository(directory: directory, onDeinit: {}), file)
+        }
+
+        func testDiscardCaptureFinishesWithStableSelectionAndCancelsOnUserDeselection() async throws {
+            for deselect in [false, true] {
+                try await snapshotFixture { _, repository, file in
+                    let entered = expectation(description: "capture entered")
+                    let completed = expectation(description: "capture completed once")
+                    let release = DispatchSemaphore(value: 0)
+                    let runner = StatusRunner(paths: [file.path], captureEntered: entered, captureRelease: release)
+                    let pane = PBStagingDiffPaneController(repository: repository, diffRunner: runner)
+                    let requests = [PBStagingDiffRequest(file: file, staged: false)]
+                    PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: requests)
+                    PBStagingDiffRevalidationTestHarness.prepare(pane: pane, files: [file]) { error in
+                        if deselect {
+                            XCTAssertTrue(error?.localizedDescription.contains("cancelled") == true)
+                        } else {
+                            XCTAssertNil(error)
+                        }
+                        completed.fulfill()
+                    }
+                    await fulfillment(of: [entered], timeout: 2)
+                    PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: deselect ? [] : requests)
+                    release.signal()
+                    await fulfillment(of: [completed], timeout: 3)
+                }
+            }
+        }
+
+        func testDiscardCaptureIgnoresIntermediatePublicationAndComparesItsFinalSelection() async throws {
+            for transition in 0 ..< 6 {
+                try await snapshotFixture { _, repository, file in
+                    let entered = expectation(description: "capture entered")
+                    let completed = expectation(description: "capture completed once")
+                    let settled = expectation(description: "coalesced render settled")
+                    let release = DispatchSemaphore(value: 0)
+                    let runner = StatusRunner(paths: [file.path], captureEntered: entered, captureRelease: release)
+                    let pane = PBStagingDiffPaneController(repository: repository, diffRunner: runner)
+                    let selected = [PBStagingDiffRequest(file: file, staged: false)]
+                    PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: selected)
+                    PBStagingDiffRevalidationTestHarness.prepare(pane: pane, files: [file]) { error in
+                        if transition == 0 {
+                            XCTAssertNil(error)
+                        } else {
+                            XCTAssertTrue(error?.localizedDescription.contains("cancelled") == true)
+                        }
+                        completed.fulfill()
+                    }
+                    await fulfillment(of: [entered], timeout: 2)
+                    switch transition {
+                    case 0, 1, 2:
+                        repository.index.setValue(true, forKey: "publishingSnapshot")
+                        PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: [])
+                        let final = transition == 0 ? selected : transition == 1 ? [] : [PBStagingDiffRequest(file: file, staged: true)]
+                        PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: final)
+                        repository.index.setValue(false, forKey: "publishingSnapshot")
+                        pane.renderRequests(final)
+                    case 3: pane.close()
+                    case 4: pane.showStateMessage("Repository state changed")
+                    default:
+                        PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: [])
+                        PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: selected)
+                    }
+                    DispatchQueue.main.async { settled.fulfill() }
+                    await fulfillment(of: [settled], timeout: 2)
+                    release.signal()
+                    await fulfillment(of: [completed], timeout: 3)
+                    pane.close()
+                }
+            }
         }
 
         func testDiscardSnapshotRejectsSameSizedContentPermissionsIndexTreeAndStagingChanges() async throws {
@@ -397,7 +495,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             let repository = LifetimeRepository(directory: directory, onDeinit: {})
-            let paths = (0 ..< 200).map { "\(String(repeating: "p", count: 170))-\($0).txt" }
+            let paths = (0 ..< 200).map { ":(literal)\(String(repeating: "p", count: 170))-\($0).txt" }
             let files = try paths.map { path in
                 try Data("selected\n".utf8).write(to: directory.appendingPathComponent(path))
                 let file = PBChangedFile(path: path); file.status = .MODIFIED; file.hasUnstagedChanges = true
@@ -407,6 +505,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             try await PBStagingDiffRevalidationTestHarness.capture(repository: repository, runner: runner, files: files, timeout: 30, cancelAfterChecks: -1)
             let calls = runner.rawArguments
             XCTAssertEqual(calls.count, 6, "Three queries each use two bounded batches")
+            XCTAssertTrue(calls.allSatisfy { $0.prefix(3) == ["-c", "core.precomposeUnicode=false", "--literal-pathspecs"] })
             for command in ["diff-index", "diff-files", "ls-files"] {
                 let batches = calls.filter { $0.contains(command) }.map { arguments -> [String] in
                     guard let separator = arguments.firstIndex(of: "--") else { XCTFail("UTF-8 selection must narrow each query"); return [] }

@@ -25,7 +25,7 @@ final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
     init(repository: PBGitRepository, makeCapture: @escaping @Sendable () -> PBTaskDiagnosticCapture = PBTaskDiagnosticCapture.init) {
         self.repository = repository
         self.makeCapture = makeCapture
-        writer = IndexRepositoryCommandRunner(repository: repository).writerCoordinator
+        writer = IndexWriterCoordinator.coordinator(for: repository)
     }
 
     func output(arguments: [String]) throws -> String {

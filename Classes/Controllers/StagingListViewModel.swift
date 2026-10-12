@@ -87,6 +87,43 @@ final nonisolated class StagingDiffRequest: NSObject {
     }
 }
 
+/// Ordered selection authority preserves filenames as raw bytes, including
+/// names that cannot be decoded as UTF-8.
+nonisolated struct StagingSelectionIdentity: Equatable, Sendable {
+    struct Entry: Equatable, Sendable {
+        let staged: Bool
+        let rawPath: Data
+    }
+
+    let entries: [Entry]
+    init(_ requests: [StagingDiffRequest] = []) {
+        entries = requests.map { request in
+            Entry(staged: request.staged, rawPath: request.file.rawPath.withUnsafeBytes { Data($0) })
+        }
+    }
+}
+
+/// Publication callbacks may expose intermediate selections. Only the final
+/// selection, or a user change outside publication, advances discard authority.
+nonisolated struct StagingSelectionAuthority {
+    struct Change {
+        let selectionChanged: Bool
+        let discardChanged: Bool
+    }
+
+    private var published = StagingSelectionIdentity()
+    private var stable = StagingSelectionIdentity()
+
+    mutating func update(_ identity: StagingSelectionIdentity, publishing: Bool) -> Change {
+        let change = Change(selectionChanged: published != identity, discardChanged: !publishing && stable != identity)
+        published = identity
+        if !publishing {
+            stable = identity
+        }
+        return change
+    }
+}
+
 /// One publication's reusable list content and summaries.
 nonisolated struct StagingListPresentation {
     let staged: [PBChangedFile]

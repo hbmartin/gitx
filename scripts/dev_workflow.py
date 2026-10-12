@@ -184,6 +184,24 @@ def finish_invalid(path, payload, problems, attempt_started):
     return 76
 
 
+@contextlib.contextmanager
+def admitted_failure_receipt(path, payload, producer, attempt_started):
+    """Publish blocked state before the enclosing directory lease is released."""
+    try:
+        yield
+    except (session.ResourceBusy, session.ResourceDefinitionError) as error:
+        busy = isinstance(error, session.ResourceBusy)
+        payload.update(status="blocked", exitCode=75 if busy else 2,
+                       category="resource-busy" if busy else error.category,
+                       problem=str(error), producer=producer, deliveryEligible=False,
+                       finishedAt=records.now(), attemptDurationSeconds=round(time.monotonic() - attempt_started, 3))
+        if busy:
+            payload.update(owner=error.owner, resource=error.resource)
+        session.atomic_json(path, payload)
+        print(f"{error}\nBlocked receipt under directory lease: {path}", file=sys.stderr)
+        raise
+
+
 def verify(args):
     root = session.ROOT
     commands, selection = selected_commands(args, root)
@@ -211,7 +229,8 @@ def verify(args):
     previous_caches = None
     owned_directory = False
     try:
-        with selected_leases(args, root, directory, owner) as (leases, commands, selection):
+        with selected_leases(args, root, directory, owner) as (leases, commands, selection), \
+                admitted_failure_receipt(path, payload, owner["producer"], attempt_started):
             owned_directory = True
             if args.resume:
                 # A previous producer may have finished while this attempt
@@ -238,6 +257,10 @@ def verify(args):
                 except (OSError, ValueError, TypeError, KeyError) as error:
                     payload["finalCacheProducts"] = {}
                     return finish_invalid(path, payload, ["Prior cache ownership cannot be validated: " + str(error)], attempt_started)
+            try:
+                session.active_workflow_steps(payload)
+            except ValueError as error:
+                return finish_invalid(path, payload, [str(error)], attempt_started)
             previous = {step["name"]: step for step in payload["steps"]}
             for name, command in commands:
                 current = session.inputs(root)
@@ -311,6 +334,12 @@ def verify(args):
                 return finish_invalid(path, payload, ["Verification inputs changed during the attempt"], attempt_started)
             payload["evidenceStatus"] = "valid"
             payload["deliveryEligible"] = selection["deliveryEligible"]
+            active = session.active_workflow_steps(payload)
+            names = [step["name"] for step in active]
+            expected = [name for name, _ in commands]
+            if set(names) != set(expected) or len(names) != len(expected) or len(names) != len(set(names)) or any(
+                    step.get("status") != "passed" or step.get("evidenceStatus") != "valid" for step in active):
+                return finish_invalid(path, payload, ["Active verification profile is incomplete, duplicated, or invalid"], attempt_started)
             try:
                 payload["finalCacheProducts"] = session.workflow_cache_snapshots(payload, root)
                 problems = session.final_cache_problems(payload, root, derived=payload["finalCacheProducts"])
@@ -341,9 +370,8 @@ def verify(args):
     except (session.ResourceBusy, session.ResourceDefinitionError) as error:
         busy = isinstance(error, session.ResourceBusy)
         status = 75 if busy else 2
-        if not owned_directory and (args.resume or path.exists() or
-                (busy and session.canonical_resource(error.resource) == session.canonical_resource(str(directory)))):
-            blocker = session.verification_artifact_root(root) / "Coordination" / f"{run_id}-{uuid.uuid4().hex[:8]}.json"
+        if not owned_directory:
+            blocker = session.verification_artifact_root(root) / "Coordination" / f"{run_id}-{uuid.uuid4().hex}.json"
             blocked = owner | {"schemaVersion": 2, "receipt": str(blocker), "entry": str(root / "scripts/dev_workflow.py"),
                 "workflowReceipt": str(path), "status": "blocked", "exitCode": status,
                 "category": "resource-busy" if busy else error.category, "problem": str(error),
@@ -355,13 +383,7 @@ def verify(args):
             session.atomic_json(blocker, blocked)
             print(f"{error}\nBlocker receipt: {blocker}", file=sys.stderr)
             return status
-        payload.update(status="blocked", exitCode=status, category="resource-busy" if busy else error.category,
-                       problem=str(error), producer=owner["producer"], deliveryEligible=False,
-                       finishedAt=records.now(), attemptDurationSeconds=round(time.monotonic() - attempt_started, 3))
-        if busy:
-            payload.update(owner=error.owner, resource=error.resource)
-        session.atomic_json(path, payload)
-        print(error, file=sys.stderr)
+        # The inner context already published while the directory was leased.
         return status
     if payload["deliveryEligible"]:
         try:

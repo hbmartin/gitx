@@ -1,0 +1,188 @@
+{
+  "sourceCommit": "ff9a9b0c575d08bafdf7190f32698ea33795bb68",
+  "baseCommit": "b3a965214defdd9f7ce28a02b7d14c2f04e5f7a8",
+  "runIds": [
+    "triage-characterization",
+    "triage-characterization-correctness-beeffc19",
+    "triage-regressions-red",
+    "triage-regressions-red-correctness-0d43b9ba",
+    "triage-covered-correctness",
+    "triage-covered-correctness-correctness-327c3fae",
+    "triage-benchmark-before",
+    "triage-benchmark-after",
+    "triage-benchmark-after-warm"
+  ],
+  "correctness": {
+    "receipt": "artifacts/verification/triage-covered-correctness-correctness-327c3fae/receipt.json",
+    "resultBundle": "artifacts/verification/triage-covered-correctness-correctness-327c3fae/Results/GitX.xcresult",
+    "tests": 1745,
+    "failures": 0,
+    "evidenceStatusAtCompletion": "valid"
+  },
+  "coverage": {
+    "coveredLines": 69343,
+    "executableLines": 74756,
+    "lineCoverage": 0.9275910963668468,
+    "affectedFiles": {
+      "Classes/git/IndexCommandRunning.swift": {
+        "coveredLines": 442,
+        "executableLines": 442,
+        "lineCoverage": 1
+      },
+      "Classes/git/GitCommandRunning.swift": {
+        "coveredLines": 188,
+        "executableLines": 188,
+        "lineCoverage": 1
+      },
+      "Classes/Controllers/StagingViewController.swift": {
+        "coveredLines": 1056,
+        "executableLines": 1123,
+        "lineCoverage": 0.9403383793410508
+      },
+      "Classes/git/IndexMutationCoordinator.swift": {
+        "coveredLines": 185,
+        "executableLines": 185,
+        "lineCoverage": 1
+      },
+      "Classes/Controllers/StagingListViewModel.swift": {
+        "coveredLines": 318,
+        "executableLines": 318,
+        "lineCoverage": 1
+      },
+      "Classes/Controllers/StagingDiffPaneController.swift": {
+        "coveredLines": 1115,
+        "executableLines": 1148,
+        "lineCoverage": 0.9712543554006968
+      }
+    },
+    "raisedFloors": {
+      "application": {
+        "before": 0.9274,
+        "after": 0.9275
+      },
+      "Classes/Controllers/StagingDiffPaneController.swift": {
+        "before": 0.9711,
+        "after": 0.9712
+      }
+    }
+  },
+  "captures": [
+    {
+      "filename": "busy-commit-recovered.png",
+      "testIdentifier": "HistoryControllerTests/testStagingControlsRecoverAfterAWriterWithoutAnIndexPublication()",
+      "attachmentTitle": "Staging-Busy-Commit-Recovered",
+      "sha256": "c9d50e2752375d46a78638a0e12abfeb4671e35731242eb85051e0ca5ca66210",
+      "captureMethod": "Unmodified app-hosted XCTest NSView bitmap attachment",
+      "capturedAt": 1791824700.975
+    },
+    {
+      "filename": "busy-commit-refused.png",
+      "testIdentifier": "HistoryControllerTests/testStagingControlsRecoverAfterAWriterWithoutAnIndexPublication()",
+      "attachmentTitle": "Staging-Busy-Commit-Refused",
+      "sha256": "e07e2d7320bec7bd234c43a5371fa38ab405ebac9da55a710a46d209b430e1b5",
+      "captureMethod": "Unmodified app-hosted XCTest NSView bitmap attachment",
+      "capturedAt": 1791824700.83
+    },
+    {
+      "filename": "discard-through-refresh.png",
+      "testIdentifier": "HistoryControllerTests/testWholeFileDiscardKeepsUnchangedConfirmationAndRejectsChangedContent()",
+      "attachmentTitle": "Staging-Whole-Discard-Through-Refresh",
+      "sha256": "da7aa85d390c1e5dfb4e69fb7ee77a6bdc7baa5c8576b66cc75d5b053690d191",
+      "captureMethod": "Unmodified app-hosted XCTest NSView bitmap attachment",
+      "capturedAt": 1791824765.536
+    }
+  ],
+  "benchmarks": [
+    {
+      "runId": "triage-benchmark-before",
+      "sourceCommit": "c6efeb07b935a737d1b80eb0c9404f079eefdbde",
+      "sourceDigest": "affc8df7a7a54331ecdb0728501e849189a2bb799c49a7e15b9c2911e9f9d008",
+      "configuration": "Release",
+      "instrumentation": "performance",
+      "testIdentifier": "GitXPerformanceTests/testDiscardAuthorizationLatencyWithMultipleLiteralPathGroups()",
+      "selectedPaths": 400,
+      "pathBatches": 3,
+      "samplesMilliseconds": [
+        428.32,
+        379.44,
+        401.28,
+        387.86,
+        401.64
+      ],
+      "p95Milliseconds": 428.3201666548848,
+      "medianMilliseconds": 401.28,
+      "attachment": "benchmark-before.txt",
+      "attachmentSHA256": "c63ccff1be948313a7694f14b109a5862bd18152caa1d8ca4ce9cb841c954f97",
+      "receipt": "artifacts/verification/triage-benchmark-before/receipt.json",
+      "resultBundle": "artifacts/verification/triage-benchmark-before/Results/GitXPerformance.xcresult",
+      "toolchain": {
+        "developerDir": "/Applications/Xcode.app/Contents/Developer",
+        "supported": true,
+        "swiftVersion": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+        "xcodeBuild": "27A266a",
+        "xcodeVersion": "27.0"
+      }
+    },
+    {
+      "runId": "triage-benchmark-after",
+      "sourceCommit": "ff9a9b0c575d08bafdf7190f32698ea33795bb68",
+      "sourceDigest": "eeb2e1de0becb6b741b74dee1c68f999f576a91a580010167e58bb9f7f553b46",
+      "configuration": "Release",
+      "instrumentation": "performance",
+      "testIdentifier": "GitXPerformanceTests/testDiscardAuthorizationLatencyWithMultipleLiteralPathGroups()",
+      "selectedPaths": 400,
+      "pathBatches": 3,
+      "samplesMilliseconds": [
+        659.9,
+        318.19,
+        268.71,
+        268.35,
+        283.98
+      ],
+      "p95Milliseconds": 659.9001666763797,
+      "medianMilliseconds": 283.98,
+      "attachment": "benchmark-after-first.txt",
+      "attachmentSHA256": "19c25daa9f158231f9bada6e6bc2bd0fe002cdc0a1c80cb5b181e4fbcdaf4489",
+      "receipt": "artifacts/verification/triage-benchmark-after/receipt.json",
+      "resultBundle": "artifacts/verification/triage-benchmark-after/Results/GitXPerformance.xcresult",
+      "toolchain": {
+        "developerDir": "/Applications/Xcode.app/Contents/Developer",
+        "supported": true,
+        "swiftVersion": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+        "xcodeBuild": "27A266a",
+        "xcodeVersion": "27.0"
+      }
+    },
+    {
+      "runId": "triage-benchmark-after-warm",
+      "sourceCommit": "ff9a9b0c575d08bafdf7190f32698ea33795bb68",
+      "sourceDigest": "eeb2e1de0becb6b741b74dee1c68f999f576a91a580010167e58bb9f7f553b46",
+      "configuration": "Release",
+      "instrumentation": "performance",
+      "testIdentifier": "GitXPerformanceTests/testDiscardAuthorizationLatencyWithMultipleLiteralPathGroups()",
+      "selectedPaths": 400,
+      "pathBatches": 3,
+      "samplesMilliseconds": [
+        297.83,
+        270.87,
+        271.67,
+        289.27,
+        282.22
+      ],
+      "p95Milliseconds": 297.8287083096802,
+      "medianMilliseconds": 282.22,
+      "attachment": "benchmark-after-warm.txt",
+      "attachmentSHA256": "44e80fb8282a9aff7bc2aa0a098ac8a1afd28c8040b4b4eaa090ed3550977054",
+      "receipt": "artifacts/verification/triage-benchmark-after-warm/receipt.json",
+      "resultBundle": "artifacts/verification/triage-benchmark-after-warm/Results/GitXPerformance.xcresult",
+      "toolchain": {
+        "developerDir": "/Applications/Xcode.app/Contents/Developer",
+        "supported": true,
+        "swiftVersion": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+        "xcodeBuild": "27A266a",
+        "xcodeVersion": "27.0"
+      }
+    }
+  ],
+  "benchmarkInterpretation": "The first after-run had one slow revalidation sample following a cold product build. Its p95 increased; its median decreased. A warm repeat reduced p95 by about 30 percent. All samples and both after-runs are retained; these measurements introduce no timing thresholds."
+}

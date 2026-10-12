@@ -79,7 +79,7 @@
     "Classes/Controllers/RepositoryStatusBarPresentation.swift": 1.0,
     "Classes/Controllers/RepositoryToolbarController.swift": 0.995,
     "Classes/Controllers/StagingDiffLoadCoordinator.swift": 0.9964,
-    "Classes/Controllers/StagingDiffPaneController.swift": 0.9711,
+    "Classes/Controllers/StagingDiffPaneController.swift": 0.9712,
     "Classes/Controllers/StagingFileListController.swift": 0.9425,
     "Classes/Controllers/StagingImageReader.swift": 0.9619,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
@@ -226,7 +226,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9274,
+  "minimumLineCoverage": 0.9275,
   "target": "Half Dark.app",
   "version": 1
 }

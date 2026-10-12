@@ -206,7 +206,7 @@
     {
       "id": "STATE-001",
       "family": "Snapshot and refresh authority",
-      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files.",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. Intermediate publication selections preserve capture; final stable selection and the exact caller raw-path set control discard authority.",
       "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content.",
       "sourcePaths": [
         "Classes/git/IndexRefreshCoordinator.swift",
@@ -284,13 +284,31 @@
           "identifier": "GitXTests/HistoryControllerTests/testUnstageHunkPreservesOtherStagedHunksAndWorktree",
           "role": "valid",
           "oracle": "Unstage exactly the selected hunk while retaining the other staged hunk and all worktree bytes."
+        },
+        {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testDiscardCaptureIgnoresIntermediatePublicationAndComparesItsFinalSelection",
+          "role": "valid",
+          "oracle": "Hold actual capture across publication callbacks; an unchanged final selection succeeds, while a changed side, deselection, closure, or state message cancels."
+        },
+        {
+          "source": "GitXTests/IndexMutationCoordinatorTests.swift",
+          "identifier": "GitXTests/IndexMutationCoordinatorTests/testDiscardAuthorizationRequiresTheExactCallerRawPathSet",
+          "role": "boundary",
+          "oracle": "Missing, extra, differently scoped raw paths launch no mutation; equivalent reordered sets use frozen ordered bytes."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testImageReadsRejectAnEarlierRenderAndSurviveUnchangedSelectionUpdates",
+          "role": "boundary",
+          "oracle": "A real image lookup from an earlier render refuses bytes after refresh or deselection; an unchanged selection update preserves its read."
         }
       ]
     },
     {
       "id": "STATE-002",
       "family": "Partial failure and reconciliation",
-      "invariant": "Successful chunks are reconciled before controls recover, including failure paths.",
+      "invariant": "Successful chunks are reconciled before controls recover, including failure paths. Busy commit submissions refuse immediately without enqueuing, while background Git commands retain FIFO order.",
       "rootCause": "Early return or premature idle publication leaves the displayed index and operation eligibility untruthful.",
       "sourcePaths": [
         "Classes/git/IndexMutation*",
@@ -357,6 +375,18 @@
           "identifier": "GitXTests/IndexMutationServiceTests/testGeneralCommandRunnerRejectsWritersDuringReconciliationAndSubmissionButAllowsReads",
           "role": "failure",
           "oracle": "Reconciliation and submission each reject a main-thread writer without launching it while read output remains available."
+        },
+        {
+          "source": "GitXTests/IndexCommitPublicationTests.swift",
+          "identifier": "GitXTests/IndexCommitPublicationTests/testBusyCommitReturnsBeforeHeldWriterAndCanRetryAfterIdle",
+          "role": "failure",
+          "oracle": "Before releasing the held writer, observe exactly one refusal, no hook or commit-message write and unchanged HEAD; retry after idle commits the original message."
+        },
+        {
+          "source": "GitXTests/IndexMutationServiceTests.swift",
+          "identifier": "GitXTests/IndexMutationServiceTests/testBackgroundCommitWriterFollowsAlreadyScheduledStagingWork",
+          "role": "valid",
+          "oracle": "The existing background Git command still executes after previously queued staging."
         }
       ]
     },

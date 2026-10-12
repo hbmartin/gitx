@@ -509,6 +509,44 @@ class CleanupTests(unittest.TestCase):
         self.write(receipt, value)
         self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
 
+    def test_full_resume_ignores_retained_feedback_evidence_but_requires_every_active_check(self):
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        valid = cleanup.read_json(receipt)
+        valid['steps'].append({'name': 'whitespace', 'status': 'failed', 'receipt': '/missing-feedback.json'})
+        self.write(receipt, valid)
+        self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
+        for defect in ('missing', 'duplicate', 'failed', 'invalid', 'stale', 'malformed', 'selection'):
+            with self.subTest(defect=defect):
+                value = json.loads(json.dumps(valid))
+                if defect == 'missing': value['steps'].pop(0)
+                elif defect == 'duplicate': value['steps'].append(value['steps'][0])
+                elif defect == 'failed': value['steps'][0]['status'] = 'failed'
+                elif defect == 'invalid': value['steps'][0]['evidenceStatus'] = 'invalid'
+                elif defect == 'stale': value['steps'][0]['inputsAfter']['head'] = 'stale'
+                elif defect == 'malformed': value['steps'][0] = None
+                else: value['selectedChecks'] = 'check'
+                self.write(receipt, value)
+                self.assertIsNotNone(cleanup.eligibility(self.root, receipt)[1])
+
+    def test_legacy_and_modern_citations_match_exact_known_identifiers(self):
+        aliases = {'workflow-xyz', 'workflow-xyz-extra', 'other'}
+        for text, expected in [
+            ('Run: workflow-xyz', {'workflow-xyz'}),
+            ('RUN-ID = workflow-xyz, other', {'workflow-xyz', 'other'}),
+            ('Run IDs: "workflow-xyz", `other`', {'workflow-xyz', 'other'}),
+            ('Verified with `workflow-xyz`.', {'workflow-xyz'}),
+            ('Verified with ``run workflow-xyz``.', {'workflow-xyz'}),
+            ('`workflow-xyz-extra`', {'workflow-xyz-extra'}),
+            ('`prefix-workflow-xyz` or `workflow-xyz-suffix`', set()),
+            ('Ordinary prose mentions workflow-xyz.', set()),
+            ('```\nworkflow-xyz\n```', set()),
+            ('artifacts/verification/workflow-xyz/receipt.json', {'workflow-xyz'}),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(cleanup.cited_run_ids(text, None, aliases, self.artifact, self.root), expected)
+        self.assertEqual(cleanup.cited_run_ids('', {'runId': 'workflow-xyz', 'runIds': ['other'], 'runs': ['workflow-xyz-extra']}, aliases, self.artifact, self.root), aliases)
+
     def test_proof_resources_discovers_toolchain_once_for_all_commands(self):
         command = str(self.root / 'scripts/xcodebuild.sh')
         self.commands[:] = [('check', [command, 'test', 'core']),

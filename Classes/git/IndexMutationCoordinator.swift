@@ -36,7 +36,7 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     init(discardPaths: [Data], authorization: PBIndexPatchAuthorization?) {
         self.authorization = authorization
         operation = .discard
-        stagePaths = (authorization?.authorizedDiscardPaths ?? discardPaths).map(Self.copy); unstagePaths = []
+        stagePaths = discardPaths.map(Self.copy); unstagePaths = []
         parentTree = ""; patch = ""; stage = false; reverse = false
         super.init()
     }
@@ -58,6 +58,28 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     private static func copy(_ data: Data) -> Data {
         data.withUnsafeBytes { Data($0) }
     }
+
+    func validatedDiscardPaths() throws -> [Data] {
+        guard let authorization else { return stagePaths }
+        guard let frozen = authorization.authorizedDiscardPaths, Set(stagePaths) == Set(frozen) else {
+            NSLog("[GitX] Discard refused: caller raw paths do not match frozen authorization (%ld requested, %ld authorized)",
+                  stagePaths.count, authorization.authorizedDiscardPaths?.count ?? 0)
+            throw NSError(domain: "PBGitIndexMutationError", code: 8, userInfo: [NSLocalizedDescriptionKey: "The selected diff or repository state changed. Refresh and retry this action."])
+        }
+        return frozen
+    }
+
+    #if DEBUG
+        @objc(testDiscardPaths:authorizedPaths:rejectValidation:)
+        static func testDiscard(paths: [Data], authorizedPaths: [Data]?, rejectValidation: Bool) -> IndexMutationRequest {
+            let authorization = PBIndexPatchAuthorization(discardPaths: authorizedPaths) {
+                if rejectValidation {
+                    throw NSError(domain: "PBGitIndexMutationError", code: 8)
+                }
+            }
+            return IndexMutationRequest(discardPaths: paths, authorization: authorization)
+        }
+    #endif
 }
 
 // swift6-safety-justification: Immutable callbacks cross the writer queue only to be invoked on main, and the repository token is released after that delivery.
@@ -85,7 +107,7 @@ final nonisolated class IndexMutationCoordinator: NSObject, @unchecked Sendable 
     init(repository: PBGitRepository, service: IndexMutationService, stateHandler: @escaping @MainActor @Sendable (IndexWriterState) -> Void) {
         self.repository = repository
         self.service = service
-        writer = IndexRepositoryCommandRunner(repository: repository).writerCoordinator
+        writer = IndexWriterCoordinator.coordinator(for: repository)
         super.init()
         observation = writer.observe(stateHandler)
     }
@@ -126,8 +148,9 @@ final nonisolated class IndexMutationCoordinator: NSObject, @unchecked Sendable 
                 case .paths: success = service.mutate(stageRawPaths: request.stagePaths, unstageRawPaths: request.unstagePaths, parentTree: request.parentTree, error: &error)
                 case .discard:
                     do {
+                        let paths = try request.validatedDiscardPaths()
                         try request.authorization?.validate()
-                        success = service.discardRawPaths(request.stagePaths, error: &error)
+                        success = service.discardRawPaths(paths, error: &error)
                     } catch let validationError { success = false; error = validationError as NSError }
                 case .patch:
                     do {

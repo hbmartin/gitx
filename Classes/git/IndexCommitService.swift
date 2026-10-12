@@ -333,7 +333,7 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
         sink: IndexCommitEventSink
     ) -> IndexCommitResult {
         if let writerCoordinator {
-            do { return try writerCoordinator.perform("commit submission") { performUnlockedCommit(with: request, sink: sink) } }
+            do { return try writerCoordinator.performIfAvailable("commit submission") { performUnlockedCommit(with: request, sink: sink) } }
             catch { return failure(IndexOperationErrorPresentation.detail(for: error as NSError)) }
         }
         return performUnlockedCommit(with: request, sink: sink)

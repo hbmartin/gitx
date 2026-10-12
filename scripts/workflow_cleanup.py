@@ -298,8 +298,13 @@ def cited_run_ids(text, value, aliases, artifact, root):
             for child in item:
                 visit(child)
     visit(value)
-    for match in re.finditer(r"\brun[ -]ids?\s*[:=]\s*([`'\"]?[\w.-]+[`'\"]?(?:\s*,\s*[`'\"]?[\w.-]+[`'\"]?)*)", text, re.IGNORECASE):
+    for match in re.finditer(r"\brun(?:[ -]ids?)?\s*[:=]\s*([`'\"]?[\w.-]+[`'\"]?(?:\s*,\s*[`'\"]?[\w.-]+[`'\"]?)*)", text, re.IGNORECASE):
         found.update(re.findall(r"[\w.-]+", match[1]))
+    # Inline code spans are historical provenance, unlike incidental prose.
+    for span in re.finditer(r"(?<!`)(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)", text):
+        for run_id in aliases:
+            if re.search(r"(?<![\w.-])" + re.escape(run_id) + r"(?![\w.-])", span[2]):
+                found.add(run_id)
     for run_id in aliases:
         # Paths are explicit citations even when the surrounding prose lacks a run-ID label.
         for prefix in (str(artifact), str(artifact.relative_to(root))):
@@ -857,9 +862,14 @@ def eligibility(root, receipt):
     if set(current["files"]) - tracked:
         return None, "uncommitted-build-inputs"
     expected = dict(workflow.full_profile(root))
-    steps = value.get("steps", [])
-    names = [step.get("name") for step in steps]
     selected = value.get("selectedChecks", [])
+    if not isinstance(selected, list) or any(not isinstance(name, str) for name in selected):
+        return None, "incomplete-profile"
+    try:
+        steps = session.active_workflow_steps(value)
+    except ValueError:
+        return None, "incomplete-profile"
+    names = [step.get("name") for step in steps]
     if set(selected) != set(expected) or len(selected) != len(expected) or set(names) != set(expected) or len(names) != len(expected):
         return None, "incomplete-profile"
     toolchain = session.cache_paths(root)["toolchain"]
