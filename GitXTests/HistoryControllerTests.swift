@@ -15,6 +15,33 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testStagingListRestoresRawSelectionAcrossPresentationChanges() throws {
+        try fixture.write("indexed\n", to: "selection-staged.txt")
+        try fixture.git(["add", "selection-staged.txt"])
+        try fixture.write("working\n", to: "selection-unstaged.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        let path = Data("selection-unstaged.txt".utf8)
+        for layout in [PBStagingListLayout.splitTables, .sectionedList] {
+            list.setListLayout(layout)
+            let files = try XCTUnwrap(list.unstagedFilesController.arrangedObjects as? [PBChangedFile])
+            list.unstagedFilesController.setSelectedObjects([try XCTUnwrap(files.first { $0.rawPath == path })])
+            for sort in [PBStagingFileSortOrder.path, .status] {
+                list.viewModel.sortOrder = sort
+                list.viewModel.searchText = "selection"
+                list.applyFilterAndSort()
+                XCTAssertEqual(list.selectedFiles(forStagedContext: false).map(\.rawPath), [path])
+                waitForIndexUpdate { repository.index.refresh() }
+                XCTAssertEqual(list.selectedFiles(forStagedContext: false).map(\.rawPath), [path])
+            }
+            list.viewModel.searchText = "selection-staged"
+            list.applyFilterAndSort()
+            XCTAssertTrue(list.selectedFiles(forStagedContext: false).isEmpty)
+            list.viewModel.searchText = ""
+            list.applyFilterAndSort()
+        }
+    }
+
     func testSectionedCheckboxesAndMixedDoubleClickUsePublishedFiles() throws {
         try fixture.write("indexed\n", to: "control-staged.txt")
         try fixture.git(["add", "control-staged.txt"])
