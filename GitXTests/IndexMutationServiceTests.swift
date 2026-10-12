@@ -136,7 +136,7 @@ final class IndexMutationServiceTests: XCTestCase {
 
     #if DEBUG
         func testNonwaitingWriterRefusesQueuedWorkAndPreservesNestedOwnershipAndFailures() throws {
-            XCTAssertEqual(try PBIndexWriterCommandTestHarness.exerciseNonwaitingAdmission(), [6, 0, 1, 7, 1, 9])
+            XCTAssertEqual(try PBIndexWriterCommandTestHarness.exerciseNonwaitingAdmission(), [1, 6, 0, 1, 7, 1, 9])
         }
 
         func testQueuedWriterRejectsOvertakingSynchronousWorkAndRemainsReusable() {

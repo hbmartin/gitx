@@ -330,9 +330,13 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
                 let finished = DispatchSemaphore(value: 0)
                 var refusal: NSError?
                 var executed = false
+                let submission = { executed = true }
+                try writer.performIfAvailable("test idle submission", submission)
+                let idleExecuted = executed
+                executed = false
                 writer.withSuspendedQueueForTesting {
                     writer.schedule("test queued admission", work: { 42 }, completion: { _ in finished.signal() })
-                    do { try writer.performIfAvailable("test refused submission") { executed = true } }
+                    do { try writer.performIfAvailable("test refused submission", submission) }
                     catch { refusal = error as NSError }
                 }
                 let drained = finished.wait(timeout: .now() + 3) == .success
@@ -343,8 +347,12 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
                 do { try writer.performIfAvailable("test failed submission") { throw NSError(domain: "admission.fixture", code: 17) } }
                 catch { propagated = (error as NSError).code == 17 }
                 let recovered = try writer.performIfAvailable("test recovered submission") { 9 }
-                return [NSNumber(value: refusal?.code ?? 0), NSNumber(value: executed), NSNumber(value: drained),
-                        NSNumber(value: nested), NSNumber(value: propagated), NSNumber(value: recovered)]
+                var observed = [NSNumber(value: idleExecuted)]
+                if let refusal {
+                    observed.append(NSNumber(value: refusal.code))
+                }
+                return observed + [NSNumber(value: executed), NSNumber(value: drained), NSNumber(value: nested),
+                                   NSNumber(value: propagated), NSNumber(value: recovered)]
             }
 
             @objc(exerciseSynchronousResultLifetimeAndReturnError:)
