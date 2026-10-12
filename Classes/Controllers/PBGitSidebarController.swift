@@ -59,6 +59,9 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     private let mutableItems = NSMutableArray()
     @objc private dynamic var branches: PBSourceViewItem?
+    private var worktreesGroup: PBSourceViewItem?
+    private var restoringSelection = false
+    private var worktreeObservations: [NSKeyValueObservation] = []
     @objc open private(set) dynamic var remotes: PBSourceViewItem?
     @objc private dynamic var tags: PBSourceViewItem?
     @objc private dynamic var others: PBSourceViewItem?
@@ -209,6 +212,14 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
                 self?.reloadSidebarAfterReferencesChange()
             }
         }
+        worktreeObservations = [
+            repository.observe(\.worktrees, options: []) { [weak self] _, _ in
+                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadSidebarPresentation() }
+            },
+            repository.observe(\.worktreeFeatureAvailable, options: []) { [weak self] _, _ in
+                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadSidebarPresentation() }
+            },
+        ]
         stashesObservation = repository.observe(\.stashes, options: []) { [weak self] _, _ in
             Self.performRepositoryObservationOnMain { [weak self] in
                 self?.reloadStashes()
@@ -235,8 +246,12 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @objc dynamic func reloadSidebarPresentation() {
         let selectedForgeSurface = selectedForgeSurface()
+        let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
         let viewedRevision = repository?.currentBranch
         populateList()
+        if restoreWorktreeSelection(selectedWorktree) {
+            return
+        }
         if restoreForgeSelection(selectedForgeSurface) {
             return
         }
@@ -291,6 +306,11 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @objc(addRevSpec:)
     dynamic func add(revision: PBGitRevSpecifier) -> PBSourceViewItem? { // swiftlint:disable:this cyclomatic_complexity
+        if let ref = revision.simpleRef(),
+           let item = worktreesGroup?.sortedChildren.compactMap({ $0 as? PBSourceViewGitWorktreeItem }).first(where: { $0.worktree.value.branchIdentity == Data(ref.utf8) })
+        {
+            return item
+        }
         if let existing = item(for: revision) {
             return existing
         }
@@ -337,6 +357,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     @objc dynamic func reloadSidebarAfterReferencesChange() {
         guard let repository else { return }
         let selectedForgeSurface = selectedForgeSurface()
+        let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
         var viewedRevision = repository.currentBranch
         let newHead = repository.headRef()
         let followHead = HistoryRefreshSelectionPolicy.shouldFollowCheckedOutBranch(
@@ -350,7 +371,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
 
         populateList()
-        if !restoreForgeSelection(selectedForgeSurface),
+        if !restoreWorktreeSelection(selectedWorktree), !restoreForgeSelection(selectedForgeSurface),
            let viewedRevision,
            let item = item(for: viewedRevision)
         {
@@ -432,6 +453,18 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         if row >= 0 {
             sourceView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
+    }
+
+    @discardableResult
+    private func restoreWorktreeSelection(_ identity: Data?) -> Bool {
+        guard let identity,
+              let item = worktreesGroup?.sortedChildren.compactMap({ $0 as? PBSourceViewGitWorktreeItem }).first(where: { $0.identity == identity }) else { return false }
+        let previousRestoring = restoringSelection
+        restoringSelection = true
+        defer { restoringSelection = previousRestoring }
+        expandItemAndParents(item)
+        select(item)
+        return true
     }
 
     private func selectedForgeSurface() -> ForgeCollaborationSurface? {
@@ -599,6 +632,9 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @objc private dynamic func populateList() {
         guard let repository else { return }
+        let previousRestoring = restoringSelection
+        restoringSelection = true
+        defer { restoringSelection = previousRestoring }
         if branchPresentation == nil {
             branchPresentation = BranchSidebarPresentation(repository: repository)
         }
@@ -608,6 +644,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         let project = PBSourceViewItem.groupItem(withTitle: repository.projectName() ?? "")
         project.isUncollapsible = true
         let branches = PBSourceViewItem.groupItem(withTitle: "Branches")
+        let worktreesGroup = PBSourceViewItem.groupItem(withTitle: "Worktrees")
+        self.worktreesGroup = worktreesGroup
         let remotes = PBSourceViewItem.groupItem(withTitle: "Remotes")
         let tags = PBSourceViewItem.groupItem(withTitle: "Tags")
         let stashes = PBSourceViewItem.groupItem(withTitle: "Stashes")
@@ -628,6 +666,11 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         for stash in repository.stashes {
             stashes.addChild(PBSourceViewGitStashItem(stash: stash))
         }
+        if repository.worktreeFeatureAvailable {
+            for worktree in repository.worktreeService.worktrees where !worktree.isCurrent {
+                worktreesGroup.addChild(PBSourceViewGitWorktreeItem(worktree: worktree))
+            }
+        }
         for revision in repository.branches {
             _ = add(revision: revision)
         }
@@ -646,6 +689,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
             mutableItems.add(forgeGroup)
         }
         mutableItems.add(branches)
+        mutableItems.add(worktreesGroup)
         if settings.isSidebarGroupVisible("Remotes") {
             mutableItems.add(remotes)
         }
@@ -666,6 +710,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         sourceView?.expandItem(project)
         sourceView?.expandItem(forgeGroup, expandChildren: true)
         sourceView?.expandItem(branches, expandChildren: true)
+        sourceView?.expandItem(worktreesGroup)
         sourceView?.expandItem(remotes)
         sourceView?.expandItem(stashes)
         sourceView?.expandItem(submodules)
@@ -675,6 +720,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
 public extension PBGitSidebarController {
     @objc dynamic func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !restoringSelection else { return }
         if let forgeItem = selectedItem() as? RepositoryForgeSourceViewItem,
            let destination = forgeItem.destination
         {
@@ -698,7 +744,9 @@ public extension PBGitSidebarController {
 
     @objc internal dynamic func doubleClicked(_ sender: Any?) {
         guard let item = selectedItem() else { return }
-        if let submodule = item as? PBSourceViewGitSubmoduleItem {
+        if let worktree = item as? PBSourceViewGitWorktreeItem {
+            windowController?.open(worktree: worktree.worktree)
+        } else if let submodule = item as? PBSourceViewGitSubmoduleItem {
             openSubmodule(at: submodule.path)
         } else if let branch = item as? PBSourceViewGitBranchItem, let ref = branch.ref() {
             do {
@@ -742,6 +790,25 @@ public extension PBGitSidebarController {
         cell.imageView?.image = item.icon
         cell.isCheckedOut = item.revSpecifier?.isEqual(repository?.headRef()) == true
         configureForgeCell(cell, item: item)
+        let worktree = (item as? PBSourceViewGitWorktreeItem)?.worktree
+        cell.isLocked = worktree?.isLocked == true
+        cell.isUnavailable = worktree?.isUnavailable == true
+        cell.toolTip = worktree.map { WorktreePresentation.details($0.value) }
+        if let worktree {
+            cell.setAccessibilityIdentifier("RepositoryWorktreeItem")
+            cell.textField?.setAccessibilityIdentifier("RepositoryWorktreeItem")
+            cell.textField?.setAccessibilityLabel(item.title)
+            cell.textField?.setAccessibilityHelp(WorktreePresentation.details(worktree.value))
+            cell.setAccessibilityLabel(item.title)
+            cell.setAccessibilityHelp(WorktreePresentation.details(worktree.value))
+            cell.setAccessibilityValue(WorktreePresentation.details(worktree.value))
+        } else {
+            cell.textField?.setAccessibilityIdentifier(nil)
+            cell.textField?.setAccessibilityLabel(nil)
+            cell.textField?.setAccessibilityHelp(nil)
+            cell.setAccessibilityHelp(nil)
+            cell.setAccessibilityValue(nil)
+        }
         return cell
     }
 
@@ -902,7 +969,7 @@ public extension PBGitSidebarController {
 extension PBGitSidebarController {
     @objc dynamic func updateActionMenu() {
         let item = selectedItem()
-        actionButton?.isEnabled = item?.ref() != nil || item is PBSourceViewGitSubmoduleItem
+        actionButton?.isEnabled = item?.ref() != nil || item is PBSourceViewGitSubmoduleItem || item is PBSourceViewGitWorktreeItem || item === worktreesGroup
     }
 
     @objc(addMenuItemsForRef:toMenu:)
@@ -933,11 +1000,29 @@ extension PBGitSidebarController {
         return item
     }
 
+    private func addWorktreeMenuItems(for viewItem: PBSourceViewItem?, to menu: NSMenu) -> Bool {
+        guard let repository else { return false }
+        let builder = HistoryMenuBuilder(repository: repository)
+        let items: [NSMenuItem]
+        if let worktree = viewItem as? PBSourceViewGitWorktreeItem {
+            items = builder.menuItems(forWorktree: worktree.worktree)
+        } else if viewItem === worktreesGroup {
+            items = builder.menuItemsForWorktreeGroup()
+        } else {
+            return false
+        }
+        items.forEach { menu.addItem($0) }
+        return true
+    }
+
     @objc(menuForRow:)
     public dynamic func menu(forRow row: Int) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         guard let viewItem = sourceView?.item(atRow: row) as? PBSourceViewItem else { return menu }
+        if addWorktreeMenuItems(for: viewItem, to: menu) {
+            return menu
+        }
         addMenuItems(for: viewItem.ref(), to: menu)
         addMenuItems(for: viewItem as? PBSourceViewGitSubmoduleItem, to: menu)
         return menu
@@ -949,6 +1034,9 @@ extension PBGitSidebarController {
             menu.addItem(actionIconItem())
         }
         let item = selectedItem()
+        if addWorktreeMenuItems(for: item, to: menu) {
+            return
+        }
         addMenuItems(for: item?.ref(), to: menu)
         addMenuItems(for: item as? PBSourceViewGitSubmoduleItem, to: menu)
     }

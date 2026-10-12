@@ -29,6 +29,7 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 	PBRepositoryMutationService *_mutationService;
 	PBRepositoryStashService *_stashService;
 	PBRepositoryHookRunner *_hookRunner;
+	PBRepositoryWorktreeService *_worktreeService;
 }
 
 @property (nonatomic, strong) NSNumber *hasSVNRepoConfig;
@@ -58,6 +59,7 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 	_mutationService = [[PBRepositoryMutationService alloc] initWithRepository:self];
 	_stashService = [[PBRepositoryStashService alloc] initWithRepository:self];
 	_hookRunner = [[PBRepositoryHookRunner alloc] initWithRepository:self];
+	_worktreeService = [[PBRepositoryWorktreeService alloc] initWithRepository:self];
 	return self;
 }
 
@@ -79,6 +81,7 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 	}
 
 	revisionList = [[PBGitHistoryList alloc] initWithRepository:self];
+	[_worktreeService start];
 
 	[self reloadRefs];
 
@@ -115,6 +118,7 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 
 - (void)dealloc
 {
+	[_worktreeService cancel];
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
 	[watcher stop];
 }
@@ -128,6 +132,35 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 	} else {
 		[watcher stop];
 	}
+}
+
+- (PBRepositoryWorktreeService *)worktreeService
+{
+	return _worktreeService;
+}
+- (NSArray<PBGitWorktree *> *)worktrees
+{
+	return _worktreeService.worktrees;
+}
+- (BOOL)worktreeFeatureAvailable
+{
+	return _worktreeService.isSupported;
+}
+- (void)refreshWorktrees
+{
+	[_worktreeService refresh];
+}
+- (void)cancelWorktreeDiscovery
+{
+	[_worktreeService cancel];
+}
+- (PBGitWorktree *)worktreeHoldingRef:(PBGitRef *)ref
+{
+	return ref ? [_worktreeService worktreeForBranch:ref.ref] : nil;
+}
+- (NSString *)pathOfWorktreeHoldingRef:(PBGitRef *)ref
+{
+	return [self worktreeHoldingRef:ref].path;
 }
 
 #pragma mark Properties/General methods
@@ -209,6 +242,7 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 
 - (void)reloadRefs
 {
+	[_worktreeService refresh];
 	PBRepositoryReferenceSnapshot *snapshot = [_referenceStore loadReferenceSnapshot];
 	self->refs = [snapshot.references mutableCopy];
 	NSMutableOrderedSet *oldBranches = [self.branchesSet mutableCopy];

@@ -50,7 +50,7 @@ public struct WorktreeEligibility: Equatable, Sendable {
     public let canLocate: Bool
 
     public init(_ worktree: GitWorktree, supported: Bool) {
-        canOpen = supported && !worktree.isCurrent && !worktree.isBare
+        canOpen = supported && !worktree.isCurrent
         canRemove = supported && !worktree.isMain && !worktree.isCurrent && !worktree.isLocked
         canLock = supported && !worktree.isMain && !worktree.isLocked
         canUnlock = supported && !worktree.isMain && worktree.isLocked

@@ -135,6 +135,9 @@ final class RepositoryFocusRefreshCoordinator: NSObject {
             ["for-each-ref", "--format=%(refname)%00%(objectname)%00"],
             ["remote"],
         ]
+        if repository.worktreeFeatureAvailable {
+            commands.append(["worktree", "list", "--porcelain", "-z"])
+        }
         if !isBareRepository {
             commands.append(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal"])
         }

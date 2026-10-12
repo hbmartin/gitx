@@ -75,6 +75,13 @@
 	XCTAssertEqualObjects([cell colorForRef:[PBGitRef refFromString:@"unknown"]], NSColor.yellowColor);
 	[cell setValue:nil forKey:@"controller"];
 	XCTAssertNotNil([cell colorForRef:[PBGitRef refFromString:@"refs/heads/main"]]);
+	WorktreeGraphCommit *commit = [WorktreeGraphCommit new];
+	commit.testRepository = repository;
+	cell.objectValue = commit;
+	NSColor *fallback = [[cell colorForRef:[PBGitRef refFromString:@"refs/heads/main"]] colorUsingColorSpace:NSColorSpace.genericRGBColorSpace];
+	XCTAssertEqualWithAccuracy(fallback.redComponent, 252.0 / 256, 0.00001);
+	XCTAssertEqualWithAccuracy(fallback.greenComponent, 166.0 / 256, 0.00001);
+	XCTAssertEqualWithAccuracy(fallback.blueComponent, 79.0 / 256, 0.00001);
 }
 
 - (void)testGraphRenderingLayoutAndReferenceHitBoundaries

@@ -206,6 +206,10 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         guard index >= 0, let refs = commits[row].refs, refs.count > Int(index),
               let ref = refs.object(at: Int(index)) as? PBGitRef
         else { return }
+        if let worktree = repository.worktreeHoldingRef(ref) {
+            owner.windowController?.open(worktree: worktree)
+            return
+        }
         do {
             _ = try repository.checkoutRefish(ref)
         } catch {

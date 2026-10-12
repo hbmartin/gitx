@@ -160,7 +160,7 @@
 		4DF173E621A1A67C003CD3CE /* MAKVONotificationCenter.m in Sources */ = {isa = PBXBuildFile; fileRef = 4DF173E521A1A67A003CD3CE /* MAKVONotificationCenter.m */; };
 		4DF173E921A1D60A003CD3CE /* NSAppearance+PBDarkMode.m in Sources */ = {isa = PBXBuildFile; fileRef = 4DF173E821A1D60A003CD3CE /* NSAppearance+PBDarkMode.m */; };
 		50660A551FD6F48A004342B0 /* PBSidebarList.m in Sources */ = {isa = PBXBuildFile; fileRef = 50660A541FD6F48A004342B0 /* PBSidebarList.m */; };
-		508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m in Sources */ = {isa = PBXBuildFile; fileRef = 508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m */; };
+		508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.swift */; };
 		50DCC65A20111E4000999D3D /* PBGitRevisionRow.m in Sources */ = {isa = PBXBuildFile; fileRef = 50DCC65920111E4000999D3D /* PBGitRevisionRow.m */; };
 		551BF176112F3F4B00265053 /* gitx_askpasswd in Resources */ = {isa = PBXBuildFile; fileRef = 551BF111112F371800265053 /* gitx_askpasswd */; };
 		643952771603EF9B00BB7AFF /* PBSourceViewGitSubmoduleItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 643952761603EF9B00BB7AFF /* PBSourceViewGitSubmoduleItem.m */; };
@@ -448,6 +448,15 @@
 		A1C6E121ABDD25A35EA37A07 /* PushOutputExportCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131B1A7EFDD3D46343E0A4EC /* PushOutputExportCoordinatorTests.swift */; };
 		FE927C9B52A14CEF9AA51484 /* GitXHostStartTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABF7368C5B946E79DCD37A5 /* GitXHostStartTests.swift */; };
 		ADE63093B08D4CBD83C99452 /* GitXInteropContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82BBC51E238F41C3A4B918FB /* GitXInteropContractTests.swift */; };
+		4F3BDC0D4DDA469895258C70 /* RepositoryWorktreeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F51E192AB871481CA7B9BEDC /* RepositoryWorktreeService.swift */; };
+		66FB4AEA1AD547DA9AD0FA7F /* RepositoryWatchPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = C022FA47ADE04E199C4B8478 /* RepositoryWatchPaths.swift */; };
+		FD274204D1E94E89A0BDFD51 /* PBGitWindowController+Worktrees.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */; };
+		CA188AFDFFFC45379B27A394 /* PBSourceViewGitWorktreeItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3302FF498D74DF0BA771862 /* PBSourceViewGitWorktreeItem.swift */; };
+		26A1958F255949DCBBB012A3 /* PBGitRefLabelColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */; };
+		11F86FC6AB4A474ABE9F1445 /* WorktreeBranchTemplate.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */; };
+		932DA454E09B44F5AB66C8A6 /* WorktreeServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F724AE03AD412D84639190 /* WorktreeServiceTests.swift */; };
+		FBFB6B67DFBB4AF8B4916F5F /* WorktreeAppKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DDF5AD278AE402E8D17B6FB /* WorktreeAppKitTests.swift */; };
+		B6547E1495BE465AA156AFAF /* WorktreeWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -914,7 +923,7 @@
 		50660A531FD6F48A004342B0 /* PBSidebarList.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBSidebarList.h; sourceTree = "<group>"; };
 		50660A541FD6F48A004342B0 /* PBSidebarList.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBSidebarList.m; sourceTree = "<group>"; };
 		508E268B1FD317FC00CE9FE0 /* PBSidebarTableViewCell.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBSidebarTableViewCell.h; sourceTree = "<group>"; };
-		508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBSidebarTableViewCell.m; sourceTree = "<group>"; };
+		508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBSidebarTableViewCell.swift; sourceTree = "<group>"; };
 		50DCC65820111E4000999D3D /* PBGitRevisionRow.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitRevisionRow.h; sourceTree = "<group>"; };
 		50DCC65920111E4000999D3D /* PBGitRevisionRow.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBGitRevisionRow.m; sourceTree = "<group>"; };
 		551BF111112F371800265053 /* gitx_askpasswd */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = gitx_askpasswd; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1166,6 +1175,15 @@
 		131B1A7EFDD3D46343E0A4EC /* PushOutputExportCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushOutputExportCoordinatorTests.swift; sourceTree = "<group>"; };
 		EABF7368C5B946E79DCD37A5 /* GitXHostStartTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXHostStartTests.swift; sourceTree = "<group>"; };
 		82BBC51E238F41C3A4B918FB /* GitXInteropContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXInteropContractTests.swift; sourceTree = "<group>"; };
+		F51E192AB871481CA7B9BEDC /* RepositoryWorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWorktreeService.swift; sourceTree = "<group>"; };
+		C022FA47ADE04E199C4B8478 /* RepositoryWatchPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWatchPaths.swift; sourceTree = "<group>"; };
+		1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitWindowController+Worktrees.swift"; sourceTree = "<group>"; };
+		E3302FF498D74DF0BA771862 /* PBSourceViewGitWorktreeItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBSourceViewGitWorktreeItem.swift; sourceTree = "<group>"; };
+		5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBGitRefLabelColors.swift; sourceTree = "<group>"; };
+		75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = WorktreeBranchTemplate.pdf; sourceTree = "<group>"; };
+		E5F724AE03AD412D84639190 /* WorktreeServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeServiceTests.swift; sourceTree = "<group>"; };
+		3DDF5AD278AE402E8D17B6FB /* WorktreeAppKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeAppKitTests.swift; sourceTree = "<group>"; };
+		73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeWorkflowUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1363,6 +1381,7 @@
 				978357A9189C074500ADC689 /* RemoteBranchTemplate.pdf */,
 				978357AA189C074500ADC689 /* RemoteTemplate.pdf */,
 				4A5D75AF14A9A90500DF6C68 /* rewindImage.pdf */,
+				75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */,
 				978357AB189C074500ADC689 /* StageTemplate.pdf */,
 				978357AC189C074500ADC689 /* TagTemplate.pdf */,
 			);
@@ -1503,6 +1522,7 @@
 				4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */,
 				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
 				C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */,
+				1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */,
 				C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */,
 				C0DEC6000000000000000011 /* HistoryTreePresentation.swift */,
 				C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */,
@@ -1603,6 +1623,8 @@
 				C0DE90000000000000000013 /* RepositoryMutationService.swift */,
 				C0DE90000000000000000014 /* RepositoryStashService.swift */,
 				C0DE90000000000000000015 /* RepositoryReferenceStore.swift */,
+				C022FA47ADE04E199C4B8478 /* RepositoryWatchPaths.swift */,
+				F51E192AB871481CA7B9BEDC /* RepositoryWorktreeService.swift */,
 				C0DE90000000000000000016 /* RepositoryHookRunner.swift */,
 				C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */,
 				C05900000000000000000013 /* RepositoryIgnoreFileService.swift */,
@@ -1742,7 +1764,9 @@
 				4A5D76CE14A9A9CC00DF6C68 /* PBGitXMessageSheet.h */,
 				4A5D76CF14A9A9CC00DF6C68 /* PBGitXMessageSheet.m */,
 				508E268B1FD317FC00CE9FE0 /* PBSidebarTableViewCell.h */,
-				508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m */,
+				508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.swift */,
+				5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */,
+				E3302FF498D74DF0BA771862 /* PBSourceViewGitWorktreeItem.swift */,
 				4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.swift */,
 				C0DE92000000000000000002 /* QuickLookFilePromiseExporter.swift */,
 				4A5D76D614A9A9CC00DF6C68 /* PBQLTextView.h */,
@@ -1820,6 +1844,8 @@
 				C0DE91000000000000000002 /* PBQLOutlineViewTests.swift */,
 				C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */,
 				C0DE48000000000000000011 /* WorktreeCharacterizationTests.swift */,
+				3DDF5AD278AE402E8D17B6FB /* WorktreeAppKitTests.swift */,
+				E5F724AE03AD412D84639190 /* WorktreeServiceTests.swift */,
 				C0DE48000000000000000012 /* WorktreeRevisionCharacterizationTests.m */,
 				C0DE90000000000000000017 /* RepositoryServiceTests.swift */,
 				82BBC51E238F41C3A4B918FB /* GitXInteropContractTests.swift */,
@@ -1897,6 +1923,7 @@
 			isa = PBXGroup;
 			children = (
 				D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */,
+				73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */,
 				D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */,
 				CC0000020000002 /* GitXScreenshotTests.m */,
 				F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */,
@@ -2222,6 +2249,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				11F86FC6AB4A474ABE9F1445 /* WorktreeBranchTemplate.pdf in Resources */,
 				913D5E500E55645900CECEA2 /* gitx in Resources */,
 				551BF176112F3F4B00265053 /* gitx_askpasswd in Resources */,
 				978357C5189C238300ADC689 /* DetailViewTemplate.pdf in Resources */,
@@ -2325,6 +2353,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				26A1958F255949DCBBB012A3 /* PBGitRefLabelColors.swift in Sources */,
+				CA188AFDFFFC45379B27A394 /* PBSourceViewGitWorktreeItem.swift in Sources */,
+				FD274204D1E94E89A0BDFD51 /* PBGitWindowController+Worktrees.swift in Sources */,
+				66FB4AEA1AD547DA9AD0FA7F /* RepositoryWatchPaths.swift in Sources */,
+				4F3BDC0D4DDA469895258C70 /* RepositoryWorktreeService.swift in Sources */,
 				C0DEAC0F0000000000000002 /* GitOutputFormatting.swift in Sources */,
 				C0DEAC0F0000000000000001 /* ErrorMessagePresentation.swift in Sources */,
 				C0DE10000000000000000019 /* PBAutoFetchManager.swift in Sources */,
@@ -2461,7 +2494,7 @@
 				4A5D76E414A9A9CC00DF6C68 /* PBDiffWindowController.m in Sources */,
 				4A5D76E614A9A9CC00DF6C68 /* PBGitHistoryController.m in Sources */,
 				4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.swift in Sources */,
-				508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m in Sources */,
+				508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.swift in Sources */,
 				4DECFBB21E662962004C3A6F /* ObjectiveGit+PBCategories.m in Sources */,
 				4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */,
 				4A5D76EA14A9A9CC00DF6C68 /* PBHistorySearchController.m in Sources */,
@@ -2564,6 +2597,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FBFB6B67DFBB4AF8B4916F5F /* WorktreeAppKitTests.swift in Sources */,
+				932DA454E09B44F5AB66C8A6 /* WorktreeServiceTests.swift in Sources */,
 				C0DE30000000000000000001 /* GitXCoreTests.m in Sources */,
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
@@ -2690,6 +2725,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B6547E1495BE465AA156AFAF /* WorktreeWorkflowUITests.swift in Sources */,
 				D0C700000000000000000001 /* GitXUIActivationPreflightTests.swift in Sources */,
 				D0C700000000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */,
 				CC0000010000001 /* GitXScreenshotTests.m in Sources */,

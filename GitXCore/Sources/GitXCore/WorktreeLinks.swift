@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 /// Link inspection follows Git's administrative `gitdir` backlinks, never a
@@ -77,6 +76,26 @@ public enum WorktreeLinkInspector {
                                isCurrent: identity == currentIdentity, linkStyle: style, hasBrokenLink: broken,
                                movedPath: moved, folderExists: exists, hasForeignLink: foreign)
         }
+    }
+
+    /// Locate must verify the administrative identity before Git can write a
+    /// link. With an explicit --git-dir, Git otherwise accepts an unrelated
+    /// checkout with the same administrative identifier.
+    public static func canRepair(_ record: GitWorktree, at path: String, commonDirectory: String) -> Bool {
+        guard !record.hasForeignLink, let selected = link(at: path) else { return false }
+        let administrative = (commonDirectory as NSString).appendingPathComponent("worktrees")
+        for identifier in (try? FileManager.default.contentsOfDirectory(atPath: administrative)) ?? [] {
+            let folder = (administrative as NSString).appendingPathComponent(identifier)
+            guard let backlink = firstLine((folder as NSString).appendingPathComponent("gitdir")), !backlink.isEmpty else { continue }
+            let original = (resolve(backlink, relativeTo: folder) as NSString).deletingLastPathComponent
+            guard WorktreePaths.identity(original) == WorktreePaths.identity(record.path) else { continue }
+            if WorktreePaths.identity(selected.target) == WorktreePaths.identity(folder) {
+                return true
+            }
+            return record.movedPath.map(WorktreePaths.identity) == WorktreePaths.identity(path)
+                && !FileManager.default.fileExists(atPath: selected.target)
+        }
+        return false
     }
 
     private static func firstLine(_ path: String) -> String? {

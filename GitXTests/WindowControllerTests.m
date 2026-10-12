@@ -2629,8 +2629,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	};
 	[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
 																	   object:self.repository]];
-	XCTAssertEqual(sidebar.items.count, (NSUInteger)2);
-	XCTAssertEqualObjects([sidebar.items valueForKey:@"title"], (@[ self.repository.projectName.uppercaseString, @"BRANCHES" ]));
+	XCTAssertEqual(sidebar.items.count, (NSUInteger)3);
+	XCTAssertEqualObjects([sidebar.items valueForKey:@"title"], (@[ self.repository.projectName.uppercaseString, @"BRANCHES", @"WORKTREES" ]));
 	XCTAssertFalse([sidebar.items containsObject:sidebar.remotes]);
 	settings.sidebarVisibility = @{
 		@"Remotes" : @YES,

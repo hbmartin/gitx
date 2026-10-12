@@ -21,6 +21,8 @@
 #import "PBProcessEnvironment.h"
 #import "PBGitRevisionCell.h"
 #import "PBSidebarTableViewCell.h"
+#import "PBWorktreeCompatibility.h"
+#import "PBGitSidebarControllerCompatibility.h"
 #import "PBHistorySearchController.h"
 #import "RepositoryIgnoreTestSupport.h"
 #import "PBGitBinary.h"

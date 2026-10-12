@@ -70,7 +70,6 @@
 #import "PBSourceViewItem.h"
 #import "PBSourceViewItems.h"
 #import "PBSourceViewGitStashItem.h"
-#import "PBSidebarTableViewCell.h"
 #import "NSOutlineViewExt.h"
 #import "PBGitTree.h"
 #import "PBWorkingTree.h"

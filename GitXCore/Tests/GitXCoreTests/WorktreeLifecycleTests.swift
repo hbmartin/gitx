@@ -37,7 +37,7 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertFalse(WorktreeEligibility(main, supported: true).canRemove)
         XCTAssertFalse(WorktreeEligibility(main, supported: true).canLock)
         XCTAssertFalse(WorktreeEligibility(main, supported: true).canOpen)
-        XCTAssertFalse(WorktreeEligibility(GitWorktree(path: "/bare", isBare: true), supported: true).canOpen)
+        XCTAssertTrue(WorktreeEligibility(GitWorktree(path: "/bare", isBare: true), supported: true).canOpen)
         let locked = GitWorktree(path: "/locked", isLocked: true)
         XCTAssertFalse(WorktreeEligibility(locked, supported: true).canRemove)
         XCTAssertFalse(WorktreeEligibility(locked, supported: true).canLock)
