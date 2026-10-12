@@ -20,6 +20,7 @@
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
 #import "PBGitRevisionCell.h"
+#import "PBSidebarTableViewCell.h"
 #import "PBHistorySearchController.h"
 #import "RepositoryIgnoreTestSupport.h"
 #import "PBGitBinary.h"

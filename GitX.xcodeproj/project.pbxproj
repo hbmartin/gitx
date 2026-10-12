@@ -224,6 +224,8 @@
 		C01400000000000000000002 /* IndexCommitCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01400000000000000000012 /* IndexCommitCoordinator.swift */; };
 		C01400000000000000000003 /* CommitProgressSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01400000000000000000013 /* CommitProgressSheetController.swift */; };
 		C01400000000000000000004 /* CommitProgressSheetControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01400000000000000000014 /* CommitProgressSheetControllerTests.swift */; };
+		C0DE48000000000000000001 /* WorktreeCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE48000000000000000011 /* WorktreeCharacterizationTests.swift */; };
+		C0DE48000000000000000002 /* WorktreeRevisionCharacterizationTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE48000000000000000012 /* WorktreeRevisionCharacterizationTests.m */; };
 		C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000017 /* RepositoryServiceTests.swift */; };
 		C0DE90000000000000000008 /* PBGitRepository+ServiceForwarding.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */; };
 		C05900000000000000000001 /* RepositoryIgnoreTestSupport.m in Sources */ = {isa = PBXBuildFile; fileRef = C05900000000000000000011 /* RepositoryIgnoreTestSupport.m */; };
@@ -997,6 +999,8 @@
 		C01400000000000000000012 /* IndexCommitCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexCommitCoordinator.swift; sourceTree = "<group>"; };
 		C01400000000000000000013 /* CommitProgressSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitProgressSheetController.swift; sourceTree = "<group>"; };
 		C01400000000000000000014 /* CommitProgressSheetControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitProgressSheetControllerTests.swift; sourceTree = "<group>"; };
+		C0DE48000000000000000011 /* WorktreeCharacterizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeCharacterizationTests.swift; sourceTree = "<group>"; };
+		C0DE48000000000000000012 /* WorktreeRevisionCharacterizationTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WorktreeRevisionCharacterizationTests.m; sourceTree = "<group>"; };
 		C0DE90000000000000000017 /* RepositoryServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryServiceTests.swift; sourceTree = "<group>"; };
 		C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitRepository+ServiceForwarding.m"; sourceTree = "<group>"; };
 		C05900000000000000000011 /* RepositoryIgnoreTestSupport.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryIgnoreTestSupport.m; sourceTree = "<group>"; };
@@ -1815,6 +1819,8 @@
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
 				C0DE91000000000000000002 /* PBQLOutlineViewTests.swift */,
 				C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */,
+				C0DE48000000000000000011 /* WorktreeCharacterizationTests.swift */,
+				C0DE48000000000000000012 /* WorktreeRevisionCharacterizationTests.m */,
 				C0DE90000000000000000017 /* RepositoryServiceTests.swift */,
 				82BBC51E238F41C3A4B918FB /* GitXInteropContractTests.swift */,
 				EABF7368C5B946E79DCD37A5 /* GitXHostStartTests.swift */,
@@ -2565,6 +2571,8 @@
 				C0DE92000000000000000003 /* QuickLookFilePromiseExporter.swift in Sources */,
 				C0DEF2000000000000000003 /* CommitCopyPolicy.swift in Sources */,
 				C0DEF1000000000000000003 /* RepositoryRejectedPushRecoveryPolicy.swift in Sources */,
+				C0DE48000000000000000001 /* WorktreeCharacterizationTests.swift in Sources */,
+				C0DE48000000000000000002 /* WorktreeRevisionCharacterizationTests.m in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
 				ADE63093B08D4CBD83C99452 /* GitXInteropContractTests.swift in Sources */,
 				FE927C9B52A14CEF9AA51484 /* GitXHostStartTests.swift in Sources */,
