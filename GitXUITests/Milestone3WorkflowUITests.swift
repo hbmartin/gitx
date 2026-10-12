@@ -280,7 +280,6 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
     private func makeWorkingRepository(name: String) throws -> URL {
         let repository = try makeDirectory(name: name)
         _ = try git(["init", "--quiet", "--initial-branch", "main"], in: repository)
-        try GitXUITestRepositoryPolicy.excludeFinderMetadata(inRepositoryAtPath: repository.path)
         _ = try git(["config", "user.name", "GitX UI Tests"], in: repository)
         _ = try git(["config", "user.email", "ui-tests@gitx.invalid"], in: repository)
         try "Milestone 3 fixture\n".write(

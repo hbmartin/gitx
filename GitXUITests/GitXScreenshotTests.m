@@ -194,25 +194,10 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 }
 - (BOOL)runGit:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
 {
-	NSTask *task = [[NSTask alloc] init];
-	// /usr/bin/git delegates through xcrun, which refuses to run from the UI
-	// test runner's sandbox. Invoke the selected Xcode's Git binary directly.
-	NSString *developerDirectory = NSProcessInfo.processInfo.environment[@"DEVELOPER_DIR"];
-	if (!developerDirectory.length) {
-		developerDirectory = @"/Applications/Xcode.app/Contents/Developer";
-	}
-	NSString *gitPath = [developerDirectory stringByAppendingPathComponent:@"usr/bin/git"];
-	if (![[NSFileManager defaultManager] isExecutableFileAtPath:gitPath]) {
-		gitPath = @"/usr/bin/git";
-	}
-	task.executableURL = [NSURL fileURLWithPath:gitPath];
-	task.arguments = arguments;
-	task.environment = GitXIsolatedScreenshotGitEnvironment(NSProcessInfo.processInfo.environment);
-	task.currentDirectoryURL = [NSURL fileURLWithPath:directory isDirectory:YES];
 	NSError *error = nil;
-	[task launchAndReturnError:&error];
-	[task waitUntilExit];
-	return error == nil && task.terminationStatus == 0;
+	[GitXUITestRepositoryPolicy runGitArguments:arguments inDirectory:directory error:&error];
+	if (error) NSLog(@"Screenshot fixture Git command failed: %@", error);
+	return error == nil;
 }
 
 - (NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
@@ -260,9 +245,6 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	[[NSFileManager defaultManager] createDirectoryAtPath:repositoryPath withIntermediateDirectories:YES attributes:nil error:nil];
 	[self.temporaryRepositoryPaths addObject:repositoryPath];
 	XCTAssertTrue(([self runGit:@[ @"init", @"-q", @"-b", @"main" ] inDirectory:repositoryPath]));
-	NSError *metadataError = nil;
-	XCTAssertTrue([GitXUITestRepositoryPolicy excludeFinderMetadataInRepositoryAtPath:repositoryPath error:&metadataError],
-				  @"Failed to isolate Finder metadata in the fixture: %@", metadataError);
 	XCTAssertTrue(([self runGit:@[ @"config", @"user.name", @"GitX Tests" ] inDirectory:repositoryPath]));
 	XCTAssertTrue(([self runGit:@[ @"config", @"user.email", @"tests@gitx.invalid" ] inDirectory:repositoryPath]));
 	[@"tracked\n" writeToFile:[repositoryPath stringByAppendingPathComponent:@"tracked.swift"] atomically:YES encoding:NSUTF8StringEncoding error:nil];

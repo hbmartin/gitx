@@ -95,6 +95,33 @@ final class HistoryFileIdentityTests: XCTestCase {
         }
     }
 
+    func testRenamedCommittedFilesRetainTheirOriginAndStatusSortOrdersCurrentPaths() throws {
+        try fixture { directory in
+            let contents = try blob("renamed contents\n", directory: directory)
+            try put([(Data("old.txt".utf8), contents)], directory: directory)
+            try GitXTestGitFixture.run(["commit", "-q", "-m", "original path"], in: directory)
+            let added = try blob("added contents\n", directory: directory)
+            try put([(Data("folder/new.txt".utf8), contents), (Data("file10.txt".utf8), added),
+                     (Data("file2.txt".utf8), added)], directory: directory)
+            try GitXTestGitFixture.run(["update-index", "--force-remove", "--", "old.txt"], in: directory)
+            try GitXTestGitFixture.run(["commit", "-q", "-m", "rename and additions"], in: directory)
+            let repository = try XCTUnwrap(GitXTestGitRepository(url: directory))
+            defer { repository.revisionList?.cleanup() }
+            PBApplicationSettings.changedFilesSort = .status
+            let presentation = PBHistoryTreePresentation(repository: repository)
+            let tree = try presentation.tree(for: headCommit(in: repository))
+            let nodes = try XCTUnwrap(tree.children)
+            XCTAssertEqual(tree.fullPath, "", "The flattened root keeps children relative to the repository")
+            XCTAssertEqual(nodes.map(\.fullPath), ["file2.txt", "file10.txt", "folder/new.txt"])
+            XCTAssertEqual(nodes.prefix(2).map { presentation.displayTitle(for: $0) }, ["A  file2.txt", "A  file10.txt"])
+            let renamed = try XCTUnwrap(nodes.last)
+            XCTAssertEqual(presentation.displayTitle(for: renamed), "R  folder/new.txt  ←  old.txt")
+            XCTAssertEqual(presentation.toolTip(for: renamed), "folder/new.txt\nRenamed from old.txt")
+            XCTAssertEqual(renamed.contents, "renamed contents")
+            XCTAssertEqual(try String(contentsOfFile: XCTUnwrap(renamed.tmpFileNameForContents()), encoding: .utf8), "renamed contents\n")
+        }
+    }
+
     func testInvalidCommittedBytesRemainDistinctFromTheirDisplaySpellingAndCannotPreview() throws {
         try fixture { directory in
             let invalid = Data([0x66, 0xFF])

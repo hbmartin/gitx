@@ -135,8 +135,11 @@ nonisolated enum PBTaskDiagnosticRedactor {
             // A numeric prefix can be a password followed by whitespace. An
             // actual path, however, ends at its first whitespace even for a
             // single-label host. Do not scan the remainder of every log line.
+            if byte <= 32, authorityColon == nil, authorityAt == nil, authorityHasHostSyntax {
+                break
+            }
             if byte <= 32, !initiallyAmbiguous, authorityAt == nil,
-               colon == nil || numericPort || (authorityHasHostSyntax && authorityColon == nil), authorityEnd < end,
+               colon == nil || numericPort, authorityEnd < end,
                try cursor.byte(at: authorityEnd) > 32
             {
                 break

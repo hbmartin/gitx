@@ -164,7 +164,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if let action = menuItem.action,
            ["checkout:", "merge:", "rebase:", "rebaseHeadBranch:", "cherryPick:", "resetSoft:",
             "stashSave:", "stashSaveWithKeepIndex:", "stashPop:", "stashApply:", "stashDrop:",
-            "pullRemote:", "pullDefaultRemote:", "pullRebaseRemote:", "pullRebaseDefaultRemote:", "toolbarPull:"].contains(NSStringFromSelector(action)),
+            "pullRemote:", "pullDefaultRemote:", "pullRebaseRemote:", "pullRebaseDefaultRemote:", "toolbarPull:",
+            "deleteRef:", "createBranch:", "createTag:"].contains(NSStringFromSelector(action)),
            repository.map({ !CommitSubmissionEligibility.allowsMutation($0.index) }) != false
         {
             return false

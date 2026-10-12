@@ -308,6 +308,49 @@ final class GitXPerformanceTests: XCTestCase {
         print("REVIEW_BENCHMARK selection p95_ms=\(percentile95(samples) * 1000)")
     }
 
+    #if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
+        func testDiscardAuthorizationLatencyWithManyUnrelatedTrackedPaths() async throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-discard-performance-\(UUID())")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            _ = try gitOutput(["init", "--quiet", "--initial-branch=main"], in: root)
+            for value in 0 ..< 2000 {
+                try Data("unrelated\n".utf8).write(to: root.appendingPathComponent("unrelated-\(value).txt"))
+            }
+            let path = "selected.txt"
+            try Data("original\n".utf8).write(to: root.appendingPathComponent(path))
+            _ = try gitOutput(["add", "."], in: root)
+            _ = try gitOutput(["commit", "--quiet", "-m", "Discard fixture"], in: root)
+            try Data("selected edit\n".utf8).write(to: root.appendingPathComponent(path))
+            let repository = try RepositoryTestGitRepository(url: root)
+            defer { repository.revisionList?.cleanup() }
+            let runner = IndexRepositoryCommandRunner(repository: repository)
+            let file = PBChangedFile(path: path); file.status = .MODIFIED; file.hasUnstagedChanges = true
+            var capture: [TimeInterval] = []
+            for _ in 0 ..< 5 {
+                let duration = try await elapsedAsync {
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: [file])
+                }
+                capture.append(duration)
+            }
+            var admission: [TimeInterval] = []
+            for _ in 0 ..< 5 {
+                var accepted = 0
+                admission.append(elapsed {
+                    for _ in 0 ..< 10000 {
+                        if PBIndexWriterCommandTestHarness.allowsMutation(index: repository.index) {
+                            accepted += 1
+                        }
+                    }
+                })
+                XCTAssertEqual(accepted, 10000)
+            }
+            attachMeasurements("Discard capture and revalidation among 2001 tracked paths", samples: capture)
+            attachMeasurements("10000 cached writer admission decisions", samples: admission)
+            print("REVIEW_BENCHMARK discard p95_ms=\(percentile95(capture) * 1000) admission10000_p95_ms=\(percentile95(admission) * 1000)")
+        }
+    #endif
+
     func testLargeCredentialFreeDiagnosticRedactionPerformance() {
         let diagnostic = String(repeating: "C", count: 65536)
             + "\nSee https://example.invalid/help\nContact gitx@example.invalid"

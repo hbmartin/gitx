@@ -129,6 +129,37 @@ class FeedbackTests(unittest.TestCase):
         resources, _ = session.entry_resources("verify_static.sh", [])
         self.assertEqual(resources, [])
 
+    def test_full_feedback_uses_canonical_static_once_without_delivery_promotion(self):
+        args = workflow.parser().parse_args(["verify", "--profile", "feedback"])
+        with mock.patch.object(workflow.feedback, "changed_paths", return_value=("HEAD", ["AGENTS.md"])):
+            commands, selection = workflow.selected_commands(args, self.root)
+        self.assertEqual([(name, command) for name, command in commands if name != "static"],
+                         [(name, command) for name, command in workflow.full_profile(self.root) if name != "static"])
+        self.assertEqual(dict(commands)["static"], [str(self.root / "scripts/verify_static.sh"), "HEAD"])
+        self.assertFalse(selection["deliveryEligible"])
+        self.assertNotIn("--feedback", dict(commands)["static"])
+
+    def test_script_feedback_shares_external_bytecode_cache_for_compile_and_tests(self):
+        feedback = self.feedback()
+        self.write("scripts/new.py", "pass\n")
+        calls = []
+        with mock.patch.object(feedback, "execute", side_effect=lambda command, root, env=None: calls.append((command, env))):
+            feedback.static_feedback(self.root, "HEAD")
+        _, compiler_env = next(item for item in calls if "py_compile" in item[0])
+        _, tests_env = next(item for item in calls if "unittest" in item[0])
+        self.assertIs(compiler_env, tests_env)
+        self.assertIn("PYTHONPYCACHEPREFIX", tests_env)
+        self.assertFalse(pathlib.Path(tests_env["PYTHONPYCACHEPREFIX"]).is_relative_to(self.root))
+
+    def test_whitespace_selection_preserves_other_selected_checks(self):
+        args = workflow.parser().parse_args(["verify", "--profile", "feedback"])
+        with mock.patch.object(workflow.feedback, "changed_paths", return_value=("HEAD", ["README.md"])), \
+                mock.patch.object(workflow.feedback, "select_checks", return_value=(["static", "whitespace"], [])):
+            commands, selection = workflow.selected_commands(args, self.root)
+        self.assertEqual([name for name, _ in commands], ["static", "whitespace"])
+        self.assertEqual(selection["selectedChecks"], ["static", "whitespace"])
+        self.assertEqual(dict(commands)["static"], [str(self.root / "scripts/verify_static.sh"), "--feedback", "--base-ref", "HEAD"])
+
 
 if __name__ == "__main__":
     unittest.main()

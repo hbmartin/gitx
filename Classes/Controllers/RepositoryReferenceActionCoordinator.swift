@@ -36,7 +36,7 @@ final class RepositoryReferenceActionCoordinator: NSObject {
         logger.debug("Requesting reference deletion confirmation")
         windowController?.confirmDialog(alert, suppressionIdentifier: "Delete Ref") { [weak self] in
             guard let self else { return }
-            self.perform { _ = try self.repository.deleteRef(ref) }
+            self.perform(confirmed: true) { _ = try self.repository.deleteRef(ref) }
         }
     }
 
@@ -91,15 +91,13 @@ final class RepositoryReferenceActionCoordinator: NSObject {
             windowController: windowController
         ) { [weak self] sheet, response in
             guard response == .OK, let self, let sheet = sheet as? PBCreateBranchSheet else { return }
-            do {
+            self.perform(confirmed: true) {
                 _ = try self.repository.createBranch(sheet.branchNameField.stringValue, at: sheet.startRefish)
                 PBGitDefaults.setShouldCheckoutBranch(sheet.shouldCheckoutBranch)
                 if sheet.shouldCheckoutBranch {
                     _ = try self.repository.checkoutRefish(sheet.selectedRef)
                 }
                 self.logger.debug("Create-branch workflow completed")
-            } catch {
-                self.present(error)
             }
         }
     }
@@ -121,7 +119,7 @@ final class RepositoryReferenceActionCoordinator: NSObject {
             windowController: windowController
         ) { [weak self] sheet, response in
             guard response == .OK, let self, let sheet = sheet as? PBCreateTagSheet else { return }
-            self.perform {
+            self.perform(confirmed: true) {
                 _ = try self.repository.createTag(
                     sheet.tagNameField?.stringValue,
                     message: sheet.tagMessageText?.string ?? "",
@@ -164,9 +162,12 @@ final class RepositoryReferenceActionCoordinator: NSObject {
         }
     }
 
-    private func perform(_ action: () throws -> Void) {
+    private func perform(confirmed: Bool = false, _ action: () throws -> Void) {
         guard CommitSubmissionEligibility.allowsMutation(repository.index) else {
-            logger.debug("Ignored reference action while repository mutation is active")
+            logger.debug("Refused reference action while repository mutation is active; confirmed: \(confirmed)")
+            if confirmed {
+                present(IndexWriterCoordinator.busyError())
+            }
             return
         }
         do {

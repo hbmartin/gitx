@@ -230,11 +230,13 @@ final class IndexCommitPublicationTests: XCTestCase, @unchecked Sendable {
         let observation = Observation()
         let observer = failureObserver { observation.failure = $0 }
         defer { NotificationCenter.default.removeObserver(observer) }
+        try write("staged merge evidence\n", to: "tracked.txt")
+        try git(["add", "tracked.txt"])
         for marker in [Data([255]), Data("not-an-object-id\n".utf8)] {
             observation.failure = nil
             try marker.write(to: directory.appendingPathComponent(".git/MERGE_HEAD"))
             try submitAndSettle("Invalid merge parent", verify: false)
-            XCTAssertNotNil(observation.failure)
+            XCTAssertTrue(observation.failure?.contains(marker == Data([255]) ? "MERGE_HEAD contains invalid text" : "MERGE_HEAD contains an invalid parent identity") == true)
             XCTAssertEqual(try git(["rev-parse", "HEAD"]), original)
             XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(".git/MERGE_HEAD")), marker)
         }

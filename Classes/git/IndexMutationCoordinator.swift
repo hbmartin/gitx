@@ -36,7 +36,7 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     init(discardPaths: [Data], authorization: PBIndexPatchAuthorization?) {
         self.authorization = authorization
         operation = .discard
-        stagePaths = discardPaths.map(Self.copy); unstagePaths = []
+        stagePaths = (authorization?.authorizedDiscardPaths ?? discardPaths).map(Self.copy); unstagePaths = []
         parentTree = ""; patch = ""; stage = false; reverse = false
         super.init()
     }
@@ -156,7 +156,9 @@ final nonisolated class IndexMutationCoordinator: NSObject, @unchecked Sendable 
 @objc(PBIndexPatchAuthorization)
 final nonisolated class PBIndexPatchAuthorization: NSObject, @unchecked Sendable {
     private let validation: @Sendable () throws -> Void
-    init(validation: @escaping @Sendable () throws -> Void) {
+    let authorizedDiscardPaths: [Data]?
+    init(discardPaths: [Data]? = nil, validation: @escaping @Sendable () throws -> Void) {
+        authorizedDiscardPaths = discardPaths?.map { $0.withUnsafeBytes { Data($0) } }
         self.validation = validation; super.init()
     }
 

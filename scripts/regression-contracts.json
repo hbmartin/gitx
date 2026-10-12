@@ -300,7 +300,9 @@
         "Classes/git/IndexCommandRunning.swift",
         "Classes/Controllers/PBGitWindowController.swift",
         "Classes/Controllers/RepositoryReferenceActionCoordinator.swift",
-        "Classes/Controllers/RepositoryStashActionCoordinator.swift"
+        "Classes/Controllers/RepositoryStashActionCoordinator.swift",
+        "Classes/Controllers/CommitControllerPolicies.swift",
+        "Classes/Controllers/PBGitWindowController+ToolbarActions.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -715,9 +717,12 @@
         "GitXUITests/GitXScreenshotTests.m",
         "GitXUITests/GitXUIActivationPreflightTests.swift",
         "GitXUITests/Milestone2WorkflowUITests.swift",
-        "GitXUITests/Milestone3WorkflowUITests.swift"
+        "GitXUITests/Milestone3WorkflowUITests.swift",
+        "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+        "GitXTests/GitXTestGitEnvironment.swift"
       ],
       "requiredChecks": [
+        "correctness",
         "ui",
         "debug-test-build",
         "release-test-build",
@@ -725,25 +730,46 @@
       ],
       "tests": [
         {
-          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
-          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureKeepsRealUntrackedFilesAndExplicitlyTrackedFinderMetadata",
+          "source": "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+          "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testFixtureKeepsRealUntrackedFilesAndExplicitlyTrackedFinderMetadata",
           "role": "valid",
           "oracle": "Real Git status still reports a modified tracked .DS_Store and ordinary untracked source.",
-          "check": "ui"
+          "check": "correctness"
         },
         {
-          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
-          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureIgnoresUntrackedFinderMetadataWithoutHidingRealFiles",
+          "source": "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+          "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testFixtureIgnoresUntrackedFinderMetadataWithoutHidingRealFiles",
           "role": "boundary",
           "oracle": "Inject root and nested Finder metadata; real Git status retains only real files, including a similarly named notes file.",
-          "check": "ui"
+          "check": "correctness"
         },
         {
-          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
-          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureMetadataExclusionPreservesExistingRulesAndIsIdempotent",
+          "source": "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+          "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testFixtureMetadataExclusionPreservesExistingRulesAndIsIdempotent",
           "role": "boundary",
           "oracle": "Preserve existing rule bytes and Git ignore/negation behavior; repeated setup keeps the same exclusion file.",
-          "check": "ui"
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+          "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testExistingMetadataRuleAnywhereInTheFileIsNotAppendedAgain",
+          "role": "boundary",
+          "oracle": "Repeated policy setup preserves exclusion bytes even with a trailing unrelated rule or no final newline.",
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+          "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testLinkedWorktreeUsesItsGitExcludeLocation",
+          "role": "boundary",
+          "oracle": "Linked worktree status ignores metadata using the resolved Git exclusion location.",
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+          "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testCloneCreationAppliesTheSameFixturePolicy",
+          "role": "boundary",
+          "oracle": "A clone automatically receives metadata exclusion through the shared creation boundary.",
+          "check": "correctness"
         }
       ]
     }

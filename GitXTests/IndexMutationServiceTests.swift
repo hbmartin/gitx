@@ -183,12 +183,14 @@ final class IndexMutationServiceTests: XCTestCase {
     private final class LocatedRepository: PBGitRepository {
         let directory: URL
         let makeBody: (String) -> (() -> Void)
+        private(set) var directoryLookups = 0
         init(directory: URL, makeBody: @escaping (String) -> (() -> Void)) {
             self.directory = directory; self.makeBody = makeBody; super.init()
         }
 
         override func gitURL() -> URL? {
-            directory
+            directoryLookups += 1
+            return directory
         }
 
         override func task(withArguments arguments: [Any]?) -> PBTask {
@@ -228,6 +230,105 @@ final class IndexMutationServiceTests: XCTestCase {
         release.signal()
         wait(for: [held], timeout: 3)
     }
+
+    func testRepeatedWriterAdmissionUsesTheCachedRepositoryIdentity() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = LocatedRepository(directory: root) { _ in {} }
+        let retained = IndexRepositoryCommandRunner(repository: repository)
+        let lookups = repository.directoryLookups
+        for _ in 0 ..< 100 {
+            XCTAssertFalse(IndexRepositoryCommandRunner(repository: repository).isWriterBusy)
+        }
+        XCTAssertEqual(repository.directoryLookups, lookups, "Menu and per-cell admission must not repeat filesystem identity discovery")
+        withExtendedLifetime(retained) {}
+    }
+
+    func testBackgroundWriterReturnsCommandFailureAndReleasesOwnership() {
+        let repository = ScriptedRepository(script: "exit 1")
+        let box = RunnerBox(IndexRepositoryCommandRunner(repository: repository))
+        let finished = expectation(description: "failed writer finishes")
+        DispatchQueue.global().async {
+            do {
+                _ = try box.value.output(withArguments: ["update-index"], input: nil, environment: nil)
+                XCTFail("Fixture must report its process failure")
+            } catch { XCTAssertEqual((error as NSError).domain, PBTaskErrorDomain) }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 3)
+        XCTAssertFalse(box.value.isWriterBusy)
+        withExtendedLifetime(repository) {}
+    }
+
+    func testBackgroundCommitWriterFollowsAlreadyScheduledStagingWork() {
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var order: [String] = []
+        let repository = ControlledRepository { label in
+            {
+                if label == "held" {
+                    entered.signal(); _ = release.wait(timeout: .now() + 5)
+                }
+                lock.lock(); order.append(label); lock.unlock()
+            }
+        }
+        let box = RunnerBox(IndexRepositoryCommandRunner(repository: repository))
+        let completed = expectation(description: "all FIFO writers finish")
+        completed.expectedFulfillmentCount = 3
+        box.value.data(withArguments: ["update-index", "held"]) { _, _ in completed.fulfill() }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        box.value.data(withArguments: ["update-index", "staging"]) { _, _ in completed.fulfill() }
+        DispatchQueue.global().async {
+            do { _ = try box.value.output(withArguments: ["commit-tree", "commit"], input: nil, environment: nil) }
+            catch { XCTFail("Queued commit writer failed: \(error)") }
+            completed.fulfill()
+        }
+        release.signal()
+        wait(for: [completed], timeout: 3)
+        lock.lock(); let actual = order; lock.unlock()
+        XCTAssertEqual(actual, ["held", "staging", "commit"])
+        withExtendedLifetime(repository) {}
+    }
+
+    #if DEBUG
+        func testSynchronousWriterDoesNotRetainItsReturnedObjectAfterHandoff() throws {
+            XCTAssertTrue(try PBIndexWriterCommandTestHarness.exerciseSynchronousResultLifetime().boolValue)
+        }
+
+        @MainActor func testWriterCompletionCanWriteWhenIdleAndRefusesOvertakingPendingWork() {
+            for pending in [false, true] {
+                let repository = ScriptedRepository(script: "printf result")
+                let runner = IndexRepositoryCommandRunner(repository: repository)
+                let finished = expectation(description: "completion writer returns without waiting on its own queue")
+                PBIndexWriterCommandTestHarness.performFromCompletion(repository: repository, pendingWriter: pending) { error in
+                    let failure = error as NSError?
+                    if pending {
+                        XCTAssertEqual(failure?.code, 6)
+                    } else {
+                        XCTAssertNil(error)
+                    }
+                    finished.fulfill()
+                }
+                wait(for: [finished], timeout: 3)
+                XCTAssertEqual(try? runner.output(withArguments: ["update-index", "recovered"], input: nil, environment: nil), "result")
+                XCTAssertFalse(runner.isWriterBusy)
+            }
+        }
+
+        @MainActor func testWriterCompletionFailureReleasesInlineOwnership() {
+            let repository = ScriptedRepository(script: "exit 1")
+            let runner = IndexRepositoryCommandRunner(repository: repository)
+            let finished = expectation(description: "completion command failure returns")
+            PBIndexWriterCommandTestHarness.performFromCompletion(repository: repository, pendingWriter: false) { error in
+                XCTAssertEqual((error as NSError?)?.domain, PBTaskErrorDomain)
+                finished.fulfill()
+            }
+            wait(for: [finished], timeout: 3)
+            XCTAssertFalse(runner.isWriterBusy)
+        }
+    #endif
 
     func testNestedSynchronousWriterRetainsOwnershipWithoutDeadlocking() throws {
         var nestedRunner: IndexRepositoryCommandRunner?
@@ -289,21 +390,16 @@ final class IndexMutationServiceTests: XCTestCase {
         } else {
             DispatchQueue.global().async {
                 do {
-                    _ = try second.value.output(withArguments: ["update-index", "second"], input: nil, environment: nil)
-                    XCTFail("A busy synchronous writer must be refused")
-                } catch {
-                    XCTAssertEqual((error as NSError).code, 6)
-                }
+                    let output = try second.value.output(withArguments: ["update-index", "second"], input: nil, environment: nil)
+                    XCTAssertEqual(output, "result\n", "A background writer must wait for ownership")
+                } catch { XCTFail("A background writer must wait for ownership: \(error)") }
                 secondCompleted.fulfill()
             }
         }
         XCTAssertEqual(secondAllocated.wait(timeout: .now() + 2), .success)
-        if !asynchronous {
-            wait(for: [secondCompleted], timeout: 2)
-        }
         wait(for: [overlap], timeout: 0.2)
         release.signal()
-        wait(for: asynchronous ? [firstCompleted, secondCompleted] : [firstCompleted], timeout: 3)
+        wait(for: [firstCompleted, secondCompleted], timeout: 3)
         if !asynchronous {
             XCTAssertEqual(try? second.value.output(withArguments: ["update-index", "second"], input: nil, environment: nil), "result\n")
         }

@@ -483,8 +483,12 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
         let ownership = RepositoryPullRequestPreparationTaskOwnership()
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
+            let start = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
             let task = Task.detached(priority: .userInitiated) {
-                try prepare(
+                var iterator = start.stream.makeAsyncIterator()
+                _ = await iterator.next()
+                try Task.checkCancellation()
+                return try prepare(
                     accountID: accountID,
                     binding: binding,
                     localBranch: localBranch,
@@ -493,6 +497,9 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
                 )
             }
             ownership.install(task)
+            // Git must not start until parent cancellation owns the worker.
+            start.continuation.yield(())
+            start.continuation.finish()
             let preparation = try await task.value
             try Task.checkCancellation()
             return preparation

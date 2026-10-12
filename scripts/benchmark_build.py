@@ -108,6 +108,16 @@ def build_command(
 def snapshot_checkout(root, destination):
     """Copy the checked-out inputs into independent local clones for edit probes."""
     environment = session.git_environment()
+    destination = pathlib.Path(destination).resolve()
+    def copy_input(source, target):
+        target = pathlib.Path(target)
+        if not target.parent.resolve().is_relative_to(destination):
+            raise ValueError("Snapshot input leaves the owned checkout: " + str(target))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            # Replace only the leaf; never follow a clone's link to its referent.
+            target.unlink()
+        shutil.copy2(source, target, follow_symlinks=False)
     def clone(source, target):
         subprocess.run(["git", "clone", "--quiet", "--shared", "--no-checkout", str(source), str(target)],
                        check=True, env=environment)
@@ -124,9 +134,8 @@ def snapshot_checkout(root, destination):
             relative = pathlib.Path(os.fsdecode(name))
             if metadata.startswith(b"160000 "):
                 clone(source / relative, target / relative)
-            elif (source / relative).is_file():
-                (target / relative).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source / relative, target / relative)
+            elif (source / relative).is_symlink() or (source / relative).is_file():
+                copy_input(source / relative, target / relative)
             elif not (source / relative).exists():
                 (target / relative).unlink(missing_ok=True)
     clone(root, destination)
@@ -134,12 +143,18 @@ def snapshot_checkout(root, destination):
     for name in new.split(b"\0"):
         if name and session.build_input_path(os.fsdecode(name)):
             relative = pathlib.Path(os.fsdecode(name))
-            (destination / relative).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(root / relative, destination / relative)
+            copy_input(root / relative, destination / relative)
     external = pathlib.Path("External/objective-git/External")
-    (destination / external).mkdir(parents=True, exist_ok=True)
     for name in ("libgit2.a", "libssh2.a", "libcrypto.a", ".libgit2-build.stamp"):
-        shutil.copy2(root / external / name, destination / external / name)
+        copy_input(root / external / name, destination / external / name)
+
+
+def edit_probe_path(source, relative):
+    source = pathlib.Path(source)
+    path = source / relative
+    if source.resolve() != source or not path.resolve().is_relative_to(source):
+        raise ValueError("Benchmark edit probe leaves the owned source snapshot: " + str(path))
+    return path
 
 
 def cache_hits(log):
@@ -166,46 +181,65 @@ def reset_products(derived, workspace):
 def compare_cache(root, output, runs):
     if runs < 5:
         raise ValueError("Cache qualification requires at least five paired runs")
-    developer = os.environ.get("GITX_DEVELOPER_DIR") or os.environ.get("DEVELOPER_DIR") or \
-        json.loads((root / "scripts/verification-config.json").read_text())["defaultDeveloperDirectory"]
-    paths = session.cache_paths(root, developer=developer)
-    toolchain = paths["toolchain"]
-    policy = compilation_cache.policy("on", toolchain, platform.machine(), "Debug", "plain", "build", {})
-    before = session.inputs(root)
     report = {"version": 2, "scope": "experiment", "deliveryEligible": False,
-              "inputsBefore": before, "environment": environment_fingerprint() | {"selectedXcode": toolchain, "developerDir": developer},
-              "cacheContext": policy["context"],
-              "samples": {"off": [], "on": []}, "cacheHits": 0, "logs": [], "passed": False}
+              "checkout": str(root), "samples": {"off": [], "on": []}, "cacheHits": 0,
+              "logs": [], "passed": False, "status": "running"}
     output.parent.mkdir(parents=True, exist_ok=True)
-    logs = output.parent / ("cache-logs-" + str(time.time_ns()))
-    logs.mkdir()
-    with tempfile.TemporaryDirectory(prefix="gitx-cache-benchmark-", dir=output.parent) as temporary:
-        workspace = pathlib.Path(temporary)
-        source = workspace / "source"
-        owner = {"runId": logs.name, "pid": os.getpid(), "receipt": str(output), "producer": session.producer_identity()}
-        with session.Leases([str(workspace), str(session.LOCK_ROOT / "build-benchmark")], owner) as leases:
-            environment = leases.environment() | session.git_environment() | {"DEVELOPER_DIR": developer}
-            snapshot_checkout(root, source)
-            derived = workspace / "DerivedData"
-            packages = workspace / "SourcePackages"
-            command = build_command(source, derived, packages)
-            command[0] = str(pathlib.Path(developer) / "usr/bin/xcodebuild")
-            command += ["-destination", "platform=macOS,arch=" + platform.machine(), "-showBuildTimingSummary"]
-            def measure(mode, label):
-                log = logs / (label + ".log")
-                started = time.monotonic()
-                with log.open("w") as stream, contextlib.redirect_stdout(stream):
-                    status = session.supervise(command + ["COMPILATION_CACHE_ENABLE_CACHING=" + ("YES" if mode == "on" else "NO"),
-                                                          "COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES"],
-                                               directory=logs / "Diagnostics" / label, timeout=1200, env=environment)
-                report["logs"].append(str(log))
-                if status:
-                    raise RuntimeError("Benchmark build failed: " + str(log))
-                if mode == "on" and label.endswith("-fresh"):
-                    report["cacheHits"] += cache_hits(log)
-                return time.monotonic() - started
-            try:
-                # Prime the native cache without deleting any shared Xcode CAS.
+    before = None
+    status = 2
+    phase = "setup-failed"
+    try:
+        developer = os.environ.get("GITX_DEVELOPER_DIR") or os.environ.get("DEVELOPER_DIR")
+        if not developer:
+            configuration = json.loads((root / "scripts/verification-config.json").read_text())
+            if not isinstance(configuration, dict) or not isinstance(configuration.get("defaultDeveloperDirectory"), str) or not configuration["defaultDeveloperDirectory"]:
+                raise ValueError("Verification configuration requires a defaultDeveloperDirectory path")
+            developer = configuration["defaultDeveloperDirectory"]
+        toolchain = session.cache_paths(root, developer=developer)["toolchain"]
+        policy = compilation_cache.policy("on", toolchain, platform.machine(), "Debug", "plain", "build", {})
+        report.update(environment=environment_fingerprint() | {"selectedXcode": toolchain, "developerDir": developer},
+                      cacheContext=policy["context"])
+        libraries = root / "External/objective-git/External"
+        missing = [name for name in ("libgit2.a", "libssh2.a", "libcrypto.a", ".libgit2-build.stamp")
+                   if not (libraries / name).is_file()]
+        if missing:
+            raise ValueError("Missing generated dependency products: " + ", ".join(missing) +
+                             ". Inspect External/objective-git/script/bootstrap prerequisites and prepare "
+                             "the existing dependencies explicitly before benchmarking.")
+        before = session.inputs(root)
+        report["inputsBefore"] = before
+        with tempfile.TemporaryDirectory(prefix="gitx-cache-benchmark-", dir=output.parent) as temporary:
+            workspace = pathlib.Path(temporary)
+            logs = output.parent / ("cache-logs-" + str(time.time_ns()))
+            owner = {"runId": logs.name, "pid": os.getpid(), "receipt": str(output), "producer": session.producer_identity()}
+            phase = "lease-failed"
+            with session.Leases([str(workspace), str(session.LOCK_ROOT / "build-benchmark")], owner) as leases:
+                # Sanitize after adding authenticated lease holdings; a union with
+                # os.environ would reintroduce foreign checkout selectors.
+                environment = session.git_environment(leases.environment()) | {"DEVELOPER_DIR": developer}
+                logs.mkdir()
+                source = (workspace / "source").resolve()
+                phase = "snapshot-failed"
+                snapshot_checkout(root, source)
+                derived = workspace / "DerivedData"
+                packages = workspace / "SourcePackages"
+                command = build_command(source, derived, packages)
+                command[0] = str(pathlib.Path(developer) / "usr/bin/xcodebuild")
+                command += ["-destination", "platform=macOS,arch=" + platform.machine(), "-showBuildTimingSummary"]
+                phase = "build-failed"
+                def measure(mode, label):
+                    log = logs / (label + ".log")
+                    report["logs"].append(str(log))
+                    started = time.monotonic()
+                    with log.open("w") as stream, contextlib.redirect_stdout(stream):
+                        result = session.supervise(command + ["COMPILATION_CACHE_ENABLE_CACHING=" + ("YES" if mode == "on" else "NO"),
+                                                             "COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES"],
+                                                   directory=logs / "Diagnostics" / label, timeout=1200, env=environment)
+                    if result:
+                        raise RuntimeError("Benchmark build failed (exit " + str(result) + "): " + str(log))
+                    if mode == "on" and label.endswith("-fresh"):
+                        report["cacheHits"] += cache_hits(log)
+                    return time.monotonic() - started
                 measure("on", "prime")
                 for index in range(1, runs + 1):
                     for mode in (("off", "on") if index % 2 else ("on", "off")):
@@ -213,7 +247,7 @@ def compare_cache(root, output, runs):
                         sample = {"run": index, "cold": measure(mode, f"{index}-{mode}-fresh"),
                                   "warm": measure(mode, f"{index}-{mode}-warm")}
                         for kind, relative in (("sourceEdit", "Classes/git/IndexSnapshot.swift"), ("headerEdit", "Classes/PBChangedFile.h")):
-                            path = source / relative
+                            path = edit_probe_path(source, relative)
                             original = path.read_bytes()
                             try:
                                 path.write_bytes(original + f"\n// GitX benchmark {index} {mode} {kind}\n".encode())
@@ -223,16 +257,36 @@ def compare_cache(root, output, runs):
                         report["samples"][mode].append(sample)
                         print(f"Pair {index}/{runs} {mode}: fresh {sample['cold']:.2f}s; warm {sample['warm']:.2f}s", flush=True)
                 report.update(compilation_cache.qualify(report["samples"]["off"], report["samples"]["on"], report["cacheHits"]))
-            except RuntimeError as error:
-                report["failures"] = [str(error)]
-            finally:
+                status = 0 if report["passed"] else 1
+                report["status"] = "passed" if report["passed"] else "failed"
+                report["category"] = "qualification"
+    except session.ResourceBusy as error:
+        status = 75
+        report.update(status="blocked", category="resource-busy", failures=[str(error)])
+    except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
+        status = 2 if phase in {"setup-failed", "lease-failed", "snapshot-failed"} else 1
+        report.update(status="failed", category=phase, failures=[str(error)])
+    finally:
+        if before is not None:
+            try:
                 report["inputsAfter"] = session.inputs(root)
                 if session.changed_inputs(before, report["inputsAfter"]):
                     report["passed"] = False
                     report.setdefault("failures", []).append("Source inputs changed during the experiment")
-                session.atomic_json(output, report)
+                    report["status"] = "invalid"
+                    if status == 0:
+                        status = 76
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                report["passed"] = False
+                report.setdefault("failures", []).append("Final input evidence unavailable: " + str(error))
+                report["status"] = "invalid"
+                if status == 0:
+                    status = 76
+        report["exitCode"] = status
+        report["finishedAt"] = session.dt.datetime.now(session.dt.timezone.utc).isoformat()
+        session.atomic_json(output, report)
     print("Cache qualification: " + ("passed" if report["passed"] else "failed") + "; report: " + str(output))
-    return 0 if report["passed"] else 1
+    return status
 
 
 def main() -> int:

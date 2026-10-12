@@ -8,6 +8,7 @@ import Foundation
 final nonisolated class StagingImageReader: @unchecked Sendable {
     static let shared = StagingImageReader()
     static let maximumBytes = 64 * 1024 * 1024
+    static let readTimeout: TimeInterval = 30
     private let cacheLock = NSLock()
     private var hashes: [String: String] = [:]
 
@@ -17,7 +18,7 @@ final nonisolated class StagingImageReader: @unchecked Sendable {
     }
 
     func read(_ url: URL, includeData: Bool = true, maximumBytes: Int = StagingImageReader.maximumBytes,
-              timeout: TimeInterval = 2, clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+              timeout: TimeInterval = StagingImageReader.readTimeout, clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
               shouldCancel: () -> Bool = { false }, whileReading: () -> Void = {}) throws -> Snapshot
     {
         let deadline = clock() + timeout
@@ -93,6 +94,35 @@ final nonisolated class StagingImageReader: @unchecked Sendable {
         return Snapshot(data: bytes, identity: identity.finalize().map { String(format: "%02x", $0) }.joined())
     }
 
+    /// Only genuine path absence permits an unstaged preview to use index bytes.
+    /// ENOENT from a dangling final or parent symlink is an unreadable object,
+    /// so inspect each existing ancestor before accepting an absent component.
+    static func isAbsent(_ url: URL, afterReadFailure error: Error, shouldCancel: () -> Bool) -> Bool {
+        let failure = error as NSError
+        guard failure.domain == NSPOSIXErrorDomain, failure.code == Int(ENOENT), !shouldCancel() else { return false }
+        var path = "/"
+        let components = url.path.components(separatedBy: "/").filter { !$0.isEmpty }
+        for (index, name) in components.enumerated() {
+            guard !shouldCancel() else { return false }
+            if name == "." {
+                continue
+            }
+            if name == ".." {
+                path = (path as NSString).deletingLastPathComponent
+                continue
+            }
+            path = path == "/" ? path + name : path + "/" + name
+            var metadata = stat()
+            guard lstat(path, &metadata) == 0 else { return errno == ENOENT && !shouldCancel() }
+            guard index < components.count - 1 else { return false }
+            if metadata.st_mode & S_IFMT == S_IFLNK {
+                guard stat(path, &metadata) == 0 else { return false }
+            }
+            guard metadata.st_mode & S_IFMT == S_IFDIR else { return false }
+        }
+        return false
+    }
+
     private struct Resolved {
         let path: String
         let links: [(String, String, Data)]
@@ -162,9 +192,16 @@ final nonisolated class StagingImageBlobReader: @unchecked Sendable {
         self.task = task
     }
 
-    func read(maximumBytes: Int = StagingImageReader.maximumBytes) throws -> Data {
+    func read(maximumBytes: Int = StagingImageReader.maximumBytes, cancellation: StagingReadCancellation? = nil) throws -> Data {
+        guard cancellation?.isCancelled != true else { throw StagingImageReader.failure("Image loading was cancelled.") }
+        let observation = cancellation?.observe { [weak self] in self?.task.terminate() }
+        defer {
+            if let observation {
+                cancellation?.removeObserver(observation)
+            }
+        }
         task.capturesStandardOutput = false
-        task.timeout = 2
+        task.timeout = StagingImageReader.readTimeout
         try task.launch { [self] chunk in
             lock.lock()
             let exceeded = chunk.count > maximumBytes - bytes.count
@@ -179,8 +216,46 @@ final nonisolated class StagingImageBlobReader: @unchecked Sendable {
             }
         }
         lock.lock(); defer { lock.unlock() }
+        guard cancellation?.isCancelled != true else { throw StagingImageReader.failure("Image loading was cancelled.") }
         guard !overflow else { throw StagingImageReader.failure("Indexed image exceeds the preview limit.") }
         return bytes
+    }
+}
+
+// swift6-safety-justification: The lock protects cancellation state and callbacks. Cancellation invokes transferred callbacks outside the lock; PBTask.terminate is the only shared task operation.
+final nonisolated class StagingReadCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var observers: [UUID: @Sendable () -> Void] = [:]
+    var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let deliveries = Array(observers.values)
+        observers.removeAll()
+        lock.unlock()
+        for callback in deliveries {
+            callback()
+        }
+    }
+
+    func observe(_ callback: @escaping @Sendable () -> Void) -> UUID {
+        let identity = UUID()
+        lock.lock()
+        if cancelled {
+            lock.unlock(); callback()
+        } else {
+            observers[identity] = callback; lock.unlock()
+        }
+        return identity
+    }
+
+    func removeObserver(_ identity: UUID) {
+        lock.lock(); observers.removeValue(forKey: identity); lock.unlock()
     }
 }
 
@@ -193,6 +268,12 @@ final nonisolated class StagingImageBlobReader: @unchecked Sendable {
         static func read(url: URL, maximumBytes: Int, cancelled: Bool, timeout: Double, whileReading: () -> Void) throws -> Data {
             try StagingImageReader.shared.read(url, maximumBytes: maximumBytes, timeout: timeout,
                                                shouldCancel: { cancelled }, whileReading: whileReading).data
+        }
+
+        @objc(readDefaultURL:elapsedDuringRead:error:)
+        static func readDefault(url: URL, elapsedDuringRead: Double) throws -> Data {
+            var now: TimeInterval = 0
+            return try StagingImageReader.shared.read(url, clock: { now }, whileReading: { now = elapsedDuringRead }).data
         }
 
         @objc(identityForURL:error:)

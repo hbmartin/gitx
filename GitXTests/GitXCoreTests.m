@@ -31,6 +31,13 @@
 #import "PBWebHistoryControllerCompatibility.h"
 #import <objc/runtime.h>
 
+// The production writer's state is authoritative before queued KVO deliveries.
+__attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
+@interface IndexRepositoryCommandRunner : NSObject
+@property (nonatomic, readonly) BOOL isWriterBusy;
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+@end
+
 @interface PBNativeContentView (GitXCoreTests)
 - (nullable NSString *)patchWithFileHeader:(NSArray<NSString *> *)fileHeader
 								 hunkLines:(NSArray<NSString *> *)hunkLines
@@ -611,6 +618,19 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	if (self.repository != nil) {
 		[self waitForHistoryUpdate];
 		[self.repository.revisionList cleanup];
+		// Failed mutations also schedule stat-cache reconciliation. Do not delete
+		// the fixture while its Git writer or publication is still in flight.
+		PBGitIndex *index = self.repository.index;
+		[index cancelCommitSubmission];
+		IndexRepositoryCommandRunner *runner = [[IndexRepositoryCommandRunner alloc] initWithRepository:self.repository];
+		if (index.mutationReconciliationPending || index.submissionActive || runner.isWriterBusy) {
+			NSPredicate *idle = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+				return !index.mutationReconciliationPending && !index.submissionActive && !runner.isWriterBusy;
+			}];
+			XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:idle object:index];
+			[self waitForExpectations:@[ expectation ] timeout:10.0];
+		}
+		[index close];
 	}
 	self.repository = nil;
 	self.fixture = nil;
@@ -630,6 +650,15 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	operation();
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	PBGitIndex *index = self.repository.index;
+	IndexRepositoryCommandRunner *runner = [[IndexRepositoryCommandRunner alloc] initWithRepository:self.repository];
+	if (index.mutationReconciliationPending || runner.isWriterBusy) {
+		NSPredicate *idle = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+			return !index.mutationReconciliationPending && !runner.isWriterBusy;
+		}];
+		XCTNSPredicateExpectation *quiescent = [[XCTNSPredicateExpectation alloc] initWithPredicate:idle object:index];
+		[self waitForExpectations:@[ quiescent ] timeout:10.0];
+	}
 }
 
 - (void)waitForHistoryUpdate

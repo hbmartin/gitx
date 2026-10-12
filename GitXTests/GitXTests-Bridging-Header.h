@@ -44,10 +44,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)requireWithTask:(PBTask *)task cancelled:(BOOL)cancelled error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(require(task:cancelled:));
 + (BOOL)clearCapturedMergeStateInDirectory:(NSString *)directory replacementMessage:(nullable NSString *)replacementMessage error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(clearCapturedMergeState(directory:replacementMessage:));
 @end
-@interface PBIndexWriterCommandTestHarness : NSObject
-+ (BOOL)writesIndexWithArguments:(NSArray<NSString *> *)arguments NS_SWIFT_NAME(writesIndex(arguments:));
-@end
 @interface PBIndexReferenceTransactionTestHarness : NSObject
++ (nullable NSDictionary<NSString *, id> *)exerciseIndependentDeadlineInDirectory:(NSString *)directory timeout:(NSTimeInterval)timeout error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseIndependentDeadline(directory:timeout:));
 + (BOOL)exerciseCommitWriteWithAcceptedByteCount:(NSInteger)acceptedByteCount error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseCommitWrite(acceptedByteCount:));
 + (BOOL)exerciseTerminalReadRaceWithAcknowledgement:(BOOL)acknowledgement error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseTerminalReadRace(acknowledgement:));
 + (BOOL)exerciseWithLaunchPath:(NSString *)launchPath arguments:(NSArray<NSString *> *)arguments workingDirectory:(nullable NSString *)workingDirectory commands:(NSArray<NSString *> *)commands acknowledgements:(NSArray<NSString *> *)acknowledgements timeout:(NSTimeInterval)timeout cancelAfterAcknowledgement:(NSInteger)cancelAfter error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exercise(launchPath:arguments:workingDirectory:commands:acknowledgements:timeout:cancelAfterAcknowledgement:));
@@ -58,6 +56,17 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 #endif
 
+#if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
+@interface PBIndexWriterCommandTestHarness : NSObject
++ (BOOL)allowsMutationForIndex:(PBGitIndex *)index NS_SWIFT_NAME(allowsMutation(index:));
+#if DEBUG
++ (nullable NSNumber *)exerciseSynchronousResultLifetimeAndReturnError:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseSynchronousResultLifetime());
++ (void)performFromCompletionForRepository:(PBGitRepository *)repository pendingWriter:(BOOL)pendingWriter completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(performFromCompletion(repository:pendingWriter:completion:));
++ (void)holdWriterForRepository:(PBGitRepository *)repository duringOwnership:(void (^)(void))duringOwnership NS_SWIFT_NAME(holdWriter(repository:duringOwnership:));
++ (BOOL)writesIndexWithArguments:(NSArray<NSString *> *)arguments NS_SWIFT_NAME(writesIndex(arguments:));
+#endif
+@end
+#endif
 
 @interface PBCommitRecoveryRepository : PBGitRepository
 @property (nonatomic, copy, nullable) NSString *recoveryPatchOutput;
@@ -1032,8 +1041,12 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 									  error:(NSError *_Nullable *_Nullable)error;
 @end
 
-#if DEBUG
+#if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
 @interface PBStagingDiffRevalidationTestHarness : NSObject
+#if DEBUG
++ (void)prepareCloseAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files eligibility:(BOOL (^)(void))eligibility completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareCloseAndValidate(repository:runner:files:eligibility:completion:));
++ (void)captureWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files timeout:(double)timeout cancelAfterChecks:(NSInteger)cancelAfterChecks completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(capture(repository:runner:files:timeout:cancelAfterChecks:completion:));
+#endif
 + (void)prepareAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files beforeValidation:(void (^)(void))beforeValidation completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareAndValidate(repository:runner:files:beforeValidation:completion:));
 + (void)prepareAndValidateWithRepository:(PBGitRepository *)repository
 								  runner:(id<PBIndexCommandRunning>)runner
@@ -1045,6 +1058,7 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 
 __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 @interface IndexRepositoryCommandRunner : NSObject<PBIndexBinaryCommandRunning>
+@property (nonatomic, readonly) BOOL isWriterBusy;
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 @end
 
@@ -1606,6 +1620,7 @@ NS_ASSUME_NONNULL_END
 NS_ASSUME_NONNULL_BEGIN
 @interface PBStagingImageReaderTestHarness : NSObject
 + (nullable NSData *)readURL:(NSURL *)url maximumBytes:(NSInteger)maximumBytes cancelled:(BOOL)cancelled timeout:(double)timeout whileReading:(void (^)(void))whileReading error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(read(url:maximumBytes:cancelled:timeout:whileReading:));
++ (nullable NSData *)readDefaultURL:(NSURL *)url elapsedDuringRead:(double)elapsedDuringRead error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(readDefault(url:elapsedDuringRead:));
 + (nullable NSString *)identityForURL:(NSURL *)url error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(identity(url:));
 + (nullable NSData *)readBlobTask:(PBTask *)task maximumBytes:(NSInteger)maximumBytes error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(readBlob(task:maximumBytes:));
 @end

@@ -32,7 +32,7 @@ ROLES = {"valid", "failure", "boundary", "compatibility", "performance"}
 BLOCKERS = {"resource-busy", "console-unavailable", "display-unavailable", "desktop-locked",
             "signature-invalid", "signature-incompatible", "host-probe-missing",
             "host-startup-timeout", "unknown-host-startup-timeout", "test-infrastructure",
-            "dependency-unavailable", "test-evidence-missing", "test-selection-empty"}
+            "dependency-unavailable", "test-evidence-missing", "test-selection-empty"} | set().union(*session.BLOCKED_RECEIPT_CATEGORIES.values())
 
 
 def finding(code, detail, contract=None):
@@ -390,7 +390,7 @@ def inspect_receipt(path, context, expected_check=None, mutable_caches=None):
                     record["reasons"].append("Package coverage gate did not pass")
         else:
             record["reasons"] = input_problems(payload.get("evidence"), context)
-            if payload.get("paths", {}).get("toolchain") != context.toolchain:
+            if actual_check not in {"static", "whitespace"} and payload.get("paths", {}).get("toolchain") != context.toolchain:
                 record["reasons"].append("Coordination receipt lacks matching toolchain provenance")
         if not record["finishedAt"] and not payload.get("entry"):
             record["reasons"].append("Receipt did not finish")
@@ -420,10 +420,19 @@ def inspect_workflow(path, payload, context):
         "inputsBefore": payload.get("inputsBefore"), "inputsAfter": payload.get("inputsAfter")}, context)
     if payload.get("schemaVersion") != 2:
         global_problems.append("Historical workflow schema")
-    cache_problems = session.final_cache_problems(payload, context.root)
-    global_problems.extend(cache_problems)
-    mutable_caches = None if cache_problems else payload.get("finalCacheProducts", session.workflow_cache_snapshots(payload, context.root))
-    for step in payload.get("steps", []):
+    mutable_caches = None
+    try:
+        cache_problems = session.final_cache_problems(payload, context.root)
+        global_problems.extend(cache_problems)
+        if not cache_problems:
+            mutable_caches = payload.get("finalCacheProducts")
+            if mutable_caches is None:
+                mutable_caches = session.workflow_cache_snapshots(payload, context.root)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as error:
+        global_problems.append("Final cache evidence unavailable: " + str(error))
+    active_steps = session.active_workflow_steps(payload)
+    current_status = observed_status(dict(payload, steps=active_steps))
+    for step in active_steps:
         name = step.get("name")
         if step.get("receipt"):
             child = inspect_receipt(result_path(context, step["receipt"]), context, name, mutable_caches)
@@ -434,7 +443,7 @@ def inspect_workflow(path, payload, context):
             "inputsBefore": step.get("inputsBefore"), "inputsAfter": step.get("inputsAfter")}, context)
         if name not in commands or not session.command_matches(step, commands.get(name, [])):
             problems.append("Workflow command does not match its canonical check")
-        if step.get("toolchain") != context.toolchain:
+        if name not in {"static", "whitespace"} and step.get("toolchain") != context.toolchain:
             problems.append("Workflow toolchain changed")
         if step.get("status") == "passed" and step.get("exitCode") != 0:
             problems.append("Passed workflow step disagrees with command exit")
@@ -449,17 +458,70 @@ def inspect_workflow(path, payload, context):
             child["status"] = step.get("status", "unknown")
         if step.get("status") in {"failed", "blocked", "interrupted"} and child["status"] == "passed":
             child["status"] = step["status"]
+        if current_status == "blocked":
+            child.update(status="blocked", finishedAt=timestamp(payload))
         records.append(child)
     return records
 
 
+def inspect_workflow_blocker(path, payload, context):
+    """Bind a completed non-execution observation to its owned workflow."""
+    path = pathlib.Path(path)
+    artifact = session.verification_artifact_root(context.root).resolve()
+    run_id = payload.get("runId")
+    checks = payload.get("selectedChecks")
+    canonical_checks = {name for name, _ in dev_workflow.full_profile(context.root)} | {"whitespace"}
+    if (path.is_symlink() or path.suffix != ".json" or path.parent.is_symlink() or path.parent.resolve() != artifact / "Coordination" or
+            type(payload.get("schemaVersion")) is not int or payload["schemaVersion"] != 2 or
+            not session.valid_run_id(run_id) or not re.fullmatch(re.escape(run_id) + r"-[0-9a-f]{8}", path.stem) or
+            payload.get("receipt") != str(path.resolve()) or
+            payload.get("entry") != str(context.root / "scripts/dev_workflow.py") or
+            payload.get("status") != "blocked" or type(payload.get("exitCode")) is not int or
+            payload.get("category") not in session.BLOCKED_RECEIPT_CATEGORIES.get(payload["exitCode"], set()) or
+            not isinstance(checks, list) or not checks or
+            any(not isinstance(check, str) or check not in canonical_checks for check in checks) or
+            len(set(checks)) != len(checks)):
+        raise ValueError("Unrecognized workflow admission blocker")
+    workflow_path = artifact / run_id / "workflow.json"
+    if (payload.get("workflowReceipt") != str(workflow_path) or workflow_path.is_symlink() or
+            workflow_path.parent.is_symlink()):
+        raise ValueError("Workflow blocker does not name its owned receipt")
+    workflow = json.loads(workflow_path.read_text())
+    if (not isinstance(workflow, dict) or type(workflow.get("schemaVersion")) is not int or
+            workflow["schemaVersion"] != 2 or workflow.get("runId") != run_id):
+        raise ValueError("Workflow blocker reference is not an owned workflow")
+    if not payload.get("startedAt") or not payload.get("finishedAt"):
+        raise ValueError("Workflow admission blocker must have attempt timestamps")
+    started = timestamp({"finishedAt": payload["startedAt"]})
+    finished = timestamp({"finishedAt": payload["finishedAt"]})
+    if finished < started:
+        raise ValueError("Workflow blocker finishes before its attempt started")
+    prior = timestamp(workflow)
+    if prior and finished < prior:
+        # The referenced workflow has since completed another attempt.
+        return []
+    problems = input_problems({"status": workflow.get("evidenceStatus"),
+                              "inputsBefore": workflow.get("inputsBefore"),
+                              "inputsAfter": workflow.get("inputsAfter")}, context)
+    if not prior:
+        problems.append("Referenced workflow lacks completion provenance")
+    # Validity describes a current, authenticated admission observation here.
+    # It grants no executed checks, test outcomes, cache or artifact evidence.
+    return [{"receipt": str(path.resolve()), "workflowReceipt": str(workflow_path), "check": check,
+             "status": "blocked", "validity": "invalid" if problems else "valid", "reasons": list(problems),
+             "tests": [], "finishedAt": finished} for check in checks]
+
+
 def inspect_evidence(paths, context):
     records = []
-    for value in dict.fromkeys(str(pathlib.Path(p).resolve()) for p in paths):
-        path = pathlib.Path(value)
+    for value in dict.fromkeys(str(pathlib.Path(p).absolute()) for p in paths):
+        original = pathlib.Path(value)
+        path = original.resolve()
         try:
             payload = json.loads(path.read_text())
-            if isinstance(payload, dict) and "profile" in payload and "invocation" not in payload:
+            if isinstance(payload, dict) and "workflowReceipt" in payload:
+                records.extend(inspect_workflow_blocker(original, payload, context))
+            elif isinstance(payload, dict) and "profile" in payload and "invocation" not in payload:
                 records.extend(inspect_workflow(path, payload, context))
             else:
                 records.append(inspect_receipt(path, context))

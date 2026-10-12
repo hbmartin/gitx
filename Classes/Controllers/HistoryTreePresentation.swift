@@ -286,6 +286,15 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
         return text
     }
 
+    private func pathOutput(_ arguments: [String], diagnosticOnFailure: Bool = true) -> String? {
+        var error: NSError?
+        guard let command = repository.index.literalArguments(forRawPath: rawPath, commandArguments: arguments, error: &error) else {
+            NSLog("[GitX] History path operation unavailable: %@", error?.localizedDescription ?? "Unsupported filename")
+            return diagnosticOnFailure ? error?.localizedDescription : nil
+        }
+        return output(command, diagnosticOnFailure: diagnosticOnFailure)
+    }
+
     private var objectSpec: String {
         "\(sha ?? ""):\(fullPath ?? "")"
     }
@@ -299,7 +308,7 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
     }
 
     private var unavailableText: String? {
-        let attributes = output(["--literal-pathspecs", "check-attr", "binary", "--", fullPath], diagnosticOnFailure: false)
+        let attributes = pathOutput(["check-attr", "binary"], diagnosticOnFailure: false)
         let binaryAttribute = attributes?.hasSuffix("binary: set") == true
         let binaryExtension = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".o"].contains { fullPath.hasSuffix($0) }
         let binary = binaryAttribute || (attributes != nil && attributes?.hasSuffix("binary: unset") != true && binaryExtension)
@@ -328,12 +337,12 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
 
     override func blame() -> String! {
         guard canPreview else { return contents }
-        return unavailableText ?? checkedText(output(["--literal-pathspecs", "blame", "-p", sha, "--", fullPath]))
+        return unavailableText ?? checkedText(pathOutput(["blame", "-p", sha]))
     }
 
     override func log(_ format: String!) -> String! {
         guard canPreview else { return contents }
-        return unavailableText ?? checkedText(output(["--literal-pathspecs", "log", "--pretty=format:\(format ?? "")", "--follow", "--", fullPath]))
+        return unavailableText ?? checkedText(pathOutput(["log", "--pretty=format:\(format ?? "")", "--follow"]))
     }
 
     override func tmpFileNameForContents() -> String! {

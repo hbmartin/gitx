@@ -7,16 +7,33 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import ROOT
+from support import ROOT, fixture_git_environment
+from unittest import mock
 
 
 class BuildVersionTests(unittest.TestCase):
+    def test_fixture_ignores_foreign_checkout_and_signing_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            foreign = Path(directory)
+            subprocess.run(["git", "init", "-q", foreign], check=True, env=fixture_git_environment())
+            config = (foreign / ".git/config").read_bytes()
+            selectors = {"GIT_DIR": str(foreign / ".git"), "GIT_WORK_TREE": str(foreign),
+                         "GIT_INDEX_FILE": str(foreign / ".git/foreign-index"),
+                         "GIT_CONFIG_PARAMETERS": "'commit.gpgsign=true'"}
+            with mock.patch.dict(os.environ, selectors):
+                info = self.run_version_script("v2.4.6", dirty=True)
+            self.assertTrue(str(info["CFBundleVersion"]).startswith("2.4.6.1 ["))
+            self.assertEqual((foreign / ".git/config").read_bytes(), config)
+            self.assertFalse((foreign / ".git/foreign-index").exists())
+
     def run_version_script(self, tag: str | None = None, *, repeat: bool = False, dirty: bool = False) -> dict[str, object]:
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
+            fixture_environment = fixture_git_environment()
             subprocess.run(
                 ["git", "init", "--initial-branch", "main"],
                 cwd=repository,
+                env=fixture_environment,
                 check=True,
                 capture_output=True,
                 text=True,
@@ -24,24 +41,27 @@ class BuildVersionTests(unittest.TestCase):
             subprocess.run(
                 ["git", "config", "user.name", "GitX Tests"],
                 cwd=repository,
+                env=fixture_environment,
                 check=True,
             )
             subprocess.run(
                 ["git", "config", "user.email", "gitx-tests@example.invalid"],
                 cwd=repository,
+                env=fixture_environment,
                 check=True,
             )
             (repository / "tracked.txt").write_text("content\n")
-            subprocess.run(["git", "add", "tracked.txt"], cwd=repository, check=True)
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repository, env=fixture_environment, check=True)
             subprocess.run(
                 ["git", "commit", "-m", "Initial"],
                 cwd=repository,
+                env=fixture_environment,
                 check=True,
                 capture_output=True,
                 text=True,
             )
             if tag is not None:
-                subprocess.run(["git", "tag", tag], cwd=repository, check=True)
+                subprocess.run(["git", "tag", tag], cwd=repository, env=fixture_environment, check=True)
 
             info_plist = repository / "Info.plist"
             with info_plist.open("wb") as stream:
@@ -52,7 +72,7 @@ class BuildVersionTests(unittest.TestCase):
                     },
                     stream,
                 )
-            environment = os.environ.copy()
+            environment = fixture_environment.copy()
             environment.update(
                 {
                     "TARGET_BUILD_DIR": str(repository),

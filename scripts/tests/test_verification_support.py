@@ -9,10 +9,78 @@ import tempfile
 import unittest
 from unittest import mock
 
-from support import ROOT, load_script
+from support import ROOT, load_script, fixture_git_environment
 
 
 verification = load_script("verification_support.py")
+
+
+class SwiftLintProfileTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = pathlib.Path(directory.name).resolve()
+        self.output = self.root / "artifacts/verification/profile/rule"
+        self.arguments = argparse.Namespace(rule="unused_import", output=self.output,
+                                            compiler_log=self.root / "compiler.log")
+        leases = mock.MagicMock()
+        leases.__enter__.return_value.environment.return_value = dict(os.environ)
+        for patch in (mock.patch.object(verification, "ROOT", self.root),
+                      mock.patch.object(verification.session, "Leases", return_value=leases),
+                      mock.patch.object(verification.session, "verification_artifact_root",
+                                        return_value=self.root / "artifacts/verification")):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write_reports(self):
+        for kind in ("files", "rules"):
+            (self.root / f"benchmark_{kind}_2026_10_11_01_02_03.txt").write_text(kind)
+
+    def test_refuses_existing_root_files_directories_and_symlinks(self):
+        path = self.root / "benchmark_existing.txt"
+        with mock.patch.object(verification.session, "supervise") as supervise:
+            for kind in ("file", "directory", "symlink"):
+                with self.subTest(kind=kind):
+                    if kind == "file": path.write_text("existing")
+                    elif kind == "directory": path.mkdir()
+                    else: path.symlink_to(self.root / "missing")
+                    with self.assertRaisesRegex(ValueError, "must be moved"):
+                        verification.command_swiftlint_profile(self.arguments)
+                    self.assertTrue(path.exists() or path.is_symlink())
+                    if kind == "directory": path.rmdir()
+                    else: path.unlink()
+            supervise.assert_not_called()
+
+    def test_collects_reports_after_failure_and_interruption_from_checkout(self):
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                def run(command, **options):
+                    self.assertEqual(options["cwd"], self.root)
+                    self.assertNotIn("--working-directory", command)
+                    self.write_reports()
+                    if interrupted: raise KeyboardInterrupt
+                    return 9
+                with mock.patch.object(verification.session, "supervise", side_effect=run):
+                    if interrupted:
+                        with self.assertRaises(KeyboardInterrupt):
+                            verification.command_swiftlint_profile(self.arguments)
+                    else:
+                        self.assertEqual(verification.command_swiftlint_profile(self.arguments), 9)
+                self.assertEqual(len(list(self.output.glob("benchmark_*.txt"))), 2)
+                self.assertEqual(list(self.root.glob("benchmark_*.txt")), [])
+                for path in self.output.glob("benchmark_*.txt"): path.unlink()
+
+    def test_preserves_a_colliding_destination(self):
+        self.output.mkdir(parents=True)
+        destination = self.output / "benchmark_files_2026_10_11_01_02_03.txt"
+        destination.write_text("existing destination")
+        def run(*args, **kwargs):
+            self.write_reports()
+            return 0
+        with mock.patch.object(verification.session, "supervise", side_effect=run):
+            self.assertEqual(verification.command_swiftlint_profile(self.arguments), 2)
+        self.assertEqual(destination.read_text(), "existing destination")
+        self.assertEqual((self.root / destination.name).read_text(), "files")
 
 
 class VersionTests(unittest.TestCase):
@@ -118,6 +186,88 @@ class PackageDoctorTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_malformed_recovery_paths_and_artifact_maps_fall_back_to_fresh_analysis(self):
+        for field in ("scratchPath", "results", "analysisArtifacts", "buildPaths"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory).resolve()
+                scratch = root / "scratch"
+                scratch.mkdir()
+                inputs = {"root": str(root)}
+                evidence = {"status": "valid", "inputsBefore": inputs, "inputsAfter": inputs,
+                            "analyzerScratch": {"path": str(scratch), "identity": verification.session.tree_identity(scratch)},
+                            "results": {}, "analysisArtifacts": {}}
+                prior = {"schemaVersion": 2, "invocation": {"preset": "analyze"}, "buildPaths": {},
+                         "steps": [{"name": "analyze", "status": "passed", "exitCode": 0, "log": "analyze.log"}],
+                         "evidence": evidence}
+                if field == "scratchPath": evidence["analyzerScratch"]["path"] = ["not-a-path"]
+                elif field == "buildPaths": prior[field] = []
+                else: evidence[field] = []
+                prior_path, current_path = root / "prior.json", root / "current.json"
+                prior_path.write_text(json.dumps(prior))
+                current_path.write_text(json.dumps({"invocation": {"preset": "analyze"}}))
+                with mock.patch.object(verification, "ROOT", root), mock.patch.object(verification.session, "inputs", return_value=inputs):
+                    self.assertEqual(verification.command_resume_analyzer(argparse.Namespace(
+                        prior=prior_path, current=current_path, allow_fresh=True)), 79)
+                current = json.loads(current_path.read_text())
+                self.assertEqual(current["analyzerRecovery"]["status"], "rejected")
+                self.assertNotIn("reusedAnalyzerScratch", current)
+                self.assertTrue(scratch.exists())
+
+    def test_receipt_git_reads_use_selected_checkout_under_foreign_selectors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            selected, foreign = [pathlib.Path(directory) / name for name in ("selected", "foreign")]
+            for root in (selected, foreign):
+                subprocess.run(["git", "init", "-q", "--initial-branch", root.name, root],
+                               check=True, env=fixture_git_environment())
+            raw = os.fsencode(selected) + "/untracked-λ\n.swift".encode()
+            with open(raw, "wb") as handle:
+                handle.write(b"selected bytes")
+            expected = verification.untracked_content_fingerprint(selected)
+            config = (foreign / ".git/config").read_bytes()
+            with mock.patch.dict(os.environ, {"GIT_DIR": str(foreign / ".git"), "GIT_WORK_TREE": str(foreign),
+                                              "GIT_INDEX_FILE": str(foreign / ".git/foreign-index")}):
+                self.assertEqual(verification.git_output("symbolic-ref", "--short", "HEAD", cwd=selected), "selected")
+                self.assertEqual(verification.untracked_content_fingerprint(selected), expected)
+                with open(raw, "wb") as handle:
+                    handle.write(b"changed selected bytes")
+                self.assertNotEqual(verification.untracked_content_fingerprint(selected), expected)
+            self.assertEqual((foreign / ".git/config").read_bytes(), config)
+            self.assertFalse((foreign / ".git/foreign-index").exists())
+
+    def test_failed_recovery_only_retains_unchanged_borrowed_scratch(self):
+        for changed in (False, True):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                scratch = root / "borrowed"
+                scratch.mkdir()
+                product = scratch / "compiler-product"
+                product.write_text("admitted bytes")
+                admitted = {"path": str(scratch), "identity": verification.session.tree_identity(scratch)}
+                if changed:
+                    product.write_text("changed bytes")
+                log = root / "analyze.log"
+                log.write_text("compiler diagnostics")
+                path = root / "receipt.json"
+                path.write_text(json.dumps({"runId": "recovery", "steps": [
+                    {"name": "analyze", "status": "passed", "exitCode": 0, "log": str(log), "reusedFrom": "prior.json"}],
+                    "artifacts": [], "toolchain": {"developerDir": "/Xcode", "xcodeVersion": "27", "xcodeBuild": "test"},
+                    "invocation": {"preset": "analyze"}, "buildPaths": {"derivedData": str(scratch)},
+                    "reusedAnalyzerScratch": admitted, "evidence": {"inputsBefore": {}}}))
+                with mock.patch.object(verification, "ROOT", root), \
+                        mock.patch.object(verification, "xcode_version", return_value=("27", "test")), \
+                        mock.patch.object(verification.session, "inputs", return_value={}):
+                    self.assertEqual(verification.command_receipt_finish(
+                        argparse.Namespace(path=path, status="failed", exit_code=9)), 0)
+                payload = json.loads(path.read_text())
+                self.assertEqual(payload["exitCode"], 9)
+                self.assertTrue(payload["finishedAt"])
+                self.assertTrue(product.exists())
+                if changed:
+                    self.assertNotIn("analyzerScratch", payload["evidence"])
+                    self.assertEqual(payload["analyzerRecovery"]["status"], "unavailable")
+                else:
+                    self.assertEqual(payload["evidence"]["analyzerScratch"], admitted)
+
     def test_finish_records_durable_analyzer_logs_and_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

@@ -70,8 +70,25 @@ def queue_commit(root):
     with session.Leases([str(path)], owner):
         value = {"schemaVersion": 1, "checkout": str(root), "head": head,
                  "queuedAt": records.now(), "token": uuid.uuid4().hex}
-        existing = read_json(path)
-        if existing and existing.get("checkout") == str(root) and existing.get("head") == head:
+        def leaf_identity():
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                return None
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError(f"Refusing non-regular cleanup queue: {path}")
+            return info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+        before = leaf_identity()
+        try:
+            existing = read_json(path)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            existing = None
+        valid = (isinstance(existing, dict) and existing.get("schemaVersion") == 1 and
+                 isinstance(existing.get("checkout"), str) and isinstance(existing.get("head"), str) and
+                 isinstance(existing.get("token"), str) and bool(existing["token"]))
+        if leaf_identity() != before:
+            raise ValueError("Cleanup queue changed while being read")
+        if valid and existing.get("checkout") == str(root) and existing.get("head") == head:
             return existing | {"status": "queued"}
         session.atomic_json(path, value)
     return value | {"status": "queued"}
@@ -248,7 +265,50 @@ def busy_resource(resources):
     return None
 
 
-def protection_token(root):
+def provenance_text(path):
+    """Expected reference documents are strict; arbitrary binary attachments are not prose."""
+    path = pathlib.Path(path)
+    if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".ico"}:
+        return None
+    data = path.read_bytes()
+    required = path.suffix.lower() in {".json", ".md", ".txt", ".rst"}
+    if b"\0" in data:
+        if required:
+            raise ValueError(f"Binary data in textual protection metadata: {path}")
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        if required:
+            raise
+        return None
+
+
+def cited_run_ids(text, value, aliases, artifact, root):
+    found = set()
+    def visit(item):
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if key == "runId" and isinstance(child, str):
+                    found.add(child)
+                elif key in {"runIds", "runs"} and isinstance(child, list):
+                    found.update(v for v in child if isinstance(v, str))
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+    visit(value)
+    for match in re.finditer(r"\brun[ -]ids?\s*[:=]\s*([`'\"]?[\w.-]+[`'\"]?(?:\s*,\s*[`'\"]?[\w.-]+[`'\"]?)*)", text, re.IGNORECASE):
+        found.update(re.findall(r"[\w.-]+", match[1]))
+    for run_id in aliases:
+        # Paths are explicit citations even when the surrounding prose lacks a run-ID label.
+        for prefix in (str(artifact), str(artifact.relative_to(root))):
+            if re.search(re.escape(prefix) + r"/(?:Coordination/)?" + re.escape(run_id) + r"(?=/|\.json\b|[\s`'\"]|$)", text):
+                found.add(run_id)
+    return found & set(aliases)
+
+
+def protection_token(root, *, referrers=None):
     """Small protection inputs can be revalidated without holding discovery leases."""
     root = pathlib.Path(root)
     names = session.git(root, "ls-files", "-z").split("\0")
@@ -278,29 +338,35 @@ def protection_token(root):
                 directories[:] = sorted(name for name in directories if not (pathlib.Path(parent) / name).is_symlink())
                 if "diagnostic-owner.json" in files:
                     paths.append(pathlib.Path(parent) / "diagnostic-owner.json")
+    paths = list(dict.fromkeys(paths))
     objects = set()
+    def references(paths, source):
+        objects.update(paths)
+        if referrers is not None:
+            for referenced in paths:
+                referrers.setdefault(str(referenced), set()).add(source)
     for path in paths:
         if path.suffix == ".json" and path.exists():
             value = read_json(path)
+            if path.is_relative_to(root) and str(path.relative_to(root)) in provenance:
+                value = {"recoverySources": value}
             if isinstance(value, dict):
-                if path.is_relative_to(root) and str(path.relative_to(root)) in provenance:
-                    value = {"recoverySources": value}
                 if path.name == "ledger.json":
                     if not isinstance(value.get("items"), dict):
                         raise ValueError("Malformed work ledger")
                     for item in value["items"].values():
                         if not isinstance(item, dict):
                             raise ValueError("Malformed work ledger item")
-                        objects.update(reference_paths(item, root))
+                        references(reference_paths(item, root), ("file", str(path)))
                 else:
-                    objects.update(reference_paths(value, root))
+                    references(reference_paths(value, root), ("file", str(path)))
     trees, tracked = records.worktrees(root), {}
     for tree in trees:
         checkout = pathlib.Path(tree["worktree"])
-        selected = [str(checkout / name) for name in session.git(checkout, "ls-files", "-z").split("\0")
+        selected = [str(checkout / name) for name in (names if checkout == root else session.git(checkout, "ls-files", "-z").split("\0"))
                     if name and any((checkout / name).is_relative_to(base) for base in (artifact, root / "build"))]
         tracked[str(checkout)] = sorted(selected)
-        objects.update(pathlib.Path(name) for name in selected)
+        references({pathlib.Path(name) for name in selected}, ("worktree", str(checkout)))
     identities = {}
     for path in objects:
         try:
@@ -321,7 +387,7 @@ def inventory(root, receipt=None, now=None):
     artifact = root / config["artifactRoot"]
     if artifact.is_symlink() or not artifact.resolve().is_relative_to(root):
         raise ValueError("Artifact root must remain inside the checkout without a symlink")
-    errors, unknown, entries, entry_identities = [], [], {}, set()
+    errors, entry_errors, accounting_errors, unknown, entries, entry_identities = [], [], [], [], {}, set()
     identity_cache = {}
     protected = {root / "build/GitX.app": "staged Debug app", root / ".git": "repository metadata"}
     def uncertain(path, error):
@@ -333,11 +399,15 @@ def inventory(root, receipt=None, now=None):
         except OSError as error:
             uncertain(path, error)
             return []
-    def snapshot(path):
+    def snapshot(path, category="entry"):
         try:
             return fingerprint(path)
         except (OSError, ValueError) as error:
-            uncertain(path, error)
+            target = accounting_errors if category == "accounting" else entry_errors
+            target.append({"path": str(path), "reason": str(error)})
+            if category != "accounting":
+                protected[path] = "unreadable or changing output"
+                unknown.append({"paths": [str(path)], "reason": "unknown or unreadable entry: " + str(error)})
             return None
     def metadata(path, default=None):
         try:
@@ -358,10 +428,12 @@ def inventory(root, receipt=None, now=None):
                     tracked = path / name
                     if tracked.is_relative_to(artifact) or tracked.is_relative_to(root / "build"):
                         protected[tracked] = "tracked repository file"
-        token = protection_token(root)
+        referrers = {}
+        token = protection_token(root, referrers=referrers)
     except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
         uncertain(root / ".git", error)
         token = None
+        referrers = {}
     if receipt:
         protected[pathlib.Path(receipt).resolve().parent] = "current successful verification"
     ledger = metadata(records.common_directory(root) / "ledger.json", {"items": {}})
@@ -393,25 +465,26 @@ def inventory(root, receipt=None, now=None):
             uncertain(path, error)
     def add_entry(path, documents):
         nonlocal current_inputs
-        snap = snapshot(path)
-        if snap is None:
-            return
-        key = snap["directory"]["device"], snap["directory"]["inode"]
+        identity = directory_identity(path)
+        key = identity["device"], identity["inode"]
         if key in entry_identities:
             return
         entry_identities.add(key)
-        if snap["repositories"]:
-            protected[path] = "embedded repository or worktree"
         refs = set().union(*(reference_paths(d, root) for d in documents))
         resources = {path} | {pathlib.Path(v).resolve() for d in documents for v in
                                (d.get("buildPaths", {}) | d.get("paths", {})).values() if isinstance(v, str) and v}
         resources.update(pathlib.Path(v) for d in documents for v in d.get("resources", []) if isinstance(v, str) and not v.startswith("desktop:"))
-        completed = max(date_value(d.get("finishedAt", d.get("startedAt")), snap["modified"]) for d in documents)
         unfinished = [d for d in documents if d.get("status") in {"running", "pending"}]
         abandoned = bool(unfinished) and all(session.producer_state(d.get("producer")) == "abandoned" for d in unfinished)
+        live = bool(unfinished) and not abandoned
+        snap = None if live else snapshot(path)
+        if snap and snap["repositories"]:
+            protected[path] = "embedded repository or worktree"
+        modified = snap["modified"] if snap else path.lstat().st_mtime
+        completed = max(date_value(d.get("finishedAt", d.get("startedAt")), modified) for d in documents)
         entries[path] = {"documents": documents, "snapshot": snap, "refs": refs,
-                         "resources": resources, "completed": completed}
-        if unfinished and not abandoned:
+                         "directory": identity, "resources": resources, "completed": completed, "live": live}
+        if live:
             protected[path] = "live or uncertain unfinished run"
         resumable = [d for d in documents if d.get("schemaVersion") == 2 and d.get("scope") == "full" and
                      d.get("inputsAfter") and d.get("status") != "passed"]
@@ -457,8 +530,11 @@ def inventory(root, receipt=None, now=None):
             if (not path.is_symlink() and path.suffix == ".json" and isinstance(value, dict) and
                     isinstance(value.get("runId"), str) and (value["runId"] == path.stem or re.fullmatch(re.escape(value["runId"]) + r"-[0-9a-f]{8}", path.stem)) and value.get("receipt") == str(path) and
                     isinstance(value.get("entry"), str) and pathlib.Path(value["entry"]).resolve().is_relative_to(root / "scripts") and
-                    value.get("evidence", {}).get("inputsBefore", {}).get("root") == str(root) and
-                    value.get("status") in {"passed", "failed", "running", "blocked"}):
+                    ((value.get("evidence", {}).get("inputsBefore", {}).get("root") == str(root)) or
+                     (not value.get("evidence") and value.get("schemaVersion") == 2 and
+                      value.get("status") == "blocked" and
+                      value.get("category") in session.BLOCKED_RECEIPT_CATEGORIES.get(value.get("exitCode"), set()))) and
+                    value.get("status") in {"passed", "failed", "running", "blocked", "invalid"}):
                 add(path, [value])
             else:
                 unknown.append({"paths": [str(path)], "reason": "unmanaged legacy Coordination receipt"})
@@ -492,7 +568,7 @@ def inventory(root, receipt=None, now=None):
     for container in (artifact / "diagnostics", artifact / "Diagnostics", artifact / "Coordination/Diagnostics"):
         for path in children(container):
             generic(path)
-    # Tracked diagnostics can cite arbitrary JSON paths or exact run IDs in prose.
+    # Tracked diagnostics protect explicit paths and structured or labeled run-ID citations.
     aliases = {}
     for path, entry in entries.items():
         for run_id in {path.stem if path.is_file() else path.name} | {d.get("runId") for d in entry["documents"]}:
@@ -504,17 +580,16 @@ def inventory(root, receipt=None, now=None):
         if not name or not (name.startswith("docs/diagnostics/") or pathlib.Path(name).name in
                             {"verification.json", "runtime.json", "provenance.json", "REVIEW.md"}):
             continue
-        if pathlib.Path(name).suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".ico"}:
-            continue
         try:
-            text = (root / name).read_text()
+            text = provenance_text(root / name)
+            if text is None:
+                continue
+            value = None
             if name.endswith(".json"):
-                for path in all_paths(json.loads(text)):
+                value = json.loads(text)
+                for path in all_paths(value):
                     protected[path] = "tracked diagnostic provenance"
-            cited = set(re.findall(r"[\w.-]+", text)) & set(aliases)
-            # Legacy IDs containing separators need their original boundaries.
-            cited.update(run_id for run_id in aliases if not re.fullmatch(r"[\w.-]+", run_id) and
-                         re.search(r"(?<![\w.-])" + re.escape(run_id) + r"(?![\w.-])", text))
+            cited = cited_run_ids(text, value, aliases, artifact, root)
             for run_id in cited:
                 for path in aliases[run_id]:
                     protected[path] = "tracked exact run-ID citation"
@@ -552,7 +627,7 @@ def inventory(root, receipt=None, now=None):
     for members in producer_runs.values():
         for path in members[1:]:
             parents[find(path)] = find(members[0])
-    indexed = {(entry["snapshot"]["directory"]["device"], entry["snapshot"]["directory"]["inode"]): path
+    indexed = {(entry["directory"]["device"], entry["directory"]["inode"]): path
                for path, entry in entries.items()}
     for path, entry in entries.items():
         for ref in entry["refs"]:
@@ -639,6 +714,9 @@ def inventory(root, receipt=None, now=None):
                      "snapshots": {str(p): s for p, s in snapshots.items()}, "resources": sorted(str(p) for p in resources)}
         (retained if reasons else candidates).append(candidate | ({"reason": "; ".join(reasons)} if reasons else {}))
     for members in groups.values():
+        if any(entries[p]["snapshot"] is None for p in members):
+            retained.append({"paths": [str(p) for p in members], "reason": "protected live or unreadable output"})
+            continue
         consider(members, "diagnostics", {p: entries[p]["snapshot"] for p in members},
                  set().union(*(entries[p]["resources"] for p in members)),
                  max(max(entries[p]["snapshot"]["modified"], entries[p]["completed"]) for p in members))
@@ -657,7 +735,13 @@ def inventory(root, receipt=None, now=None):
                 if instrumentation.is_dir() and not instrumentation.is_symlink():
                     cache_directories.extend(p for p in children(instrumentation) if p.name in
                                              {"DerivedData", "SwiftPM"} or p.name.startswith("AnalyzerDerivedData."))
-    for path in children(root / "build"):
+    build = root / "build"
+    if build.resolve() != build:
+        retained.append({"paths": [str(build)], "reason": "non-canonical build root"})
+        build_children = []
+    else:
+        build_children = children(build)
+    for path in build_children:
         if path == root / "build/GitX.app":
             continue
         try:
@@ -672,10 +756,14 @@ def inventory(root, receipt=None, now=None):
             retained.append({"paths": [str(path)], "reason": "unknown build directory"})
     cache_seen = set()
     for path in cache_directories:
+        if path.is_symlink() or not path.is_dir():
+            retained.append({"paths": [str(path)], "reason": "symlink or non-directory cache"})
+            continue
         try:
             identity = directory_identity(path)
         except OSError as error:
-            uncertain(path, error)
+            entry_errors.append({"path": str(path), "reason": str(error)})
+            retained.append({"paths": [str(path)], "reason": "unknown or unreadable cache"})
             continue
         key = identity["device"], identity["inode"]
         if key in cache_seen:
@@ -696,10 +784,15 @@ def inventory(root, receipt=None, now=None):
     try:
         total = artifact.lstat().st_blocks * 512 if artifact.exists() else 0
     except OSError as error:
-        uncertain(artifact, error)
+        accounting_errors.append({"path": str(artifact), "reason": str(error)})
         total = 0
     for path in top:
-        snap = entries[path]["snapshot"] if path in entries else snapshot(path)
+        if path in entries:
+            snap = entries[path]["snapshot"]
+            if snap is None:
+                accounting_errors.append({"path": str(path), "reason": "retained output was not recursively counted"})
+        else:
+            snap = snapshot(path, "accounting")
         if snap is not None:
             total += snap["bytes"]
     diagnostic_candidates = sum(c["bytes"] for c in candidates if c["kind"] == "diagnostics")
@@ -717,17 +810,18 @@ def inventory(root, receipt=None, now=None):
             retained.append(candidate | {"reason": "recent diagnostics or cache"})
     print(f"Cleanup inventory: inspected {len(entries)} owned entries and {len(cache_directories)} caches", file=sys.stderr, flush=True)
     return {"schemaVersion": 2, "checkout": str(root), "policy": policy, "diagnosticBytes": total,
-            "protectedDiagnosticBytes": max(0, protected_bytes), "diagnosticBytesComplete": not errors,
+            "protectedDiagnosticBytes": max(0, protected_bytes), "diagnosticBytesComplete": not (errors or entry_errors or accounting_errors),
             "reclaimableDiagnosticBytes": sum(c["bytes"] for c in selected if c["kind"] == "diagnostics"),
             "projectedDiagnosticBytes": remaining, "protectedExcessBytes": max(0, remaining - policy["diagnosticBudgetBytes"]),
-            "candidates": selected, "retained": retained, "discoveryErrors": errors, "protectionToken": token,
+            "candidates": selected, "retained": retained, "discoveryErrors": errors, "entryErrors": entry_errors,
+            "accountingErrors": accounting_errors, "protectionToken": token, "protectionReferrers": referrers,
             "protectedPaths": [str(p) for p in protected],
             "estimatedReclaimableBytes": sum(c["bytes"] for c in selected)}
 
 
 def public_report(report):
     return {key: ([{k: v for k, v in item.items() if k not in {"snapshots", "resources", "modified"}} for item in value]
-                  if isinstance(value, list) else value) for key, value in report.items() if key not in {"protectionToken", "protectedPaths"}}
+                  if isinstance(value, list) else value) for key, value in report.items() if key not in {"protectionToken", "protectedPaths", "protectionReferrers"}}
 
 
 def preview(root, now=None):
@@ -769,6 +863,19 @@ def eligibility(root, receipt):
     if set(selected) != set(expected) or len(selected) != len(expected) or set(names) != set(expected) or len(names) != len(expected):
         return None, "incomplete-profile"
     toolchain = session.cache_paths(root)["toolchain"]
+    children, identities = {}, {}
+    readers = {"results": session.tree_identity, "products": session.product_identity,
+               "packages": session.package_products, "dependencies": session.dependency_products}
+    def artifact_identity(kind, path):
+        key = kind, os.path.abspath(path)
+        if key not in identities:
+            identities[key] = readers[kind](path)
+        return identities[key]
+    def child_receipt(path):
+        key = str(pathlib.Path(path).resolve())
+        if key not in children:
+            children[key] = read_json(path, {})
+        return children[key]
     for step in steps:
         command = expected[step["name"]]
         if pathlib.Path(command[0]).name == "xcodebuild.sh" and not step.get("receipt"):
@@ -778,12 +885,15 @@ def eligibility(root, receipt):
             child_path = child_path if child_path.is_absolute() else root / child_path
             if not child_path.resolve().is_relative_to(artifact.resolve()):
                 return None, "child-receipt-outside-checkout"
-            child = read_json(child_path, {})
-            if child.get("status") != "passed" or child.get("evidence", {}).get("status") != "valid":
+            child = child_receipt(child_path)
+            if not isinstance(child, dict) or child.get("status") != "passed" or child.get("evidence", {}).get("status") != "valid":
                 return None, "invalid-child-evidence"
-    if session.final_cache_problems(value, root):
+    try:
+        caches = session.workflow_cache_snapshots(value, root, receipt_reader=child_receipt)
+    except (OSError, ValueError, TypeError, KeyError):
         return None, "final-cache-products-changed"
-    caches = session.workflow_cache_snapshots(value, root)
+    if session.final_cache_problems(value, root, derived=caches, identity=artifact_identity):
+        return None, "final-cache-products-changed"
     for step in steps:
         command = expected[step["name"]]
         if not session.command_matches(step, command) or step.get("status") != "passed" or step.get("evidenceStatus") != "valid" or step.get("toolchain") != toolchain or session.changed_inputs(step.get("inputsAfter", {}), current):
@@ -796,18 +906,18 @@ def eligibility(root, receipt):
                 child_path = root / child_path
             if not child_path.resolve().is_relative_to(artifact.resolve()):
                 return None, "child-receipt-outside-checkout"
-            child = read_json(child_path, {})
+            child = child_receipt(child_path)
             evidence = child.get("evidence", {})
             if child.get("schemaVersion") != 2 or child.get("status") != "passed" or evidence.get("status") != "valid" or any(
                     session.changed_inputs(evidence.get(key, {}), current) for key in ("inputsBefore", "inputsAfter")):
                 return None, "invalid-child-evidence"
-            if session.receipt_artifact_problems(child, root, caches):
+            if session.receipt_artifact_problems(child, root, caches, identity=artifact_identity):
                 return None, "child-artifacts-changed"
-        if any(identity is None or session.tree_identity(path) != identity for path, identity in step.get("outputs", {}).items()):
+        if any(identity is None or artifact_identity("results", path) != identity for path, identity in step.get("outputs", {}).items()):
             return None, "workflow-output-changed"
     stage = next(step for step in steps if step["name"] == "stage-debug")
     app = root / "build/GitX.app"
-    if not app.is_dir() or app.is_symlink() or stage.get("outputs", {}).get(str(app)) != session.tree_identity(app):
+    if not app.is_dir() or app.is_symlink() or stage.get("outputs", {}).get(str(app)) != artifact_identity("results", app):
         return None, "staged-app-does-not-match"
     return pending, None
 
@@ -821,10 +931,11 @@ def proof_resources(root, receipt):
         if step.get("receipt"):
             path = pathlib.Path(step["receipt"])
             resources.add(str((path if path.is_absolute() else root / path).resolve().parent))
+    toolchain = session.cache_paths(root)["toolchain"]
     for _, command in workflow.full_profile(root):
         if pathlib.Path(command[0]).suffix == ".sh":
             # Cleanup validates products; it never needs the console session.
-            resources.update(r for r in session.entry_resources(pathlib.Path(command[0]).name, command[1:], root)[0]
+            resources.update(r for r in session.entry_resources(pathlib.Path(command[0]).name, command[1:], root, toolchain=toolchain)[0]
                              if not r.startswith("desktop:"))
     return resources
 
@@ -833,13 +944,26 @@ def journal_paths(value, directory):
     if value.get("schemaVersion") != 1 or value.get("state") not in {"prepared", "quarantined", "complete"}:
         raise ValueError("Unrecognized deletion journal")
     original, quarantine = pathlib.Path(value["originalPath"]), pathlib.Path(value["quarantinePath"])
-    if (not original.is_absolute() or original.parent != quarantine.parent or
+    if (not original.is_absolute() or pathlib.Path(os.path.normpath(original)) != original or
+            pathlib.Path(os.path.normpath(quarantine)) != quarantine or original.parent != quarantine.parent or
             not re.fullmatch(r"\.gitx-cleanup-trash-[0-9a-f]{32}", quarantine.name) or
             original.name.startswith(".gitx-cleanup-trash-") or overlap(original, directory)):
         raise ValueError("Invalid deletion journal paths")
     authorization = value.get("authorization", {})
     if not isinstance(authorization, dict) or not authorization.get("head") or not authorization.get("checkout"):
         raise ValueError("Deletion authorization is missing")
+    snapshot = authorization.get("snapshot", {})
+    identity = value.get("directoryIdentity", {})
+    parent = value.get("parentIdentity", {})
+    if (not isinstance(snapshot, dict) or not isinstance(identity, dict) or not isinstance(parent, dict) or
+            any(type(data.get(key)) is not int for data in (identity, parent) for key in ("device", "inode", "mode", "birthNs")) or
+            identity.get("mode") not in {stat.S_IFDIR, stat.S_IFREG} or parent.get("mode") != stat.S_IFDIR or
+            snapshot.get("directory") != identity or type(snapshot.get("bytes")) is not int or snapshot["bytes"] < 0 or
+            not isinstance(snapshot.get("identity"), str) or not snapshot["identity"] or
+            not isinstance(authorization.get("receiptIdentity"), dict) or not authorization["receiptIdentity"].get("sha256") or
+            any(not isinstance(authorization.get(key), str) or not authorization[key]
+                for key in ("receipt", "pendingToken"))):
+        raise ValueError("Deletion journal identities or snapshot are invalid")
     root = pathlib.Path(authorization["checkout"])
     if not root.is_absolute() or state_directory(root) != directory:
         raise ValueError("Deletion journal belongs to another checkout")
@@ -849,6 +973,12 @@ def journal_paths(value, directory):
         raise ValueError("Deletion journal is outside managed output")
     if overlap(original, root / "build/GitX.app"):
         raise ValueError("Deletion journal targets the staged app")
+    digest = authorization.get("protectionDigest")
+    if digest is not None and (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        raise ValueError("Invalid deletion protection digest")
+    if not any(path.exists() or path.is_symlink() for path in (original, quarantine)):
+        # Completing metadata for absent objects cannot delete a redirected parent's contents.
+        return original, quarantine
     if original.parent.resolve() != original.parent or directory_identity(original.parent) != value["parentIdentity"]:
         raise ValueError("Deletion parent was redirected or replaced")
     return original, quarantine
@@ -897,8 +1027,11 @@ def prepare_journal(path, snapshot, root, receipt, pending, protection):
              "parentIdentity": directory_identity(path.parent), "createdAt": records.now(),
              "authorization": {"checkout": str(root), "head": pending["head"], "pendingToken": pending["token"],
                                "receipt": str(receipt), "receiptIdentity": session.tree_identity(receipt),
-                               "snapshot": snapshot, "protection": protection}}
+                               "snapshot": snapshot, "protectionDigest": protection_digest(protection)}}
     journal = directory / "journals" / (identity + ".json")
+    journal_paths(value, directory)
+    if directory_identity(path) != snapshot["directory"]:
+        raise ValueError("Original object changed before journal preparation")
     persist_journal(journal, value)
     return journal, value
 
@@ -926,18 +1059,89 @@ def quarantine_journal(journal, value, directory):
     return quarantine
 
 
+def protection_digest(token):
+    return session.digest(json.dumps(token, sort_keys=True, separators=(",", ":")).encode())
+
+
+class JournalCompletionError(OSError):
+    """Removal succeeded, but its durable journal completion could not be published."""
+    def __init__(self, journal, reclaimed_bytes, error):
+        self.journal = str(journal)
+        self.reclaimed_bytes = reclaimed_bytes
+        super().__init__("Removal succeeded; journal completion failed: " + str(error))
+
+
 def finish_journal(journal, value, directory):
-    _, quarantine = journal_paths(value, directory)
+    original, quarantine = journal_paths(value, directory)
     if quarantine.is_symlink() or directory_identity(quarantine) != value["directoryIdentity"]:
         raise ValueError("Refusing redirected quarantine")
+    if original.exists() or original.is_symlink():
+        raise ValueError("Original path reappeared before quarantine removal")
+    remaining_bytes = fingerprint(quarantine)["bytes"]
     if value["directoryIdentity"]["mode"] == stat.S_IFDIR:
         shutil.rmtree(quarantine)
     elif value["directoryIdentity"]["mode"] == stat.S_IFREG:
         quarantine.unlink()
     else:
         raise ValueError("Quarantined object is not a directory or regular file")
-    value.update(state="complete", finishedAt=records.now())
-    persist_journal(journal, value)
+    if quarantine.exists() or quarantine.is_symlink():
+        raise ValueError("Quarantine remains after removal; journal completion refused")
+    try:
+        if original.exists() or original.is_symlink():
+            raise ValueError("Original path reappeared after quarantine removal")
+        value.update(state="complete", finishedAt=records.now())
+        persist_journal(journal, value)
+    except (OSError, ValueError) as error:
+        raise JournalCompletionError(journal, remaining_bytes, error) from error
+    return remaining_bytes
+
+
+def protection_matches(expected, current, removed, referrers):
+    def removed_path(path):
+        return any(pathlib.Path(path).is_relative_to(base) for base in removed)
+    def remaining(value):
+        return value | {kind: {p: v for p, v in value[kind].items() if not removed_path(p)}
+                        for kind in ("files", "objects")}
+    expected, current = remaining(expected), remaining(current)
+    if {k: v for k, v in expected.items() if k != "objects"} != {k: v for k, v in current.items() if k != "objects"}:
+        return False
+    if any(path not in expected["objects"] or identity != expected["objects"][path]
+           for path, identity in current["objects"].items()):
+        return False
+    for path in expected["objects"].keys() - current["objects"].keys():
+        sources = referrers.get(path, set())
+        if not sources or any(kind != "file" or not removed_path(source) for kind, source in sources):
+            return False
+    return True
+
+
+def rotate_history(directory, limit, current_report):
+    """Bound managed history while retaining every incomplete or unrecognized journal."""
+    for folder, key, accepted in (("reports", "status", {"complete", "partial", "failed", "interrupted"}),
+                                  ("journals", "state", {"complete"})):
+        entries = []
+        for path in (directory / folder).glob("*.json"):
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                value = read_json(path)
+                if not isinstance(value, dict) or value.get(key) not in accepted:
+                    continue
+                if folder == "journals" and value.get("schemaVersion") != 1:
+                    continue
+                if folder == "journals":
+                    journal_paths(value, directory)
+                info = path.stat()
+                finished = date_value(value.get("finishedAt"), info.st_mtime)
+                entries.append((path == current_report, finished, info.st_mtime_ns, str(path), path, directory_identity(path)))
+            except (OSError, ValueError, TypeError, AttributeError, KeyError):
+                continue
+        for *_, path, identity in sorted(entries, reverse=True)[limit:]:
+            try:
+                if not path.is_symlink() and directory_identity(path) == identity:
+                    path.unlink()
+            except OSError:
+                continue
 
 
 def run_cleanup(root, receipt, inherited=None):
@@ -951,31 +1155,44 @@ def run_cleanup(root, receipt, inherited=None):
              "producer": session.producer_identity()}
     # Only cleanup state stays owned during discovery and filesystem removal.
     with session.Leases([str(directory)], owner, inherited=inherited) as outer:
-        authenticated = dict(inherited or {}) | outer.held
+        authenticated = dict(outer.inherited) | outer.held
         with session.Leases(proof, owner, inherited=authenticated):
             pending, reason = eligibility(root, receipt)
             if reason:
                 return {"status": "deferred", "reason": reason}
         report = inventory(root, receipt)
         report.update(status="complete", committedHead=pending["head"], receipt=str(receipt),
-                      deleted=[], skipped=[], failed=[], reclaimedBytes=0, startedAt=records.now())
-        removed = set()
+                      deleted=[], recovered=[], skipped=[], failed=[], reclaimedBytes=0, startedAt=records.now())
+        removed, removed_originals = set(), set()
+        def removed_original_problem():
+            return "removed-output-reappeared" if any(path.exists() or path.is_symlink() for path in removed_originals) else None
+        def finish_removal(candidate, journal, value):
+            failure = None
+            try:
+                reclaimed = finish_journal(journal, value, directory)
+            except JournalCompletionError as error:
+                reclaimed, failure = error.reclaimed_bytes, error
+            item = candidate | {"paths": [value["originalPath"]], "bytes": reclaimed, "journal": str(journal)}
+            report["deleted"].append(item)
+            report["reclaimedBytes"] += reclaimed
+            print(f"Cleanup removed {item['paths']}: approximately {reclaimed} bytes", flush=True)
+            if failure:
+                raise failure
+        def remaining_candidate(candidate):
+            completed = {path for item in report["deleted"] + report["recovered"] for path in item["paths"]}
+            paths = [path for path in candidate["paths"] if path not in completed]
+            return candidate | {"paths": paths, "bytes": sum(candidate["snapshots"][path]["bytes"] for path in paths)}
         def gate():
             _, reason = eligibility(root, receipt)
             if reason or read_json(pending_path(root)) != pending:
                 return reason or "newer commit queued"
-            current = protection_token(root)
+            if problem := removed_original_problem():
+                return problem
             expected = report["protectionToken"]
             if expected is None:
                 return "protection-discovery-incomplete"
-            def remaining(value):
-                return value | {kind: {p: v for p, v in value[kind].items()
-                                       if not any(pathlib.Path(p).is_relative_to(q) for q in removed)}
-                                for kind in ("files", "objects")}
-            expected, current = remaining(expected), remaining(current)
-            # Missing metadata belonging to this cleanup's quarantined objects
-            # is expected. Other changes invalidate the protection boundary.
-            if current != expected:
+            current = protection_token(root)
+            if not protection_matches(expected, current, removed, report["protectionReferrers"]):
                 return "protection-boundaries-changed"
             return None
         if report["discoveryErrors"]:
@@ -1012,17 +1229,20 @@ def run_cleanup(root, receipt, inherited=None):
                                     raise ValueError("Original directory changed after inventory")
                                 value["authorization"].update(head=pending["head"], pendingToken=pending["token"],
                                                               receipt=str(receipt), receiptIdentity=session.tree_identity(receipt),
-                                                              snapshot=snapshot, protection=report["protectionToken"])
+                                                              snapshot=snapshot, protectionDigest=protection_digest(report["protectionToken"]))
+                                value["authorization"].pop("protection", None)
                                 persist_journal(journal, value)
                                 candidate["bytes"] = snapshot["bytes"]
                             target = quarantine_journal(journal, value, directory)
                             removed.update((original, quarantine))
+                            removed_originals.add(original)
                         if target is not None:
-                            finish_journal(journal, value, directory)
-                    report["deleted"].append(candidate)
-                    report["reclaimedBytes"] += candidate["bytes"]
+                            finish_removal(candidate, journal, value)
+                        else:
+                            report["recovered"].append(candidate | {"bytes": 0})
                 except (OSError, ValueError, KeyError, session.ResourceBusy) as error:
-                    report["failed"].append({"paths": [value.get("originalPath", str(journal))], "journal": str(journal), "reason": str(error)})
+                    paths = [str(journal)] if isinstance(error, JournalCompletionError) else [value.get("originalPath", str(journal))]
+                    report["failed"].append({"paths": paths, "journal": str(journal), "reason": str(error)})
             for index, candidate in enumerate(report["candidates"]):
                 paths = [p for p in candidate["paths"] if pathlib.Path(p) not in removed]
                 if not paths:
@@ -1034,51 +1254,64 @@ def run_cleanup(root, receipt, inherited=None):
                     with session.Leases(candidate["resources"], owner, inherited=authenticated) as candidate_lease:
                         prepared = []
                         with session.Leases(proof, owner, inherited=authenticated | candidate_lease.held):
-                            reason = gate()
-                            if reason:
-                                report["skipped"].extend(c | {"reason": reason} for c in report["candidates"][index:])
-                                break
                             if any(fingerprint(p) != snapshot for p, snapshot in candidate["snapshots"].items()):
                                 report["skipped"].append(candidate | {"reason": "directory changed after inventory"})
                                 continue
                             for path in candidate["paths"]:
+                                # Each rename gets fresh authorization, including within linked groups.
+                                reason = gate()
+                                if reason:
+                                    for remaining in report["candidates"][index:]:
+                                        pending_paths = [p for p in remaining["paths"] if pathlib.Path(p) not in removed]
+                                        if pending_paths:
+                                            report["skipped"].append(remaining | {"paths": pending_paths, "reason": reason})
+                                    break
                                 journal, value = prepare_journal(path, candidate["snapshots"][path], root, receipt, pending, report["protectionToken"])
                                 target = quarantine_journal(journal, value, directory)
                                 removed.update((pathlib.Path(path), pathlib.Path(value["quarantinePath"])))
+                                removed_originals.add(pathlib.Path(path))
                                 prepared.append((journal, value, target))
                         # Product and ledger ownership ends before potentially
                         # expensive recursive removal. Candidate ownership stays.
                         for journal, value, target in prepared:
                             if target is not None:
-                                finish_journal(journal, value, directory)
-                        report["deleted"].append(candidate)
-                        report["reclaimedBytes"] += candidate["bytes"]
-                        print(f"Cleanup removed {candidate['paths']}: approximately {candidate['bytes']} bytes", flush=True)
+                                finish_removal(candidate, journal, value)
+                            else:
+                                report["recovered"].append({"paths": [value["originalPath"]], "bytes": 0, "journal": str(journal)})
+                        if reason:
+                            break
                 except session.ResourceBusy as error:
                     report["skipped"].append(candidate | {"reason": str(error)})
                 except (OSError, ValueError, KeyError) as error:
-                    report["failed"].append(candidate | {"reason": str(error)})
-        with session.Leases(proof, owner, inherited=authenticated):
-            _, changed = eligibility(root, receipt)
-            report["status"] = "partial" if report["skipped"] or report["failed"] or report["discoveryErrors"] or changed else "complete"
-            if changed:
-                report["reason"] = changed
-            if report["status"] == "complete":
-                if read_json(pending_path(root)) == pending:
-                    pending_path(root).unlink()
-                else:
-                    report.update(status="partial", reason="newer commit queued")
-        report["finishedAt"] = records.now()
+                    failed = remaining_candidate(candidate) | {"reason": str(error)}
+                    if isinstance(error, JournalCompletionError):
+                        failed["journal"] = error.journal
+                        if not failed["paths"]:
+                            failed["paths"] = [error.journal]
+                    report["failed"].append(failed)
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
-        session.atomic_json(output, public_report(report))
-        completed = []
-        for old in sorted(reports.glob("*.json")):
-            try:
-                if not old.is_symlink() and read_json(old).get("status") == "complete":
-                    completed.append(old)
-            except (OSError, ValueError, AttributeError):
-                continue
-        for old in completed[:-report["policy"]["reportLimit"]]:
-            old.unlink()
+        saved = False
+        try:
+            with session.Leases(proof, owner, inherited=authenticated):
+                _, changed = eligibility(root, receipt)
+                changed = changed or removed_original_problem()
+                report["status"] = "partial" if (report["skipped"] or report["failed"] or report["discoveryErrors"] or
+                                                 report["entryErrors"] or changed) else "complete"
+                if changed:
+                    report["reason"] = changed
+                if report["status"] == "complete" and read_json(pending_path(root)) != pending:
+                    report.update(status="partial", reason="newer commit queued")
+                report["finishedAt"] = records.now()
+                # Durable deletion history precedes queue clearing; proof ownership covers both.
+                persist_journal(output, public_report(report))
+                saved = True
+                if report["status"] == "complete":
+                    pending_path(root).unlink()
+        except (session.ResourceBusy, OSError, ValueError, KeyError) as error:
+            report.update(status="partial", reason=str(error), finishedAt=records.now())
+            saved = False
+        if not saved:
+            persist_journal(output, public_report(report))
+        rotate_history(directory, report["policy"]["reportLimit"], output)
         return public_report(report) | {"report": str(output)}

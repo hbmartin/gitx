@@ -47,6 +47,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     private var observingSelections = false
     private var submissionObservation: NSKeyValueObservation?
     private var pendingObservation: NSKeyValueObservation?
+    private let writer: IndexWriterCoordinator
+    private var writerObservation: UUID?
 
     private struct SectionedDrop {
         let target: StagingListSection
@@ -56,6 +58,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     @objc(initWithRepository:index:)
     init(repository: PBGitRepository, index: PBGitIndex) {
         self.index = index
+        writer = IndexWriterCoordinator.coordinator(for: repository)
         viewModel = StagingListViewModel()
         viewModel.sortOrder = ApplicationSettings.stagingFileSortOrder
 
@@ -140,6 +143,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             controller.addObserver(self, forKeyPath: "selectionIndexes", options: [], context: &Self.selectionContext)
         }
         observingSelections = true
+        writerObservation = writer.observe { [weak self] _ in
+            guard let self, writerObservation != nil else { return }
+            refreshMutationControls()
+        }
         submissionObservation = index.observe(\.submissionActive, options: [.new]) { [weak self] _, _ in
             // swift6-safety-justification: The index changes submission state on the main thread.
             MainActor.assumeIsolated { self?.refreshMutationControls() }
@@ -168,6 +175,11 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc func close() {
+        if let writerObservation {
+            writer.removeObserver(writerObservation)
+        }
+        writerObservation = nil
+        submissionObservation = nil
         if observingSelections {
             for controller in [unstagedFilesController, stagedFilesController] {
                 controller.removeObserver(self, forKeyPath: "selectionIndexes", context: &Self.selectionContext)
