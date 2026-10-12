@@ -21,6 +21,38 @@ class WorkflowAttemptRegressionTests(unittest.TestCase):
     setUp = completion.WorkflowCompletionTests.setUp
     run_verification = completion.WorkflowCompletionTests.run_verification
 
+    def test_full_resume_retains_whitespace_and_rejects_duplicate_active_evidence(self):
+        app = self.root / 'build/GitX.app'
+        app.mkdir(parents=True)
+        (app / 'binary').write_text('fixture')
+        self.assertEqual(self.run_verification((0,), 'correctness')[0], 0)
+        path = self.root / 'artifacts/verification/fixture/workflow.json'
+        prior = json.loads(path.read_text())
+        prior['steps'].append({'name': 'whitespace', 'status': 'failed', 'receipt': '/missing-feedback.json'})
+        for duplicate in (False, True):
+            value = json.loads(json.dumps(prior))
+            if duplicate: value['steps'].append(value['steps'][0].copy())
+            path.write_text(json.dumps(value))
+            args = workflow.parser().parse_args(['verify', '--resume', 'fixture', '--cleanup-mode', 'preview'])
+            with mock.patch.object(session, 'supervise', return_value=0):
+                self.assertEqual(workflow.verify(args), 76 if duplicate else 0)
+            resumed = json.loads(path.read_text())
+            self.assertEqual(resumed['deliveryEligible'], not duplicate)
+            self.assertIn('whitespace', [step['name'] for step in resumed['steps']])
+
+    def test_malformed_resumed_active_profiles_finish_invalid_without_execution(self):
+        path = self.root / 'artifacts/verification/fixture/workflow.json'
+        for steps in (None, [None], [{'status': 'passed'}], [{'name': []}]):
+            with self.subTest(steps=steps):
+                session.atomic_json(path, {'schemaVersion': 2, 'runId': 'fixture', 'status': 'failed', 'steps': steps})
+                args = workflow.parser().parse_args(['verify', '--resume', 'fixture', '--check', 'correctness'])
+                with mock.patch.object(session, 'supervise') as execute:
+                    self.assertEqual(workflow.verify(args), 76)
+                execute.assert_not_called()
+                value = json.loads(path.read_text())
+                self.assertEqual(value['status'], 'invalid')
+                self.assertFalse(value['deliveryEligible'])
+
     def test_partial_resume_preserves_unselected_evidence_without_validating_it(self):
         app = self.root / "build/GitX.app"
         app.mkdir(parents=True)
@@ -98,12 +130,61 @@ class WorkflowAttemptRegressionTests(unittest.TestCase):
         with mock.patch.object(workflow, "resources_for", side_effect=session.ResourceDefinitionError("toolchain timed out")), \
                 mock.patch.object(session, "supervise") as execute:
             self.assertEqual(workflow.verify(args), 2)
-        value = json.loads((self.root / "artifacts/verification/fixture/workflow.json").read_text())
+        self.assertFalse((self.root / "artifacts/verification/fixture").exists())
+        blockers = list((self.root / "artifacts/verification/Coordination").glob("*.json"))
+        self.assertEqual(len(blockers), 1)
+        value = json.loads(blockers[0].read_text())
         self.assertEqual(value["category"], "resource-definition-unavailable")
         self.assertEqual(value["status"], "blocked")
         self.assertTrue(value["finishedAt"])
         self.assertFalse(value["deliveryEligible"])
         execute.assert_not_called()
+
+    def test_every_pre_admission_blocker_uses_unique_coordination_receipts(self):
+        directory = (self.root / 'artifacts/verification/fixture').resolve()
+        coordination = directory.parent / 'Coordination'
+        owner = {'runId': 'winner', 'pid': 999}
+        failures = [session.ResourceBusy(str(path), owner) for path in
+                    (directory, self.root / 'DerivedData', self.root / 'SourcePackages', self.root / 'desktop')]
+        failures += [session.ResourceDefinitionError('unavailable'),
+                     session.ResourceDefinitionError('changed', 'resource-definition-changed')]
+        for directory_exists in (False, True):
+            if directory_exists: directory.mkdir()
+            for failure in failures:
+                with self.subTest(exists=directory_exists, failure=str(failure)):
+                    previous = set(coordination.glob('*.json'))
+                    args = workflow.parser().parse_args(['verify', '--run-id', 'fixture', '--check', 'correctness'])
+                    with mock.patch.object(workflow, 'resources_for', side_effect=failure), mock.patch.object(session, 'supervise') as execute:
+                        self.assertEqual(workflow.verify(args), 75 if isinstance(failure, session.ResourceBusy) else 2)
+                    self.assertEqual(directory.exists(), directory_exists)
+                    self.assertFalse((directory / 'workflow.json').exists())
+                    created = set(coordination.glob('*.json')) - previous
+                    self.assertEqual(len(created), 1)
+                    blocker = json.loads(created.pop().read_text())
+                    self.assertEqual(blocker['workflowReceipt'], str(directory / 'workflow.json'))
+                    execute.assert_not_called()
+        # A contender's blocker must not prevent the owner from using the same ID.
+        with mock.patch.object(session, 'supervise', return_value=0):
+            self.assertEqual(workflow.verify(args), 0)
+
+    def test_post_admission_resource_failure_is_written_before_directory_lease_release(self):
+        args = workflow.parser().parse_args(['verify', '--run-id', 'fixture', '--check', 'correctness'])
+        path = (self.root / 'artifacts/verification/fixture/workflow.json').resolve()
+        released = False
+        original = session.atomic_json
+        def release(*_):
+            nonlocal released
+            released = True
+        def write(destination, payload):
+            if pathlib.Path(destination) == path:
+                self.assertFalse(released, 'workflow writes require the directory lease')
+            original(destination, payload)
+        session.Leases.return_value.__exit__.side_effect = release
+        with mock.patch.object(session, 'atomic_json', side_effect=write), \
+                mock.patch.object(session, 'supervise', side_effect=session.ResourceBusy('/cache', {'runId': 'other'})):
+            self.assertEqual(workflow.verify(args), 75)
+        self.assertTrue(released)
+        self.assertEqual(json.loads(path.read_text())['status'], 'blocked')
 
     def test_successful_resume_clears_the_previous_blocker_outcome(self):
         self.assertEqual(self.run_verification((0,), "correctness")[0], 0)

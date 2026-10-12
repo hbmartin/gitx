@@ -78,6 +78,44 @@ final class IndexCommitPublicationTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try git(["diff", "--cached", "--name-only"]), "")
     }
 
+    #if DEBUG
+        func testBusyCommitReturnsBeforeHeldWriterAndCanRetryAfterIdle() throws {
+            try seed()
+            let oldHead = try git(["rev-parse", "HEAD"])
+            try write("staged\n", to: "tracked.txt")
+            try git(["add", "tracked.txt"])
+            try hook("printf 'entered\\n' >> .git/entered\n")
+            repository = try GitXTestGitRepository(url: directory)
+            let priorMessage = try String(contentsOf: directory.appendingPathComponent(".git/COMMIT_EDITMSG"), encoding: .utf8)
+            let observation = Observation()
+            let observer = failureObserver { reason in observation.completions += 1; observation.failure = reason }
+            defer { NotificationCenter.default.removeObserver(observer) }
+            let message = "Preserve this busy commit\n\nDetailed message\n"
+            PBIndexWriterCommandTestHarness.holdWriter(repository: repository) {
+                self.repository.index.commit(withMessage: message, andVerify: true)
+                let deadline = Date().addingTimeInterval(2)
+                while observation.failure == nil, Date() < deadline {
+                    RunLoop.main.run(until: Date().addingTimeInterval(0.001))
+                }
+                XCTAssertEqual(observation.completions, 1, "Busy admission must finish before the held writer is released")
+                XCTAssertTrue(observation.failure?.contains("Another operation owns the Git index") == true)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: self.directory.appendingPathComponent(".git/entered").path))
+                XCTAssertEqual(try? String(contentsOf: self.directory.appendingPathComponent(".git/COMMIT_EDITMSG"), encoding: .utf8), priorMessage)
+                XCTAssertEqual(try? self.git(["rev-parse", "HEAD"]), oldHead)
+            }
+            XCTAssertTrue(observe { !self.repository.index.submissionActive && !self.repository.index.mutationReconciliationPending && !IndexRepositoryCommandRunner(repository: self.repository).isWriterBusy })
+            guard observation.completions == 1 else { return }
+            let finished = expectation(forNotification: Notification.Name(PBGitIndexFinishedCommit), object: repository.index)
+            repository.index.commit(withMessage: message, andVerify: true)
+            wait(for: [finished], timeout: 10)
+            XCTAssertTrue(observe { !self.repository.index.mutationReconciliationPending })
+            XCTAssertEqual(observation.completions, 1)
+            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent(".git/COMMIT_EDITMSG"), encoding: .utf8), message)
+            XCTAssertEqual(try git(["rev-list", "--count", "HEAD"]), "2")
+            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent(".git/entered"), encoding: .utf8), "entered\n")
+        }
+    #endif
+
     func testFailedHookLeavesIndexChangesForTheOriginalVerificationSkippingRetry() throws {
         try seed()
         let original = try git(["rev-parse", "HEAD"])

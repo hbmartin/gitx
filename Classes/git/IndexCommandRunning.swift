@@ -202,6 +202,24 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
         IndexWriterRegistry.shared.coordinator(for: repository)
     }
 
+    /// Synchronous admission for user submissions. Rejected work never joins
+    /// the FIFO, while calls made by the owning thread remain reentrant.
+    func performIfAvailable<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
+        guard lock.try() else {
+            NSLog("[GitX] Index writer refused %@: another thread owns the index", operation)
+            throw Self.busyError()
+        }
+        stateLock.lock()
+        let available = depth > 0 || pending == 0
+        stateLock.unlock()
+        guard available else {
+            lock.unlock()
+            NSLog("[GitX] Index writer refused %@: earlier work is queued", operation)
+            throw Self.busyError()
+        }
+        return try withOwnedState(operation, scheduled: false, body)
+    }
+
     func perform<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
         let onWriterQueue = DispatchQueue.getSpecific(key: queueIdentity) == true
         if lock.try() {
@@ -215,7 +233,7 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
             lock.unlock()
         }
         guard !Thread.isMainThread, !onWriterQueue else { throw Self.busyError() }
-        // Background commit work joins the same FIFO as scheduled staging.
+        // Background Git commands join the same FIFO as scheduled staging.
         // Its nonescaping body cannot outlive this call: wait completes before
         // withoutActuallyEscaping returns, including when the body throws.
         return try withoutActuallyEscaping(body) { work in
@@ -306,6 +324,29 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
         }
 
         #if DEBUG
+            @objc(exerciseNonwaitingAdmissionAndReturnError:)
+            static func exerciseNonwaitingAdmission() throws -> [NSNumber] {
+                let writer = IndexWriterCoordinator()
+                let finished = DispatchSemaphore(value: 0)
+                var refusal: NSError?
+                var executed = false
+                writer.withSuspendedQueueForTesting {
+                    writer.schedule("test queued admission", work: { 42 }, completion: { _ in finished.signal() })
+                    do { try writer.performIfAvailable("test refused submission") { executed = true } }
+                    catch { refusal = error as NSError }
+                }
+                let drained = finished.wait(timeout: .now() + 3) == .success
+                let nested = try writer.performIfAvailable("test outer submission") {
+                    try writer.performIfAvailable("test nested submission") { 7 }
+                }
+                var propagated = false
+                do { try writer.performIfAvailable("test failed submission") { throw NSError(domain: "admission.fixture", code: 17) } }
+                catch { propagated = (error as NSError).code == 17 }
+                let recovered = try writer.performIfAvailable("test recovered submission") { 9 }
+                return [NSNumber(value: refusal?.code ?? 0), NSNumber(value: executed), NSNumber(value: drained),
+                        NSNumber(value: nested), NSNumber(value: propagated), NSNumber(value: recovered)]
+            }
+
             @objc(exerciseSynchronousResultLifetimeAndReturnError:)
             static func exerciseSynchronousResultLifetime() throws -> NSNumber {
                 var source: NSObject? = NSObject()

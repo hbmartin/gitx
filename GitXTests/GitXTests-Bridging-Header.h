@@ -60,6 +60,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBIndexWriterCommandTestHarness : NSObject
 + (BOOL)allowsMutationForIndex:(PBGitIndex *)index NS_SWIFT_NAME(allowsMutation(index:));
 #if DEBUG
++ (nullable NSArray<NSNumber *> *)exerciseNonwaitingAdmissionAndReturnError:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseNonwaitingAdmission());
 + (nullable NSNumber *)exerciseSynchronousResultLifetimeAndReturnError:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseSynchronousResultLifetime());
 + (void)performFromCompletionForRepository:(PBGitRepository *)repository pendingWriter:(BOOL)pendingWriter completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(performFromCompletion(repository:pendingWriter:completion:));
 + (void)holdWriterForRepository:(PBGitRepository *)repository duringOwnership:(void (^)(void))duringOwnership NS_SWIFT_NAME(holdWriter(repository:duringOwnership:));
@@ -320,6 +321,8 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 				 diffRunner:(nullable id<PBIndexCommandRunning>)diffRunner;
 - (void)renderRequests:(NSArray<PBStagingDiffRequest *> *)requests;
 - (void)rerenderCurrentRequests;
+- (void)close;
+- (void)showStateMessage:(NSString *)message;
 @end
 
 @class PBStagingListViewModel;
@@ -1044,6 +1047,8 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 #if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
 @interface PBStagingDiffRevalidationTestHarness : NSObject
 #if DEBUG
++ (nullable NSData *)imageDataWithPane:(PBStagingDiffPaneController *)pane path:(NSString *)path beforeReading:(void (^)(void))beforeReading NS_SWIFT_NAME(imageData(pane:path:beforeReading:));
++ (BOOL)selectionIdentityWithRequests:(NSArray<PBStagingDiffRequest *> *)requests equalsRequests:(NSArray<PBStagingDiffRequest *> *)other NS_SWIFT_NAME(selectionIdentity(_:equals:));
 + (void)prepareWithPane:(PBStagingDiffPaneController *)pane files:(NSArray<PBChangedFile *> *)files completion:(void (^)(NSError *_Nullable))completion NS_SWIFT_NAME(prepare(pane:files:completion:)) __attribute__((swift_async(none)));
 + (void)updateSelectionWithPane:(PBStagingDiffPaneController *)pane requests:(NSArray<PBStagingDiffRequest *> *)requests NS_SWIFT_NAME(updateSelection(pane:requests:));
 + (void)prepareCloseAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files eligibility:(BOOL (^)(void))eligibility completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareCloseAndValidate(repository:runner:files:eligibility:completion:));

@@ -300,6 +300,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 try fixture.write(selected + "unpublished new content\n", to: "nested/tracked.txt")
             } else {
                 waitForIndexUpdate { repository.index.refresh() }
+                try attachScreenshot(of: pane.view, named: "Staging-Whole-Discard-Through-Refresh")
             }
             let rejected = changedAfterConfirmation ? expectation(forNotification: Notification.Name(PBGitIndexOperationFailed), object: repository.index) : nil
             controller.confirmPendingAction()
@@ -309,15 +310,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8), selected + "unpublished new content\n")
             } else {
                 XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending && (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8)) == original })
+                try attachScreenshot(of: pane.view, named: "Staging-Whole-Discard-After-Refresh")
             }
         }
     }
 
-    func testWholeFileDiscardKeepsItsAuthorizedPathsWhenAnUntrackedRowBecomesTracked() throws {
+    func testWholeFileDiscardRejectsExpandedPathsWhenAnUntrackedRowBecomesTracked() throws {
         let controller = try XCTUnwrap(windowController as? HistoryWindowController)
         controller.automaticallyConfirms = false
         let tracked = "nested/tracked.txt"
-        let original = try fixture.git(["show", "HEAD:" + tracked])
         try fixture.write("discard this tracked edit\n", to: tracked)
         try fixture.write("initial untracked bytes\n", to: "newly-tracked.txt")
         let pane = try openStagingPane()
@@ -330,11 +331,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try fixture.git(["add", "newly-tracked.txt"])
         try fixture.write("preserve uncaptured edit\n", to: "newly-tracked.txt")
         waitForIndexUpdate { repository.index.refresh() }
+        let rejected = expectation(forNotification: Notification.Name(PBGitIndexOperationFailed), object: repository.index)
         controller.confirmPendingAction()
-        XCTAssertTrue(waitForCondition {
-            !self.repository.index.mutationReconciliationPending &&
-                (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent(tracked), encoding: .utf8)) == original
-        })
+        wait(for: [rejected], timeout: 10)
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent(tracked), encoding: .utf8), "discard this tracked edit\n")
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("newly-tracked.txt"), encoding: .utf8), "preserve uncaptured edit\n")
     }
 
@@ -517,6 +518,28 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         pane.closeView()
         XCTAssertNil(native.delegate?.nativeContentView?(native, imageDataForPath: "cancelled-preview.png", section: 0, imageSource: [:]))
     }
+
+    #if DEBUG
+        func testImageReadsRejectAnEarlierRenderAndSurviveUnchangedSelectionUpdates() throws {
+            let path = "refresh-preview.png"
+            let (pane, native, _, _) = try prepareImageLookupFixture(path: path, deleted: false)
+            let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
+            let requests = [PBStagingDiffRequest(file: file, staged: false)]
+            let expected = Data("modified worktree image".utf8)
+            XCTAssertEqual(PBStagingDiffRevalidationTestHarness.imageData(pane: pane.diffPaneController, path: path, beforeReading: {
+                PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane.diffPaneController, requests: requests)
+            }), expected)
+            XCTAssertNil(PBStagingDiffRevalidationTestHarness.imageData(pane: pane.diffPaneController, path: path, beforeReading: {
+                pane.diffPaneController.rerenderCurrentRequests()
+            }), "An unchanged render must still invalidate a read from its predecessor")
+            XCTAssertTrue(waitForCondition { native.textView.string.contains("Unstaged — " + path) })
+            XCTAssertEqual(native.delegate?.nativeContentView?(native, imageDataForPath: path, section: 0, imageSource: [:]), expected)
+            XCTAssertNil(PBStagingDiffRevalidationTestHarness.imageData(pane: pane.diffPaneController, path: path, beforeReading: {
+                PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane.diffPaneController, requests: [])
+            }))
+            XCTAssertNil(PBStagingDiffRevalidationTestHarness.imageData(pane: pane.diffPaneController, path: "wrong-path", beforeReading: {}))
+        }
+    #endif
 
     private func prepareImageLookupFixture(path: String, deleted: Bool) throws -> (PBStagingViewController, PBNativeContentView, URL, Data) {
         let indexed = Data("indexed image bytes".utf8)
@@ -4361,6 +4384,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             try fixture.write("staged writer fixture\n", to: "nested/tracked.txt")
             try fixture.git(["add", "nested/tracked.txt"])
             let pane = try openStagingPane()
+            let controller = try XCTUnwrap(windowController as? HistoryWindowController)
+            let message = "Preserve busy composer contents\n\nOriginal body"
+            pane.commitMessageView.string = message
+            let initialHead = try fixture.git(["rev-parse", "HEAD"])
             let buttons = controls(in: pane.view).compactMap { $0 as? NSButton }
             let amend = try XCTUnwrap(buttons.first { $0.title == "Amend" })
             let commit = try XCTUnwrap(buttons.first { $0.title == "Commit" })
@@ -4370,12 +4397,21 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 XCTAssertFalse(self.indexIsQuiescent(self.repository.index), "Admission reads the writer directly, including before async KVO counts arrive")
                 XCTAssertFalse(PBIndexWriterCommandTestHarness.allowsMutation(index: self.repository.index), "Admission must reject an owned writer before its queued UI observations arrive")
                 XCTAssertTrue(self.waitForCondition { !amend.isEnabled && !commit.isEnabled })
-                do { try self.attachScreenshot(of: pane.view, named: "Staging-Writer-Controls-Busy") }
+                let previousMessages = controller.shownMessages.count
+                self.repository.index.commit(withMessage: message, andVerify: false)
+                XCTAssertTrue(self.waitForCondition(timeout: 3) { controller.shownMessages.count > previousMessages })
+                XCTAssertEqual(controller.shownMessages.last?.message, "Commit failed")
+                XCTAssertTrue(controller.shownMessages.last?.info.contains("Another operation owns the Git index") == true)
+                XCTAssertEqual(pane.commitMessageView.string, message)
+                XCTAssertFalse(commit.isEnabled)
+                XCTAssertEqual(try? self.fixture.git(["rev-parse", "HEAD"]), initialHead)
+                do { try self.attachScreenshot(of: pane.view, named: "Staging-Busy-Commit-Refused") }
                 catch { XCTFail("Busy staging diagnostic capture failed: \(error)") }
             }
             XCTAssertTrue(waitForCondition { amend.isEnabled && commit.isEnabled })
             XCTAssertTrue(PBIndexWriterCommandTestHarness.allowsMutation(index: repository.index), "Writer release must restore admission without an index publication")
-            try attachScreenshot(of: pane.view, named: "Staging-Writer-Controls-Recovered")
+            XCTAssertEqual(pane.commitMessageView.string, message)
+            try attachScreenshot(of: pane.view, named: "Staging-Busy-Commit-Recovered")
         }
     #endif
 

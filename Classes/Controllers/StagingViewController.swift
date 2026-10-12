@@ -611,8 +611,8 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         commitProgressSheet = nil
     }
 
-    private var discardSelectionIdentity: [String] {
-        fileListController.currentDiffRequests.map { ($0.staged ? "s:" : "u:") + $0.file.rawPath.base64EncodedString() }
+    private var discardSelectionIdentity: StagingSelectionIdentity {
+        StagingSelectionIdentity(fileListController.currentDiffRequests)
     }
 
     private func discardChanges(for files: [PBChangedFile], force: Bool) {

@@ -218,7 +218,14 @@ def receipt_artifact_problems(payload, root=ROOT, mutable_caches=None, identity=
 def active_workflow_steps(payload):
     """Retain historical evidence, but validate only the current attempt's checks."""
     selected = payload.get("selectedChecks")
-    return [step for step in payload.get("steps", [])
+    steps = payload.get("steps", [])
+    if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+        raise ValueError("Malformed workflow steps")
+    if selected is not None and (not isinstance(selected, list) or any(not isinstance(name, str) for name in selected)):
+        raise ValueError("Malformed selected checks")
+    if selected is not None and any(not isinstance(step.get("name"), str) for step in steps):
+        raise ValueError("Malformed workflow step names")
+    return [step for step in steps
             if selected is None or step.get("name") in selected]
 
 

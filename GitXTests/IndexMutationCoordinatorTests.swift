@@ -3,6 +3,34 @@ import XCTest
 
 final class IndexMutationCoordinatorTests: XCTestCase {
     #if DEBUG
+        func testDiscardAuthorizationRequiresTheExactCallerRawPathSet() {
+            let first = Data("tracked.txt".utf8)
+            let second = Data([0xFF, 0x2E, 0x74, 0x78, 0x74])
+            let cases: [([Data], [Data]?, Bool)] = [([first], [second], false),
+                                                    ([], [first], false), ([first, second], [first], false),
+                                                    ([first], nil, false), ([second, first, first], [first, second], true),
+                                                    ([], [], true)]
+            for (caller, frozen, accepted) in cases {
+                let repository = PBGitRepository()
+                let runner = Fake()
+                let coordinator = PBIndexMutationCoordinator(repository: repository, service: PBIndexMutationService(repository: repository, runner: runner)) { _ in }
+                let request = PBIndexMutationRequest.testDiscard(paths: caller, authorizedPaths: frozen, rejectValidation: false)
+                let completed = expectation(description: "discard authorization completed once")
+                XCTAssertTrue(coordinator.schedule(request: request) { success, error in
+                    XCTAssertEqual(success, accepted)
+                    XCTAssertEqual((error as NSError?)?.code, accepted ? nil : 8)
+                    completed.fulfill()
+                })
+                wait(for: [completed], timeout: 3)
+                if !accepted || caller.isEmpty {
+                    XCTAssertTrue(runner.calls.isEmpty)
+                } else {
+                    XCTAssertEqual(runner.calls.first?.input, Data("tracked.txt\0".utf8) + second + Data([0]))
+                }
+                coordinator.close()
+            }
+        }
+
         func testAuthorizedDiscardCopiesFrozenRawPathsAndPropagatesValidationFailures() {
             for reject in [false, true] {
                 let repository = PBGitRepository()
