@@ -98,6 +98,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 XCTAssertEqual(rows.count, 2)
                 table.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
                 XCTAssertEqual(callbacks, [[staged, unstaged]], "Both section controllers are synchronized before notification")
+                XCTAssertTrue(waitForCondition {
+                    let text = pane.diffPaneController.contentView.textView.string
+                    return text.contains("+indexed") && text.contains("+working")
+                })
                 try attachScreenshot(of: pane.view, named: "Staging-Complete-Selection-Sectioned")
                 callbacks = []
                 list.setListLayout(.splitTables)
@@ -108,7 +112,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 XCTAssertFalse(callbacks.isEmpty)
                 XCTAssertTrue(callbacks.allSatisfy { $0 == [staged] }, "Split-table callbacks cannot expose both sides")
             }
-            try attachScreenshot(of: pane.view, named: "Staging-Complete-Selection-\(layout == .splitTables ? "Split" : "Sectioned")")
+            XCTAssertTrue(waitForCondition {
+                let text = pane.diffPaneController.contentView.textView.string
+                return text.contains("+indexed") && !text.contains("+working")
+            })
+            try attachScreenshot(of: pane.view, named: "Staging-Complete-Selection-Split")
         }
     }
 
