@@ -1044,6 +1044,8 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 #if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
 @interface PBStagingDiffRevalidationTestHarness : NSObject
 #if DEBUG
++ (void)prepareWithPane:(PBStagingDiffPaneController *)pane files:(NSArray<PBChangedFile *> *)files completion:(void (^)(NSError *_Nullable))completion NS_SWIFT_NAME(prepare(pane:files:completion:)) __attribute__((swift_async(none)));
++ (void)updateSelectionWithPane:(PBStagingDiffPaneController *)pane requests:(NSArray<PBStagingDiffRequest *> *)requests NS_SWIFT_NAME(updateSelection(pane:requests:));
 + (void)prepareCloseAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files eligibility:(BOOL (^)(void))eligibility completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareCloseAndValidate(repository:runner:files:eligibility:completion:));
 + (void)captureWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files timeout:(double)timeout cancelAfterChecks:(NSInteger)cancelAfterChecks completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(capture(repository:runner:files:timeout:cancelAfterChecks:completion:));
 #endif
@@ -1282,6 +1284,9 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 - (instancetype)initWithStagePaths:(NSArray<NSData *> *)stagePaths unstagePaths:(NSArray<NSData *> *)unstagePaths parentTree:(NSString *)parentTree;
 - (instancetype)initWithDiscardPaths:(NSArray<NSData *> *)discardPaths;
 - (instancetype)initWithPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse;
+#if DEBUG
++ (instancetype)testDiscardPaths:(NSArray<NSData *> *)paths authorizedPaths:(nullable NSArray<NSData *> *)authorizedPaths rejectValidation:(BOOL)rejectValidation NS_SWIFT_NAME(testDiscard(paths:authorizedPaths:rejectValidation:));
+#endif
 @end
 
 @interface PBIndexMutationCoordinator : NSObject

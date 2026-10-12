@@ -309,6 +309,36 @@ final class GitXPerformanceTests: XCTestCase {
     }
 
     #if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
+        func testDiscardAuthorizationLatencyWithMultipleLiteralPathGroups() async throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-discard-groups-\(UUID())")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            _ = try gitOutput(["init", "--quiet", "--initial-branch=main"], in: root)
+            let paths = (0 ..< 400).map { ":(literal)selected-\($0)-" + String(repeating: "x", count: 170) + ".txt" }
+            for path in paths {
+                try Data("original\n".utf8).write(to: root.appendingPathComponent(path))
+            }
+            _ = try gitOutput(["add", "."], in: root)
+            _ = try gitOutput(["commit", "--quiet", "-m", "Selected groups fixture"], in: root)
+            for path in paths {
+                try Data("edited\n".utf8).write(to: root.appendingPathComponent(path))
+            }
+            let repository = try RepositoryTestGitRepository(url: root)
+            defer { repository.revisionList?.cleanup() }
+            let runner = IndexRepositoryCommandRunner(repository: repository)
+            let files = paths.map { path in
+                let file = PBChangedFile(path: path); file.status = .MODIFIED; file.hasUnstagedChanges = true; return file
+            }
+            var samples: [TimeInterval] = []
+            for _ in 0 ..< 5 {
+                try samples.append(await elapsedAsync {
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: files)
+                })
+            }
+            attachMeasurements("Discard capture and revalidation for 400 selected literal paths", samples: samples)
+            print("REVIEW_BENCHMARK discard_selected_groups p95_ms=\(percentile95(samples) * 1000)")
+        }
+
         func testDiscardAuthorizationLatencyWithManyUnrelatedTrackedPaths() async throws {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-discard-performance-\(UUID())")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

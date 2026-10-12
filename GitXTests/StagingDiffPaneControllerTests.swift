@@ -11,11 +11,16 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         let indexOutput: Data?
         let indexedImageSize: String?
         let diffOutput: String
+        let captureEntered: XCTestExpectation?
+        let captureRelease: DispatchSemaphore?
         init(paths: [String], rawPaths: [Data]? = nil, status: String = "M", indexOutput: Data? = nil,
-             indexedImageSize: String? = nil, diffOutput: String = "diff --git a/selected.txt b/selected.txt\n")
+             indexedImageSize: String? = nil, diffOutput: String = "diff --git a/selected.txt b/selected.txt\n",
+             captureEntered: XCTestExpectation? = nil, captureRelease: DispatchSemaphore? = nil)
         {
             self.paths = paths; self.rawPaths = rawPaths ?? paths.map { Data($0.utf8) }; self.status = status; self.indexOutput = indexOutput
-            self.indexedImageSize = indexedImageSize; self.diffOutput = diffOutput; super.init()
+            self.indexedImageSize = indexedImageSize; self.diffOutput = diffOutput
+            self.captureEntered = captureEntered; self.captureRelease = captureRelease
+            super.init()
         }
 
         private let lock = NSLock()
@@ -51,7 +56,12 @@ final class StagingDiffPaneControllerTests: XCTestCase {
 
         func rawOutput(withArguments arguments: [String], environment: [String: Any]?) throws -> Data {
             XCTAssertEqual(environment?["GIT_OPTIONAL_LOCKS"] as? String, "0")
-            lock.lock(); statusCommands += 1; capturedArguments.append(arguments); let object = indexObject; let hasStaged = staged; lock.unlock()
+            lock.lock(); statusCommands += 1; capturedArguments.append(arguments); let object = indexObject; let hasStaged = staged
+            let firstCapture = statusCommands == 1; lock.unlock()
+            if firstCapture, let captureRelease {
+                captureEntered?.fulfill()
+                XCTAssertEqual(captureRelease.wait(timeout: .now() + 5), .success)
+            }
             let selected: [Data]
             if let separator = arguments.firstIndex(of: "--") {
                 let names = Set(arguments.suffix(from: separator + 1).map { Data($0.utf8) })
@@ -231,6 +241,32 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             let file = PBChangedFile(path: "selected.txt")
             file.status = .MODIFIED; file.hasUnstagedChanges = true
             try await body(directory, LifetimeRepository(directory: directory, onDeinit: {}), file)
+        }
+
+        func testDiscardCaptureFinishesWithStableSelectionAndCancelsOnUserDeselection() async throws {
+            for deselect in [false, true] {
+                try await snapshotFixture { _, repository, file in
+                    let entered = expectation(description: "capture entered")
+                    let completed = expectation(description: "capture completed once")
+                    let release = DispatchSemaphore(value: 0)
+                    let runner = StatusRunner(paths: [file.path], captureEntered: entered, captureRelease: release)
+                    let pane = PBStagingDiffPaneController(repository: repository, diffRunner: runner)
+                    let requests = [PBStagingDiffRequest(file: file, staged: false)]
+                    PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: requests)
+                    PBStagingDiffRevalidationTestHarness.prepare(pane: pane, files: [file]) { error in
+                        if deselect {
+                            XCTAssertTrue(error?.localizedDescription.contains("cancelled") == true)
+                        } else {
+                            XCTAssertNil(error)
+                        }
+                        completed.fulfill()
+                    }
+                    await fulfillment(of: [entered], timeout: 2)
+                    PBStagingDiffRevalidationTestHarness.updateSelection(pane: pane, requests: deselect ? [] : requests)
+                    release.signal()
+                    await fulfillment(of: [completed], timeout: 3)
+                }
+            }
         }
 
         func testDiscardSnapshotRejectsSameSizedContentPermissionsIndexTreeAndStagingChanges() async throws {

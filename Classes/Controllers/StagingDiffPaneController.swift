@@ -879,6 +879,20 @@ final class StagingDiffPaneController: NSObject {
     @objc(PBStagingDiffRevalidationTestHarness)
     final class StagingDiffRevalidationTestHarness: NSObject {
         #if DEBUG
+            @objc(prepareWithPane:files:completion:)
+            static func prepare(pane: StagingDiffPaneController, files: [PBChangedFile],
+                                completion: @escaping @MainActor @Sendable (NSError?) -> Void)
+            {
+                pane.prepareDiscard(files: files, eligibility: { true }) { authorization, error in
+                    withExtendedLifetime(pane) { completion(authorization == nil ? error : nil) }
+                }
+            }
+
+            @objc(updateSelectionWithPane:requests:)
+            static func updateSelection(pane: StagingDiffPaneController, requests: [StagingDiffRequest]) {
+                pane.updateSelection(requests)
+            }
+
             @objc(captureWithRepository:runner:files:timeout:cancelAfterChecks:completion:)
             static func capture(repository: PBGitRepository, runner: IndexCommandRunning, files: [PBChangedFile], timeout: Double, cancelAfterChecks: Int,
                                 completion: @escaping @MainActor @Sendable (NSError?) -> Void)

@@ -2,6 +2,33 @@ import Foundation
 import XCTest
 
 final class IndexMutationCoordinatorTests: XCTestCase {
+    #if DEBUG
+        func testAuthorizedDiscardCopiesFrozenRawPathsAndPropagatesValidationFailures() {
+            for reject in [false, true] {
+                let repository = PBGitRepository()
+                let runner = Fake()
+                let coordinator = PBIndexMutationCoordinator(repository: repository, service: PBIndexMutationService(repository: repository, runner: runner)) { _ in }
+                let mutable = NSMutableData(data: Data([0xFF, 0x2E, 0x74, 0x78, 0x74]))
+                let paths = [Data("tracked.txt".utf8), mutable as Data]
+                let request = PBIndexMutationRequest.testDiscard(paths: paths.reversed(), authorizedPaths: paths, rejectValidation: reject)
+                mutable.setData(Data("changed.txt".utf8))
+                let completed = expectation(description: "authorized discard completes once")
+                XCTAssertTrue(coordinator.schedule(request: request) { success, error in
+                    XCTAssertEqual(success, !reject)
+                    XCTAssertEqual((error as NSError?)?.code, reject ? 8 : nil)
+                    completed.fulfill()
+                })
+                wait(for: [completed], timeout: 3)
+                if reject {
+                    XCTAssertTrue(runner.calls.isEmpty)
+                } else {
+                    XCTAssertEqual(runner.calls.count, 1)
+                    XCTAssertEqual(runner.calls.first?.input, Data("tracked.txt\0".utf8) + Data([0xFF, 0x2E, 0x74, 0x78, 0x74, 0]))
+                }
+                coordinator.close()
+            }
+        }
+    #endif
     private final class GateTask: PBTask {
         let action: () throws -> Void
         init(action: @escaping () throws -> Void) {

@@ -58,6 +58,18 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     private static func copy(_ data: Data) -> Data {
         data.withUnsafeBytes { Data($0) }
     }
+
+    #if DEBUG
+        @objc(testDiscardPaths:authorizedPaths:rejectValidation:)
+        static func testDiscard(paths: [Data], authorizedPaths: [Data]?, rejectValidation: Bool) -> IndexMutationRequest {
+            let authorization = PBIndexPatchAuthorization(discardPaths: authorizedPaths) {
+                if rejectValidation {
+                    throw NSError(domain: "PBGitIndexMutationError", code: 8)
+                }
+            }
+            return IndexMutationRequest(discardPaths: paths, authorization: authorization)
+        }
+    #endif
 }
 
 // swift6-safety-justification: Immutable callbacks cross the writer queue only to be invoked on main, and the repository token is released after that delivery.
