@@ -287,9 +287,9 @@ def provenance_text(path):
 def inline_citation_regions(text):
     """Scan plausible inline spans conservatively, without consuming stray delimiters.
 
-    Equal-length runs may overlap. A run that has neither a closer nor an
-    earlier matching opener protects the rest of its paragraph. Fences are
-    separate Markdown blocks and never create inline citations.
+    A stray opener makes equal-length pairings ambiguous, so their plausible
+    spans may overlap. Balanced spans leave intervening prose uncited. Unmatched
+    openers protect the rest of their paragraph; fences remain separate blocks.
     """
     def scan(paragraph):
         runs = []
@@ -306,19 +306,35 @@ def inline_citation_regions(text):
                 preceding -= 1
             escaped = (start - preceding - 1) % 2 == 1
             runs.append((start, offset, escaped))
-        next_by_length, openers, closers, intervals = {}, set(), set(), []
+            if escaped and offset - start > 1:
+                # An escape consumes only the first backtick. The remaining
+                # run can open a span; the whole run can still close one.
+                runs.append((start + 1, offset, False))
+        next_by_length, next_run = {}, {}
         # Reverse indexing avoids a span-by-delimiter quadratic scan.
-        for start, end, escaped in reversed(runs):
+        for index in range(len(runs) - 1, -1, -1):
+            start, end, _ = runs[index]
             length = end - start
-            if not escaped and length in next_by_length:
-                closer = next_by_length[length]
+            if length in next_by_length:
+                next_run[index] = next_by_length[length]
+            next_by_length[length] = index
+        intervals, ambiguous_lengths, consumed = [], set(), 0
+        for index, (start, end, escaped) in enumerate(runs):
+            if start < consumed or escaped:
+                continue
+            if index in next_run:
+                closer, closer_end, _ = runs[next_run[index]]
                 intervals.append((end, closer))
-                openers.add(start)
-                closers.add(closer)
-            next_by_length[length] = start
-        for start, end, escaped in runs:
-            if not escaped and start not in closers and start not in openers:
+                consumed = closer_end
+            else:
+                ambiguous_lengths.add(end - start)
                 intervals.append((end, len(paragraph)))
+        # A stray delimiter may have consumed a real opener. Include shifted
+        # pairings only for that delimiter length, preserving ordinary prose
+        # between complete, unambiguous spans.
+        for index, (start, end, escaped) in enumerate(runs):
+            if not escaped and end - start in ambiguous_lengths and index in next_run:
+                intervals.append((end, runs[next_run[index]][0]))
         # Scan the union once, even when several plausible spans overlap.
         merged = []
         for start, end in sorted(intervals):

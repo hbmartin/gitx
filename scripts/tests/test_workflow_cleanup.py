@@ -22,7 +22,7 @@ class CleanupTests(unittest.TestCase):
         cited = self.run_directory('cited')
         double = self.run_directory('double')
         unrelated = self.run_directory('unrelated')
-        (self.root / 'REVIEW.md').write_text('Verified with `cited` and ``double``.\n')
+        (self.root / 'REVIEW.md').write_text('Verified with `cited` unrelated `cited` and ``double``.\n')
         self.git('add', 'REVIEW.md')
         self.git('commit', '-qm', 'inline citation fixture')
         cleanup.queue_commit(self.root)
@@ -47,10 +47,14 @@ class CleanupTests(unittest.TestCase):
             ('\\`known in ordinary prose', set()),
             ('\\\\`known`', {'known'}),
             ('\\`stray and then `known`', {'known'}),
+            ('\\```known``', {'known'}),
             ('``verify ` known-extra\nother``', {'known-extra', 'other'}),
             ('``unmatched known` then other', {'known', 'other'}),
             ('`prefix-known known-suffix known-extra a+b`', {'known-extra', 'a+b'}),
             ('`unrelated` known', set()),
+            ('`unrelated` known `unrelated`', set()),
+            ('`known` other `known`', {'known'}),
+            ('``unrelated`` known ``unrelated``', set()),
             ('```md\n`known`\n```\nordinary other', set()),
             ('~~~md\n`known`\n~~~~\n`other`', {'other'}),
             ('ordinary known and other', set()),
