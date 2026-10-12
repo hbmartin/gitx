@@ -215,9 +215,11 @@ def receipt_artifact_problems(payload, root=ROOT, mutable_caches=None, identity=
     return problems
 
 
-def active_workflow_steps(payload):
+def active_workflow_steps(payload, *, require_selected_checks=False):
     """Retain historical evidence, but validate only the current attempt's checks."""
     selected = payload.get("selectedChecks")
+    if require_selected_checks and selected is None:
+        raise ValueError("Explicit selected checks required")
     steps = payload.get("steps", [])
     if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
         raise ValueError("Malformed workflow steps")
@@ -416,6 +418,18 @@ class ResourceBusy(RuntimeError):
         super().__init__(f"Resource busy: {resource}; owning run {owner.get('runId', 'unknown')}; "
                          f"PID {owner.get('pid', 'unknown')}; receipt {owner.get('receipt', 'unknown')}. "
                          "Wait for that run to finish or interrupt its owning session.")
+
+
+def resource_failure_fields(error):
+    """Shared blocked outcome; callers retain their own receipt ownership and context."""
+    busy = isinstance(error, ResourceBusy)
+    fields = {"status": "blocked", "exitCode": 75 if busy else 2,
+              "category": "resource-busy" if busy else error.category,
+              "problem": str(error), "deliveryEligible": False,
+              "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
+    if busy:
+        fields.update(owner=error.owner, resource=error.resource)
+    return fields
 
 
 def canonical_resource(resource):
@@ -987,18 +1001,11 @@ def guard(entry, arguments):
                 else:
                     return execute_guarded(entry, arguments, root, receipt, owner, resources, refreshed_paths, leases)
             time.sleep(min(.2, max(0, deadline - time.monotonic())))
-    except ResourceBusy as error:
-        atomic_json(receipt, owner | {"status": "blocked", "exitCode": 75, "category": "resource-busy",
-                    "owner": error.owner, "resource": error.resource, "deliveryEligible": False,
-                    "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
+    except (ResourceBusy, ResourceDefinitionError) as error:
+        failure = resource_failure_fields(error)
+        atomic_json(receipt, owner | failure)
         print(error, file=sys.stderr)
-        return 75
-    except ResourceDefinitionError as error:
-        atomic_json(receipt, owner | {"status": "blocked", "exitCode": 2, "category": error.category,
-                    "problem": str(error), "deliveryEligible": False,
-                    "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
-        print(error, file=sys.stderr)
-        return 2
+        return failure["exitCode"]
 
 
 def execute_guarded(entry, arguments, root, receipt, owner, resources, paths, leases):

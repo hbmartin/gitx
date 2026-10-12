@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from support import ROOT
@@ -44,14 +45,14 @@ class PinnedToolsTests(unittest.TestCase):
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         readme = (ROOT / "README.markdown").read_text()
-        migration = (ROOT / "docs" / "swift6_migration.md").read_text()
+        configuration = json.loads((ROOT / "scripts" / "verification-config.json").read_text())
 
         self.assertNotIn("26.2", build_workflow + verify_workflow)
         self.assertEqual(build_workflow.count("xcode: 26.6"), 1)
         self.assertEqual(build_workflow.count('xcode-version: "26.6"'), 1)
         self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 8)
         self.assertIn("Xcode 26.6 or newer is required", readme)
-        self.assertIn("CI is pinned to Xcode 26.6", migration)
+        self.assertEqual(configuration['minimumXcodeVersion'], '26.6')
 
     def test_build_workflow_uses_canonical_ui_preset(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()

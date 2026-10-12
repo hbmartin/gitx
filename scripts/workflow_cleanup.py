@@ -284,6 +284,70 @@ def provenance_text(path):
         return None
 
 
+def inline_citation_regions(text):
+    """Scan plausible inline spans conservatively, without consuming stray delimiters.
+
+    Equal-length runs may overlap. A run that has neither a closer nor an
+    earlier matching opener protects the rest of its paragraph. Fences are
+    separate Markdown blocks and never create inline citations.
+    """
+    def scan(paragraph):
+        runs = []
+        offset = 0
+        while offset < len(paragraph):
+            if paragraph[offset] != '`':
+                offset += 1
+                continue
+            start = offset
+            while offset < len(paragraph) and paragraph[offset] == '`':
+                offset += 1
+            preceding = start - 1
+            while preceding >= 0 and paragraph[preceding] == '\\':
+                preceding -= 1
+            escaped = (start - preceding - 1) % 2 == 1
+            runs.append((start, offset, escaped))
+        next_by_length, openers, closers, intervals = {}, set(), set(), []
+        # Reverse indexing avoids a span-by-delimiter quadratic scan.
+        for start, end, escaped in reversed(runs):
+            length = end - start
+            if not escaped and length in next_by_length:
+                closer = next_by_length[length]
+                intervals.append((end, closer))
+                openers.add(start)
+                closers.add(closer)
+            next_by_length[length] = start
+        for start, end, escaped in runs:
+            if not escaped and start not in closers and start not in openers:
+                intervals.append((end, len(paragraph)))
+        # Scan the union once, even when several plausible spans overlap.
+        merged = []
+        for start, end in sorted(intervals):
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+            else:
+                merged.append((start, end))
+        for start, end in merged:
+            yield paragraph[start:end]
+
+    paragraph, fence = [], None
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r" {0,3}(`{3,}|~{3,})([^\r\n]*)", line)
+        if fence is not None:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= fence[1] and not marker[2].strip():
+                fence = None
+            continue
+        if marker and (marker[1][0] == '~' or '`' not in marker[2]):
+            yield from scan(''.join(paragraph))
+            paragraph = []
+            fence = (marker[1][0], len(marker[1]))
+        elif not line.strip():
+            yield from scan(''.join(paragraph))
+            paragraph = []
+        else:
+            paragraph.append(line)
+    yield from scan(''.join(paragraph))
+
+
 def cited_run_ids(text, value, aliases, artifact, root):
     found = set()
     def visit(item):
@@ -301,10 +365,10 @@ def cited_run_ids(text, value, aliases, artifact, root):
     for match in re.finditer(r"\brun(?:[ -]ids?)?\s*[:=]\s*([`'\"]?[\w.-]+[`'\"]?(?:\s*,\s*[`'\"]?[\w.-]+[`'\"]?)*)", text, re.IGNORECASE):
         found.update(re.findall(r"[\w.-]+", match[1]))
     # Inline code spans are historical provenance, unlike incidental prose.
-    for span in re.finditer(r"(?<!`)(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)", text):
-        for run_id in aliases:
-            if re.search(r"(?<![\w.-])" + re.escape(run_id) + r"(?![\w.-])", span[2]):
-                found.add(run_id)
+    if aliases:
+        alias_pattern = re.compile(r"(?<![\w.-])(?:" + '|'.join(re.escape(alias) for alias in sorted(aliases)) + r")(?![\w.-])")
+        for span in inline_citation_regions(text):
+            found.update(match[0] for match in alias_pattern.finditer(span))
     for run_id in aliases:
         # Paths are explicit citations even when the surrounding prose lacks a run-ID label.
         for prefix in (str(artifact), str(artifact.relative_to(root))):
@@ -862,13 +926,11 @@ def eligibility(root, receipt):
     if set(current["files"]) - tracked:
         return None, "uncommitted-build-inputs"
     expected = dict(workflow.full_profile(root))
-    selected = value.get("selectedChecks", [])
-    if not isinstance(selected, list) or any(not isinstance(name, str) for name in selected):
-        return None, "incomplete-profile"
     try:
-        steps = session.active_workflow_steps(value)
+        steps = session.active_workflow_steps(value, require_selected_checks=True)
     except ValueError:
         return None, "incomplete-profile"
+    selected = value["selectedChecks"]
     names = [step.get("name") for step in steps]
     if set(selected) != set(expected) or len(selected) != len(expected) or set(names) != set(expected) or len(names) != len(expected):
         return None, "incomplete-profile"
