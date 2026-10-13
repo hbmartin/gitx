@@ -120,6 +120,48 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testStagingLayoutMenuActionsPreserveSelectionAndCheckedState() throws {
+        let previousLayout = PBApplicationSettings.stagingListLayout
+        defer { PBApplicationSettings.stagingListLayout = previousLayout }
+        try fixture.write("menu selection\n", to: "menu-layout-selected.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.splitTables)
+        let path = Data("menu-layout-selected.txt".utf8)
+        let file = try XCTUnwrap((list.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first { $0.rawPath == path })
+        list.unstagedFilesController.setSelectedObjects([file])
+        let original = list.onSelectionChange
+        var callbacks: [[Data]] = []
+        list.onSelectionChange = {
+            callbacks.append(list.currentDiffRequests.map { $0.file.rawPath })
+            original?()
+        }
+        defer { list.onSelectionChange = original }
+        let action = NSSelectorFromString("changeListLayout:")
+        for layout in [PBStagingListLayout.sectionedList, .splitTables] {
+            let item = NSMenuItem(title: "Layout", action: action, keyEquivalent: "")
+            item.target = pane
+            item.tag = layout.rawValue
+            callbacks = []
+            XCTAssertTrue(NSApp.sendAction(action, to: pane, from: item))
+            XCTAssertEqual(list.layout, layout)
+            XCTAssertEqual(callbacks, [[path]])
+            XCTAssertEqual(list.currentDiffRequests.map(\.staged), [false])
+            XCTAssertTrue(pane.validate(item))
+            XCTAssertEqual(item.state, .on)
+            item.tag = layout == .sectionedList ? PBStagingListLayout.splitTables.rawValue : PBStagingListLayout.sectionedList.rawValue
+            XCTAssertTrue(pane.validate(item))
+            XCTAssertEqual(item.state, .off)
+            item.tag = Int.max
+            callbacks = []
+            XCTAssertTrue(NSApp.sendAction(action, to: pane, from: item))
+            XCTAssertEqual(list.layout, layout)
+            XCTAssertTrue(callbacks.isEmpty)
+            XCTAssertEqual(list.currentDiffRequests.map { $0.file.rawPath }, [path])
+        }
+        XCTAssertTrue(waitForCondition { pane.diffPaneController.contentView.textView.string.contains("+menu selection") })
+    }
+
     func testSectionedCheckboxesAndMixedDoubleClickUsePublishedFiles() throws {
         try fixture.write("indexed\n", to: "control-staged.txt")
         try fixture.git(["add", "control-staged.txt"])
