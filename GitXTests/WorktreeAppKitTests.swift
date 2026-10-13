@@ -491,6 +491,48 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(document.repository.headRef()?.simpleRef(), "refs/heads/topic")
     }
 
+    func testCreatingWorktreesThroughFolderSheetsUsesExistingBranchAndActualHEAD() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let existingHead = try fixture.git(["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "existing branch history"])
+        _ = try fixture.git(["branch", "existing/topic", existingHead.trimmingCharacters(in: .whitespacesAndNewlines)])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = PBGitWindowController(); controller.repository = repository; controller.showWindow(nil)
+        let window = try XCTUnwrap(controller.window)
+        defer { controller.close(); service.cancel() }
+        let item = NSMenuItem(); item.representedObject = PBGitRef(string: "refs/heads/existing/topic")
+        controller.checkOutInNewWorktree(item)
+        await waitUntil { window.attachedSheet is NSSavePanel }
+        let existingPanel = try XCTUnwrap(window.attachedSheet as? NSSavePanel)
+        XCTAssertEqual(existingPanel.nameFieldStringValue, "main-existing-topic")
+        XCTAssertEqual(existingPanel.url?.lastPathComponent, "main-existing-topic")
+        window.endSheet(existingPanel, returnCode: .OK)
+        await waitUntil { service.worktree(forBranch: "refs/heads/existing/topic") != nil && window.attachedSheet == nil }
+        let existing = try XCTUnwrap(service.worktree(forBranch: "refs/heads/existing/topic"))
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: URL(fileURLWithPath: existing.path)), existingHead)
+        repository.currentBranch = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/existing/topic"))
+        controller.addWorktree(nil)
+        let alert = try await waitForSheet(in: window)
+        let field = try XCTUnwrap(descendants(alert.contentView).compactMap { $0 as? NSTextField }.first { $0.placeholderString == "Branch name" })
+        field.stringValue = "new/topic"
+        window.endSheet(alert, returnCode: .alertFirstButtonReturn)
+        await waitUntil { window.attachedSheet is NSSavePanel }
+        let newPanel = try XCTUnwrap(window.attachedSheet as? NSSavePanel)
+        XCTAssertEqual(newPanel.nameFieldStringValue, "main-new-topic")
+        XCTAssertEqual(newPanel.url?.lastPathComponent, "main-new-topic")
+        window.endSheet(newPanel, returnCode: .OK)
+        await waitUntil { service.worktree(forBranch: "refs/heads/new/topic") != nil && window.attachedSheet == nil }
+        let created = try XCTUnwrap(service.worktree(forBranch: "refs/heads/new/topic"))
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: URL(fileURLWithPath: created.path)), head)
+        XCTAssertNotEqual(existingHead, head)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertEqual(repository.currentBranch?.simpleRef(), "refs/heads/existing/topic")
+        try attachScreenshot(of: window, named: "Worktrees-Created-Through-Folder-Sheets")
+    }
+
     private func descendants(_ view: NSView?) -> [NSView] {
         guard let view else { return [] }
         return [view] + view.subviews.flatMap { descendants($0) }
