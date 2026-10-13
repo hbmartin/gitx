@@ -17,6 +17,43 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertNil(window.attachedSheet)
     }
 
+    func testExplicitBranchSelectionReturnsMountedContentToHistoryWithoutCheckout() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let window = PBGitWindowController()
+        window.repository = repository
+        window.showWindow(nil)
+        defer { window.close(); service.cancel() }
+        await waitUntil { window.historyViewController?.view.window === window.window }
+        let history = try XCTUnwrap(window.historyViewController)
+        let sidebar = try XCTUnwrap(window.sidebarViewController)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let main = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }
+            .first { $0.title == "BRANCHES" }?.sortedChildren.first)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let content = try XCTUnwrap(PBViewController(repository: repository, superController: window))
+        content.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
+        XCTAssertTrue(content.view.window === window.window)
+
+        outline.deselectAll(nil)
+        outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: main)), byExtendingSelection: false)
+        sidebar.outlineViewSelectionDidChange(Notification(name: NSOutlineView.selectionDidChangeNotification))
+        XCTAssertTrue(history.view.window === window.window)
+        XCTAssertNil(content.view.window)
+        XCTAssertEqual(repository.currentBranch?.simpleRef(), "refs/heads/main")
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+
+        _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
+        _ = sidebar.perform(NSSelectorFromString("reloadSidebarPresentation"))
+        XCTAssertTrue(history.view.window === window.window)
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), "refs/heads/main")
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+    }
+
     func testLifecycleUsesGitProtectsLockedWorktreeAndKeepsBranch() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
