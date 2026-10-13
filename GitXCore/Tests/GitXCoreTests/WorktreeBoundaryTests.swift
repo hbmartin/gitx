@@ -18,6 +18,57 @@ final class WorktreeBoundaryTests: XCTestCase {
         XCTAssertNotEqual(GitWorktree(path: "/a", folderExists: false), GitWorktree(path: "/a"))
     }
 
+    func testLocatedUnprovenGitfilesAndNonregularGitObjectsAreNeverRepairable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-repair-object-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let common = root.appendingPathComponent("repo/.git")
+        let admin = common.appendingPathComponent("worktrees/id")
+        let original = root.appendingPathComponent("original")
+        let located = root.appendingPathComponent("located")
+        for folder in [admin, original, located] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        try (original.path + "/.git\n").write(to: admin.appendingPathComponent("gitdir"), atomically: true, encoding: .utf8)
+        try "../..\n".write(to: admin.appendingPathComponent("commondir"), atomically: true, encoding: .utf8)
+        let record = GitWorktree(path: original.path)
+        let records = [GitWorktree(path: root.appendingPathComponent("repo").path, isMain: true), record]
+        let originalDotGit = original.appendingPathComponent(".git")
+        let locatedDotGit = located.appendingPathComponent(".git")
+        for contents in [nil, Data(), Data("gitdir: \n".utf8), Data("malformed\n".utf8)] as [Data?] {
+            if let contents {
+                try contents.write(to: locatedDotGit)
+            }
+            XCTAssertFalse(WorktreeLinkInspector.canRepair(record, at: located.path, commonDirectory: common.path))
+        }
+        try FileManager.default.createDirectory(at: originalDotGit, withIntermediateDirectories: false)
+        XCTAssertFalse(WorktreeLinkInspector.canRepair(record, at: original.path, commonDirectory: common.path))
+        XCTAssertFalse(WorktreeLinkInspector.inspect(records, commonDirectory: common.path, currentPath: nil)[1].hasBrokenLink)
+        try FileManager.default.removeItem(at: originalDotGit)
+        let gitfile = root.appendingPathComponent("gitfile")
+        try ("gitdir: " + admin.path + "\n").write(to: gitfile, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: originalDotGit, withDestinationURL: gitfile)
+        XCTAssertFalse(WorktreeLinkInspector.canRepair(record, at: original.path, commonDirectory: common.path), "Repair must preserve symlink objects")
+        let ownAlias = WorktreeLinkInspector.inspect(records, commonDirectory: common.path, currentPath: nil)[1]
+        XCTAssertFalse(ownAlias.hasBrokenLink)
+        XCTAssertFalse(ownAlias.hasForeignLink)
+        XCTAssertEqual(ownAlias.linkStyle, .absolute)
+        let foreign = root.appendingPathComponent("foreign")
+        try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: false)
+        try ("gitdir: " + foreign.path + "\n").write(to: gitfile, atomically: true, encoding: .utf8)
+        let foreignAlias = WorktreeLinkInspector.inspect(records, commonDirectory: common.path, currentPath: nil)[1]
+        XCTAssertTrue(foreignAlias.hasForeignLink)
+        XCTAssertFalse(foreignAlias.hasBrokenLink)
+        XCTAssertFalse(WorktreeLinkInspector.canRepair(record, at: original.path, commonDirectory: common.path))
+        try "malformed\n".write(to: gitfile, atomically: true, encoding: .utf8)
+        XCTAssertFalse(WorktreeLinkInspector.inspect(records, commonDirectory: common.path, currentPath: nil)[1].hasBrokenLink)
+        try FileManager.default.removeItem(at: gitfile)
+        XCTAssertFalse(WorktreeLinkInspector.canRepair(record, at: original.path, commonDirectory: common.path))
+        XCTAssertFalse(WorktreeLinkInspector.inspect(records, commonDirectory: common.path, currentPath: nil)[1].hasBrokenLink)
+        try FileManager.default.removeItem(at: originalDotGit)
+        try ("gitdir: " + admin.path + "\n").write(to: originalDotGit, atomically: true, encoding: .utf8)
+        XCTAssertTrue(WorktreeLinkInspector.canRepair(record, at: original.path, commonDirectory: common.path))
+    }
+
     func testRepairFolderMustMatchAdministrativeBacklink() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-repair-match-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -32,6 +83,7 @@ final class WorktreeBoundaryTests: XCTestCase {
         }
         let backlink = administrative.appendingPathComponent("gitdir")
         try (original.path + "/.git\n").write(to: backlink, atomically: true, encoding: .utf8)
+        try "../..\n".write(to: administrative.appendingPathComponent("commondir"), atomically: true, encoding: .utf8)
         for folder in [original, moved] {
             try ("gitdir: " + administrative.path + "\n").write(to: folder.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
         }
@@ -46,7 +98,7 @@ final class WorktreeBoundaryTests: XCTestCase {
         XCTAssertFalse(WorktreeLinkInspector.canRepair(GitWorktree(path: root.path), at: moved.path, commonDirectory: common.path))
         try "gitdir: /old/repo/.git/worktrees/id\n".write(to: moved.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
         XCTAssertFalse(WorktreeLinkInspector.canRepair(record, at: moved.path, commonDirectory: common.path))
-        XCTAssertTrue(WorktreeLinkInspector.canRepair(GitWorktree(path: original.path, movedPath: moved.path), at: moved.path, commonDirectory: common.path))
+        XCTAssertFalse(WorktreeLinkInspector.canRepair(GitWorktree(path: original.path, movedPath: moved.path), at: moved.path, commonDirectory: common.path), "A movedPath hint must be independently proven")
         try FileManager.default.removeItem(at: backlink)
         XCTAssertFalse(WorktreeLinkInspector.canRepair(record, at: moved.path, commonDirectory: common.path))
     }

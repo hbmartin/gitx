@@ -63,6 +63,14 @@ public struct WorktreeEligibility: Equatable, Sendable {
     }
 }
 
+public extension WorktreePolicy {
+    /// Keep moved checkout evidence for prune protection when its link object
+    /// cannot be safely reconstructed by automatic repair.
+    static func manualRepairPaths(_ records: [GitWorktree]) -> [String] {
+        records.compactMap { $0.hasBrokenLink ? nil : $0.movedPath }
+    }
+}
+
 public enum WorktreeCommand: Equatable, Sendable {
     case addExisting(path: String, branch: String)
     case addNew(path: String, branch: String)

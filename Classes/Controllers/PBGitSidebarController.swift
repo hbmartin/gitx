@@ -296,6 +296,14 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
 
         dispatchPrecondition(condition: .onQueue(.main))
+        if let selectedWorktree = selectedItem() as? PBSourceViewGitWorktreeItem,
+           selectedWorktree.revSpecifier?.isEqual(revision) == true
+        {
+            // Different detached checkouts can share a revision. Keep the
+            // clicked checkout rather than selecting the first matching row.
+            Self.logger.info("Preserved selected worktree at \(selectedWorktree.worktree.path, privacy: .public)")
+            return
+        }
         if let item = add(revision: revision), let sourceView {
             expandItemAndParents(item)
             let row = sourceView.row(forItem: item)

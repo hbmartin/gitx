@@ -8,6 +8,11 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBWorktreePrunePreview : NSObject
+@property (readonly, copy) NSString *report;
+@property (readonly) BOOL hasMovedWorktrees;
+@end
+
 /// Narrow mirrors of the generated Swift interface for app-hosted XCTest.
 @interface PBGitWorktree : NSObject
 @property (readonly, copy) NSString *path;
@@ -37,6 +42,9 @@ NS_SWIFT_UI_ACTOR
 - (void)lockWorktreeAtPath:(NSString *)path reason:(NSString *)reason completion:(void (^)(NSString *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(lockWorktree(path:reason:completion:));
 - (void)unlockWorktreeAtPath:(NSString *)path completion:(void (^)(NSString *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(unlockWorktree(path:completion:));
 - (void)pruneWorktreesReportOnly:(BOOL)reportOnly completion:(void (^)(NSString *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(pruneWorktrees(reportOnly:completion:));
+- (void)preparePrunePreviewWithCompletion:(void (^)(PBWorktreePrunePreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(preparePrunePreview(completion:));
+- (void)pruneWithConfirmedPreview:(PBWorktreePrunePreview *)preview completion:(void (^)(PBWorktreePrunePreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(prune(confirmedPreview:completion:));
+- (void)discardPrunePreview:(PBWorktreePrunePreview *)preview;
 - (void)repairWorktree:(PBGitWorktree *)worktree movedTo:(NSString *)path completion:(void (^)(NSError *_Nullable))completion NS_SWIFT_NAME(repair(worktree:movedTo:completion:));
 - (void)repairLinksWithRelativePaths:(BOOL)relative completion:(void (^)(NSError *_Nullable))completion NS_SWIFT_NAME(repairLinks(relativePaths:completion:));
 @end

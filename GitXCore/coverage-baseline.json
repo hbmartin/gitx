@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitXCore",
-  "minimumLineCoverage": 0.9973,
+  "minimumLineCoverage": 0.9981,
   "files": {
     "ApplicationPreferencesPolicy.swift": 1.0,
     "CommitPolicy.swift": 1.0,
@@ -12,6 +12,7 @@
     "RepositoryConfigurationPolicy.swift": 1.0,
     "SidebarPolicy.swift": 1.0,
     "Worktree.swift": 0.9909,
+    "WorktreeEvidence.swift": 1.0,
     "WorktreeLinks.swift": 1.0,
     "WorktreePolicy.swift": 1.0
   }

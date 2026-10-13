@@ -41,7 +41,7 @@
     "Classes/Controllers/PBGitSidebarController.swift": 0.998,
     "Classes/Controllers/PBGitWindowController+Dialogs.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
-    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.8997,
+    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9087,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
     "Classes/Controllers/PBHistorySearchController.m": 0.9285,
     "Classes/Controllers/PBHistorySearchMode.m": 0.8333,
@@ -156,7 +156,7 @@
     "Classes/Views/PBSidebarTableViewCell.swift": 1.0,
     "Classes/Views/PBSourceViewBadge.swift": 1.0,
     "Classes/Views/PBSourceViewGitWorktreeItem.swift": 1.0,
-    "Classes/Views/PBSourceViewItem.m": 0.9357,
+    "Classes/Views/PBSourceViewItem.m": 0.9449,
     "Classes/Views/PushOutputExportCoordinator.swift": 0.9651,
     "Classes/Views/QuickLookFilePromiseExporter.swift": 0.9365,
     "Classes/Views/RepositoryPullRequestReviewOverlayController.swift": 0.9282,
@@ -210,7 +210,7 @@
     "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
     "Classes/git/RepositoryWatchPaths.swift": 0.98,
-    "Classes/git/RepositoryWorktreeService.swift": 0.9273,
+    "Classes/git/RepositoryWorktreeService.swift": 0.9605,
     "Classes/main.m": 1.0
   },
   "groups": {
@@ -231,7 +231,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9288,
+  "minimumLineCoverage": 0.9293,
   "target": "Half Dark.app",
   "version": 1
 }

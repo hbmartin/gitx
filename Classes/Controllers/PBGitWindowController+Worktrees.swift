@@ -135,32 +135,87 @@ extension PBGitWindowController {
 
     @IBAction @objc(pruneWorktrees:)
     dynamic func pruneWorktrees(_: Any?) {
-        guard let service = worktreeService, service.isSupported else { return }
-        guard !service.worktrees.contains(where: { $0.movedPath != nil }) else { repairWorktreeLinks(nil); return }
-        service.perform(.pruneReport) { [weak self] report, error in
-            guard let self else { return }
-            if let error {
-                self.showErrorSheet(error); return
-            }
-            let report = (report ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let alert = NSAlert()
-            if report.isEmpty {
-                alert.messageText = "Nothing to prune"
-                alert.informativeText = "Every worktree Git knows of still has its folder."
-                alert.addButton(withTitle: "OK")
-                self.presentWorktreeSheet(alert) { _ in }
+        guard isWindowLoaded, let window, window.isVisible, window.attachedSheet == nil,
+              let service = worktreeService, service.isSupported else { return }
+        service.preparePrunePreview { [weak self, weak window] preview, error in
+            guard let self, let window, self.canPresentPruneResult(service: service, in: window) else {
+                if let preview {
+                    service.discardPrunePreview(preview)
+                }
                 return
             }
-            alert.messageText = "Prune these worktrees?"
-            alert.informativeText = "Git will forget these worktrees:\n\n\(report)"
-            alert.addButton(withTitle: "Prune")
-            alert.addButton(withTitle: "Cancel")
-            self.presentWorktreeSheet(alert) { [self] response in
-                if response == .alertFirstButtonReturn {
-                    self.performWorktree(.prune)
+            if let error {
+                if let preview {
+                    service.discardPrunePreview(preview)
+                }
+                self.showPruneError(error)
+                return
+            }
+            guard let preview else { return }
+            self.presentPrunePreview(preview, service: service, in: window, changed: false)
+        }
+    }
+
+    private func canPresentPruneResult(service: PBRepositoryWorktreeService, in window: NSWindow) -> Bool {
+        isWindowLoaded && self.window === window && window.isVisible && worktreeService === service && service.isSupported
+    }
+
+    private func presentPrunePreview(_ preview: PBWorktreePrunePreview, service: PBRepositoryWorktreeService, in window: NSWindow, changed: Bool) {
+        guard canPresentPruneResult(service: service, in: window), window.attachedSheet == nil else {
+            service.discardPrunePreview(preview)
+            return
+        }
+        if preview.hasMovedWorktrees {
+            service.discardPrunePreview(preview)
+            repairWorktreeLinks(nil)
+            return
+        }
+        // Only display text is trimmed. The service owns the exact evidence
+        // and revalidates it while holding the shared mutation gate.
+        let report = preview.report.trimmingCharacters(in: .whitespacesAndNewlines)
+        let alert = NSAlert()
+        if report.isEmpty {
+            service.discardPrunePreview(preview)
+            alert.messageText = "Nothing to prune"
+            alert.informativeText = "Git has no stale worktree registrations to prune."
+            alert.addButton(withTitle: "OK")
+            presentWorktreeSheet(alert) { _ in }
+            return
+        }
+        alert.messageText = "Prune these worktrees?"
+        alert.informativeText = (changed ? "The worktree state changed. Review this updated list and choose Prune again.\n\n" : "")
+            + "Git will forget these worktrees:\n\n\(report)"
+        alert.addButton(withTitle: "Prune").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        presentWorktreeSheet(alert) { [weak self, weak window] response in
+            guard response == .alertFirstButtonReturn,
+                  let self, let window, self.canPresentPruneResult(service: service, in: window), window.attachedSheet == nil
+            else {
+                service.discardPrunePreview(preview)
+                return
+            }
+            service.prune(confirmedPreview: preview) { [weak self, weak window] updated, error in
+                guard let self, let window, self.canPresentPruneResult(service: service, in: window) else {
+                    if let updated {
+                        service.discardPrunePreview(updated)
+                    }
+                    return
+                }
+                if let error {
+                    if let updated {
+                        service.discardPrunePreview(updated)
+                    }
+                    self.showPruneError(error)
+                } else if let updated {
+                    self.presentPrunePreview(updated, service: service, in: window, changed: true)
                 }
             }
         }
+    }
+
+    private func showPruneError(_ error: NSError) {
+        guard error.domain != NSCocoaErrorDomain || error.code != NSUserCancelledError else { return }
+        showErrorSheet(error)
     }
 
     private func newWorktreeParent() -> URL? {
@@ -219,10 +274,18 @@ extension PBGitWindowController {
     @IBAction @objc(repairWorktreeLinks:)
     dynamic func repairWorktreeLinks(_: Any?) {
         guard let service = worktreeService, service.isSupported else { return }
+        let manualPaths = WorktreePolicy.manualRepairPaths(service.worktrees.map(\.value))
+        guard manualPaths.isEmpty else {
+            showErrorSheet(RepositoryServiceError.make(
+                description: "A moved worktree needs manual link repair",
+                failureReason: "Its .git link cannot be replaced safely. Restore a regular Git link file before repairing or pruning:\n\n" + manualPaths.joined(separator: "\n")
+            ))
+            return
+        }
         let broken = service.worktrees.filter(\.hasBrokenLink)
         guard !broken.isEmpty else { return }
         let alert = NSAlert()
-        alert.messageText = "This repository was moved, so its worktrees can no longer find it"
+        alert.messageText = "Some worktrees have broken repository links"
         alert.informativeText = "Git can reconnect these worktrees with absolute or relative paths:\n\n" + broken.map { $0.movedPath ?? $0.path }.joined(separator: "\n")
         let absolute = alert.addButton(withTitle: "Repair with Absolute Paths")
         let relative = alert.addButton(withTitle: "Repair with Relative Paths")
