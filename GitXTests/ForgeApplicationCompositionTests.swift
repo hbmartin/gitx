@@ -257,6 +257,22 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         }
     }
 
+    func testVerificationHostUsesExplicitIsolatedForgeStorage() throws {
+        let environment = ProcessInfo.processInfo.environment
+        // IDE execution can choose its own fixture composition. The repository
+        // wrapper tags its owned hosts and must isolate their default factory.
+        guard environment["GITX_VERIFICATION_SESSION"] != nil else { return }
+        let path = try XCTUnwrap(environment[ForgeApplicationStorageConfiguration.uiTestStorageRootEnvironmentKey])
+        let configuration = try ForgeApplicationStorageConfiguration.resolve(
+            applicationSupportDirectory: URL(fileURLWithPath: "/tmp/unused-verification-support", isDirectory: true),
+            environment: environment
+        )
+        XCTAssertTrue(path.hasPrefix("/"))
+        XCTAssertEqual(configuration.forgeDirectory.path, URL(fileURLWithPath: path).standardizedFileURL.path)
+        XCTAssertNotEqual(configuration.keychainService, SecurityForgeCredentialKeychain.defaultService)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: configuration.forgeDirectory.path))
+    }
+
     func testDefaultLoaderCanCaptureTheSystemDirectoryProviderWithoutInitializingServices() throws {
         let defaults = try makeDefaults()
         let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)

@@ -15,6 +15,153 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testStagingListRestoresRawSelectionAcrossPresentationChanges() throws {
+        try fixture.write("indexed\n", to: "selection-staged.txt")
+        try fixture.git(["add", "selection-staged.txt"])
+        try fixture.write("working\n", to: "selection-unstaged.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        let path = Data("selection-unstaged.txt".utf8)
+        for layout in [PBStagingListLayout.splitTables, .sectionedList] {
+            list.setListLayout(layout)
+            let files = try XCTUnwrap(list.unstagedFilesController.arrangedObjects as? [PBChangedFile])
+            try list.unstagedFilesController.setSelectedObjects([XCTUnwrap(files.first { $0.rawPath == path })])
+            for sort in [PBStagingFileSortOrder.path, .status] {
+                list.viewModel.sortOrder = sort
+                list.viewModel.searchText = "selection"
+                list.applyFilterAndSort()
+                XCTAssertEqual(list.selectedFiles(forStagedContext: false).map(\.rawPath), [path])
+                waitForIndexUpdate { repository.index.refresh() }
+                XCTAssertEqual(list.selectedFiles(forStagedContext: false).map(\.rawPath), [path])
+            }
+            list.viewModel.searchText = "selection-staged"
+            list.applyFilterAndSort()
+            XCTAssertTrue(list.selectedFiles(forStagedContext: false).isEmpty)
+            list.viewModel.searchText = ""
+            list.applyFilterAndSort()
+        }
+    }
+
+    func testStagingListCallbacksPublishCompleteSelectionsInBothLayouts() throws {
+        try fixture.write("indexed\n", to: "callback-staged.txt")
+        try fixture.git(["add", "callback-staged.txt"])
+        try fixture.write("working\n", to: "callback-unstaged.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        struct Entry: Equatable {
+            let path: Data
+            let staged: Bool
+        }
+        func identity() -> [Entry] {
+            list.currentDiffRequests.map { Entry(path: $0.file.rawPath, staged: $0.staged) }
+        }
+        let original = list.onSelectionChange
+        var callbacks: [[Entry]] = []
+        list.onSelectionChange = {
+            callbacks.append(identity())
+            original?()
+        }
+        defer { list.onSelectionChange = original }
+        let unstaged = Entry(path: Data("callback-unstaged.txt".utf8), staged: false)
+        let staged = Entry(path: Data("callback-staged.txt".utf8), staged: true)
+        for layout in [PBStagingListLayout.splitTables, .sectionedList] {
+            list.setListLayout(layout)
+            list.stagedFilesController.setSelectedObjects([])
+            let file = try XCTUnwrap((list.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first { $0.rawPath == unstaged.path })
+            list.unstagedFilesController.setSelectedObjects([file])
+            for sort in [PBStagingFileSortOrder.path, .status] {
+                list.viewModel.sortOrder = sort
+                list.viewModel.searchText = "callback"
+                callbacks = []
+                list.applyFilterAndSort()
+                XCTAssertEqual(callbacks, [[unstaged]], "One complete selection after presentation replacement")
+                callbacks = []
+                waitForIndexUpdate { repository.index.refresh() }
+                XCTAssertFalse(callbacks.isEmpty)
+                XCTAssertTrue(callbacks.allSatisfy { $0 == [unstaged] }, "Refresh must not expose transient deselection")
+            }
+            callbacks = []
+            list.viewModel.searchText = "callback-staged"
+            list.applyFilterAndSort()
+            XCTAssertEqual(callbacks, [[]])
+            list.viewModel.searchText = ""
+            list.applyFilterAndSort()
+            let restored = try XCTUnwrap((list.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first { $0.rawPath == unstaged.path })
+            list.unstagedFilesController.setSelectedObjects([restored])
+            callbacks = []
+            if layout == .sectionedList {
+                let table = list.sectionedTable
+                let rows = (0 ..< table.numberOfRows).filter { row in
+                    let path = (table.view(atColumn: 0, row: row, makeIfNecessary: true) as? PBStagingFileCellView)?.pathField.stringValue
+                    return path == "callback-staged.txt" || path == "callback-unstaged.txt"
+                }
+                XCTAssertEqual(rows.count, 2)
+                table.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+                XCTAssertEqual(callbacks, [[staged, unstaged]], "Both section controllers are synchronized before notification")
+                XCTAssertTrue(waitForCondition {
+                    let text = pane.diffPaneController.contentView.textView.string
+                    return text.contains("+indexed") && text.contains("+working")
+                })
+                try attachScreenshot(of: pane.view, named: "Staging-Complete-Selection-Sectioned")
+                callbacks = []
+                list.setListLayout(.splitTables)
+                XCTAssertEqual(callbacks, [[staged]], "Layout switch enforces exclusivity before notification")
+            } else {
+                let file = try XCTUnwrap((list.stagedFilesController.arrangedObjects as? [PBChangedFile])?.first { $0.rawPath == staged.path })
+                list.stagedFilesController.setSelectedObjects([file])
+                XCTAssertFalse(callbacks.isEmpty)
+                XCTAssertTrue(callbacks.allSatisfy { $0 == [staged] }, "Split-table callbacks cannot expose both sides")
+            }
+            XCTAssertTrue(waitForCondition {
+                let text = pane.diffPaneController.contentView.textView.string
+                return text.contains("+indexed") && !text.contains("+working")
+            })
+            try attachScreenshot(of: pane.view, named: "Staging-Complete-Selection-Split")
+        }
+    }
+
+    func testStagingLayoutMenuActionsPreserveSelectionAndCheckedState() throws {
+        let previousLayout = PBApplicationSettings.stagingListLayout
+        defer { PBApplicationSettings.stagingListLayout = previousLayout }
+        try fixture.write("menu selection\n", to: "menu-layout-selected.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.splitTables)
+        let path = Data("menu-layout-selected.txt".utf8)
+        let file = try XCTUnwrap((list.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first { $0.rawPath == path })
+        list.unstagedFilesController.setSelectedObjects([file])
+        let original = list.onSelectionChange
+        var callbacks: [[Data]] = []
+        list.onSelectionChange = {
+            callbacks.append(list.currentDiffRequests.map { $0.file.rawPath })
+            original?()
+        }
+        defer { list.onSelectionChange = original }
+        let action = NSSelectorFromString("changeListLayout:")
+        for layout in [PBStagingListLayout.sectionedList, .splitTables] {
+            let item = NSMenuItem(title: "Layout", action: action, keyEquivalent: "")
+            item.target = pane
+            item.tag = layout.rawValue
+            callbacks = []
+            XCTAssertTrue(NSApp.sendAction(action, to: pane, from: item))
+            XCTAssertEqual(list.layout, layout)
+            XCTAssertEqual(callbacks, [[path]])
+            XCTAssertEqual(list.currentDiffRequests.map(\.staged), [false])
+            XCTAssertTrue(pane.validate(item))
+            XCTAssertEqual(item.state, .on)
+            item.tag = layout == .sectionedList ? PBStagingListLayout.splitTables.rawValue : PBStagingListLayout.sectionedList.rawValue
+            XCTAssertTrue(pane.validate(item))
+            XCTAssertEqual(item.state, .off)
+            item.tag = Int.max
+            callbacks = []
+            XCTAssertTrue(NSApp.sendAction(action, to: pane, from: item))
+            XCTAssertEqual(list.layout, layout)
+            XCTAssertTrue(callbacks.isEmpty)
+            XCTAssertEqual(list.currentDiffRequests.map { $0.file.rawPath }, [path])
+        }
+        XCTAssertTrue(waitForCondition { pane.diffPaneController.contentView.textView.string.contains("+menu selection") })
+    }
+
     func testSectionedCheckboxesAndMixedDoubleClickUsePublishedFiles() throws {
         try fixture.write("indexed\n", to: "control-staged.txt")
         try fixture.git(["add", "control-staged.txt"])

@@ -44,6 +44,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @IBOutlet private weak var progressIndicator: NSProgressIndicator?
     @IBOutlet private weak var jumpToCheckedOutBranchButton: NSButton?
 
+    private var worktreeObservations: [NSKeyValueObservation] = []
+    /// Objective-C-imported subclasses cannot dispatch new Swift-only virtual accessors.
+    final var offeredWorktreeRepair = false
+
     @objc public convenience init() {
         self.init(windowNibName: "RepositoryWindow")
     }
@@ -129,6 +133,32 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    private func installWorktreeObservations() {
+        guard let repository else { return }
+        worktreeObservations = [
+            repository.observe(\.worktrees, options: [.initial]) { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    self?.offerWorktreeRepairIfNeeded()
+                    if let history = self?.historyViewController, history.isViewLoaded {
+                        history.commitList.enumerateAvailableRowViews { row, _ in
+                            row.subviews.forEach { $0.needsDisplay = true }
+                        }
+                    }
+                }
+            },
+            repository.observe(\.worktreeFeatureAvailable, options: []) { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    self?.offerWorktreeRepairIfNeeded()
+                    if let history = self?.historyViewController, history.isViewLoaded {
+                        history.commitList.enumerateAvailableRowViews { row, _ in
+                            row.subviews.forEach { $0.needsDisplay = true }
+                        }
+                    }
+                }
+            },
+        ]
+    }
+
     override open func synchronizeWindowTitleWithDocumentName() {
         super.synchronizeWindowTitleWithDocumentName()
         if isWindowLoaded {
@@ -136,9 +166,15 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    @objc public dynamic func windowDidBecomeMain(_ notification: Notification) {
+        offerWorktreeRepairIfNeeded()
+    }
+
     @objc public dynamic func windowWillClose(_ notification: Notification) {
         NotificationCenter.default.removeObserver(self)
         focusRefreshCoordinator?.cancel()
+        repository?.cancelWorktreeDiscovery()
+        worktreeObservations.removeAll()
         sidebarViewController?.closeView()
         historyViewController?.closeView()
         _sidebarController = nil
@@ -293,6 +329,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         ForgeDeepLinkApplicationRouter.shared.installIfNeeded()
         ensureActionCoordinators()
         ensureFocusRefreshCoordinator()
+        installWorktreeObservations()
         window?.setFrameUsingName("GitX")
         window?.representedURL = repository?.workingDirectoryURL()
         if let repository {
@@ -879,6 +916,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func refreshLocalRepositoryContent() {
+        repository?.refreshWorktrees()
         contentController?.refresh(self)
         repositoryLocalStatusLoader?.refresh()
         synchronizeWindowTitleWithDocumentName()

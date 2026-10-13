@@ -10,6 +10,7 @@
 #import "PBGitRef.h"
 #import "PBGitCommit.h"
 #import "PBGitRevSpecifier.h"
+#import "GitX-Swift.h"
 
 #import "NSColor+RGB.h"
 
@@ -214,22 +215,7 @@ const BOOL SHUFFLE_COLORS = NO;
 
 - (NSColor *)colorForRef:(PBGitRef *)ref
 {
-	BOOL isHEAD = [ref.ref isEqualToString:[[[controller repository] headRef] simpleRef]];
-
-	if (isHEAD) {
-		return [NSColor colorWithCalibratedRed:0Xfc / 256.0 green:0Xa6 / 256.0 blue:0X4f / 256.0 alpha:1.0];
-	}
-
-	NSString *type = [ref type];
-	if ([type isEqualToString:@"head"]) {
-		return [NSColor colorWithCalibratedRed:0X9a / 256.0 green:0Xe2 / 256.0 blue:0X84 / 256.0 alpha:1.0];
-	} else if ([type isEqualToString:@"remote"]) {
-		return [NSColor colorWithCalibratedRed:0xa2 / 256.0 green:0Xcf / 256.0 blue:0Xef / 256.0 alpha:1.0];
-	} else if ([type isEqualToString:@"tag"]) {
-		return [NSColor colorWithCalibratedRed:0Xfc / 256.0 green:0Xed / 256.0 blue:0X6f / 256.0 alpha:1.0];
-	}
-
-	return [NSColor yellowColor];
+	return [PBGitRefLabelColors colorForRef:ref repository:(controller.repository ?: self.objectValue.repository)];
 }
 
 - (NSArray<NSValue *> *)rectsForRefsinRect:(NSRect)rect;

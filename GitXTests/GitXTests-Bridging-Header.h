@@ -20,6 +20,9 @@
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
 #import "PBGitRevisionCell.h"
+#import "PBSidebarTableViewCell.h"
+#import "PBWorktreeCompatibility.h"
+#import "PBGitSidebarControllerCompatibility.h"
 #import "PBHistorySearchController.h"
 #import "RepositoryIgnoreTestSupport.h"
 #import "PBGitBinary.h"
@@ -357,6 +360,10 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @interface PBStagingFileListController : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository index:(PBGitIndex *)index;
+@property (nonatomic, copy, nullable) void (^onSelectionChange)(void);
+@property (nonatomic, readonly) NSArray<PBStagingDiffRequest *> *currentDiffRequests;
+- (void)close;
 @property (nonatomic, readonly) PBCommitTableInteractionCoordinator *interactionCoordinator;
 @property (nonatomic, readonly) PBStagingListViewModel *viewModel;
 @property (nonatomic, readonly) NSArrayController *unstagedFilesController;
@@ -1046,9 +1053,11 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 
 #if DEBUG || GITX_PERFORMANCE_TEST_SUPPORT
 @interface PBStagingDiffRevalidationTestHarness : NSObject
-#if DEBUG
-+ (nullable NSData *)imageDataWithPane:(PBStagingDiffPaneController *)pane path:(NSString *)path beforeReading:(void (^)(void))beforeReading NS_SWIFT_NAME(imageData(pane:path:beforeReading:));
 + (BOOL)selectionIdentityWithRequests:(NSArray<PBStagingDiffRequest *> *)requests equalsRequests:(NSArray<PBStagingDiffRequest *> *)other NS_SWIFT_NAME(selectionIdentity(_:equals:));
+#if DEBUG
++ (void)startValidationWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files completion:(void (^)(NSError *_Nullable))completion NS_SWIFT_NAME(startValidation(repository:runner:files:completion:)) __attribute__((swift_async(none)));
++ (void)closeAndDrainWithRepository:(PBGitRepository *)repository panes:(NSArray<PBStagingDiffPaneController *> *)panes completion:(void (^)(void))completion NS_SWIFT_NAME(closeAndDrain(repository:panes:completion:)) __attribute__((swift_async(none)));
++ (nullable NSData *)imageDataWithPane:(PBStagingDiffPaneController *)pane path:(NSString *)path beforeReading:(void (^)(void))beforeReading NS_SWIFT_NAME(imageData(pane:path:beforeReading:));
 + (void)prepareWithPane:(PBStagingDiffPaneController *)pane files:(NSArray<PBChangedFile *> *)files completion:(void (^)(NSError *_Nullable))completion NS_SWIFT_NAME(prepare(pane:files:completion:)) __attribute__((swift_async(none)));
 + (void)updateSelectionWithPane:(PBStagingDiffPaneController *)pane requests:(NSArray<PBStagingDiffRequest *> *)requests NS_SWIFT_NAME(updateSelection(pane:requests:));
 + (void)prepareCloseAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files eligibility:(BOOL (^)(void))eligibility completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareCloseAndValidate(repository:runner:files:eligibility:completion:));

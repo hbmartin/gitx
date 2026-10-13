@@ -10,11 +10,13 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface PBSidebarTableViewCell : NSTableCellView {
-	__weak IBOutlet NSImageView *checkedOutImageView;
+	__weak IBOutlet NSImageView *_Nullable checkedOutImageView;
 }
 
 @property (assign, nonatomic) BOOL isCheckedOut;
-
-NS_ASSUME_NONNULL_END
+@property (assign, nonatomic) BOOL isLocked;
+@property (assign, nonatomic) BOOL isUnavailable;
 
 @end
+
+NS_ASSUME_NONNULL_END

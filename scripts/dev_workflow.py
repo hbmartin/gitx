@@ -185,18 +185,14 @@ def finish_invalid(path, payload, problems, attempt_started):
 
 
 @contextlib.contextmanager
-def admitted_failure_receipt(path, payload, producer, attempt_started):
+def admitted_failure_receipt(path, payload_getter, producer, attempt_started):
     """Publish blocked state before the enclosing directory lease is released."""
     try:
         yield
     except (session.ResourceBusy, session.ResourceDefinitionError) as error:
-        busy = isinstance(error, session.ResourceBusy)
-        payload.update(status="blocked", exitCode=75 if busy else 2,
-                       category="resource-busy" if busy else error.category,
-                       problem=str(error), producer=producer, deliveryEligible=False,
-                       finishedAt=records.now(), attemptDurationSeconds=round(time.monotonic() - attempt_started, 3))
-        if busy:
-            payload.update(owner=error.owner, resource=error.resource)
+        payload = payload_getter()
+        payload.update(session.resource_failure_fields(error), producer=producer,
+                       attemptDurationSeconds=round(time.monotonic() - attempt_started, 3))
         session.atomic_json(path, payload)
         print(f"{error}\nBlocked receipt under directory lease: {path}", file=sys.stderr)
         raise
@@ -230,7 +226,7 @@ def verify(args):
     owned_directory = False
     try:
         with selected_leases(args, root, directory, owner) as (leases, commands, selection), \
-                admitted_failure_receipt(path, payload, owner["producer"], attempt_started):
+                admitted_failure_receipt(path, lambda: payload, owner["producer"], attempt_started):
             owned_directory = True
             if args.resume:
                 # A previous producer may have finished while this attempt
@@ -337,7 +333,7 @@ def verify(args):
             active = session.active_workflow_steps(payload)
             names = [step["name"] for step in active]
             expected = [name for name, _ in commands]
-            if set(names) != set(expected) or len(names) != len(expected) or len(names) != len(set(names)) or any(
+            if set(names) != set(expected) or len(names) != len(expected) or any(
                     step.get("status") != "passed" or step.get("evidenceStatus") != "valid" for step in active):
                 return finish_invalid(path, payload, ["Active verification profile is incomplete, duplicated, or invalid"], attempt_started)
             try:
@@ -368,18 +364,15 @@ def verify(args):
                   f"{payload['attemptDurationSeconds']:.1f}s; delivery eligible: {payload['deliveryEligible']}")
             print(f"Local verification passed. Receipt: {path}")
     except (session.ResourceBusy, session.ResourceDefinitionError) as error:
-        busy = isinstance(error, session.ResourceBusy)
-        status = 75 if busy else 2
+        failure = session.resource_failure_fields(error)
+        status = failure["exitCode"]
         if not owned_directory:
             blocker = session.verification_artifact_root(root) / "Coordination" / f"{run_id}-{uuid.uuid4().hex}.json"
-            blocked = owner | {"schemaVersion": 2, "receipt": str(blocker), "entry": str(root / "scripts/dev_workflow.py"),
-                "workflowReceipt": str(path), "status": "blocked", "exitCode": status,
-                "category": "resource-busy" if busy else error.category, "problem": str(error),
-                "selectedChecks": selection["selectedChecks"], "resources": [], "deliveryEligible": False,
-                "startedAt": records.now(), "finishedAt": records.now(),
+            blocked = owner | failure | {"schemaVersion": 2, "receipt": str(blocker), "entry": str(root / "scripts/dev_workflow.py"),
+                "workflowReceipt": str(path),
+                "selectedChecks": selection["selectedChecks"], "resources": [],
+                "startedAt": records.now(),
                 "attemptDurationSeconds": round(time.monotonic() - attempt_started, 3)}
-            if busy:
-                blocked.update(owner=error.owner, resource=error.resource)
             session.atomic_json(blocker, blocked)
             print(f"{error}\nBlocker receipt: {blocker}", file=sys.stderr)
             return status

@@ -19,6 +19,8 @@
 @class GTRepository;
 @class GTConfiguration;
 @class PBRepositoryPushRetryPlan;
+@class PBRepositoryWorktreeService;
+@class PBGitWorktree;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -58,6 +60,13 @@ typedef enum branchFilterTypes {
 @property (nullable, readonly, strong) GTRepository *gtRepo;
 @property (nonatomic, readonly) BOOL isShallowRepository;
 @property (nullable, nonatomic, readonly, copy) NSString *lastPushOutput;
+@property (nonatomic, readonly, strong) PBRepositoryWorktreeService *worktreeService;
+@property (nonatomic, readonly, strong) NSArray<PBGitWorktree *> *worktrees;
+@property (nonatomic, readonly) BOOL worktreeFeatureAvailable;
+- (void)refreshWorktrees;
+- (void)cancelWorktreeDiscovery;
+- (nullable PBGitWorktree *)worktreeHoldingRef:(nullable PBGitRef *)ref;
+- (nullable NSString *)pathOfWorktreeHoldingRef:(nullable PBGitRef *)ref;
 
 @property (nonatomic, strong) NSMutableArray<GTSubmodule *> *submodules;
 @property (readonly, strong) PBGitIndex *index;

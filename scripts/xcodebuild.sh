@@ -531,11 +531,25 @@ ensure_probe_option() {
 	probe_arguments+=("$option" "$value")
 }
 
+configure_test_forge_storage() {
+	# App-hosted XCTest starts the default application composition too. Forward
+	# the existing fixture setting so verification never reads the live account
+	# store. Keep run-owned fixtures beside the established compilation cache:
+	# the source checkout and its receipt directory may be on an external volume.
+	# Preserve explicit caller-selected test stores.
+	local forge_test_root="${TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT:-${GITX_UITEST_FORGE_STORAGE_ROOT:-${derived_data%/*}/Fixtures/$run_id/Forge}}"
+	[[ "$forge_test_root" == /* ]] || { echo "Test Forge storage root must be absolute: $forge_test_root" >&2; return 2; }
+	mkdir -p "$forge_test_root" || return $?
+	export TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT="$forge_test_root"
+	printf 'Test Forge storage: %s\n' "$forge_test_root"
+}
+
 xcode_test() {
 	local test_preset=$1
 	local plan=$2
 	local result="$results/$plan.xcresult"
 	shift 2
+	configure_test_forge_storage || return $?
 	if [[ "$test_preset" != "ui-preflight" && "$test_preset" != "ui" ]]; then
 		local probe_arguments=() index=0
 		local arguments=("$@")
@@ -841,6 +855,7 @@ case "$command" in
 		if (( is_test_action )); then
 			# Raw test actions use the same desktop/provenance protections while
 			# retaining explicit project, scheme, paths, signing and test options.
+			configure_test_forge_storage || exit $?
 			suite_arguments=() compile_arguments=() probe_arguments=()
 			raw_arguments=("${raw_common[@]}" "MACOSX_DEPLOYMENT_TARGET=$deployment_target" "${extra[@]}")
 			raw_plan=GitX

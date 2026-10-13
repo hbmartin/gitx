@@ -18,6 +18,82 @@ import workflow_session as session
 
 
 class CleanupTests(unittest.TestCase):
+    def test_inline_citations_retain_old_runs_during_actual_cleanup(self):
+        cited = self.run_directory('cited')
+        double = self.run_directory('double')
+        unrelated = self.run_directory('unrelated')
+        (self.root / 'REVIEW.md').write_text('Verified with `cited` unrelated `cited` and ``double``.\n')
+        self.git('add', 'REVIEW.md')
+        self.git('commit', '-qm', 'inline citation fixture')
+        cleanup.queue_commit(self.root)
+        report = cleanup.run_cleanup(self.root, self.valid_receipt())
+        self.assertEqual(report['status'], 'complete')
+        self.assertTrue(cited.exists())
+        self.assertTrue(double.exists())
+        self.assertFalse(unrelated.exists())
+
+    def test_legacy_active_steps_accept_missing_or_null_selection(self):
+        steps = [{'name': 'correctness'}, {'name': 'historical'}]
+        for payload in ({'steps': steps}, {'steps': steps, 'selectedChecks': None}):
+            self.assertEqual(session.active_workflow_steps(payload), steps)
+        self.assertEqual(session.active_workflow_steps({'steps': steps, 'selectedChecks': ['correctness']}), steps[:1])
+
+    def test_inline_citation_delimiters_conservatively_protect_known_runs(self):
+        aliases = {'known', 'known-extra', 'other', 'a+b'}
+        for text, expected in [
+            ('`verify\nknown`', {'known'}),
+            ('stray ` before `known`', {'known'}),
+            ('unclosed `known\nand other\n\nknown-extra is ordinary prose', {'known', 'other'}),
+            ('\\`known in ordinary prose', set()),
+            ('\\\\`known`', {'known'}),
+            ('\\`stray and then `known`', {'known'}),
+            ('\\```known``', {'known'}),
+            ('``verify ` known-extra\nother``', {'known-extra', 'other'}),
+            ('``unmatched known` then other', {'known', 'other'}),
+            ('`prefix-known known-suffix known-extra a+b`', {'known-extra', 'a+b'}),
+            ('`unrelated` known', set()),
+            ('`unrelated` known `unrelated`', set()),
+            ('`known` other `known`', {'known'}),
+            ('``unrelated`` known ``unrelated``', set()),
+            ('```md\n`known`\n```\nordinary other', set()),
+            ('~~~md\n`known`\n~~~~\n`other`', {'other'}),
+            ('ordinary known and other', set()),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(cleanup.cited_run_ids(text, None, aliases, self.artifact, self.root), expected)
+        self.assertEqual(cleanup.cited_run_ids('`known`', None, set(), self.artifact, self.root), set())
+
+    def test_ambiguous_and_multiline_citations_retain_runs_during_cleanup(self):
+        cited = self.run_directory('cited')
+        ambiguous = self.run_directory('ambiguous')
+        unclosed = self.run_directory('unclosed')
+        unrelated = self.run_directory('unrelated')
+        (self.root / 'REVIEW.md').write_text('`verify\ncited`\n\nstray ` before `ambiguous`\n\nopen `unclosed\n')
+        self.git('add', 'REVIEW.md')
+        self.git('commit', '-qm', 'ambiguous citation fixture')
+        cleanup.queue_commit(self.root)
+        report = cleanup.run_cleanup(self.root, self.valid_receipt())
+        self.assertEqual(report['status'], 'complete')
+        self.assertTrue(all(path.exists() for path in (cited, ambiguous, unclosed)))
+        self.assertFalse(unrelated.exists())
+
+    def test_cleanup_requires_explicit_well_formed_selection(self):
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        original = cleanup.read_json(receipt)
+        for selection in ('missing', None, 'correctness', [None], [], ['correctness', 'correctness']):
+            with self.subTest(selection=selection):
+                value = json.loads(json.dumps(original))
+                if selection == 'missing':
+                    value.pop('selectedChecks')
+                else:
+                    value['selectedChecks'] = selection
+                self.write(receipt, value)
+                self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'incomplete-profile')
+                if selection in ('missing', None, 'correctness') or selection == [None]:
+                    with self.assertRaises(ValueError):
+                        session.active_workflow_steps(value, require_selected_checks=True)
+
     def test_binary_attachment_without_known_extension_does_not_block_cleanup(self):
         old = self.run_directory('old')
         attachment = self.root / 'docs/diagnostics/capture.data'

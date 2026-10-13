@@ -206,12 +206,13 @@
     {
       "id": "STATE-001",
       "family": "Snapshot and refresh authority",
-      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. Intermediate publication selections preserve capture; final stable selection and the exact caller raw-path set control discard authority.",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter.",
       "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content.",
       "sourcePaths": [
         "Classes/git/IndexRefreshCoordinator.swift",
         "Classes/Controllers/Staging*",
-        "Classes/Controllers/PBGitHistoryController*"
+        "Classes/Controllers/PBGitHistoryController*",
+        "Classes/Controllers/PBGitSidebarController.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -287,9 +288,33 @@
         },
         {
           "source": "GitXTests/StagingDiffPaneControllerTests.swift",
-          "identifier": "GitXTests/StagingDiffPaneControllerTests/testDiscardCaptureIgnoresIntermediatePublicationAndComparesItsFinalSelection",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testDiscardCaptureUsesFinalListCallbacksAcrossRefreshAndUserChanges",
           "role": "valid",
-          "oracle": "Hold actual capture across publication callbacks; an unchanged final selection succeeds, while a changed side, deselection, closure, or state message cancels."
+          "oracle": "Hold actual capture across real list callbacks in both layouts; unchanged refresh selection succeeds, while changed bytes, side, deselection, closure, or a state message cancels."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testStagingListCallbacksPublishCompleteSelectionsInBothLayouts",
+          "role": "boundary",
+          "oracle": "Refresh, filtering, sorting, layout changes and mixed sectioned selection publish complete selections; split exclusivity holds before each callback."
+        },
+        {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testDiscardCaptureCancelsWhenSelectionOrderChanges",
+          "role": "boundary",
+          "oracle": "Reordering the same byte paths and sides cancels the held capture."
+        },
+        {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testCloseCancelsPendingCoalescedRendering",
+          "role": "failure",
+          "oracle": "Close prevents a pending coalesced render from starting Git commands."
+        },
+        {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testFixtureCleanupDrainsRevalidationEnqueuedByEarlierMainCallbacks",
+          "role": "boundary",
+          "oracle": "Fixture deletion waits for validation enqueued by earlier main callbacks to complete on the writer."
         },
         {
           "source": "GitXTests/IndexMutationCoordinatorTests.swift",
@@ -302,6 +327,25 @@
           "identifier": "GitXTests/HistoryControllerTests/testImageReadsRejectAnEarlierRenderAndSurviveUnchangedSelectionUpdates",
           "role": "boundary",
           "oracle": "A real image lookup from an earlier render refuses bytes after refresh or deselection; an unchanged selection update preserves its read."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testExplicitBranchSelectionReturnsMountedContentToHistoryWithoutCheckout",
+          "role": "valid",
+          "oracle": "Explicit branch selection returns real mounted content to history while preserving checkout HEAD; the existing general reload behavior remains observable."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testWorktreeSnapshotRefreshPreservesMountedContentAndBranchSelection",
+          "role": "boundary",
+          "oracle": "A real sibling-worktree change publishes a snapshot while mounted content, viewed branch, selected branch, and checkout HEAD remain unchanged."
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testExactCheckoutFetchesOnlyApprovedRefAndSwitchesToNamedBranch",
+          "check": "ui",
+          "role": "valid",
+          "oracle": "The native inspector stays visible at cold launch; explicit confirmation fetches only the approved ref and switches to the named branch at the approved OID."
         }
       ]
     },
@@ -699,10 +743,12 @@
     {
       "id": "INTEROP-001",
       "family": "Debug and Release interoperability",
-      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations.",
-      "rootCause": "Conditional runtime/test surfaces or bridge annotations compile in Debug but fail in Release.",
+      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations; Objective-C-imported subclasses can execute controller callbacks without Swift-only virtual dispatch failures.",
+      "rootCause": "Conditional runtime/test surfaces or bridge annotations compile in Debug but fail in Release; new Swift-only virtual state accessors can have missing dispatch slots in Objective-C-imported subclasses.",
       "sourcePaths": [
         "Classes/*.h",
+        "Classes/Controllers/PBGitWindowController.swift",
+        "Classes/Controllers/PBGitWindowController+Worktrees.swift",
         "Classes/Util/PBTask*",
         "GitX.xcodeproj/project.pbxproj",
         "Resources/GitX.h",
@@ -716,6 +762,12 @@
         "release-contracts"
       ],
       "tests": [
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testRepairOfferThroughObjectiveCImportedSubclassKeepsWindowState",
+          "role": "compatibility",
+          "oracle": "Invoke the window delegate through an Objective-C-imported subclass and preserve both nil-window and loaded-window state without crashing or presenting a repair sheet."
+        },
         {
           "source": "GitXTests/GitXInteropContractTests.swift",
           "identifier": "GitXTests/GitXInteropContractTests/testRequiredObjectiveCRuntimeSelectorsRemainAvailable",

@@ -21,6 +21,48 @@ class WorkflowAttemptRegressionTests(unittest.TestCase):
     setUp = completion.WorkflowCompletionTests.setUp
     run_verification = completion.WorkflowCompletionTests.run_verification
 
+    def test_resume_resource_failures_preserve_live_attempt_progress(self):
+        self.commands.insert(1, ('core', ['fixture-core']))
+        self.assertEqual(self.run_verification((0,), 'correctness')[0], 0)
+        path = self.root / 'artifacts/verification/fixture/workflow.json'
+        original = json.loads(path.read_text())
+        for error in (session.ResourceBusy('/cache', {'runId': 'owner'}),
+                      session.ResourceDefinitionError('resource changed', 'resource-definition-changed')):
+            with self.subTest(error=type(error).__name__):
+                session.atomic_json(path, original)
+                args = workflow.parser().parse_args(['verify', '--resume', 'fixture'])
+                with mock.patch.object(session, 'supervise', side_effect=[0, error]):
+                    self.assertEqual(workflow.verify(args), 75 if isinstance(error, session.ResourceBusy) else 2)
+                value = json.loads(path.read_text())
+                self.assertEqual(value['status'], 'blocked')
+                self.assertEqual(len(value['resumeHistory']), 1)
+                self.assertEqual(value['reusedChecks'], ['correctness'])
+                self.assertEqual(value['executedChecks'], ['core'])
+                self.assertEqual([step['name'] for step in value['steps']], ['correctness', 'core'])
+                self.assertTrue(all(step['status'] == 'passed' for step in value['steps']))
+                self.assertEqual(value['problem'], str(error))
+
+    def test_resume_failure_retains_receipt_reread_after_waiting_for_ownership(self):
+        self.assertEqual(self.run_verification((9,), 'correctness')[0], 9)
+        path = self.root / 'artifacts/verification/fixture/workflow.json'
+        updated = json.loads(path.read_text())
+        updated['resumeHistory'] = [{'marker': 'prior owner finished while waiting'}]
+        updated['steps'].append({'name': 'historical', 'status': 'failed'})
+        held = session.Leases.return_value.__enter__.return_value
+        def acquire():
+            session.atomic_json(path, updated)
+            return held
+        session.Leases.return_value.__enter__.side_effect = acquire
+        args = workflow.parser().parse_args(['verify', '--resume', 'fixture'])
+        with mock.patch.object(session, 'supervise', side_effect=[0, session.ResourceBusy('/cache', {'runId': 'owner'})]):
+            self.assertEqual(workflow.verify(args), 75)
+        value = json.loads(path.read_text())
+        self.assertEqual(value['resumeHistory'][0], updated['resumeHistory'][0])
+        self.assertEqual(len(value['resumeHistory']), 2)
+        self.assertEqual(value['executedChecks'], ['correctness'])
+        self.assertEqual({step['name'] for step in value['steps']}, {'correctness', 'historical'})
+        self.assertEqual(next(step for step in value['steps'] if step['name'] == 'correctness')['status'], 'passed')
+
     def test_full_resume_retains_whitespace_and_rejects_duplicate_active_evidence(self):
         app = self.root / 'build/GitX.app'
         app.mkdir(parents=True)

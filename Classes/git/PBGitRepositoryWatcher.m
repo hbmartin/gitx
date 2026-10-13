@@ -68,12 +68,15 @@ static void PBGitRepositoryWatcherReleaseCallbackContext(const void *info)
 }
 
 @property (nonatomic, copy, readonly) NSString *gitDir;
+@property (nonatomic, copy, readonly) NSString *commonDir;
+@property (nonatomic, strong, readonly) PBRepositoryWatchPaths *watchPaths;
 @property (nonatomic, copy, readonly, nullable) NSString *workDir;
 @property (nonatomic, strong, readonly, nullable) GTRepository *statusRepository;
 
 @property (nonatomic, strong) NSMutableDictionary *statusCache;
 
 - (void)handleGitDirEventCallback:(NSArray *)eventPaths;
+- (void)handleCommonDirEventCallback:(NSArray<PBGitRepositoryWatcherEventPath *> *)eventPaths;
 - (void)handleWorkDirEventCallback:(NSArray *)eventPaths;
 
 @end
@@ -91,8 +94,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 	NSMutableArray *gitDirEvents = [NSMutableArray array];
 	NSMutableArray *workDirEvents = [NSMutableArray array];
-	NSString *gitDir = watcher.gitDir;
-	NSString *workDir = watcher.workDir;
+	NSMutableArray *commonDirEvents = [NSMutableArray array];
 	NSArray *eventPaths = (__bridge NSArray *)_eventPaths;
 	for (int i = 0; i < numEvents; ++i) {
 		NSString *path = [eventPaths objectAtIndex:i];
@@ -101,17 +103,24 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 		ep.flag = eventFlags[i];
 
 
-		if ([ep.path hasPrefix:gitDir]) {
-			// exclude all changes to .lock files
-			if ([ep.path hasSuffix:@".lock"]) {
-				continue;
-			}
-			[gitDirEvents addObject:ep];
-		} else if (workDir && [ep.path hasPrefix:workDir]) {
-			[workDirEvents addObject:ep];
+		switch ([watcher.watchPaths categoryForPath:ep.path]) {
+			case 1:
+				[gitDirEvents addObject:ep];
+				break;
+			case 2:
+				[commonDirEvents addObject:ep];
+				break;
+			case 3:
+				[workDirEvents addObject:ep];
+				break;
+			default:
+				break;
 		}
 	}
 
+	if (commonDirEvents.count) {
+		[watcher handleCommonDirEventCallback:commonDirEvents];
+	}
 	if (workDirEvents.count) {
 		[watcher handleWorkDirEventCallback:workDirEvents];
 	}
@@ -136,6 +145,9 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 	GTRepository *sharedRepository = theRepository.gtRepo;
 	_gitDir = [sharedRepository.gitDirectoryURL.path stringByStandardizingPath];
 	_workDir = !sharedRepository.isBare ? [sharedRepository.fileURL.path stringByStandardizingPath] : nil;
+	_commonDir = [PBRepositoryWorktreeService commonDirectoryForGitDirectory:_gitDir];
+	_watchPaths = [[PBRepositoryWatchPaths alloc] initWithGitDirectory:_gitDir commonDirectory:_commonDir workingDirectory:_workDir];
+	NSLog(@"Watching checkout Git directory %@ and common Git directory %@", _gitDir, _commonDir);
 	NSError *statusRepositoryError = nil;
 	NSURL *statusRepositoryURL = sharedRepository.isBare ? sharedRepository.gitDirectoryURL : sharedRepository.fileURL;
 	_statusRepository = [GTRepository repositoryWithURL:statusRepositoryURL error:&statusRepositoryError];
@@ -268,6 +280,14 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 	}
 }
 
+- (void)handleCommonDirEventCallback:(NSArray<PBGitRepositoryWatcherEventPath *> *)eventPaths
+{
+	NSMutableArray<NSString *> *paths = [NSMutableArray array];
+	for (PBGitRepositoryWatcherEventPath *eventPath in eventPaths) [paths addObject:eventPath.path];
+	NSLog(@"Shared repository events: %@", paths);
+	[refreshCoordinator recordEventType:PBGitRepositoryWatcherEventTypeGitDirectory paths:paths];
+}
+
 - (void)handleWorkDirEventCallback:(NSArray *)eventPaths
 {
 	PBGitRepositoryWatcherEventType event = 0x0;
@@ -324,6 +344,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 	NSMutableArray *array = [NSMutableArray array];
 	if (self.gitDir) [array addObject:self.gitDir];
 	if (self.workDir) [array addObject:self.workDir];
+	if (self.commonDir && ![array containsObject:self.commonDir]) [array addObject:self.commonDir];
 
 	if (!array.count) return;
 

@@ -1064,6 +1064,90 @@ class ScriptEntrypointTests(unittest.TestCase):
             self.assertTrue(any(flag in argument for argument in
                                 self.receipt("compiler-flags")["invocation"]["arguments"]))
 
+    def capture_forge_test_environment(self) -> pathlib.Path:
+        self.install_mock_xcodebuild(self.root / "Products")
+        captured = self.root / "forge-test-environment.jsonl"
+        self.environment["CAPTURED_FORGE_ENVIRONMENT"] = str(captured)
+        mock = self.developer_directory / "usr/bin/xcodebuild"
+        mock.write_text(mock.read_text() + '''
+if [[ " $* " == *" test-without-building "* ]]; then
+python3 - "$@" <<'PY'
+import json, os, pathlib, sys
+arguments = sys.argv[1:]
+record = {"plan": arguments[arguments.index("-testPlan") + 1],
+          "root": os.environ.get("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT")}
+with pathlib.Path(os.environ["CAPTURED_FORGE_ENVIRONMENT"]).open("a") as output:
+    output.write(json.dumps(record) + "\\n")
+PY
+fi
+''')
+        return captured
+
+    def test_native_verification_preserves_explicit_forwarded_forge_store(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.capture_forge_test_environment()
+        selected = self.root / "Caller Forge Store"
+        self.environment["TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT"] = str(selected)
+        for name, arguments in (("preset", ["test", "correctness", "-only-testing:GitXTests/ExampleTests"]),
+                                ("raw", ["raw", "--", "test", "-testPlan", "GitX"])):
+            with self.subTest(entrypoint=name):
+                result = subprocess.run([script, "--run-id", f"explicit-forge-{name}", *arguments],
+                                        capture_output=True, text=True, env=self.environment)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line) for line in captured.read_text().splitlines()]
+        self.assertEqual([record["plan"] for record in records], ["GitXHostPreflight", "GitX"] * 2)
+        self.assertTrue(all(record["root"] == str(selected) for record in records))
+
+    def test_native_verification_defaults_to_distinct_run_owned_forge_stores(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.capture_forge_test_environment()
+        for key in ("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT", "GITX_UITEST_FORGE_STORAGE_ROOT"):
+            self.environment.pop(key, None)
+        for name, arguments in (("preset", ["test", "correctness", "-only-testing:GitXTests/ExampleTests"]),
+                                ("raw", ["raw", "--", "test", "-testPlan", "GitX"])):
+            with self.subTest(entrypoint=name):
+                result = subprocess.run([script, "--run-id", f"isolated-forge-{name}", *arguments],
+                                        capture_output=True, text=True, env=self.environment)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line) for line in captured.read_text().splitlines()]
+        self.assertEqual([record["plan"] for record in records], ["GitXHostPreflight", "GitX"] * 2)
+        for record, name in zip(records, ("preset", "preset", "raw", "raw")):
+            expected = self.root / "build/Fixtures" / f"isolated-forge-{name}" / "Forge"
+            self.assertEqual(record["root"], str(expected))
+            self.assertTrue(expected.is_dir())
+            self.assertFalse((self.root / "artifacts/verification" / f"isolated-forge-{name}" / "Fixtures").exists())
+
+    def test_native_verification_forwards_an_explicit_application_forge_store(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.capture_forge_test_environment()
+        selected = self.root / "Application Forge Store"
+        self.environment.pop("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT", None)
+        self.environment["GITX_UITEST_FORGE_STORAGE_ROOT"] = str(selected)
+        result = subprocess.run([script, "--run-id", "application-forge-store", "test", "correctness",
+                                 "-only-testing:GitXTests/ExampleTests"],
+                                capture_output=True, text=True, env=self.environment)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line) for line in captured.read_text().splitlines()]
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(record["root"] == str(selected) for record in records))
+
+    def test_native_verification_rejects_relative_forge_stores_before_execution(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.capture_forge_test_environment()
+        for key in ("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT", "GITX_UITEST_FORGE_STORAGE_ROOT"):
+            environment = self.environment.copy()
+            for setting in ("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT", "GITX_UITEST_FORGE_STORAGE_ROOT"):
+                environment.pop(setting, None)
+            environment[key] = "relative-forge"
+            with self.subTest(setting=key):
+                result = subprocess.run([script, "--run-id", f"invalid-forge-{key.lower()}", "test", "correctness",
+                                         "-only-testing:GitXTests/ExampleTests"],
+                                        capture_output=True, text=True, env=environment)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("Test Forge storage root must be absolute", result.stderr)
+        self.assertFalse(captured.exists())
+        self.assertFalse((self.root / "relative-forge").exists())
+
     def test_correctness_records_atomic_counters_for_all_compilation_entrypoints(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")

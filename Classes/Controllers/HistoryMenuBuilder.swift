@@ -1,4 +1,5 @@
 import AppKit
+import GitXCore
 import OSLog // swiftlint:disable:this unused_import
 
 // SwiftLint's analyzer cannot see these entry points through GitX-Swift.h.
@@ -49,6 +50,7 @@ final class HistoryMenuBuilder: NSObject {
             return stashItems(ref)
         }
 
+        let worktree = worktreeService.worktree(forBranch: ref.ref)
         let refName = ref.shortName()
         let headRef = repository.headRef()?.ref()
         let headName = headRef?.shortName() ?? "HEAD"
@@ -62,13 +64,24 @@ final class HistoryMenuBuilder: NSObject {
         var items: [NSMenuItem] = []
 
         if !remoteOnly {
-            items.append(item("Checkout “\(refName)”", action: #selector(PBGitWindowController.checkout(_:)), enabled: !isHead))
+            if let worktree {
+                items.append(worktreeItem("Open Worktree of Branch “\(refName)”", action: #selector(PBGitWindowController.openWorktree(_:)), worktree: worktree, enabled: worktreeService.isSupported))
+            } else {
+                items.append(item("Checkout “\(refName)”", action: #selector(PBGitWindowController.checkout(_:)), enabled: !isHead))
+            }
             if ref.isBranch || ref.isRemoteBranch {
                 let copyBranchName = item("Copy Branch Name", action: #selector(copyBranchName(_:)))
                 copyBranchName.target = self
                 items.append(copyBranchName)
             }
             items.append(.separator())
+            if let worktree {
+                items += worktreeFolderItems(worktree) + [.separator()]
+            } else if ref.isBranch {
+                let create = worktreeItem("Checkout “\(refName)” in New Worktree…", action: #selector(PBGitWindowController.checkOutInNewWorktree(_:)), enabled: worktreeService.isSupported && !isHead, reason: "This branch is checked out here. Git checks a branch out in one worktree at a time.")
+                create.representedObject = ref
+                items += [create, .separator()]
+            }
             let branchTitle = ref.isRemoteBranch ? "Create Branch tracking “\(refName)”…" : "Create Branch…"
             items += [item(branchTitle, action: #selector(PBGitWindowController.createBranch(_:))), item("Create Tag…", action: #selector(PBGitWindowController.createTag(_:)))]
             if ref.isTag {
@@ -108,7 +121,9 @@ final class HistoryMenuBuilder: NSObject {
         }
 
         items.append(.separator())
-        if !(detached || isHead || ref.ref.hasPrefix("refs/stash")) {
+        if let worktree {
+            items.append(removeWorktreeItem(worktree))
+        } else if !(detached || isHead || ref.ref.hasPrefix("refs/stash")) {
             let title = ReferenceActionPolicy.deletionMenuTitle(refName: refName, isRemote: ref.isRemote)
             items.append(item(title, action: #selector(PBGitWindowController.deleteRef(_:))))
         }
@@ -176,3 +191,53 @@ final class HistoryMenuBuilder: NSObject {
 }
 
 // swiftlint:enable unused_declaration
+
+extension HistoryMenuBuilder {
+    private var worktreeService: PBRepositoryWorktreeService {
+        repository.worktreeService
+    }
+
+    private func worktreeItem(_ title: String, action: Selector, worktree: PBGitWorktree? = nil, enabled: Bool, reason: String? = nil) -> NSMenuItem {
+        let menu = item(title, action: action, enabled: enabled)
+        menu.representedObject = worktree
+        menu.toolTip = enabled ? worktree?.path : (worktreeService.isSupported ? reason : worktreeService.explanation)
+        return menu
+    }
+
+    private func worktreeFolderItems(_ worktree: PBGitWorktree) -> [NSMenuItem] {
+        let eligibility = WorktreeEligibility(worktree.value, supported: worktreeService.isSupported)
+        let folder: NSMenuItem
+        if worktree.hasBrokenLink {
+            folder = worktreeItem("Repair Worktree Links…", action: #selector(PBGitWindowController.repairWorktreeLinks(_:)), worktree: worktree, enabled: worktreeService.isSupported)
+        } else if worktree.value.folderExists {
+            folder = worktreeItem("Reveal Worktree in Finder", action: #selector(PBGitWindowController.revealWorktreeInFinder(_:)), worktree: worktree, enabled: eligibility.canReveal)
+        } else {
+            folder = worktreeItem("Locate Worktree Folder…", action: #selector(PBGitWindowController.locateWorktreeFolder(_:)), worktree: worktree, enabled: eligibility.canLocate)
+        }
+        let lock = worktree.isLocked && !worktree.isMain
+            ? worktreeItem("Unlock Worktree", action: #selector(PBGitWindowController.unlockWorktree(_:)), worktree: worktree, enabled: eligibility.canUnlock)
+            : worktreeItem("Lock Worktree…", action: #selector(PBGitWindowController.lockWorktree(_:)), worktree: worktree, enabled: eligibility.canLock, reason: "Git cannot lock the main worktree.")
+        return [folder, lock]
+    }
+
+    private func removeWorktreeItem(_ worktree: PBGitWorktree) -> NSMenuItem {
+        let reason = worktree.isMain ? "Git never removes the main worktree." : "Locked\(worktree.lockReason.map { ": \($0)" } ?? ""). Unlock it first."
+        return worktreeItem("Remove Worktree…", action: #selector(PBGitWindowController.removeWorktree(_:)), worktree: worktree,
+                            enabled: WorktreeEligibility(worktree.value, supported: worktreeService.isSupported).canRemove, reason: reason)
+    }
+
+    @objc(menuItemsForWorktree:)
+    func menuItems(forWorktree worktree: PBGitWorktree) -> [NSMenuItem] {
+        [worktreeItem("Open Worktree", action: #selector(PBGitWindowController.openWorktree(_:)), worktree: worktree,
+                      enabled: WorktreeEligibility(worktree.value, supported: worktreeService.isSupported).canOpen), .separator()]
+            + worktreeFolderItems(worktree) + [.separator(), removeWorktreeItem(worktree)]
+    }
+
+    @objc(menuItemsForWorktreeGroup)
+    func menuItemsForWorktreeGroup() -> [NSMenuItem] {
+        [worktreeItem("Add Worktree…", action: #selector(PBGitWindowController.addWorktree(_:)), enabled: worktreeService.isSupported),
+         worktreeItem("Prune Worktrees…", action: #selector(PBGitWindowController.pruneWorktrees(_:)),
+                      enabled: WorktreeEligibility.canPrune(worktreeService.worktrees.map(\.value), supported: worktreeService.isSupported),
+                      reason: worktreeService.worktrees.contains { $0.movedPath != nil } ? "Repair the worktree links first; these worktrees moved with the repository." : "Every worktree still has its folder.")]
+    }
+}
