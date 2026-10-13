@@ -1570,18 +1570,20 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	self.remoteRef = [PBGitRef refFromString:@"refs/remotes/origin"];
 	self.tagRef = [self.repository refForName:@"v1"];
 	self.repository.trackingRef = self.remoteBranchRef;
-	NSDate *historyDeadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
-	while (self.repository.revisionList.commits.count == 0 && historyDeadline.timeIntervalSinceNow > 0) {
-		[self pumpRunLoopFor:0.02];
-	}
 	GTOID *headOID = self.repository.headOID;
-	for (PBGitCommit *commit in self.repository.revisionList.commits) {
-		if ([commit.OID isEqual:headOID]) {
-			self.headCommit = commit;
-			break;
+	// Instrumented Git children can outlast five seconds; wait for the required commit, not an initial publication.
+	NSTimeInterval historyDeadline = NSProcessInfo.processInfo.systemUptime + 30.0;
+	while (!self.headCommit && NSProcessInfo.processInfo.systemUptime < historyDeadline) {
+		for (PBGitCommit *commit in self.repository.revisionList.commits) {
+			if ([commit.OID isEqual:headOID]) {
+				self.headCommit = commit;
+				break;
+			}
 		}
+		if (!self.headCommit) [self pumpRunLoopFor:0.02];
 	}
-	XCTAssertNotNil(self.headCommit);
+	XCTAssertNotNil(self.headCommit, @"Fixture history did not publish HEAD %@ at %@ (commits: %lu)",
+					headOID, self.repositoryURL.path, (unsigned long)self.repository.revisionList.commits.count);
 	self.stash = self.repository.stashes.firstObject;
 	self.controller = [[PBWindowControllerSpy alloc] initWithRepository:self.repository];
 
