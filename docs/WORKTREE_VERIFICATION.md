@@ -104,6 +104,23 @@ Initial new-file measurements from that complete run:
 
 The converted sidebar cell retains its existing 100% floor (39/39 lines).
 
+## Complete coverage ratchet for the combined branch
+
+Verified run ID: workflow-pr87-complete-correctness-3
+
+At policy-admission commit `23ff2c02`, all 1,775 tests pass, with no skipped
+tests or host restart. The complete correctness receipt records valid evidence
+and passes every coverage gate. The strict receipt-backed ratchet and a second
+plain coverage check both pass, raising the app floor from 92.75% to 92.88% and
+12 implementation-file floors without lowering any existing floor.
+
+The staging file list rises from 94.25% to 95.26%; its diff pane reaches 97.19%.
+The selection model, index writer, mutation coordinator and converted sidebar
+cell retain 100%. The revision cell rises from 81.96% to 97.36%, repository
+facade from 95.85% to 96.24%, and repository watcher from 97.51% to 97.67%.
+The subsequent baseline commit changes verification inputs, so final delivery
+requires the full profile at that new commit.
+
 Fresh target-window UI screenshots are exported under
 `artifacts/diagnostics/worktree-ui-green/`; AppKit lifecycle sheet attachments
 remain in the native result bundles. These are diagnostic attachments, without
