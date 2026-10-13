@@ -67,6 +67,18 @@ move into Swift.
 - `workflow-fff3c2b7a41e`: canonical static checks pass, including pinned
   SwiftFormat/SwiftLint, architecture and header boundaries, resources and all
   579 verification-script tests.
+- `workflow-pr87-complete-correctness-1`: the unfiltered run executed 1,772 tests,
+  exposing a null Swift virtual getter call in a queued worktree repair callback
+  on an Objective-C-imported window-controller subclass. The runner attributed
+  that crash to the active Raycast test. Its coverage remains diagnostic only.
+- `workflow-0945abaeab9f`: 97 focused tests pass after making the internal repair
+  state final, including a direct subclass delegate regression, the complete
+  Swift feature class, held-history-label dispatch, sidebar menus and cache/path
+  lookup boundaries. Existing staging layout actions also pass their new
+  selection and menu-state characterization.
+- `workflow-db02b2b9aab8`: both accessibility journeys and activation preflight
+  pass with an explicit front-window assertion for activating an existing
+  checkout.
 
 Fresh target-window UI screenshots are exported under
 `artifacts/diagnostics/worktree-ui-green/`; AppKit lifecycle sheet attachments

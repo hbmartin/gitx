@@ -45,7 +45,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @IBOutlet private weak var jumpToCheckedOutBranchButton: NSButton?
 
     private var worktreeObservations: [NSKeyValueObservation] = []
-    var offeredWorktreeRepair = false
+    /// Objective-C-imported subclasses cannot dispatch new Swift-only virtual accessors.
+    final var offeredWorktreeRepair = false
 
     @objc public convenience init() {
         self.init(windowNibName: "RepositoryWindow")

@@ -723,10 +723,12 @@
     {
       "id": "INTEROP-001",
       "family": "Debug and Release interoperability",
-      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations.",
-      "rootCause": "Conditional runtime/test surfaces or bridge annotations compile in Debug but fail in Release.",
+      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations; Objective-C-imported subclasses can execute controller callbacks without Swift-only virtual dispatch failures.",
+      "rootCause": "Conditional runtime/test surfaces or bridge annotations compile in Debug but fail in Release; new Swift-only virtual state accessors can have missing dispatch slots in Objective-C-imported subclasses.",
       "sourcePaths": [
         "Classes/*.h",
+        "Classes/Controllers/PBGitWindowController.swift",
+        "Classes/Controllers/PBGitWindowController+Worktrees.swift",
         "Classes/Util/PBTask*",
         "GitX.xcodeproj/project.pbxproj",
         "Resources/GitX.h",
@@ -740,6 +742,12 @@
         "release-contracts"
       ],
       "tests": [
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testRepairOfferThroughObjectiveCImportedSubclassKeepsWindowState",
+          "role": "compatibility",
+          "oracle": "Invoke the window delegate through an Objective-C-imported subclass and preserve both nil-window and loaded-window state without crashing or presenting a repair sheet."
+        },
         {
           "source": "GitXTests/GitXInteropContractTests.swift",
           "identifier": "GitXTests/GitXInteropContractTests/testRequiredObjectiveCRuntimeSelectorsRemainAvailable",

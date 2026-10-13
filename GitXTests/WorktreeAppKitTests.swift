@@ -4,6 +4,19 @@ import XCTest
 
 @MainActor
 final class WorktreeAppKitTests: XCTestCase {
+    func testRepairOfferThroughObjectiveCImportedSubclassKeepsWindowState() {
+        let controller = RepairWindowControllerFixture(window: nil)
+        let initiallyLoaded = controller.isWindowLoaded
+        _ = controller.perform(NSSelectorFromString("windowDidBecomeMain:"), with: Notification(name: NSWindow.didBecomeMainNotification))
+        XCTAssertEqual(controller.isWindowLoaded, initiallyLoaded)
+        XCTAssertNil(controller.window)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: .titled, backing: .buffered, defer: false)
+        let loaded = RepairWindowControllerFixture(window: window)
+        _ = loaded.perform(NSSelectorFromString("windowDidBecomeMain:"), with: Notification(name: NSWindow.didBecomeMainNotification, object: window))
+        XCTAssertTrue(loaded.window === window)
+        XCTAssertNil(window.attachedSheet)
+    }
+
     func testLifecycleUsesGitProtectsLockedWorktreeAndKeepsBranch() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -58,6 +71,17 @@ final class WorktreeAppKitTests: XCTestCase {
         let item = try XCTUnwrap(group.sortedChildren.first as? PBSourceViewGitWorktreeItem)
         XCTAssertEqual(item.title, "topic")
         XCTAssertTrue(outline.isItemExpanded(group))
+        XCTAssertEqual(repository.worktrees.count, service.worktrees.count)
+        XCTAssertEqual(repository.path(ofWorktreeHolding: PBGitRef(string: "refs/heads/topic")), service.worktree(forBranch: "refs/heads/topic")?.path)
+        XCTAssertNil(repository.path(ofWorktreeHolding: nil))
+        XCTAssertNil(repository.path(ofWorktreeHolding: PBGitRef(string: "refs/heads/main")))
+        let groupMenu = sidebar.menu(forRow: outline.row(forItem: group))
+        XCTAssertEqual(groupMenu.items.map(\.title), ["Add Worktree…", "Prune Worktrees…"])
+        XCTAssertTrue(groupMenu.items[0].isEnabled)
+        XCTAssertFalse(groupMenu.items[1].isEnabled)
+        XCTAssertTrue(groupMenu.items[1].toolTip?.contains("Every worktree") ?? false)
+        let worktreeMenu = sidebar.menu(forRow: outline.row(forItem: item))
+        XCTAssertEqual(worktreeMenu.items.first?.title, "Open Worktree")
         let rowCell = try XCTUnwrap(outline.view(atColumn: 0, row: outline.row(forItem: item), makeIfNecessary: true) as? NSTableCellView)
         XCTAssertEqual(rowCell.textField?.accessibilityIdentifier(), "RepositoryWorktreeItem")
         XCTAssertTrue(rowCell.textField?.accessibilityHelp()?.contains(item.worktree.path) ?? false)
@@ -65,6 +89,9 @@ final class WorktreeAppKitTests: XCTestCase {
         let head = try fixture.git(["rev-parse", "HEAD"])
         outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: item)), byExtendingSelection: false)
         sidebar.outlineViewSelectionDidChange(Notification(name: NSOutlineView.selectionDidChangeNotification))
+        let actions = NSMenu()
+        sidebar.menuNeedsUpdate(actions)
+        XCTAssertEqual(actions.items.map(\.title), worktreeMenu.items.map(\.title))
         XCTAssertEqual(repository.currentBranch?.simpleRef(), "refs/heads/topic")
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
         _ = try fixture.git(["checkout", "-b", "renamed"], in: fixture.linked)
@@ -264,6 +291,8 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         XCTAssertTrue(service.worktrees.contains { $0.hasBrokenLink })
         XCTAssertNotNil(service.worktree(forBranch: "refs/heads/nested")?.movedPath)
+        let repairMenu = try PBHistoryMenuBuilder(repository: repository).menuItems(forWorktree: XCTUnwrap(service.worktree(forBranch: "refs/heads/nested")))
+        XCTAssertTrue(repairMenu.contains { $0.title == "Repair Worktree Links…" && $0.isEnabled })
         let controller = PBGitWindowController(); controller.repository = repository; controller.showWindow(nil)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
@@ -391,7 +420,12 @@ final class WorktreeAppKitTests: XCTestCase {
         controller.checkOutInNewWorktree(item)
         XCTAssertNil(window.attachedSheet)
         try FileManager.default.removeItem(at: fixture.linked)
+        service.refresh()
+        await waitUntil { service.worktree(forBranch: "refs/heads/feature/topic")?.folderExists == false }
         item.representedObject = try XCTUnwrap(service.worktree(forBranch: "refs/heads/feature/topic"))
+        let locateMenu = try PBHistoryMenuBuilder(repository: repository).menuItems(forWorktree: XCTUnwrap(service.worktree(forBranch: "refs/heads/feature/topic")))
+        XCTAssertTrue(locateMenu.contains { $0.title == "Locate Worktree Folder…" && $0.isEnabled })
+        XCTAssertTrue(locateMenu.first?.isEnabled ?? false, "Opening an unavailable worktree offers its locate flow")
         controller.openWorktree(item)
         sheet = try await waitForSheet(in: window, containing: "Locate Folder…")
         window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
@@ -420,7 +454,18 @@ final class WorktreeAppKitTests: XCTestCase {
         var opened: PBGitRepositoryDocument?
         defer { opened?.close(); controller.close(); service.cancel() }
         let item = NSMenuItem(); item.representedObject = PBGitRef(string: "refs/heads/topic")
-        controller.openWorktree(item)
+        repository.currentBranch = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/topic"))
+        await waitUntil { controller.historyViewController?.view.window === controller.window }
+        let history = try XCTUnwrap(controller.historyViewController)
+        let topicSHA = topicHead.trimmingCharacters(in: .whitespacesAndNewlines)
+        await waitUntil { (history.commitController.arrangedObjects as? [PBGitCommit])?.contains { $0.sha == topicSHA && ($0.refs?.count ?? 0) > 0 } == true }
+        let commits = try XCTUnwrap(history.commitController.arrangedObjects as? [PBGitCommit])
+        let row = try XCTUnwrap(commits.firstIndex { $0.sha == topicSHA })
+        let referenceIndex = try XCTUnwrap((commits[row].refs ?? NSMutableArray()).compactMap { $0 as? PBGitRef }.firstIndex { $0.ref == "refs/heads/topic" })
+        let table = WorktreeCommitListFake(frame: NSRect(x: 0, y: 0, width: 300, height: 20))
+        table.testRow = row; table.revisionCell.referenceIndex = Int32(referenceIndex)
+        let interactions = try XCTUnwrap(history.commitList.delegate as? PBHistoryTableInteractionCoordinator)
+        interactions.didDoubleClickCommitList(table)
         await waitUntil {
             opened = NSDocumentController.shared.documents.compactMap { $0 as? PBGitRepositoryDocument }.first {
                 $0.repository.workingDirectoryURL()?.resolvingSymlinksInPath() == fixture.linked.resolvingSymlinksInPath()
@@ -433,6 +478,12 @@ final class WorktreeAppKitTests: XCTestCase {
         try attachScreenshot(of: openedWindow, named: "Worktrees-Held-Branch-Opened-Document")
         item.representedObject = service.worktree(forBranch: "refs/heads/topic")
         controller.openWorktree(item)
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let group = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "WORKTREES" })
+        let rowItem = try XCTUnwrap(group.sortedChildren.first as? PBSourceViewGitWorktreeItem)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: rowItem)), byExtendingSelection: false)
+        sidebar.doubleClicked(sidebar)
         await Task.yield()
         XCTAssertEqual(NSDocumentController.shared.documents.filter { $0 === document }.count, 1)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
@@ -482,6 +533,41 @@ final class WorktreeAppKitTests: XCTestCase {
         case .pruneReport: _ = try await service.pruneWorktrees(reportOnly: true)
         case .prune: _ = try await service.pruneWorktrees(reportOnly: false)
         case .repairLinks, .repairMoved: XCTFail("Use the typed repair API")
+        }
+    }
+
+    private final class RepairWindowControllerFixture: PBGitWindowController {}
+
+    private final class WorktreeReferenceCellFake: NSTableCellView {
+        var referenceIndex: Int32 = -1
+        @objc(indexAtX:)
+        // swiftlint:disable:next unused_declaration
+        func index(atX _: CGFloat) -> Int32 {
+            referenceIndex
+        }
+    }
+
+    private final class WorktreeCommitListFake: NSTableView {
+        var testRow = 0
+        let revisionCell = WorktreeReferenceCellFake()
+        @objc var mouseDownPoint: NSPoint {
+            NSPoint(x: 5, y: 5)
+        }
+
+        override func row(at _: NSPoint) -> Int {
+            testRow
+        }
+
+        override func column(at _: NSPoint) -> Int {
+            0
+        }
+
+        override func view(atColumn _: Int, row _: Int, makeIfNecessary _: Bool) -> NSView? {
+            revisionCell
+        }
+
+        override func frameOfCell(atColumn _: Int, row _: Int) -> NSRect {
+            NSRect(x: 0, y: 0, width: 300, height: 20)
         }
     }
 

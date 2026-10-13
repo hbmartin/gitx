@@ -46,6 +46,8 @@ final class WorktreeWorkflowUITests: XCTestCase, @unchecked Sendable {
         topic.rightClick()
         let open = app.menuItems["Open Worktree"]
         XCTAssertTrue(open.waitForExistence(timeout: 5)); open.click()
+        let activated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "title CONTAINS %@", linked.lastPathComponent), object: app.windows.firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 5), .completed)
         XCTAssertEqual(app.windows.count, 2)
         XCTAssertEqual(try workspace.git(["rev-parse", "HEAD"], in: main), mainHead)
         XCTAssertEqual(try workspace.git(["rev-parse", "HEAD"], in: linked), linkedHead)
