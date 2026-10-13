@@ -79,6 +79,30 @@ move into Swift.
 - `workflow-db02b2b9aab8`: both accessibility journeys and activation preflight
   pass with an explicit front-window assertion for activating an existing
   checkout.
+- `2a072cf7` and `workflow-92bd5a74e5f0`: successful folder-sheet completions
+  create an existing branch at its own commit and a new branch at the checkout's
+  actual HEAD while browsing the other branch. Both preserve the original HEAD
+  and viewed history. The AppKit test uses the configured panel's public URL and
+  sheet completion; directly invoking its remote OK action aborts inside the
+  asynchronous XCTest runner on this host.
+- `workflow-pr87-complete-correctness-2`: all 1,775 tests pass without a host
+  restart. Every existing coverage floor passes, with aggregate app coverage
+  70,906/76,341 lines (92.88%). The coverage gate reports only the five new files
+  awaiting initial policy admission. This complete measurement establishes
+  their initial floors; existing floors are retained until a fresh, enforced
+  passing receipt permits a ratchet.
+
+Initial new-file measurements from that complete run:
+
+| Implementation | Covered / executable lines | Initial floor |
+| --- | ---: | ---: |
+| Window worktree extension | 341 / 379 | 89.97% |
+| History reference colors | 17 / 17 | 100% |
+| Worktree sidebar item | 12 / 12 | 100% |
+| Repository watch paths | 49 / 50 | 98% |
+| Repository worktree service | 549 / 592 | 92.73% |
+
+The converted sidebar cell retains its existing 100% floor (39/39 lines).
 
 Fresh target-window UI screenshots are exported under
 `artifacts/diagnostics/worktree-ui-green/`; AppKit lifecycle sheet attachments

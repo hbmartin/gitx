@@ -41,6 +41,7 @@
     "Classes/Controllers/PBGitSidebarController.swift": 0.9978,
     "Classes/Controllers/PBGitWindowController+Dialogs.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
+    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.8997,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
     "Classes/Controllers/PBHistorySearchController.m": 0.9285,
     "Classes/Controllers/PBHistorySearchMode.m": 0.8333,
@@ -143,6 +144,7 @@
     "Classes/Views/PBCreateTagSheet.m": 0.0,
     "Classes/Views/PBFileChangesTableView.swift": 0.9318,
     "Classes/Views/PBGitGradientBarView.m": 0.8571,
+    "Classes/Views/PBGitRefLabelColors.swift": 1.0,
     "Classes/Views/PBGitRevisionCell.m": 0.8196,
     "Classes/Views/PBGitRevisionRow.m": 0.8684,
     "Classes/Views/PBGitXMessageSheet.m": 1.0,
@@ -153,6 +155,7 @@
     "Classes/Views/PBRemoteProgressSheet.m": 0.0,
     "Classes/Views/PBSidebarTableViewCell.swift": 1.0,
     "Classes/Views/PBSourceViewBadge.swift": 1.0,
+    "Classes/Views/PBSourceViewGitWorktreeItem.swift": 1.0,
     "Classes/Views/PBSourceViewItem.m": 0.899,
     "Classes/Views/PushOutputExportCoordinator.swift": 0.9651,
     "Classes/Views/QuickLookFilePromiseExporter.swift": 0.9365,
@@ -206,6 +209,8 @@
     "Classes/git/RepositoryRefreshCoordinator.swift": 0.9948,
     "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
+    "Classes/git/RepositoryWatchPaths.swift": 0.98,
+    "Classes/git/RepositoryWorktreeService.swift": 0.9273,
     "Classes/main.m": 1.0
   },
   "groups": {
