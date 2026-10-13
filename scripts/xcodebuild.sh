@@ -534,8 +534,10 @@ ensure_probe_option() {
 configure_test_forge_storage() {
 	# App-hosted XCTest starts the default application composition too. Forward
 	# the existing fixture setting so verification never reads the live account
-	# store; keep this per run and preserve explicit caller-selected test stores.
-	local forge_test_root="${TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT:-${GITX_UITEST_FORGE_STORAGE_ROOT:-$run_dir/Fixtures/Forge}}"
+	# store. Keep run-owned fixtures beside the established compilation cache:
+	# the source checkout and its receipt directory may be on an external volume.
+	# Preserve explicit caller-selected test stores.
+	local forge_test_root="${TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT:-${GITX_UITEST_FORGE_STORAGE_ROOT:-${derived_data%/*}/Fixtures/$run_id/Forge}}"
 	[[ "$forge_test_root" == /* ]] || { echo "Test Forge storage root must be absolute: $forge_test_root" >&2; return 2; }
 	mkdir -p "$forge_test_root" || return $?
 	export TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT="$forge_test_root"

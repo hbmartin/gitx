@@ -1112,9 +1112,10 @@ fi
         records = [json.loads(line) for line in captured.read_text().splitlines()]
         self.assertEqual([record["plan"] for record in records], ["GitXHostPreflight", "GitX"] * 2)
         for record, name in zip(records, ("preset", "preset", "raw", "raw")):
-            expected = self.root / "artifacts/verification" / f"isolated-forge-{name}" / "Fixtures/Forge"
+            expected = self.root / "build/Fixtures" / f"isolated-forge-{name}" / "Forge"
             self.assertEqual(record["root"], str(expected))
             self.assertTrue(expected.is_dir())
+            self.assertFalse((self.root / "artifacts/verification" / f"isolated-forge-{name}" / "Fixtures").exists())
 
     def test_native_verification_forwards_an_explicit_application_forge_store(self) -> None:
         script = self.install_script("xcodebuild.sh")
