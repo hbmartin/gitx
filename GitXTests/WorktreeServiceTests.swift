@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import XCTest
 
 // swift6-safety-justification: The lock protects every callback, output, and cancellation access, including delivery from the discovery queue.

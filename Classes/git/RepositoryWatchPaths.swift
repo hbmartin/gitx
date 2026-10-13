@@ -3,8 +3,9 @@ import GitXCore
 
 /// FSEvents remains Objective-C wiring. This value decides which checkout
 /// owns a path and prevents sibling indexes from changing local status.
+/// PBGitRepositoryWatcher.m constructs this class through GitX-Swift.h.
 @objc(PBRepositoryWatchPaths)
-final nonisolated class RepositoryWatchPaths: NSObject {
+final nonisolated class RepositoryWatchPaths: NSObject { // swiftlint:disable:this unused_declaration
     private let gitDirectory: String
     private let commonDirectory: String
     private let workingDirectory: String?
@@ -18,8 +19,9 @@ final nonisolated class RepositoryWatchPaths: NSObject {
     }
 
     /// 1 = this checkout's Git data, 2 = shared Git data, 3 = local working data.
+    /// The Objective-C FSEvents callback invokes categoryForPath:.
     @objc(categoryForPath:)
-    func category(for path: String) -> Int {
+    func category(for path: String) -> Int { // swiftlint:disable:this unused_declaration
         if WorktreePaths.contains(path, in: commonDirectory) {
             let relative = String(path.dropFirst(commonDirectory.count + 1))
             if relative.hasPrefix("worktrees/") && !WorktreePaths.contains(path, in: gitDirectory) {
