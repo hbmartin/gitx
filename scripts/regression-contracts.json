@@ -343,6 +343,7 @@
         {
           "source": "GitXUITests/Milestone2WorkflowUITests.swift",
           "identifier": "GitXUITests/Milestone2WorkflowUITests/testExactCheckoutFetchesOnlyApprovedRefAndSwitchesToNamedBranch",
+          "check": "ui",
           "role": "valid",
           "oracle": "The native inspector stays visible at cold launch; explicit confirmation fetches only the approved ref and switches to the named branch at the approved OID."
         }
