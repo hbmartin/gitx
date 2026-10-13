@@ -54,6 +54,43 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
     }
 
+    func testWorktreeSnapshotRefreshPreservesMountedContentAndBranchSelection() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let window = PBGitWindowController()
+        window.repository = repository
+        window.showWindow(nil)
+        defer { window.close(); service.cancel() }
+        await waitUntil { window.historyViewController?.view.window === window.window }
+        let history = try XCTUnwrap(window.historyViewController)
+        let sidebar = try XCTUnwrap(window.sidebarViewController)
+        let viewedBranch = repository.currentBranch?.simpleRef()
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), viewedBranch)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let content = try XCTUnwrap(PBViewController(repository: repository, superController: window))
+        content.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
+        XCTAssertTrue(content.view.window === window.window)
+
+        let published = expectation(description: "locked sibling snapshot published")
+        let observation = service.observe(\.worktrees) { _, _ in published.fulfill() }
+        _ = try fixture.git(["worktree", "lock", "--reason", "refresh regression", fixture.linked.path])
+        service.refresh()
+        await fulfillment(of: [published], timeout: 5)
+        observation.invalidate()
+
+        XCTAssertTrue(service.worktree(forBranch: "refs/heads/topic")?.isLocked == true)
+        XCTAssertTrue(content.view.window === window.window)
+        XCTAssertNil(history.view.window)
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), viewedBranch)
+        XCTAssertEqual(repository.currentBranch?.simpleRef(), viewedBranch)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+    }
+
     func testLifecycleUsesGitProtectsLockedWorktreeAndKeepsBranch() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

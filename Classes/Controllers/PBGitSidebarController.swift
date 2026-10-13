@@ -214,10 +214,10 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
         worktreeObservations = [
             repository.observe(\.worktrees, options: []) { [weak self] _, _ in
-                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadSidebarPresentation() }
+                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreePresentation() }
             },
             repository.observe(\.worktreeFeatureAvailable, options: []) { [weak self] _, _ in
-                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadSidebarPresentation() }
+                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreePresentation() }
             },
         ]
         stashesObservation = repository.observe(\.stashes, options: []) { [weak self] _, _ in
@@ -261,6 +261,18 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         } else {
             selectCurrentBranch()
         }
+    }
+
+    /// Discovery restores sidebar rows without taking navigation authority from
+    /// the content currently mounted by an inspector or another presenter.
+    private final func reloadWorktreePresentation() {
+        let previousRestoring = restoringSelection
+        restoringSelection = true
+        defer { restoringSelection = previousRestoring }
+        reloadSidebarPresentation()
+        updateActionMenu()
+        updateRemoteControls()
+        Self.logger.info("Refreshed worktree sidebar while preserving mounted content")
     }
 
     @objc(showForgeAttention:)

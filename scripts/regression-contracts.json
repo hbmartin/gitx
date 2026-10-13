@@ -206,12 +206,13 @@
     {
       "id": "STATE-001",
       "family": "Snapshot and refresh authority",
-      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority.",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter.",
       "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content.",
       "sourcePaths": [
         "Classes/git/IndexRefreshCoordinator.swift",
         "Classes/Controllers/Staging*",
-        "Classes/Controllers/PBGitHistoryController*"
+        "Classes/Controllers/PBGitHistoryController*",
+        "Classes/Controllers/PBGitSidebarController.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -326,6 +327,24 @@
           "identifier": "GitXTests/HistoryControllerTests/testImageReadsRejectAnEarlierRenderAndSurviveUnchangedSelectionUpdates",
           "role": "boundary",
           "oracle": "A real image lookup from an earlier render refuses bytes after refresh or deselection; an unchanged selection update preserves its read."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testExplicitBranchSelectionReturnsMountedContentToHistoryWithoutCheckout",
+          "role": "valid",
+          "oracle": "Explicit branch selection returns real mounted content to history while preserving checkout HEAD; the existing general reload behavior remains observable."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testWorktreeSnapshotRefreshPreservesMountedContentAndBranchSelection",
+          "role": "boundary",
+          "oracle": "A real sibling-worktree change publishes a snapshot while mounted content, viewed branch, selected branch, and checkout HEAD remain unchanged."
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testExactCheckoutFetchesOnlyApprovedRefAndSwitchesToNamedBranch",
+          "role": "valid",
+          "oracle": "The native inspector stays visible at cold launch; explicit confirmation fetches only the approved ref and switches to the named branch at the approved OID."
         }
       ]
     },

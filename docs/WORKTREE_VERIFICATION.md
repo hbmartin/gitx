@@ -139,3 +139,31 @@ The planned authoritative combined delivery receipt is
 `artifacts/verification/workflow-pr87-worktrees-final/workflow.json`.
 Its recorded status determines completion; this planned path does not claim a
 successful full run before that run finishes.
+
+## Mounted content during asynchronous discovery
+
+Verified run ID: workflow-d2ca8d1279f1
+
+Preparation commit `f23d294e` characterizes explicit branch selection returning
+mounted content to history without checking out, and the existing general
+sidebar reload behavior. Debug and Release consumers and the focused native
+characterization pass.
+
+The complete UI attempt `workflow-pr87-worktrees-final-ui-e8a0c711` exposed a
+separate navigation race: the exact-checkout and review harnesses mounted their
+inspectors, then an asynchronous worktree publication restored a branch row and
+replaced the inspector with history. Their accessibility attachments retain both
+the harness-ready marker and history content. SecurityAgent obstruction in
+other row/menu tests is retained separately as an external interruption.
+
+`workflow-db6f78de76f9` reproduces the navigation fault through a real sibling
+worktree change: the mounted-content assertions fail while branch selection and
+HEAD remain unchanged. Worktree-only presentation refresh now holds the existing
+selection-restoration guard through row selection and updates controls without
+taking navigation authority. Explicit selection and the general reload retain
+their characterized behavior.
+
+`workflow-d9b23629e426` passes both consumers and the complete worktree AppKit
+class with that regression. STATE-001 records the preservation invariant and
+independent native/UI oracles. Final delivery still requires fresh full-profile
+evidence after the fix and any coverage-policy commit.
