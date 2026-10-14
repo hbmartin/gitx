@@ -101,7 +101,7 @@ final class WorktreePresentationTests: XCTestCase {
         controller.document = nil
         var repositoryNotifications = 0
         let observation = controller.observe(\.repository) { _, _ in
-            // These repository setters and their KVO notifications run on main.
+            // swift6-safety-justification: This main-actor test invokes setters synchronously; KVO delivers their notifications on the same thread.
             MainActor.assumeIsolated { repositoryNotifications += 1 }
         }
         controller.repository = repository
