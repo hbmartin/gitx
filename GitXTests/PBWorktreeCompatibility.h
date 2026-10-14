@@ -17,6 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBGitWorktree : NSObject
 @property (readonly, copy) NSString *path;
 @property (readonly, copy, nullable) NSString *branchRefName;
+@property (readonly, copy, nullable) NSString *headRefName;
 @property (readonly) BOOL isMain;
 @property (readonly) BOOL isCurrent;
 @property (readonly) BOOL isLocked;

@@ -10,6 +10,9 @@ public enum WorktreeLinkStyle: Int, Sendable {
 public struct GitWorktree: Equatable, Sendable {
     public let identity: Data
     public let head: String?
+    /// The exact symbolic HEAD target, including non-local reference namespaces.
+    public let headRefIdentity: Data?
+    /// Only local refs/heads targets participate in branch ownership and menus.
     public let branchIdentity: Data?
     public let isMain: Bool
     public let isBare: Bool
@@ -33,7 +36,11 @@ public struct GitWorktree: Equatable, Sendable {
         branchIdentity.map { String(decoding: $0, as: UTF8.self) }
     }
 
-    public init(path: String, head: String? = nil, branchRefName: String? = nil, isMain: Bool = false,
+    public var headRefName: String? {
+        headRefIdentity.map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    public init(path: String, head: String? = nil, branchRefName: String? = nil, headRefName: String? = nil, isMain: Bool = false,
                 isBare: Bool = false, isDetached: Bool = false, isLocked: Bool = false,
                 lockReason: String? = nil, isPrunable: Bool = false, prunableReason: String? = nil,
                 isCurrent: Bool = false, linkStyle: WorktreeLinkStyle = .unknown,
@@ -42,7 +49,13 @@ public struct GitWorktree: Equatable, Sendable {
     {
         identity = Data(path.utf8)
         self.head = head
-        branchIdentity = branchRefName.map { Data($0.utf8) }
+        headRefIdentity = (headRefName ?? branchRefName).map { Data($0.utf8) }
+        let localPrefix = Data("refs/heads/".utf8)
+        if let reference = headRefIdentity, reference.starts(with: localPrefix), reference.count > localPrefix.count {
+            branchIdentity = reference
+        } else {
+            branchIdentity = nil
+        }
         self.isMain = isMain
         self.isBare = isBare
         self.isDetached = isDetached
@@ -107,14 +120,26 @@ public enum WorktreeParser {
         if bare {
             guard head == nil, branch == nil, !detached else { throw WorktreeParseError.malformedRecord }
         } else {
-            guard let head, !head.isEmpty, detached ? branch == nil : (branch?.hasPrefix("refs/heads/") == true && (branch?.count ?? 0) > 11) else {
+            guard let head, !head.isEmpty, detached ? branch == nil : branch.map(isValidHeadRef) == true else {
                 throw WorktreeParseError.malformedRecord
             }
         }
-        return GitWorktree(path: path, head: head, branchRefName: branch, isMain: isMain,
+        return GitWorktree(path: path, head: head, headRefName: branch, isMain: isMain,
                            isBare: bare, isDetached: detached, isLocked: fields["locked"] != nil,
                            lockReason: nonempty(fields["locked"]), isPrunable: fields["prunable"] != nil,
                            prunableReason: nonempty(fields["prunable"]))
+    }
+
+    /// Match Git's full-ref rules, rather than its stricter branch-name shorthand.
+    /// Inspect UTF-8 bytes so Unicode reference identity remains unchanged.
+    private static func isValidHeadRef(_ reference: String) -> Bool {
+        let bytes = Array(reference.utf8)
+        guard bytes.starts(with: Array("refs/".utf8)), bytes.last != 46,
+              !zip(bytes, bytes.dropFirst()).contains(where: { ($0.0 == 46 && $0.1 == 46) || ($0.0 == 64 && $0.1 == 123) }),
+              !bytes.contains(where: { $0 <= 32 || $0 == 127 || [126, 94, 58, 63, 42, 91, 92].contains($0) }) else { return false }
+        return bytes.split(separator: 47, omittingEmptySubsequences: false).allSatisfy {
+            !$0.isEmpty && $0.first != 46 && !$0.suffix(5).elementsEqual(Array(".lock".utf8))
+        }
     }
 
     private static func nonempty(_ value: String?) -> String? {

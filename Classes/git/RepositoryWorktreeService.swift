@@ -19,6 +19,10 @@ final nonisolated class PBGitWorktree: NSObject {
         value.branchRefName
     }
 
+    @objc var headRefName: String? {
+        value.headRefName
+    }
+
     @objc var isCurrent: Bool {
         value.isCurrent
     }

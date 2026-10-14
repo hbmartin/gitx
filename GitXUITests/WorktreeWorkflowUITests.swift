@@ -44,8 +44,12 @@ final class WorktreeWorkflowUITests: XCTestCase, @unchecked Sendable {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: topic)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
         topic.rightClick()
-        let open = app.menuItems["Open Worktree"]
-        XCTAssertTrue(open.waitForExistence(timeout: 5)); open.click()
+        let open = app.menuItems["Open Worktree of Branch “topic”"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.menuItems["Copy Branch Name"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.menuItems["Create Tag…"].exists)
+        screenshot("Worktrees-Restored-Branch-Menu", window: original)
+        open.click()
         let activated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "title CONTAINS %@", linked.lastPathComponent), object: app.windows.firstMatch)
         XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 5), .completed)
         XCTAssertEqual(app.windows.count, 2)

@@ -245,6 +245,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc dynamic func reloadSidebarPresentation() {
+        defer { refreshSelectionControls() }
         let selectedForgeSurface = selectedForgeSurface()
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
         let viewedRevision = repository?.currentBranch
@@ -270,8 +271,6 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         restoringSelection = true
         defer { restoringSelection = previousRestoring }
         reloadSidebarPresentation()
-        updateActionMenu()
-        updateRemoteControls()
         Self.logger.info("Refreshed worktree sidebar while preserving mounted content")
     }
 
@@ -288,6 +287,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc open dynamic func selectCurrentBranch() {
+        defer { refreshSelectionControls() }
         guard let repository else { return }
         guard let revision = repository.currentBranch else {
             repository.reloadRefs()
@@ -375,6 +375,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc dynamic func reloadSidebarAfterReferencesChange() {
+        defer { refreshSelectionControls() }
         guard let repository else { return }
         let selectedForgeSurface = selectedForgeSurface()
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
@@ -468,6 +469,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     private func select(_ item: PBSourceViewItem) {
+        defer { refreshSelectionControls() }
         guard let sourceView else { return }
         let row = sourceView.row(forItem: item)
         if row >= 0 {
@@ -740,6 +742,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
 public extension PBGitSidebarController {
     @objc dynamic func outlineViewSelectionDidChange(_ notification: Notification) {
+        defer { refreshSelectionControls() }
         guard !restoringSelection else { return }
         if let forgeItem = selectedItem() as? RepositoryForgeSourceViewItem,
            let destination = forgeItem.destination
@@ -758,8 +761,6 @@ public extension PBGitSidebarController {
                 windowController?.changeContentController(history)
             }
         }
-        updateActionMenu()
-        updateRemoteControls()
     }
 
     @objc internal dynamic func doubleClicked(_ sender: Any?) {
@@ -987,9 +988,16 @@ public extension PBGitSidebarController {
 }
 
 extension PBGitSidebarController {
+    /// Restoring a row updates its controls even when navigation is suppressed
+    /// or AppKit emits no selection notification.
+    private func refreshSelectionControls() {
+        updateActionMenu()
+        updateRemoteControls()
+    }
+
     @objc dynamic func updateActionMenu() {
         let item = selectedItem()
-        actionButton?.isEnabled = item?.ref() != nil || item is PBSourceViewGitSubmoduleItem || item is PBSourceViewGitWorktreeItem || item === worktreesGroup
+        actionButton?.isEnabled = item?.ref() != nil || item is PBSourceViewGitSubmoduleItem || item is PBSourceViewGitWorktreeItem || (item != nil && item === worktreesGroup)
     }
 
     @objc(addMenuItemsForRef:toMenu:)
@@ -1025,8 +1033,16 @@ extension PBGitSidebarController {
         let builder = HistoryMenuBuilder(repository: repository)
         let items: [NSMenuItem]
         if let worktree = viewItem as? PBSourceViewGitWorktreeItem {
-            items = builder.menuItems(forWorktree: worktree.worktree)
-        } else if viewItem === worktreesGroup {
+            if let ref = worktree.ref(), ref.isBranch,
+               let referenceItems = windowController?.historyViewController?.menuItems(for: ref)
+            {
+                // Copy targets the retained history menu builder. Lifecycle
+                // substitution remains governed by its reference policy.
+                items = referenceItems
+            } else {
+                items = builder.menuItems(forWorktree: worktree.worktree)
+            }
+        } else if let worktreesGroup, viewItem === worktreesGroup {
             items = builder.menuItemsForWorktreeGroup()
         } else {
             return false

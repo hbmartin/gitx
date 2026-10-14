@@ -77,7 +77,7 @@ public enum WorktreeLinkInspector {
                     broken = hasRepairableGitfile(at: record.path, fileSystem: fileSystem)
                 }
             }
-            return GitWorktree(path: record.path, head: record.head, branchRefName: record.branchRefName,
+            return GitWorktree(path: record.path, head: record.head, headRefName: record.headRefName,
                                isMain: record.isMain, isBare: record.isBare, isDetached: record.isDetached,
                                isLocked: record.isLocked, lockReason: record.lockReason,
                                isPrunable: record.isPrunable, prunableReason: record.prunableReason,

@@ -97,10 +97,28 @@ public enum WorktreeCommand: Equatable, Sendable {
     }
 }
 
+public enum WorktreeHistoryRevision: Equatable, Sendable {
+    case branch(String)
+    case capturedCommit(oid: String, description: String)
+}
+
 public enum WorktreePresentation {
+    public static func historyRevision(for worktree: GitWorktree) -> WorktreeHistoryRevision? {
+        if let branch = worktree.branchRefName {
+            return .branch(branch)
+        }
+        guard worktree.isDetached || worktree.headRefIdentity != nil,
+              let head = worktree.head, !head.isEmpty, head.contains(where: { $0 != "0" }) else { return nil }
+        let description = worktree.headRefName == nil ? "Detached HEAD (\(head))" : "\(title(worktree)) (\(head))"
+        return .capturedCommit(oid: head, description: description)
+    }
+
     public static func title(_ worktree: GitWorktree) -> String {
         if let branch = worktree.branchRefName {
             return String(branch.dropFirst("refs/heads/".count))
+        }
+        if let reference = worktree.headRefName {
+            return "HEAD → " + reference
         }
         if worktree.isBare {
             return "Bare repository"

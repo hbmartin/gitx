@@ -47,6 +47,35 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var worktreeObservations: [NSKeyValueObservation] = []
     /// Objective-C-imported subclasses cannot dispatch new Swift-only virtual accessors.
     final var offeredWorktreeRepair = false
+    /// Presentation authority expires when the originating window or owner changes.
+    private(set) final var worktreePresentationGeneration: UInt64 = 0
+
+    private final func invalidateWorktreePresentation() {
+        worktreePresentationGeneration &+= 1
+        NSLog("[GitX] Invalidated worktree presentation generation %llu", worktreePresentationGeneration)
+    }
+
+    override open var window: NSWindow? {
+        get { super.window }
+        set {
+            // Reading an unloaded window would create it merely to compare ownership.
+            let previous = super.isWindowLoaded ? super.window : nil
+            if previous !== newValue {
+                invalidateWorktreePresentation()
+            }
+            super.window = newValue
+        }
+    }
+
+    override open var document: AnyObject? {
+        get { super.document }
+        set {
+            if super.document !== newValue {
+                invalidateWorktreePresentation()
+            }
+            super.document = newValue
+        }
+    }
 
     @objc public convenience init() {
         self.init(windowNibName: "RepositoryWindow")
@@ -55,7 +84,13 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Retain the historical setter surface while continuing to derive the active repository from the document.
     @objc open dynamic var repository: PBGitRepository? {
         get { (document as? PBGitRepositoryDocument)?.repository ?? explicitlyAssignedRepository }
-        set { explicitlyAssignedRepository = newValue }
+        set {
+            let incoming = (document as? PBGitRepositoryDocument)?.repository ?? newValue
+            if repository !== incoming {
+                invalidateWorktreePresentation()
+            }
+            explicitlyAssignedRepository = newValue
+        }
     }
 
     @objc dynamic var historyViewController: PBGitHistoryController? {
@@ -171,6 +206,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc public dynamic func windowWillClose(_ notification: Notification) {
+        // Cancellation can synchronously deliver a pending operation's result.
+        invalidateWorktreePresentation()
         NotificationCenter.default.removeObserver(self)
         focusRefreshCoordinator?.cancel()
         repository?.cancelWorktreeDiscovery()
