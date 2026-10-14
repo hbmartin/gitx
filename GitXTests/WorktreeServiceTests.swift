@@ -741,6 +741,99 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertEqual(main.category(for: "/repo/.git/HEAD.lock"), 0)
     }
 
+    func testAcceptedCapabilityPublicationDoesNotOverwriteAProbeStartedByItsAvailabilityObserver() async throws {
+        try await characterizeSuccessfulCapabilityPublicationReentry(observeSupported: true)
+    }
+
+    private func characterizeSuccessfulCapabilityPublicationReentry(observeSupported: Bool) async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable")
+        defer {
+            defaults.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        defaults.set("/usr/bin/git", forKey: "gitExecutable")
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        let service = installed.service
+        try await start(installed)
+        let initial = service.worktrees
+        let initialDiscoveries = installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count
+        let versionB = "git version 2.50.2"
+        let versionC = "git version 2.50.3"
+        let requestedB = installed.tasks.expect(["--version"])
+        defaults.set("/usr/bin/true", forKey: "gitExecutable")
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        await fulfillment(of: [requestedB], timeout: 5)
+        let b = try installed.tasks.task(["--version"], occurrence: 1)
+        let lateB = try XCTUnwrap(b.retainedCallback())
+        XCTAssertFalse(service.isSupported)
+        XCTAssertNil(service.gitVersion)
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, initialDiscoveries)
+        let reentry = WorktreeCompletionRecorder()
+        let changedAgain = expectation(description: "one-shot successful publication observer chooses C")
+        changedAgain.assertForOverFulfill = true
+        let requestedC = installed.tasks.expect(["--version"])
+        let observation: NSKeyValueObservation
+        if observeSupported {
+            observation = service.observe(\.isSupported) { observed, _ in
+                // swift6-safety-justification: Service availability is published on its main actor.
+                MainActor.assumeIsolated {
+                    guard observed.isSupported, reentry.names.isEmpty else { return }
+                    reentry.names.append("C")
+                    UserDefaults.standard.set("/usr/bin/false", forKey: "gitExecutable")
+                    service.refresh()
+                    changedAgain.fulfill()
+                }
+            }
+        } else {
+            observation = service.observe(\.gitVersion) { observed, _ in
+                // swift6-safety-justification: Service availability is published on its main actor.
+                MainActor.assumeIsolated {
+                    guard observed.gitVersion == versionB, reentry.names.isEmpty else { return }
+                    reentry.names.append("C")
+                    UserDefaults.standard.set("/usr/bin/false", forKey: "gitExecutable")
+                    service.refresh()
+                    changedAgain.fulfill()
+                }
+            }
+        }
+        defer { observation.invalidate() }
+        b.finish(Data(versionB.utf8))
+        await fulfillment(of: [changedAgain, requestedC], timeout: 5)
+        await drainMainQueue()
+        observation.invalidate()
+        let current = try installed.tasks.task(["--version"], occurrence: 2)
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 3)
+        XCTAssertFalse(current.wasCancelled, "Older B publication must not terminate C")
+        XCTAssertFalse(service.isSupported, "Only C's pending probe may decide current availability")
+        XCTAssertNil(service.gitVersion, "B cannot overwrite C's unavailable state")
+        XCTAssertEqual(service.worktrees, initial)
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        let beforeCertification = installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count
+        XCTAssertEqual(beforeCertification, initialDiscoveries,
+                       "Ordinary discovery must not start using C before C is certified")
+        // Avoid cascading timeout failures if the RED oracle already observed an
+        // uncertified discovery. Fixture cleanup cancels every retained fake task.
+        guard beforeCertification == initialDiscoveries else { return }
+        let currentDiscovery = installed.tasks.expect(discoveryArguments)
+        current.finish(Data(versionC.utf8))
+        await fulfillment(of: [currentDiscovery], timeout: 5)
+        XCTAssertTrue(service.isSupported)
+        XCTAssertEqual(service.gitVersion, versionC)
+        lateB(Data("git version 1.0.0".utf8), nil)
+        await drainMainQueue()
+        XCTAssertTrue(service.isSupported)
+        XCTAssertEqual(service.gitVersion, versionC)
+        XCTAssertFalse(current.wasCancelled)
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 3)
+        try installed.tasks.task(discoveryArguments, occurrence: initialDiscoveries).finish(snapshot)
+        await drainMainQueue()
+        XCTAssertEqual(reentry.names, ["C"])
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+    }
+
     private func drainMainQueue() async {
         let drained = expectation(description: "main queue completion boundary")
         DispatchQueue.main.async { drained.fulfill() }

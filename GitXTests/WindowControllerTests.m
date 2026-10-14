@@ -2736,17 +2736,72 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertTrue([remoteControls isEnabledForSegment:2]);
 	XCTAssertTrue([remoteControls isEnabledForSegment:3]);
 
-	[sidebar menuNeedsUpdate:actionButton.menu];
-	XCTAssertEqual(actionButton.menu.numberOfItems, (NSInteger)2);
-	XCTAssertNotNil(actionButton.menu.itemArray.firstObject.image);
-	XCTAssertEqualObjects(actionButton.menu.itemArray.lastObject.title, characterizedItem.title);
 	NSMenu *externalMenu = [NSMenu new];
-	[sidebar menuNeedsUpdate:externalMenu];
-	XCTAssertEqual(externalMenu.numberOfItems, (NSInteger)1);
-	XCTAssertEqualObjects(externalMenu.itemArray.firstObject.title, characterizedItem.title);
-	NSMenu *rowMenu = [sidebar menuForRow:0];
+	NSMenu *rowMenu = nil;
+	@autoreleasepool {
+		[sidebar menuNeedsUpdate:actionButton.menu];
+		[sidebar menuNeedsUpdate:externalMenu];
+		rowMenu = [sidebar menuForRow:0];
+	}
+	XCTAssertNotNil(actionButton.menu.itemArray.firstObject.image);
 	XCTAssertFalse(rowMenu.autoenablesItems);
-	XCTAssertEqual(rowMenu.numberOfItems, (NSInteger)1);
+	NSArray<NSMenuItem *> *historyItems = [history menuItemsForRef:featureRef];
+	XCTAssertEqual(historyItems.count, (NSUInteger)1);
+	XCTAssertEqualObjects(historyItems.firstObject.title, characterizedItem.title,
+						  @"The existing History menu override remains callable");
+
+	NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+	NSMutableArray<NSPasteboardItem *> *originalPasteboardItems = [NSMutableArray array];
+	for (NSPasteboardItem *original in pasteboard.pasteboardItems) {
+		NSPasteboardItem *saved = [NSPasteboardItem new];
+		for (NSPasteboardType type in original.types) {
+			NSData *data = [original dataForType:type];
+			if (data) [saved setData:data forType:type];
+		}
+		[originalPasteboardItems addObject:saved];
+	}
+	[self addTeardownBlock:^{
+		[pasteboard clearContents];
+		[pasteboard writeObjects:originalPasteboardItems];
+	}];
+	id copyTarget = nil;
+	for (NSMenu *menu in @[ actionButton.menu, externalMenu, rowMenu ]) {
+		XCTAssertNil([menu itemWithTitle:characterizedItem.title],
+					 @"Sidebar reference menus do not depend on a loaded History view");
+		for (NSString *selectorName in @[ @"copyBranchName:", @"createBranch:", @"createTag:", @"diffWithHEAD:" ]) {
+			SEL action = NSSelectorFromString(selectorName);
+			NSArray<NSMenuItem *> *matching = [menu.itemArray filteredArrayUsingPredicate:
+				[NSPredicate predicateWithBlock:^BOOL(NSMenuItem *item, NSDictionary *bindings) {
+					return item.action == action;
+				}]];
+			XCTAssertEqual(matching.count, (NSUInteger)1, @"Expected exactly one %@ action", selectorName);
+			NSMenuItem *item = matching.firstObject;
+			XCTAssertTrue(item.enabled);
+			XCTAssertEqualObjects([(PBGitRef *)item.representedObject ref], featureRef.ref);
+			if ([selectorName isEqualToString:@"copyBranchName:"]) {
+				XCTAssertNotNil(item.target);
+				XCTAssertNotEqual(item.target, history);
+				XCTAssertTrue([item.target respondsToSelector:action]);
+				if (copyTarget) XCTAssertEqual(item.target, copyTarget);
+				copyTarget = item.target;
+				[pasteboard clearContents];
+				[pasteboard setString:@"unchanged sentinel" forType:NSPasteboardTypeString];
+				XCTAssertTrue([NSApp sendAction:action to:item.target from:item]);
+				XCTAssertEqualObjects([pasteboard stringForType:NSPasteboardTypeString], @"feature");
+			} else {
+				XCTAssertNil(item.target, @"Reference actions retain responder-chain routing");
+			}
+		}
+		for (NSString *title in @[ @"Merge", @"Rebase" ]) {
+			NSMenuItem *item = [menu itemWithTitle:title];
+			XCTAssertNotNil(item);
+			XCTAssertFalse(item.enabled, @"This fixture's feature branch points at HEAD");
+			// Cocoa may install a private no-op selector in an auto-enabling menu.
+			NSString *disabledAction = [title isEqualToString:@"Merge"] ? @"merge:" : @"rebaseHeadBranch:";
+			XCTAssertNotEqual(item.action, NSSelectorFromString(disabledAction));
+			XCTAssertEqualObjects([(PBGitRef *)item.representedObject ref], featureRef.ref);
+		}
+	}
 
 	outline.testItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.tagRef]];
 	[sidebar outlineViewSelectionDidChange:[NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification object:outline]];
