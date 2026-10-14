@@ -54,6 +54,70 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
     }
 
+    func testNormalBranchSidebarMenusDispatchCopyAfterConstructionReturns() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let branchName = "characterized-copy"
+        let refName = "refs/heads/\(branchName)"
+        _ = try fixture.git(["branch", branchName])
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let refs = try fixture.git(["show-ref", "--head"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        defer { controller.close(); service.cancel() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+        let branch = try XCTUnwrap(branches.sortedChildren.first { $0.revSpecifier?.simpleRef() == refName })
+        XCTAssertFalse(branch is PBSourceViewGitWorktreeItem)
+        let row = outline.row(forItem: branch)
+        XCTAssertGreaterThanOrEqual(row, 0)
+        outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        sidebar.outlineViewSelectionDidChange(Notification(name: NSOutlineView.selectionDidChangeNotification))
+        let actionButton = try XCTUnwrap(sidebar.value(forKey: "actionButton") as? NSPopUpButton)
+        let actionMenu = try XCTUnwrap(actionButton.menu)
+        let contextMenu = autoreleasepool { sidebar.menu(forRow: row) }
+        autoreleasepool { sidebar.menuNeedsUpdate(actionMenu) }
+
+        let pasteboard = NSPasteboard.general
+        let originalItems: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        } ?? []
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(originalItems.map { $0 as NSPasteboardWriting })
+        }
+        for menu in [contextMenu, actionMenu] {
+            let copy = try XCTUnwrap(menu.items.first { $0.title == "Copy Branch Name" })
+            let action = try XCTUnwrap(copy.action)
+            XCTAssertEqual(action, NSSelectorFromString("copyBranchName:"))
+            XCTAssertTrue(copy.isEnabled)
+            XCTAssertNotNil(copy.target, "The action target must remain alive after menu construction returns")
+            XCTAssertEqual((copy.representedObject as? PBGitRef)?.ref, refName)
+            pasteboard.clearContents()
+            pasteboard.setString("unchanged sentinel", forType: .string)
+            let changeCount = pasteboard.changeCount
+            XCTAssertTrue(NSApp.sendAction(action, to: copy.target, from: copy))
+            XCTAssertEqual(pasteboard.string(forType: .string), branchName)
+            XCTAssertGreaterThan(pasteboard.changeCount, changeCount)
+        }
+        XCTAssertEqual(repository.currentBranch?.simpleRef(), refName)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+    }
+
     func testWorktreeSnapshotRefreshPreservesMountedContentAndBranchSelection() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
