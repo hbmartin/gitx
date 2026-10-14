@@ -90,7 +90,7 @@ public enum WorktreeLinkInspector {
     /// link. With an explicit --git-dir, Git otherwise accepts an unrelated
     /// checkout with the same administrative identifier.
     public static func canRepair(_ record: GitWorktree, at path: String, commonDirectory: String) -> Bool {
-        (try? captureRepairTarget(record, at: path, commonDirectory: commonDirectory)) != nil
+        (try? captureRepairTarget(record, at: path, commonDirectory: commonDirectory)).map { !$0.requiresReclaim } ?? false
     }
 
     private static func hasRepairableGitfile(at path: String, fileSystem: WorktreeEvidenceFileSystem) -> Bool {

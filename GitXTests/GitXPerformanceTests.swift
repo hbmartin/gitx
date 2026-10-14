@@ -1356,21 +1356,49 @@ extension GitXPerformanceTests {
             let fixture = try worktreeCaptureInventory(count: count)
             let proof = try worktreeCaptureProof(fixture)
             let expectedPaths = fixture.records.map { WorktreePaths.canonical($0.path) }
-            let capture = {
+            let repeatedCapture = {
                 try fixture.records.map {
                     try WorktreeLinkInspector.captureRepairTarget($0, at: $0.path, commonDirectory: fixture.common.path)
                 }
             }
-            XCTAssertEqual(try capture().map(\.path), expectedPaths)
-            var samples: [TimeInterval] = []
-            for _ in 0 ..< 5 {
+            let indexedCapture = {
+                try WorktreeLinkInspector.captureRepairScope(records: fixture.records, commonDirectory: fixture.common.path)
+            }
+            XCTAssertEqual(try repeatedCapture().map(\.path), expectedPaths)
+            XCTAssertEqual(try indexedCapture().targets.map(\.path), expectedPaths)
+            var repeatedSamples: [TimeInterval] = []
+            var indexedSamples: [TimeInterval] = []
+            for sample in 0 ..< 5 {
                 var targets: [WorktreeRepairTarget] = []
-                try samples.append(elapsedThrowing { targets = try capture() })
-                XCTAssertEqual(targets.map(\.path), expectedPaths)
-                XCTAssertEqual(Set(targets.map(\.administrativePath)).count, count)
+                var scope: WorktreeRepairScope?
+                let measureRepeated = {
+                    let duration = try self.elapsedThrowing { targets = try repeatedCapture() }
+                    XCTAssertEqual(targets.map(\.path), expectedPaths)
+                    XCTAssertEqual(Set(targets.map(\.administrativePath)).count, count)
+                    return duration
+                }
+                let measureIndexed = {
+                    let duration = try self.elapsedThrowing { scope = try indexedCapture() }
+                    let captured = try XCTUnwrap(scope)
+                    XCTAssertEqual(captured.targets.map(\.path), expectedPaths)
+                    XCTAssertEqual(Set(captured.targets.map(\.administrativePath)).count, count)
+                    XCTAssertFalse(captured.requiresReclaim)
+                    XCTAssertTrue(captured.absentLocations.isEmpty)
+                    return duration
+                }
+                // Alternate the pair order so warm filesystem caches do not
+                // consistently benefit one capture path.
+                if sample.isMultiple(of: 2) {
+                    try repeatedSamples.append(measureRepeated())
+                    try indexedSamples.append(measureIndexed())
+                } else {
+                    try indexedSamples.append(measureIndexed())
+                    try repeatedSamples.append(measureRepeated())
+                }
             }
             XCTAssertEqual(try worktreeCaptureProof(fixture), proof)
-            attachMeasurements("Worktree repair capture: \(count) registrations", samples: samples)
+            attachMeasurements("Worktree repeated target capture: \(count) registrations", samples: repeatedSamples)
+            attachMeasurements("Worktree indexed scope capture: \(count) registrations", samples: indexedSamples)
         }
     }
 

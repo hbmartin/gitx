@@ -8,9 +8,21 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+typedef void(NS_SWIFT_SENDABLE ^ PBWorktreePreparationObserver)(void);
+
 @interface PBWorktreePrunePreview : NSObject
 @property (readonly, copy) NSString *report;
 @property (readonly) BOOL hasMovedWorktrees;
+@end
+
+@interface PBWorktreeRepairPreview : NSObject
+@property (readonly, copy) NSArray<NSString *> *paths;
+@property (readonly, copy) NSArray<NSString *> *reclaimPaths;
+@property (readonly) BOOL requiresReclaim;
+@end
+
+@interface PBWorktreeLifecycleDiagnostics : NSObject
++ (NSString *)publicEventWithArguments:(NSArray<NSString *> *)arguments stage:(NSString *)stage phase:(NSString *)phase count:(NSInteger)count category:(NSString *)category NS_SWIFT_NAME(publicEvent(arguments:stage:phase:count:category:));
 @end
 
 /// Narrow mirrors of the generated Swift interface for app-hosted XCTest.
@@ -29,11 +41,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 NS_SWIFT_UI_ACTOR
 @interface PBRepositoryWorktreeService : NSObject
+@property (readonly) uint64_t repairPreparationCount;
 @property (readonly, copy) NSArray<PBGitWorktree *> *worktrees;
 @property (readonly, copy, nullable) NSString *gitVersion;
 @property (readonly) BOOL isSupported;
 @property (readonly, copy) NSString *explanation;
 - (instancetype)initWithRepository:(PBGitRepository *)repository taskFactory:(PBTask *(^)(NSArray<NSString *> *))factory;
+- (instancetype)initWithRepository:(PBGitRepository *)repository taskFactory:(PBTask *(^)(NSArray<NSString *> *))factory repairPreparationObserver:(PBWorktreePreparationObserver)observer;
 - (void)start;
 - (void)refresh;
 - (void)cancel;
@@ -48,6 +62,11 @@ NS_SWIFT_UI_ACTOR
 - (void)discardPrunePreview:(PBWorktreePrunePreview *)preview;
 - (void)repairWorktree:(PBGitWorktree *)worktree movedTo:(NSString *)path completion:(void (^)(NSError *_Nullable))completion NS_SWIFT_NAME(repair(worktree:movedTo:completion:));
 - (void)repairLinksWithRelativePaths:(BOOL)relative completion:(void (^)(NSError *_Nullable))completion NS_SWIFT_NAME(repairLinks(relativePaths:completion:));
+- (void)prepareRepairWorktree:(PBGitWorktree *)worktree movedTo:(NSString *)path completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(prepareRepair(worktree:movedTo:completion:));
+- (void)prepareRepairLinksWithRelativePaths:(BOOL)relative completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(prepareRepairLinks(relativePaths:completion:));
+- (void)repairWithConfirmedPreview:(PBWorktreeRepairPreview *)preview completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(repair(confirmedPreview:completion:));
+- (void)discardRepairPreview:(PBWorktreeRepairPreview *)preview;
+
 @end
 
 @interface PBRepositoryWatchPaths : NSObject

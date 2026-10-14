@@ -47,7 +47,7 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertFalse(WorktreeEligibility(missing, supported: true).canReveal)
         XCTAssertTrue(WorktreeEligibility.canPrune([missing], supported: true))
         XCTAssertFalse(WorktreeEligibility.canPrune([missing], supported: false))
-        XCTAssertFalse(WorktreeEligibility.canPrune([normal], supported: true))
+        XCTAssertTrue(WorktreeEligibility.canPrune([normal], supported: true))
         let moved = GitWorktree(path: "/old", movedPath: "/new", folderExists: false)
         XCTAssertFalse(WorktreeEligibility(moved, supported: true).canLocate)
         XCTAssertFalse(WorktreeEligibility.canPrune([missing, moved], supported: true))
@@ -82,6 +82,7 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertEqual(WorktreeCommand.prune.arguments, ["worktree", "prune"])
         XCTAssertEqual(WorktreeCommand.pruneReport.arguments, ["worktree", "prune", "--dry-run", "--verbose"])
         XCTAssertEqual(WorktreeCommand.repairMoved(path: "/new").arguments, ["worktree", "repair", "/new"])
+        XCTAssertEqual(WorktreeCommand.repairMovedPaths(paths: ["/first", "/second"]).arguments, ["worktree", "repair", "/first", "/second"])
         XCTAssertEqual(WorktreeCommand.repairLinks(style: .relative, movedPaths: ["/a"]).arguments, ["worktree", "repair", "--relative-paths", "/a"])
         XCTAssertEqual(WorktreeCommand.repairLinks(style: .absolute, movedPaths: []).arguments, ["worktree", "repair", "--no-relative-paths"])
         let state = GitWorktree(path: "/old", head: "123456789", branchRefName: "refs/heads/feature/topic", isMain: true,
@@ -167,7 +168,7 @@ final class WorktreeLinkTests: XCTestCase {
         _ = try git(WorktreeCommand.remove(path: main.path, force: true).arguments, at: main, succeeds: false)
     }
 
-    func testMissingEmptyAndMalformedOriginalGitfilesAreBrokenAndRepairable() throws {
+    func testMissingEmptyAndMalformedOriginalGitfilesRequireReclaimAndPreserveCheckout() throws {
         let root = try temporaryDirectory()
         let main = try repository(in: root)
         let tracked = main.appendingPathComponent("tracked.txt")
@@ -195,8 +196,9 @@ final class WorktreeLinkTests: XCTestCase {
             XCTAssertTrue(broken.folderExists, "case \(caseIndex)")
             XCTAssertTrue(broken.hasBrokenLink, "case \(caseIndex)")
             XCTAssertFalse(broken.hasForeignLink, "case \(caseIndex)")
-            XCTAssertTrue(WorktreeLinkInspector.canRepair(broken, at: linked.path, commonDirectory: common.path), "case \(caseIndex)")
+            XCTAssertFalse(WorktreeLinkInspector.canRepair(broken, at: linked.path, commonDirectory: common.path), "case \(caseIndex)")
             let target = try WorktreeLinkInspector.captureRepairTarget(broken, at: linked.path, commonDirectory: common.path)
+            XCTAssertTrue(target.requiresReclaim)
             try WorktreeLinkInspector.validateRepairTarget(target, commonDirectory: common.path)
             _ = try git(WorktreeCommand.repairLinks(style: .absolute, movedPaths: []).arguments, at: main)
             let repaired = try XCTUnwrap(records(at: main).first { !$0.isMain })

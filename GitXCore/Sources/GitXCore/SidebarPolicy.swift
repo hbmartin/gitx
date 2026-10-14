@@ -1,5 +1,75 @@
 import Foundation
 
+public enum WorktreePrunePresentation: Equatable, Sendable {
+    case repair
+    case empty
+    case confirmation(String)
+}
+
+public enum WorktreeRepairPresentation: Equatable, Sendable {
+    case perform
+    case reclaim
+    case renewed
+}
+
+public enum WorktreeRepairOfferPresentation: Equatable, Sendable {
+    case manualGuidance
+    case none
+    case chooseStyle
+}
+
+public enum WorktreePresentationPolicy {
+    public static func isExpectedCancellation(_ error: NSError) -> Bool {
+        error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError
+    }
+
+    public static func prune(report: String, hasMovedWorktrees: Bool) -> WorktreePrunePresentation {
+        if hasMovedWorktrees {
+            return .repair
+        }
+        let report = report.trimmingCharacters(in: .whitespacesAndNewlines)
+        return report.isEmpty ? .empty : .confirmation(report)
+    }
+
+    public static func repair(requiresReclaim: Bool, changed: Bool) -> WorktreeRepairPresentation {
+        if requiresReclaim {
+            return .reclaim
+        }
+        return changed ? .renewed : .perform
+    }
+
+    public static func repairOffer(hasManualRepairPaths: Bool, hasBrokenLinks: Bool) -> WorktreeRepairOfferPresentation {
+        if hasManualRepairPaths {
+            return .manualGuidance
+        }
+        return hasBrokenLinks ? .chooseStyle : .none
+    }
+}
+
+public struct SidebarSelectionControlsRefreshState: Sendable {
+    private var depth = 0
+
+    public init() {}
+
+    public mutating func begin() {
+        depth += 1
+    }
+
+    /// Nested selection and rebuild scopes contribute to one final refresh.
+    public mutating func finish() -> Bool {
+        guard depth > 0 else { return false }
+        depth -= 1
+        return depth == 0
+    }
+}
+
+public enum SidebarWorktreeMenuPolicy {
+    public static func canUseReferenceMenu(reference: String, branchIdentity: Data?) -> Bool {
+        guard reference.hasPrefix("refs/heads/"), reference.utf8.count > "refs/heads/".utf8.count else { return false }
+        return branchIdentity == Data(reference.utf8)
+    }
+}
+
 public struct SidebarRemoteSyncPlan: Equatable, Sendable {
     public let namesToAdd: [String]
     public let namesToRemove: [String]

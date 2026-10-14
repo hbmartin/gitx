@@ -83,6 +83,7 @@ final class WorktreePresentationTests: XCTestCase {
         _ = controller.perform(NSSelectorFromString("repairWorktreeLinks:"), with: nil)
         controller.addWorktree(nil)
         controller.pruneWorktrees(nil)
+        _ = controller.perform(NSSelectorFromString("returnToHistory:"), with: nil)
         XCTAssertEqual(controller.loadWindowCount, 0)
         XCTAssertNil(controller.repository)
         XCTAssertEqual(controller.errors.count, 0)

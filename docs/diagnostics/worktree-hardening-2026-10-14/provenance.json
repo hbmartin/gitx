@@ -1,0 +1,268 @@
+{
+  "baseCommit": "78407c2b1b94a8aed6d50eabfb4e112ad19538d4",
+  "characterizationCommit": "27f05a8e3215e71caf6d32d6160478d47f64e363",
+  "runIds": [
+    "worktree-hardening-baseline",
+    "worktree-hardening-characterization",
+    "worktree-hardening-core-red",
+    "worktree-hardening-native-red",
+    "worktree-hardening-native-red-v2",
+    "worktree-hardening-history-red-v3",
+    "worktree-hardening-history-red-v4",
+    "worktree-hardening-green-checkpoint-v1",
+    "worktree-hardening-green-checkpoint-v2",
+    "worktree-hardening-green-checkpoint-v3",
+    "worktree-hardening-green-checkpoint-v4",
+    "worktree-hardening-core-green-v1",
+    "worktree-hardening-core-green-v2",
+    "worktree-hardening-native-checkpoint-v5",
+    "worktree-hardening-green-checkpoint-v6",
+    "worktree-hardening-ui-performance-v7",
+    "worktree-review-final-v3"
+  ],
+  "status": "Precommit behavior and performance evidence; complete postcommit coverage and final full verification remain required.",
+  "captures": [
+    {
+      "filename": "reclaim-consent.png",
+      "testIdentifier": "WorktreeWorkflowUITests/testMissingLinkReclaimConsentDefaultsReturnToCancel()",
+      "attachmentTitle": "Worktrees-Reclaim-Consent-Return-Cancels",
+      "sha256": "e4ac233f9573266272c9faaed62d4539d7fdf4f852f51060be56dce7e99f7036",
+      "captureMethod": "Unmodified XCTest diagnostic attachment",
+      "sourceExport": "artifacts/verification/worktree-hardening-preparation/captures-v7/reclaim/DCF0BDAC-2897-46ED-8FB1-893F6F853C0D.png",
+      "attachmentMetadata": {
+        "configurationName": "UI",
+        "deviceId": "00006020-000C11362ED3C01E",
+        "deviceName": "My Mac",
+        "exportedFileName": "DCF0BDAC-2897-46ED-8FB1-893F6F853C0D.png",
+        "isAssociatedWithFailure": false,
+        "suggestedHumanReadableName": "Worktrees-Reclaim-Consent-Return-Cancels_0_03CB28B1-12CC-4037-908A-09296B096BD0.png",
+        "timestamp": 1792018234.933
+      }
+    },
+    {
+      "filename": "duplicate-row-menu.png",
+      "testIdentifier": "WorktreeWorkflowUITests/testDuplicateBranchContextMenuLocksOnlyTheClickedCheckout()",
+      "attachmentTitle": "Worktrees-Duplicate-Clicked-Checkout-Context-Menu",
+      "sha256": "f226d7dfda4b1712e5ae8b057eb42b4e4971d0e582b7c51b001efb79c4014242",
+      "captureMethod": "Unmodified XCTest diagnostic attachment",
+      "sourceExport": "artifacts/verification/worktree-hardening-preparation/captures-v7/duplicate-menu/8B4ACA45-8A7E-4270-B238-0EDE3F4907EF.png",
+      "attachmentMetadata": {
+        "configurationName": "UI",
+        "deviceId": "00006020-000C11362ED3C01E",
+        "deviceName": "My Mac",
+        "exportedFileName": "8B4ACA45-8A7E-4270-B238-0EDE3F4907EF.png",
+        "isAssociatedWithFailure": false,
+        "suggestedHumanReadableName": "Worktrees-Duplicate-Clicked-Checkout-Context-Menu_0_E5C1FAA3-40EF-4328-B222-E3A48D903C11.png",
+        "timestamp": 1792018202.435
+      }
+    },
+    {
+      "filename": "explicit-history.png",
+      "testIdentifier": "WorktreeWorkflowUITests/testExplicitHistoryShortcutAdoptsNewestCapturedDetachedHead()",
+      "attachmentTitle": "Worktrees-Explicit-History-Shortcut-Newest-Detached-Head",
+      "sha256": "9dd56610b8cd2c46a707372a3d78683969ce17adea2f9bf9821a6006110ef60b",
+      "captureMethod": "Unmodified XCTest diagnostic attachment",
+      "sourceExport": "artifacts/verification/worktree-hardening-preparation/captures-v7/explicit-history/EF8B4143-61E0-4D3E-A30D-5B15B72499E8.png",
+      "attachmentMetadata": {
+        "configurationName": "UI",
+        "deviceId": "00006020-000C11362ED3C01E",
+        "deviceName": "My Mac",
+        "exportedFileName": "EF8B4143-61E0-4D3E-A30D-5B15B72499E8.png",
+        "isAssociatedWithFailure": false,
+        "suggestedHumanReadableName": "Worktrees-Explicit-History-Shortcut-Newest-Detached-Head_0_13B3A890-B575-4D5C-9A1A-799A30516626.png",
+        "timestamp": 1792018225.631
+      }
+    },
+    {
+      "filename": "manual-guidance.png",
+      "testIdentifier": "WorktreeAppKitTests/testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune()",
+      "attachmentTitle": "Worktrees-Moved-Symlink-Manual-Repair",
+      "sha256": "01bafe5c8829c44b1c8dc340da7a4dbc72f265481bcb5cedf2e1fef370005828",
+      "captureMethod": "Unmodified XCTest diagnostic attachment",
+      "sourceExport": "artifacts/verification/worktree-hardening-preparation/captures-v7/manual-guidance/DE1561D5-0274-47D0-8C58-ABC411D4280E.png",
+      "attachmentMetadata": {
+        "configurationName": "Default",
+        "deviceId": "00006020-000C11362ED3C01E",
+        "deviceName": "My Mac",
+        "exportedFileName": "DE1561D5-0274-47D0-8C58-ABC411D4280E.png",
+        "isAssociatedWithFailure": false,
+        "suggestedHumanReadableName": "Worktrees-Moved-Symlink-Manual-Repair_0_34BBDE0F-CEDD-465B-A867-33DA639DAD82.png",
+        "timestamp": 1792017550.761
+      }
+    },
+    {
+      "filename": "renewed-prune-consent.png",
+      "testIdentifier": "WorktreeAppKitTests/testChangedPruneCandidatesRequireRenewedSheetConfirmation()",
+      "attachmentTitle": "Worktrees-Prune-Renewed-Confirmation",
+      "sha256": "019ece082b4cf075dd580bc75ee71d924829c2001603e790ed66f9ffe6ca6a5e",
+      "captureMethod": "Unmodified XCTest diagnostic attachment",
+      "sourceExport": "artifacts/verification/worktree-hardening-preparation/captures-v7/prune-renewal/51014760-9AB9-4B2D-8A32-68454EDAA2D2.png",
+      "attachmentMetadata": {
+        "configurationName": "Default",
+        "deviceId": "00006020-000C11362ED3C01E",
+        "deviceName": "My Mac",
+        "exportedFileName": "51014760-9AB9-4B2D-8A32-68454EDAA2D2.png",
+        "isAssociatedWithFailure": false,
+        "suggestedHumanReadableName": "Worktrees-Prune-Renewed-Confirmation_0_B38A8A1E-F5C4-49CD-A2AD-E72FDE5209AE.png",
+        "timestamp": 1792017525.999
+      }
+    }
+  ],
+  "benchmarks": [
+    {
+      "filename": "before-128.txt",
+      "title": "Worktree repair capture 128 registrations_0_2511692F-7529-446A-B341-91EE8563C675.txt",
+      "sha256": "c28cdbf8b808d4f792514a946a3f5a9210fb98fb50cb3dbf2edf6f8a627618c7",
+      "text": "p95=3453.01ms\nsamples(ms)=3407.14, 3453.01, 3365.28, 3365.99, 3346.29"
+    },
+    {
+      "filename": "before-32.txt",
+      "title": "Worktree repair capture 32 registrations_0_AA9887A3-6219-4CEA-A213-B1466978C246.txt",
+      "sha256": "a0d4010a5024abb5e9cc37399c21e65b65815768d86db7a7173b954a01499987",
+      "text": "p95=217.69ms\nsamples(ms)=215.78, 215.33, 215.15, 215.04, 217.69"
+    },
+    {
+      "filename": "before-8.txt",
+      "title": "Worktree repair capture 8 registrations_0_EBBCF567-E188-44BC-9991-1BEE026E47A9.txt",
+      "sha256": "01a8e17388dd18e0f9a31830f47c29dc30cfcae7a96f4c40fad75f75a63d0c60",
+      "text": "p95=15.97ms\nsamples(ms)=15.97, 15.93, 15.91, 15.94, 15.90"
+    },
+    {
+      "filename": "paired-indexed-128.txt",
+      "title": "Worktree indexed scope capture 128 registrations_0_F43111A7-452E-4017-B7CA-5017ADC2A536.txt",
+      "sha256": "865f39cd2353b76697879d44bff23df5d000469f6cebab9e71cb3d75a2ba221a",
+      "text": "p95=61.91ms\nsamples(ms)=61.91, 61.18, 61.81, 61.16, 61.03"
+    },
+    {
+      "filename": "paired-repeated-128.txt",
+      "title": "Worktree repeated target capture 128 registrations_0_82ACE02E-CC92-48D2-BD12-77D36DF2A0D9.txt",
+      "sha256": "40d6150d70ccc5da2fe6527313bd4ae87e0ce94365fd74a32ad7e809869ef9ce",
+      "text": "p95=2927.67ms\nsamples(ms)=2927.67, 2918.49, 2922.85, 2923.12, 2923.37"
+    },
+    {
+      "filename": "paired-indexed-32.txt",
+      "title": "Worktree indexed scope capture 32 registrations_0_0B0E2C34-7223-4F21-A8DC-670F5FCE7172.txt",
+      "sha256": "3b4b3735f8c4db9bbe3f94404d36c68d9ccfbf47f1d46ce9649f451369f40679",
+      "text": "p95=15.53ms\nsamples(ms)=15.49, 15.50, 15.46, 15.42, 15.53"
+    },
+    {
+      "filename": "paired-repeated-32.txt",
+      "title": "Worktree repeated target capture 32 registrations_0_9521B6DD-BEC7-4BDA-8786-3E9C8AE1B06A.txt",
+      "sha256": "8804a8e241becdc9be45cfa5f6457ca138db6b4658155968f5df044f7f1e6536",
+      "text": "p95=195.64ms\nsamples(ms)=193.19, 192.71, 193.56, 192.84, 195.64"
+    },
+    {
+      "filename": "paired-indexed-8.txt",
+      "title": "Worktree indexed scope capture 8 registrations_0_C08DCA81-97AE-426F-9C90-5A0004876E1A.txt",
+      "sha256": "6334eb1d1a89fd792315b634f353c1177c973eea9fbde4263864c43992e02ce5",
+      "text": "p95=4.14ms\nsamples(ms)=3.98, 4.10, 4.12, 4.14, 4.09"
+    },
+    {
+      "filename": "paired-repeated-8.txt",
+      "title": "Worktree repeated target capture 8 registrations_0_86DF9A77-7790-4E45-9A55-BC693646B07B.txt",
+      "sha256": "5d81e58de93100e4fbbc5f5a39822fc2bece8bdce768ff78bd7d5f71d9c38bd6",
+      "text": "p95=15.24ms\nsamples(ms)=14.47, 15.24, 14.47, 14.60, 14.46"
+    }
+  ],
+  "core": {
+    "tests": 111,
+    "aggregateLineCoverage": 0.9993,
+    "worktreeFileLineCoverage": 1.0
+  },
+  "native": {
+    "tests": 112,
+    "failures": 0
+  },
+  "ui": {
+    "tests": 5,
+    "failures": 0
+  },
+  "performance": {
+    "tests": 33,
+    "failures": 0
+  },
+  "retiredCoordinator": {
+    "runId": "worktree-review-final-v3",
+    "retirement": "artifacts/verification/worktree-hardening-preparation/retirement.json",
+    "preservedInputs": "artifacts/verification/worktree-hardening-preparation/previous-workflow-before-retirement.json",
+    "resumedAgainstChangedSource": false
+  },
+  "productionSourceSHA256": {
+    "Classes/Controllers/HistoryMenuBuilder.swift": "fdcc8ff0e5192a5ed61af9a4271c4a8a2496cc169ac6b28d7be9e9a5affd1af0",
+    "Classes/Controllers/PBGitSidebarController.swift": "6459ab88ab9cf532ab7785fca41197226432903246ccc4e3eac22e50dfeb2778",
+    "Classes/Controllers/PBGitWindowController+Worktrees.swift": "a655cb864698435f983a727dfb44c4129299520da3ebc4e54c07132fd1a063d9",
+    "Classes/Controllers/PBGitWindowController.swift": "4458a6836326b822eee24366d6e31352a7b786c2fadb6232c364572c67cf3aa1",
+    "Classes/git/RepositoryWorktreeService.swift": "ae5cec35e3d569b375c3859431a5dcb85b375ca928ff2861911b381ee4b96d2e",
+    "GitXCore/Sources/GitXCore/SidebarPolicy.swift": "362a74791b0da7137e039d145b05d1fab0304b9e539539a7fac3e333611081c6",
+    "GitXCore/Sources/GitXCore/WorktreeEvidence.swift": "e243f714c1e81be1574888b572aad4eadf920c24e85e1a5d2d8b333be06de652",
+    "GitXCore/Sources/GitXCore/WorktreeLinks.swift": "4870c1f8dac39f27ed7e1c31154151cfaba2bd010a3038f29b1b67f76ed13324",
+    "GitXCore/Sources/GitXCore/WorktreePolicy.swift": "e25547ddbdc8a3b301bc78695581baf13bdb4ba84bb3320c52e0c4068610efed",
+    "Resources/en.lproj/MainMenu.xib": "7b6a657f594029fb3b889681544e161c93274e7bb21845ff2f2b26ad4eac1558"
+  },
+  "sourceWasUncommitted": true,
+  "checks": [
+    {
+      "name": "debug-test-build",
+      "status": "passed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-green-checkpoint-v6-debug-test-build-43ac0b5d/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 44.523
+    },
+    {
+      "name": "release-test-build",
+      "status": "passed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-green-checkpoint-v6-release-test-build-d6e2e4a2/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 42.05
+    },
+    {
+      "name": "correctness",
+      "status": "passed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-green-checkpoint-v6-correctness-5e493b1d/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 157.989
+    },
+    {
+      "name": "core",
+      "status": "passed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-green-checkpoint-v6-core-0139eb84/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 26.824
+    },
+    {
+      "name": "ui",
+      "status": "failed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-green-checkpoint-v6-ui-8c59ef2f/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 269.138
+    },
+    {
+      "name": "debug-test-build",
+      "status": "passed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-ui-performance-v7-debug-test-build-fce5d793/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 24.209
+    },
+    {
+      "name": "release-test-build",
+      "status": "passed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-ui-performance-v7-release-test-build-756b30ee/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 24.966
+    },
+    {
+      "name": "ui",
+      "status": "passed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-ui-performance-v7-ui-ecbfb73c/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 149.784
+    },
+    {
+      "name": "performance",
+      "status": "passed",
+      "receipt": "/Volumes/ExtStor/gitx/artifacts/verification/worktree-hardening-ui-performance-v7-performance-db3f00f3/receipt.json",
+      "evidenceStatus": "valid",
+      "durationSeconds": 175.543
+    }
+  ]
+}
