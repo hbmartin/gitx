@@ -5,7 +5,9 @@ import Foundation
 /// those existing foreign targets are deliberately left alone.
 public enum WorktreePaths {
     public static func canonical(_ path: String) -> String {
-        var existing = (path as NSString).standardizingPath
+        // Resolve the existing prefix before handling missing components.
+        // Lexical normalization can change the meaning of symlink/.. paths.
+        var existing = path
         var missing: [String] = []
         while existing.count > 1, !FileManager.default.fileExists(atPath: existing) {
             missing.insert((existing as NSString).lastPathComponent, at: 0)
@@ -35,6 +37,10 @@ public enum WorktreePaths {
 
 public enum WorktreeLinkInspector {
     public static func inspect(_ records: [GitWorktree], commonDirectory: String, currentPath: String?) -> [GitWorktree] {
+        inspect(records, commonDirectory: commonDirectory, currentPath: currentPath, fileSystem: .live)
+    }
+
+    static func inspect(_ records: [GitWorktree], commonDirectory: String, currentPath: String?, fileSystem: WorktreeEvidenceFileSystem) -> [GitWorktree] {
         let administrative = (commonDirectory as NSString).appendingPathComponent("worktrees")
         var identifiers: [Data: String] = [:]
         for identifier in (try? FileManager.default.contentsOfDirectory(atPath: administrative)) ?? [] {
@@ -59,14 +65,16 @@ public enum WorktreeLinkInspector {
                         if let moved, let link = link(at: moved) {
                             style = link.style
                         }
-                        broken = moved != nil
+                        broken = moved.map { hasRepairableGitfile(at: $0, fileSystem: fileSystem) } ?? false
                     }
                 } else if let link = link(at: record.path) {
                     style = link.style
                     if WorktreePaths.identity(link.target) != WorktreePaths.identity(ownAdministrative) {
                         foreign = FileManager.default.fileExists(atPath: link.target)
-                        broken = !foreign
+                        broken = !foreign && hasRepairableGitfile(at: record.path, fileSystem: fileSystem)
                     }
+                } else {
+                    broken = hasRepairableGitfile(at: record.path, fileSystem: fileSystem)
                 }
             }
             return GitWorktree(path: record.path, head: record.head, branchRefName: record.branchRefName,
@@ -82,43 +90,51 @@ public enum WorktreeLinkInspector {
     /// link. With an explicit --git-dir, Git otherwise accepts an unrelated
     /// checkout with the same administrative identifier.
     public static func canRepair(_ record: GitWorktree, at path: String, commonDirectory: String) -> Bool {
-        guard !record.hasForeignLink, let selected = link(at: path) else { return false }
-        let administrative = (commonDirectory as NSString).appendingPathComponent("worktrees")
-        for identifier in (try? FileManager.default.contentsOfDirectory(atPath: administrative)) ?? [] {
-            let folder = (administrative as NSString).appendingPathComponent(identifier)
-            guard let backlink = firstLine((folder as NSString).appendingPathComponent("gitdir")), !backlink.isEmpty else { continue }
-            let original = (resolve(backlink, relativeTo: folder) as NSString).deletingLastPathComponent
-            guard WorktreePaths.identity(original) == WorktreePaths.identity(record.path) else { continue }
-            if WorktreePaths.identity(selected.target) == WorktreePaths.identity(folder) {
-                return true
-            }
-            return record.movedPath.map(WorktreePaths.identity) == WorktreePaths.identity(path)
-                && !FileManager.default.fileExists(atPath: selected.target)
+        (try? captureRepairTarget(record, at: path, commonDirectory: commonDirectory)) != nil
+    }
+
+    private static func hasRepairableGitfile(at path: String, fileSystem: WorktreeEvidenceFileSystem) -> Bool {
+        do {
+            _ = try fileSystem.regularContents((path as NSString).appendingPathComponent(".git"))
+            return true
+        } catch {
+            return false
         }
-        return false
     }
 
     private static func firstLine(_ path: String) -> String? {
-        guard var contents = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        guard let data = try? WorktreeEvidenceFileSystem.live.regularContents(path) else { return nil }
+        return firstLine(data)
+    }
+
+    static func firstLine(_ data: Data) -> String? {
+        guard !data.contains(0), var contents = String(data: data, encoding: .utf8) else { return nil }
         if contents.last == "\n" {
             contents.removeLast()
         }
         return contents
     }
 
-    private static func resolve(_ target: String, relativeTo folder: String) -> String {
-        let path = (target as NSString).isAbsolutePath ? target : (folder as NSString).appendingPathComponent(target)
-        return (path as NSString).standardizingPath
+    static func resolve(_ target: String, relativeTo folder: String) -> String {
+        (target as NSString).isAbsolutePath ? target : (folder as NSString).appendingPathComponent(target)
     }
 
     private static func link(at path: String) -> (target: String, style: WorktreeLinkStyle)? {
-        guard let line = firstLine((path as NSString).appendingPathComponent(".git")), line.hasPrefix("gitdir: ") else { return nil }
+        // Git accepts symlink gitfiles. Inspection preserves their read-only
+        // behavior; repair evidence separately rejects the symlink object.
+        let gitfile = WorktreePaths.canonical((path as NSString).appendingPathComponent(".git"))
+        guard let data = try? WorktreeEvidenceFileSystem.live.regularContents(gitfile) else { return nil }
+        return link(data, at: path)
+    }
+
+    static func link(_ data: Data, at path: String) -> (target: String, style: WorktreeLinkStyle)? {
+        guard let line = firstLine(data), line.hasPrefix("gitdir: ") else { return nil }
         let target = String(line.dropFirst(8))
         guard !target.isEmpty else { return nil }
         return (resolve(target, relativeTo: path), (target as NSString).isAbsolutePath ? .absolute : .relative)
     }
 
-    private static func movedPath(_ path: String, identifier: String, mainPath: String, commonDirectory: String) -> String? {
+    static func movedPath(_ path: String, identifier: String, mainPath: String, commonDirectory: String) -> String? {
         let main = WorktreePaths.canonical(mainPath)
         let common = WorktreePaths.canonical(commonDirectory)
         guard WorktreePaths.contains(common, in: main) else { return nil }
@@ -130,7 +146,7 @@ public enum WorktreeLinkInspector {
             let candidate = (mainPath as NSString).appendingPathComponent(relative)
             let formerCommon = (formerMain as NSString).appendingPathComponent(suffix)
             let formerAdministrative = ((formerCommon as NSString).appendingPathComponent("worktrees") as NSString).appendingPathComponent(identifier)
-            if let link = link(at: candidate), Data(link.target.utf8) == Data((formerAdministrative as NSString).standardizingPath.utf8),
+            if let link = link(at: candidate), WorktreePaths.identity(link.target) == WorktreePaths.identity(formerAdministrative),
                !FileManager.default.fileExists(atPath: link.target)
             {
                 return candidate

@@ -171,16 +171,21 @@
     {
       "id": "PATH-002",
       "family": "Literal mutation and atomic rejection",
-      "invariant": "Every selected path is validated before any mutation; raw identities never become shell/display text.",
-      "rootCause": "Partial validation and pathspec metacharacters can mutate the wrong files or leave a partially applied selection.",
+      "invariant": "Every selected path is validated before any mutation; raw identities never become shell/display text. Queued worktree locate repair revalidates the captured folder and administrative ownership at writer admission, preserving both repositories' links when either identity changes.",
+      "rootCause": "Partial validation and pathspec metacharacters can mutate the wrong files or leave a partially applied selection. Validating a locate folder only before queueing allows a replacement folder or reused administrative name to inherit mutation authority.",
       "sourcePaths": [
         "Classes/git/IndexMutationService.swift",
         "Classes/git/PBGitIndex*",
-        "Classes/git/IndexCommandRunning.swift"
+        "Classes/git/IndexCommandRunning.swift",
+        "Classes/git/RepositoryWorktreeService.swift",
+        "GitXCore/Sources/GitXCore/WorktreeEvidence.swift",
+        "GitXCore/Sources/GitXCore/WorktreeLinks.swift",
+        "GitXCore/Sources/GitXCore/WorktreePolicy.swift"
       ],
       "requiredChecks": [
         "correctness",
-        "thread-sanitizer"
+        "thread-sanitizer",
+        "core"
       ],
       "tests": [
         {
@@ -200,24 +205,148 @@
           "identifier": "GitXTests/IndexMutationServiceTests/testUnknownOrPartialCapabilitiesRejectEntireUnsafeSelectionBeforeAnyChunk",
           "role": "boundary",
           "oracle": "No chunk launches after an unsafe capability/selection combination."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testUnchangedQueuedLocateRepairsTheExactBidirectionalLinks",
+          "role": "valid",
+          "oracle": "An unchanged folder admitted after a held writer gains the exact administrative backlink and Git directory, while its actual HEAD remains unchanged."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedLocateRejectsForeignFolderReplacementWithoutTouchingEitherRepository",
+          "role": "failure",
+          "oracle": "Replace the queued folder with another repository's worktree; compare exact .git, backlink, HEAD and index bytes, both repositories' refs, and the foreign checkout HEAD after refusal and subsequent queue release."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedLocateRejectsRecreatedAdministrativeRegistrationWithTheSameName",
+          "role": "boundary",
+          "oracle": "Recreate the administrative directory under the same name while repair waits; refusal preserves the replacement backlink and selected folder's exact .git bytes."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedLocateRejectsAReappearedForeignSiblingWithoutTouchingEitherRepository",
+          "role": "boundary",
+          "oracle": "While locate repair waits, replace a missing sibling registration's folder with a foreign checkout without changing administrative evidence; refusal preserves both .git files, administrative backlink, HEAD and index bytes, actual checkout HEADs and refs, then releases the queue."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedRepositoryRepairRejectsAReappearedForeignSiblingWithoutTouchingEitherRepository",
+          "role": "boundary",
+          "oracle": "While repository-wide repair waits, a missing sibling folder reappears as a foreign checkout; unchanged administrative evidence grants no authority to overwrite it, and exact links, HEAD and index bytes, actual checkout HEADs and refs survive refusal and queue release."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testOriginalRepairAcceptsReadableDamageAndRejectsUnprovenObjects",
+          "check": "core",
+          "role": "valid",
+          "oracle": "Captured original-folder ownership permits repairable missing or malformed links and rejects foreign targets, ambiguous registrations and malformed administrative backlinks."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testQueuedRepairRejectsReplacedCheckoutGitfileBacklinkAndRegistration",
+          "check": "core",
+          "role": "failure",
+          "oracle": "A captured target rejects changed .git bytes, administrative backlinks or common links, replacement checkout or registration identities, and unreadable evidence while unchanged ownership remains valid."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeLifecycleTests.swift",
+          "identifier": "GitXCoreTests/WorktreeLinkTests/testValidSymlinkGitfileRemainsBrowsableAndRepairPreservesItsObject",
+          "check": "core",
+          "role": "valid",
+          "oracle": "A valid managed .git symlink remains browsable while automatic repair refuses to replace its object and preserves the exact symlink destination."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeLifecycleTests.swift",
+          "identifier": "GitXCoreTests/WorktreeLinkTests/testStaleOriginalGitfileSymlinkDoesNotAdvertiseAutomaticRepairAndPreservesMetadata",
+          "check": "core",
+          "role": "failure",
+          "oracle": "A readable stale .git symlink is not advertised as automatically repairable; refusal preserves the symlink object and destination, target identity and bytes, administrative links, HEAD, index and checkout content."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeLifecycleTests.swift",
+          "identifier": "GitXCoreTests/WorktreeLinkTests/testMovedStaleGitfileSymlinkRetainsPruneProtectionWithoutAdvertisingAutomaticRepair",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "A moved checkout with a readable stale .git symlink retains its exact move identity and refuses automatic replacement while preserving the symlink, target bytes, registration metadata and tracked content."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedRepairRejectsAStaleLinkTargetThatBecomesAForeignRegistration",
+          "role": "boundary",
+          "oracle": "With unchanged saved .git bytes, a previously missing target becomes a real foreign registration while Locate or repository-wide repair waits; re-resolution refuses mutation, preserving both repositories' links, administrative metadata, HEAD, index, content and refs, then releases the queue."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testQueuedRepairRejectsAStaleTargetThatBecomesAnExistingForeignRegistration",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "A captured stale .git target becomes an existing foreign directory without changing saved link bytes; validation and fresh capture reject it while the selected checkout identity and exact administrative fingerprint remain unchanged."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testQueuedRepairRejectsRetargetedSelectedGitdirAlias",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "A selected .git link keeps its exact bytes while its Git-directory alias is retargeted; validation and fresh capture refuse while the raw link, administrative fingerprint and new alias destination remain unchanged."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testQueuedRepairRejectsRetargetedAdministrativeBacklinkAlias",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "An administrative backlink keeps its exact bytes while its path alias is retargeted to a different checkout; validation and fresh capture reject it, fresh fingerprint evidence changes and no longer matches the registered checkout path, and the backlink bytes and new alias destination remain unchanged."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testQueuedRepairRejectsRetargetedAdministrativeCommonAlias",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "An administrative common link keeps its exact bytes while its path alias is retargeted to a foreign common directory; validation and fresh capture refuse, fresh fingerprint evidence changes and no longer matches the registration ownership, and the common-link bytes and new alias destination remain unchanged."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testFingerprintFreezesBacklinkEndpointResolutionWithoutChangingCheckoutPathAttribution",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Administrative fingerprints freeze the resolved endpoint of a backlink independently of its raw bytes; retargeting the checkout's managed .git symlink changes fresh evidence while captured and fresh fingerprints still attribute the same checkout path and registration identity."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedGlobalRepairUsesCapturedCheckoutWhenMovedDirectoryAliasChanges",
+          "role": "valid",
+          "oracle": "Retarget a moved checkout directory alias while global repair waits; Git repairs the captured canonical checkout rather than the alias's new foreign target, preserving foreign links, metadata, HEAD, index, content and refs while the owned checkout becomes the published registration with its exact administrative backlink."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testQueuedRepairReevaluatesGitdirAliasesBeforeParentComponents",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Capture owned and missing Git-directory targets through alias/.. paths, then retarget the alias without changing .git bytes; queued validation must reparse the saved bytes and reject the changed target resolution rather than trusting the normalized target captured earlier."
         }
       ]
     },
     {
       "id": "STATE-001",
       "family": "Snapshot and refresh authority",
-      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter.",
-      "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content.",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter. Prune authority is bound to the approved preview's administrative registrations and revalidated at writer admission; changed candidates require an updated preview and a new confirmation.",
+      "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content. A prune confirmation detached from current registration identity can forget worktrees the user did not approve.",
       "sourcePaths": [
         "Classes/git/IndexRefreshCoordinator.swift",
         "Classes/Controllers/Staging*",
         "Classes/Controllers/PBGitHistoryController*",
-        "Classes/Controllers/PBGitSidebarController.swift"
+        "Classes/Controllers/PBGitSidebarController.swift",
+        "Classes/Controllers/PBGitWindowController+Worktrees.swift",
+        "Classes/git/RepositoryWorktreeService.swift",
+        "GitXCore/Sources/GitXCore/WorktreeEvidence.swift",
+        "GitXCore/Sources/GitXCore/WorktreePolicy.swift"
       ],
       "requiredChecks": [
         "correctness",
         "thread-sanitizer",
-        "ui"
+        "ui",
+        "core"
       ],
       "tests": [
         {
@@ -341,11 +470,62 @@
           "oracle": "A real sibling-worktree change publishes a snapshot while mounted content, viewed branch, selected branch, and checkout HEAD remain unchanged."
         },
         {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testLegacyPruneRequiresAPreviewBeforeDeletingARegistration",
+          "role": "failure",
+          "oracle": "Calling the legacy destructive prune entry point without a captured preview refuses the operation and preserves the actual administrative registration."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testLegacyPruneRejectsNewCandidatesAfterPreviewAndReleasesQueue",
+          "role": "boundary",
+          "oracle": "Make another worktree prunable after preview; refusal preserves both real administrative directories and allows the following queued writer to complete."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testChangedPruneCandidatesRequireRenewedSheetConfirmation",
+          "role": "boundary",
+          "oracle": "A changed candidate set replaces the real confirmation sheet before any registration changes; cancellation preserves both backlinks and checkout HEADs, and a fresh approved preview then deletes its registrations while preserving the moved folder and main HEAD."
+        },
+        {
           "source": "GitXUITests/Milestone2WorkflowUITests.swift",
           "identifier": "GitXUITests/Milestone2WorkflowUITests/testExactCheckoutFetchesOnlyApprovedRefAndSwitchesToNamedBranch",
           "check": "ui",
           "role": "valid",
           "oracle": "The native inspector stays visible at cold launch; explicit confirmation fetches only the approved ref and switches to the named branch at the approved OID."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testFingerprintIncludesOnlyConsentRelevantAdministrativeMetadata",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Exact administrative fingerprints change for HEAD, lock, common-link and backlink bytes or replaced registrations, retain identity across index/log changes, and require a one-to-one match with registered paths."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeLifecycleTests.swift",
+          "identifier": "GitXCoreTests/WorktreeLinkTests/testMovedStaleGitfileSymlinkRetainsPruneProtectionWithoutAdvertisingAutomaticRepair",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Unsupported .git object classification retains the moved path that blocks prune, without advertising automatic repair or changing the managed link and registration evidence."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune",
+          "role": "failure",
+          "oracle": "Explicit repair and prune actions present a manual-repair notice with no mutation buttons for the moved managed .git symlink; exact link targets, registration metadata, actual HEAD and refs remain unchanged."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testFingerprintFreezesBacklinkEndpointResolutionWithoutChangingCheckoutPathAttribution",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Administrative fingerprints freeze the resolved endpoint of a backlink independently of its raw bytes; retargeting the checkout's managed .git symlink changes fresh evidence while captured and fresh fingerprints still attribute the same checkout path and registration identity."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedPruneRequiresRenewedConsentWhenCommonDirectoryAliasChanges",
+          "role": "boundary",
+          "oracle": "Retarget a captured administrative common-directory alias while prune waits, keeping raw link bytes, revision OID and candidate report identical; a renewed preview is required and both repositories' exact metadata and refs survive before the following queued operation completes."
         }
       ]
     },
