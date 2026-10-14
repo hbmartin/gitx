@@ -455,6 +455,7 @@
 		26A1958F255949DCBBB012A3 /* PBGitRefLabelColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */; };
 		11F86FC6AB4A474ABE9F1445 /* WorktreeBranchTemplate.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */; };
 		932DA454E09B44F5AB66C8A6 /* WorktreeServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F724AE03AD412D84639190 /* WorktreeServiceTests.swift */; };
+		C0DE88000000000000000032 /* WorktreePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE88000000000000000031 /* WorktreePresentationTests.swift */; };
 		FBFB6B67DFBB4AF8B4916F5F /* WorktreeAppKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DDF5AD278AE402E8D17B6FB /* WorktreeAppKitTests.swift */; };
 		B6547E1495BE465AA156AFAF /* WorktreeWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */; };
 /* End PBXBuildFile section */
@@ -1182,6 +1183,7 @@
 		5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBGitRefLabelColors.swift; sourceTree = "<group>"; };
 		75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = WorktreeBranchTemplate.pdf; sourceTree = "<group>"; };
 		E5F724AE03AD412D84639190 /* WorktreeServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeServiceTests.swift; sourceTree = "<group>"; };
+		C0DE88000000000000000031 /* WorktreePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePresentationTests.swift; sourceTree = "<group>"; };
 		3DDF5AD278AE402E8D17B6FB /* WorktreeAppKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeAppKitTests.swift; sourceTree = "<group>"; };
 		73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeWorkflowUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -1844,6 +1846,7 @@
 				C0DE91000000000000000002 /* PBQLOutlineViewTests.swift */,
 				C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */,
 				C0DE48000000000000000011 /* WorktreeCharacterizationTests.swift */,
+				C0DE88000000000000000031 /* WorktreePresentationTests.swift */,
 				3DDF5AD278AE402E8D17B6FB /* WorktreeAppKitTests.swift */,
 				E5F724AE03AD412D84639190 /* WorktreeServiceTests.swift */,
 				C0DE48000000000000000012 /* WorktreeRevisionCharacterizationTests.m */,
@@ -2597,6 +2600,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0DE88000000000000000032 /* WorktreePresentationTests.swift in Sources */,
 				FBFB6B67DFBB4AF8B4916F5F /* WorktreeAppKitTests.swift in Sources */,
 				932DA454E09B44F5AB66C8A6 /* WorktreeServiceTests.swift in Sources */,
 				C0DE30000000000000000001 /* GitXCoreTests.m in Sources */,

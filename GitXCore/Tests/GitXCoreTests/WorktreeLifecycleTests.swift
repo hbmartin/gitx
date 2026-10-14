@@ -357,7 +357,7 @@ final class WorktreeLinkTests: XCTestCase {
         let copy = root.appendingPathComponent("copied")
         try FileManager.default.copyItem(at: main, to: copy)
         var snapshot = try WorktreeParser.parse(git(["worktree", "list", "--porcelain", "-z"], at: copy))
-        snapshot[1] = GitWorktree(path: copy.appendingPathComponent("topic").path, head: snapshot[1].head, branchRefName: snapshot[1].branchRefName)
+        snapshot[1] = GitWorktree(path: copy.appendingPathComponent("topic").path, head: snapshot[1].head, headRefName: snapshot[1].headRefName)
         let admin = copy.appendingPathComponent(".git/worktrees/topic/gitdir")
         try (copy.appendingPathComponent("topic/.git").path + "\n").write(to: admin, atomically: true, encoding: .utf8)
         let before = try Data(contentsOf: copy.appendingPathComponent("topic/.git"))
