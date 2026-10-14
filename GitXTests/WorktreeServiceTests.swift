@@ -768,6 +768,14 @@ final class WorktreeServiceTests: XCTestCase {
 
 @MainActor
 final class WorktreeRepairSafetyTests: XCTestCase {
+    func testRealWriterPublishesReconciliationBeforeCompletionAndReleasesFIFO() async throws {
+        try await characterizeRealWriterReconciliation(failsReconciliation: false)
+    }
+
+    func testCompletedRealWriterReportsReconciliationCancellationAndReleasesFIFO() async throws {
+        try await characterizeRealWriterReconciliation(failsReconciliation: true)
+    }
+
     func testQueuedGlobalRepairUsesCapturedCheckoutWhenMovedDirectoryAliasChanges() async throws {
         let fixture = try RepairFixture(label: "argument-alias-own")
         let foreign = try RepairFixture(label: "argument-alias-foreign")
@@ -1476,6 +1484,112 @@ final class WorktreeRepairSafetyTests: XCTestCase {
     private final class PruneCompletion {
         var preview: PBWorktreePrunePreview?
         var error: NSError?
+    }
+
+    private func characterizeRealWriterReconciliation(failsReconciliation: Bool) async throws {
+        let fixture = try RepairFixture(label: "writer-reconciliation-\(failsReconciliation)")
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let reconciliation = ControlledWorktreeTask()
+        let reading = expectation(description: "completed real writer starts reconciliation")
+        reading.assertForOverFulfill = true
+        let listingArguments = ["worktree", "list", "--porcelain", "-z"]
+        let lockArguments = ["worktree", "lock", "--reason", "characterized writer", fixture.linked.path]
+        let unlockArguments = ["worktree", "unlock", fixture.linked.path]
+        var holdNextDiscovery = false
+        var firstArguments: [[String]] = []
+        var followingArguments: [[String]] = []
+        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            firstArguments.append(arguments)
+            if holdNextDiscovery, arguments == listingArguments {
+                holdNextDiscovery = false
+                reading.fulfill()
+                return reconciliation
+            }
+            return nil
+        })
+        let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            followingArguments.append(arguments)
+            return nil
+        })
+        defer { service.cancel(); following.cancel(); reconciliation.finish(nil, error: CancellationError()) }
+        try await ready(service)
+        try await ready(following)
+        let initialMetadata = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let mainHEAD = try Data(contentsOf: fixture.main.appendingPathComponent(".git/HEAD"))
+        let mainIndex = try Data(contentsOf: fixture.main.appendingPathComponent(".git/index"))
+        let mainContent = try Data(contentsOf: fixture.main.appendingPathComponent("marker.txt"))
+        let linkedContent = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        let results = WriterCharacterizationResult()
+        let firstCompleted = expectation(description: "real writer completion follows reconciliation")
+        let followingCompleted = expectation(description: "following real writer reconciles")
+        firstCompleted.assertForOverFulfill = true
+        followingCompleted.assertForOverFulfill = true
+        holdNextDiscovery = true
+        enqueue {
+            service.lockWorktree(path: fixture.linked.path, reason: "characterized writer") { _, error in
+                // swift6-safety-justification: The service delivers these lifecycle completions synchronously on the main queue.
+                MainActor.assumeIsolated {
+                    results.error = error as NSError?
+                    results.names.append("first")
+                    XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.isLocked, !failsReconciliation)
+                    XCTAssertFalse(followingArguments.contains(unlockArguments), "FIFO releases only after delivering this completion")
+                    firstCompleted.fulfill()
+                }
+            }
+        }
+        await fulfillment(of: [reading], timeout: 10)
+        XCTAssertTrue(results.names.isEmpty)
+        let lockFile = fixture.main.appendingPathComponent(".git/worktrees/linked/locked")
+        XCTAssertEqual(try String(contentsOf: lockFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), "characterized writer")
+        XCTAssertFalse(service.worktree(forBranch: "refs/heads/topic")?.isLocked ?? true, "The last snapshot stays unchanged while reconciliation is pending")
+        enqueue {
+            following.unlockWorktree(path: fixture.linked.path) { _, error in
+                // swift6-safety-justification: The service delivers these lifecycle completions synchronously on the main queue.
+                MainActor.assumeIsolated {
+                    XCTAssertNil(error)
+                    results.names.append("following")
+                    followingCompleted.fulfill()
+                }
+            }
+        }
+        XCTAssertFalse(followingArguments.contains(unlockArguments))
+        XCTAssertEqual(firstArguments.filter { $0 == lockArguments }.count, 1)
+        if failsReconciliation {
+            reconciliation.finish(nil, error: CancellationError())
+        } else {
+            try reconciliation.finish(Data(fixture.git(listingArguments).utf8))
+        }
+        await fulfillment(of: [firstCompleted, followingCompleted], timeout: 10)
+        XCTAssertEqual(results.names, ["first", "following"])
+        if failsReconciliation {
+            let error = try XCTUnwrap(results.error)
+            XCTAssertEqual(error.domain, "PBGitXErrorDomain")
+            XCTAssertTrue(error.localizedFailureReason?.contains("Git completed the operation, but worktree state could not be reread") == true)
+            XCTAssertTrue(error.userInfo[NSUnderlyingErrorKey] is CancellationError)
+        } else {
+            XCTAssertNil(results.error)
+            XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.lockReason, "characterized writer")
+        }
+        XCTAssertEqual(firstArguments.filter { $0 == lockArguments }.count, 1)
+        XCTAssertEqual(followingArguments.filter { $0 == unlockArguments }.count, 1)
+        XCTAssertFalse(following.worktree(forBranch: "refs/heads/topic")?.isLocked ?? true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: lockFile.path))
+        XCTAssertEqual(try metadata(in: fixture), initialMetadata)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent(".git/HEAD")), mainHEAD)
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent(".git/index")), mainIndex)
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent("marker.txt")), mainContent)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), linkedContent)
+    }
+
+    @MainActor
+    private final class WriterCharacterizationResult {
+        var error: NSError?
+        var names: [String] = []
     }
 
     private func confirmationError(_ service: PBRepositoryWorktreeService, preview: PBWorktreePrunePreview) async -> NSError? {

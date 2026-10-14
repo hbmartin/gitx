@@ -162,6 +162,73 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
     }
 
+    func testHealthyWorktreeMenusDispatchUnlockWithoutLoadingHistory() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        _ = try fixture.git(["worktree", "lock", "--reason", "characterized", fixture.linked.path])
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked)
+            .trimmingCharacters(in: .whitespacesAndNewlines))
+        let originalMetadata = try registrationMetadata(administrative)
+        let originalRefs = try fixture.git(["show-ref", "--head"])
+        let originalMainHead = try fixture.git(["rev-parse", "HEAD"])
+        let originalLinkedHead = try fixture.git(["rev-parse", "HEAD"], in: fixture.linked)
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = RepairWindowControllerFixture(windowNibName: "RepositoryWindow")
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: .titled, backing: .buffered, defer: false)
+        controller.window = window
+        controller.repository = repository
+        window.orderFront(nil)
+        defer { controller.close(); service.cancel() }
+        XCTAssertTrue(window.isVisible)
+        XCTAssertNil(controller.historyViewController)
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: controller))
+        _ = sidebar.view
+        XCTAssertNil(controller.historyViewController, "Loading the sidebar must not require History")
+        let row = try worktreeItem(in: sidebar, at: fixture.linked.path)
+        try selectWorktree(row, in: sidebar)
+        let actionButton = try XCTUnwrap(sidebar.value(forKey: "actionButton") as? NSPopUpButton)
+        let actionMenu = try XCTUnwrap(actionButton.menu)
+
+        for usesActionMenu in [false, true] {
+            if usesActionMenu {
+                _ = try fixture.git(["worktree", "lock", "--reason", "characterized-again", fixture.linked.path])
+                service.refresh()
+                await waitUntil { service.worktree(forBranch: "refs/heads/topic")?.isLocked == true }
+            }
+            let selected = try worktreeItem(in: sidebar, at: fixture.linked.path)
+            XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, selected.identity)
+            let outline = try XCTUnwrap(sidebar.sourceView)
+            let selectedRow = outline.row(forItem: selected)
+            XCTAssertGreaterThanOrEqual(selectedRow, 0)
+            let menu: NSMenu
+            if usesActionMenu {
+                autoreleasepool { sidebar.menuNeedsUpdate(actionMenu) }
+                menu = actionMenu
+            } else {
+                menu = autoreleasepool { sidebar.menu(forRow: selectedRow) }
+            }
+            let unlockItems = menu.items.filter { $0.action == NSSelectorFromString("unlockWorktree:") }
+            XCTAssertEqual(unlockItems.count, 1)
+            let unlock = try XCTUnwrap(unlockItems.first)
+            XCTAssertTrue(unlock.isEnabled)
+            XCTAssertNil(unlock.target, "Lifecycle actions continue through the responder chain")
+            XCTAssertEqual((unlock.representedObject as? PBGitWorktree)?.path, selected.worktree.path)
+            XCTAssertFalse(menu.items.contains { $0.action == NSSelectorFromString("checkout:") || $0.action == NSSelectorFromString("deleteRef:") })
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(unlock.action), to: controller, from: unlock))
+            await waitUntil { service.worktree(forBranch: "refs/heads/topic")?.isLocked == false }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: administrative.appendingPathComponent("locked").path))
+            XCTAssertEqual(try registrationMetadata(administrative), originalMetadata)
+            XCTAssertEqual(try fixture.git(["show-ref", "--head"]), originalRefs)
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), originalMainHead)
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked), originalLinkedHead)
+            XCTAssertNil(controller.historyViewController, "Menu dispatch must not load History")
+            XCTAssertNil(window.attachedSheet)
+        }
+    }
+
     func testBranchWorktreeSidebarMenusRetainReferenceActionsAndSafeLifecycleRouting() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
