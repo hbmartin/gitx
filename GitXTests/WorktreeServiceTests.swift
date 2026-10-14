@@ -741,6 +741,228 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertEqual(main.category(for: "/repo/.git/HEAD.lock"), 0)
     }
 
+    func testCapabilityChangePublishesInputsBeforeCancellingAnAdmittedReadAndUsesItsOwnTaskFlags() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable")
+        defer {
+            defaults.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        for currentClipped in [false, true] {
+            defaults.set("/usr/bin/git", forKey: "gitExecutable")
+            let fixture = try WorktreeMutationFixture()
+            defer { fixture.cleanup() }
+            let installed = fixture.makeService()
+            let service = installed.service
+            try await start(installed)
+            XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 1)
+            let reading = installed.tasks.expect(discoveryArguments)
+            let readCancelled = expectation(description: "admitted preview cancels once")
+            let queuedCancelled = expectation(description: "same-service queued writer cancels once")
+            readCancelled.assertForOverFulfill = true
+            queuedCancelled.assertForOverFulfill = true
+            enqueuePrunePreview(service) { preview, error in
+                XCTAssertNil(preview)
+                XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
+                XCTAssertEqual(error?.code, NSUserCancelledError)
+                // A normal client entry point is called synchronously while cancellation is
+                // being delivered, before complete() releases the shared FIFO reservation.
+                service.refresh()
+                readCancelled.fulfill()
+            }
+            await fulfillment(of: [reading], timeout: 5)
+            let oldRead = try installed.tasks.task(discoveryArguments, occurrence: 1)
+            enqueueLock(service, reason: "must-cancel-before-launch") { _, error in
+                XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
+                XCTAssertEqual(error?.code, NSUserCancelledError)
+                queuedCancelled.fulfill()
+            }
+            XCTAssertTrue(installed.tasks.mutations.isEmpty)
+            defaults.set("/usr/bin/true", forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+            await fulfillment(of: [readCancelled, queuedCancelled], timeout: 5)
+            await drainMainQueue()
+            let probes = installed.tasks.requests.filter { $0.arguments == ["--version"] }
+            XCTAssertEqual(probes.count, 2, "One preference change launches exactly one additional probe")
+            XCTAssertTrue(oldRead.wasCancelled)
+            XCTAssertTrue(installed.tasks.mutations.isEmpty)
+            let current = try installed.tasks.task(["--version"], occurrence: 1)
+            current.setTruncationFlags(standardOutput: currentClipped)
+            // In the broken implementation this is the outer, superseded task stored in
+            // self.versionTask after recursive checkVersion returns. Its flags must not
+            // decide whether the newest-generation task output is complete.
+            for obsolete in probes.dropFirst(2) {
+                obsolete.task.setTruncationFlags(standardOutput: !currentClipped)
+            }
+            let version = "git version 2.50.1"
+            current.finish(Data(version.utf8))
+            await drainMainQueue()
+            XCTAssertEqual(service.isSupported, !currentClipped)
+            XCTAssertEqual(service.gitVersion, currentClipped ? nil : version)
+            for obsolete in probes.dropFirst(2) {
+                obsolete.task.finish(Data("git version 1.0.0".utf8))
+            }
+            oldRead.finish(nil, error: CancellationError())
+            await drainMainQueue()
+            XCTAssertEqual(service.isSupported, !currentClipped)
+            XCTAssertEqual(service.gitVersion, currentClipped ? nil : version)
+            // Complete any automatic successful-probe discovery so no fake read remains.
+            for request in installed.tasks.requests.filter({ $0.arguments == discoveryArguments }) {
+                request.task.finish(snapshot)
+            }
+            await drainMainQueue()
+        }
+    }
+
+    func testAvailabilityObserverChangingThePreferenceAgainDoesNotTerminateOrSupersedeTheNewestProbe() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable")
+        defer {
+            defaults.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        defaults.set("/usr/bin/git", forKey: "gitExecutable")
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        let service = installed.service
+        try await start(installed)
+        let reading = installed.tasks.expect(discoveryArguments)
+        let readCancelled = expectation(description: "availability transition cancels admitted read once")
+        let queuedCancelled = expectation(description: "availability transition cancels queued writer once")
+        readCancelled.assertForOverFulfill = true
+        queuedCancelled.assertForOverFulfill = true
+        enqueuePrunePreview(service) { preview, error in
+            XCTAssertNil(preview)
+            XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
+            XCTAssertEqual(error?.code, NSUserCancelledError)
+            readCancelled.fulfill()
+        }
+        await fulfillment(of: [reading], timeout: 5)
+        let oldRead = try installed.tasks.task(discoveryArguments, occurrence: 1)
+        enqueueLock(service, reason: "must-not-launch") { _, error in
+            XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
+            XCTAssertEqual(error?.code, NSUserCancelledError)
+            queuedCancelled.fulfill()
+        }
+        let reentry = WorktreeCompletionRecorder()
+        let changedAgain = expectation(description: "one-shot observer chooses C while B publishes unavailable")
+        changedAgain.assertForOverFulfill = true
+        let observation = service.observe(\.gitVersion) { observed, _ in
+            // swift6-safety-justification: Service availability is published on its main actor.
+            MainActor.assumeIsolated {
+                guard observed.gitVersion == nil, reentry.names.isEmpty else { return }
+                reentry.names.append("changed-once")
+                UserDefaults.standard.set("/usr/bin/false", forKey: "gitExecutable")
+                service.refresh() // Synchronous existing entry point starts C before B returns.
+                changedAgain.fulfill()
+            }
+        }
+        defer { observation.invalidate() }
+        defaults.set("/usr/bin/true", forKey: "gitExecutable")
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        await fulfillment(of: [changedAgain, readCancelled, queuedCancelled], timeout: 5)
+        await drainMainQueue()
+        observation.invalidate()
+        let probes = installed.tasks.requests.filter { $0.arguments == ["--version"] }
+        XCTAssertEqual(probes.count, 2, "Initial probe and C only: superseded B must never launch")
+        let current = try installed.tasks.task(["--version"], occurrence: 1)
+        XCTAssertFalse(current.wasCancelled, "B must retire only its captured old tasks, never C")
+        XCTAssertTrue(oldRead.wasCancelled)
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        let discovered = installed.tasks.expect(discoveryArguments)
+        current.finish(Data("git version 2.50.3".utf8))
+        await fulfillment(of: [discovered], timeout: 5)
+        XCTAssertTrue(service.isSupported)
+        XCTAssertEqual(service.gitVersion, "git version 2.50.3")
+        // A superseded callback cannot replace the newest accepted result.
+        for obsolete in probes.dropFirst(2) {
+            obsolete.task.finish(Data("git version 1.0.0".utf8))
+        }
+        oldRead.finish(nil, error: CancellationError())
+        try installed.tasks.task(discoveryArguments, occurrence: 2).finish(snapshot)
+        await drainMainQueue()
+        XCTAssertTrue(service.isSupported)
+        XCTAssertEqual(service.gitVersion, "git version 2.50.3")
+        XCTAssertEqual(reentry.names, ["changed-once"])
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+    }
+
+    func testAvailabilityObserverClosingTheServiceCancelsReadsWithoutLaunchingAnotherProbe() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable")
+        defer {
+            defaults.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        defaults.set("/usr/bin/git", forKey: "gitExecutable")
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        let service = installed.service
+        try await start(installed)
+        let initial = service.worktrees
+        let reading = installed.tasks.expect(discoveryArguments)
+        let readCancelled = expectation(description: "close during availability cancels admitted read once")
+        let queuedCancelled = expectation(description: "close during availability cancels queued writer once")
+        readCancelled.assertForOverFulfill = true
+        queuedCancelled.assertForOverFulfill = true
+        enqueuePrunePreview(service) { preview, error in
+            XCTAssertNil(preview)
+            XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
+            XCTAssertEqual(error?.code, NSUserCancelledError)
+            readCancelled.fulfill()
+        }
+        await fulfillment(of: [reading], timeout: 5)
+        let oldRead = try installed.tasks.task(discoveryArguments, occurrence: 1)
+        enqueueLock(service, reason: "must-not-launch") { _, error in
+            XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
+            XCTAssertEqual(error?.code, NSUserCancelledError)
+            queuedCancelled.fulfill()
+        }
+        let reentry = WorktreeCompletionRecorder()
+        let closed = expectation(description: "one-shot availability observer closes owner")
+        closed.assertForOverFulfill = true
+        let observation = service.observe(\.gitVersion) { observed, _ in
+            // swift6-safety-justification: Service availability is published on its main actor.
+            MainActor.assumeIsolated {
+                guard observed.gitVersion == nil, reentry.names.isEmpty else { return }
+                reentry.names.append("closed-once")
+                service.cancel()
+                closed.fulfill()
+            }
+        }
+        defer { observation.invalidate() }
+        defaults.set("/usr/bin/true", forKey: "gitExecutable")
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        await fulfillment(of: [closed, readCancelled, queuedCancelled], timeout: 5)
+        await drainMainQueue()
+        observation.invalidate()
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 1,
+                       "Close invalidates B before task construction")
+        XCTAssertTrue(oldRead.wasCancelled)
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        oldRead.finish(snapshot)
+        service.refresh()
+        service.start()
+        await drainMainQueue()
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 1)
+        XCTAssertFalse(service.isSupported)
+        XCTAssertEqual(service.worktrees, initial)
+        XCTAssertEqual(reentry.names, ["closed-once"])
+    }
+
+    private func enqueuePrunePreview(_ service: PBRepositoryWorktreeService, completion: @escaping @MainActor @Sendable (PBWorktreePrunePreview?, NSError?) -> Void) {
+        service.preparePrunePreview { preview, error in
+            // swift6-safety-justification: The service delivers preview completion on the main queue.
+            MainActor.assumeIsolated { completion(preview, error as NSError?) }
+        }
+    }
+
+    func testAcceptedCapabilityPublicationDoesNotOverwriteAProbeStartedByItsGitVersionObserver() async throws {
+        try await characterizeSuccessfulCapabilityPublicationReentry(observeSupported: false)
+    }
+
     func testAcceptedCapabilityPublicationDoesNotOverwriteAProbeStartedByItsAvailabilityObserver() async throws {
         try await characterizeSuccessfulCapabilityPublicationReentry(observeSupported: true)
     }
@@ -2779,6 +3001,106 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         await fulfillment(of: [refused], timeout: 5)
         XCTAssertEqual(reportCommands, 0)
         XCTAssertEqual(try metadata(in: fixture), before)
+    }
+
+    func testExecutableUpgradeDuringCapabilityProbeRecoversAtTheSamePathWithoutRevivingConsent() async throws {
+        let fixture = try RepairFixture(label: "upgrade-during-capability-probe")
+        defer { fixture.cleanup() }
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable")
+        defer {
+            defaults.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        let executable = fixture.root.appendingPathComponent("selected-git")
+        try writeVersionedGitProxy(executable, version: "2.50.1", atomic: true)
+        defaults.set(executable.path, forKey: "gitExecutable")
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        var probes: [ControlledWorktreeTask] = []
+        var writes = 0
+        var nextProbe: XCTestExpectation?
+        var nextDiscovery: XCTestExpectation?
+        let service = makeService(repository: repository, fixture: fixture,
+                                  blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"),
+                                  taskOverride: { arguments in
+                                      if arguments == ["--version"] {
+                                          let task = ControlledWorktreeTask()
+                                          probes.append(task)
+                                          nextProbe?.fulfill(); nextProbe = nil
+                                          return task
+                                      }
+                                      if arguments == ["worktree", "list", "--porcelain", "-z"] {
+                                          nextDiscovery?.fulfill(); nextDiscovery = nil
+                                      } else if arguments.first == "worktree", arguments.count > 1,
+                                                ["add", "remove", "lock", "unlock", "repair"].contains(arguments[1])
+                                                || arguments == ["worktree", "prune"]
+                                      {
+                                          writes += 1
+                                      }
+                                      return nil
+                                  })
+        defer {
+            service.cancel()
+            probes.forEach { $0.finish(nil, error: CancellationError()) }
+        }
+        let firstPublished = expectation(description: "initial real Git inventory published")
+        let initialObservation = service.observe(\.worktrees) { _, _ in firstPublished.fulfill() }
+        service.start()
+        XCTAssertEqual(probes.count, 1)
+        try XCTUnwrap(probes.first).finish(Data("git version 2.50.1".utf8))
+        await fulfillment(of: [firstPublished], timeout: 10)
+        initialObservation.invalidate()
+        XCTAssertTrue(service.isSupported)
+        let capturedConsent = try await service.preparePrunePreview()
+        let oldConsent = try XCTUnwrap(capturedConsent)
+        let before = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let link = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let marker = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        let initialIdentity = try WorktreeFileFingerprint.capture(path: executable.path)
+        try writeVersionedGitProxy(executable, version: "2.50.2", atomic: true)
+        let secondIdentity = try WorktreeFileFingerprint.capture(path: executable.path)
+        XCTAssertNotEqual(secondIdentity, initialIdentity)
+        service.refresh()
+        XCTAssertEqual(probes.count, 2)
+        let upgrading = try XCTUnwrap(probes.last)
+        // Upgrade again while the second probe remains in flight. The old output cannot
+        // certify the replacement, but the failed certification must remain recoverable.
+        try writeVersionedGitProxy(executable, version: "2.50.3", atomic: true)
+        XCTAssertNotEqual(try WorktreeFileFingerprint.capture(path: executable.path), secondIdentity)
+        upgrading.finish(Data("git version 2.50.2".utf8))
+        XCTAssertFalse(service.isSupported)
+        let oldConsentError = await confirmationError(service, preview: oldConsent)
+        XCTAssertNotNil(oldConsentError)
+        let reprobed = expectation(description: "same-path request notices replacement after failed certification")
+        reprobed.assertForOverFulfill = true
+        nextProbe = reprobed
+        let rejected = expectation(description: "writer blocked until capability is checked")
+        enqueue {
+            service.lockWorktree(path: fixture.linked.path, reason: "must-not-launch") { _, error in
+                XCTAssertNotNil(error); rejected.fulfill()
+            }
+        }
+        await fulfillment(of: [rejected, reprobed], timeout: 5)
+        XCTAssertEqual(writes, 0)
+        service.refresh() // An already in-flight unchanged probe is not duplicated.
+        XCTAssertEqual(probes.count, 3)
+        let current = try XCTUnwrap(probes.indices.contains(2) ? probes[2] : nil)
+        let rediscovered = expectation(description: "fresh certified executable launches ordinary discovery")
+        rediscovered.assertForOverFulfill = true
+        nextDiscovery = rediscovered
+        current.finish(Data("git version 2.50.3".utf8))
+        await fulfillment(of: [rediscovered], timeout: 5)
+        XCTAssertTrue(service.isSupported)
+        XCTAssertEqual(service.gitVersion, "git version 2.50.3")
+        let capturedFreshConsent = try await service.preparePrunePreview()
+        let freshConsent = try XCTUnwrap(capturedFreshConsent)
+        service.discardPrunePreview(freshConsent)
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try metadata(in: fixture), before)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), link)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), marker)
     }
 
     private func writeVerificationGitProxy(_ path: URL) throws {

@@ -453,13 +453,15 @@
           "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
           "identifier": "GitXCoreTests/WorktreeScopeTests/testBatchCaptureValidationAndPostconditionUseOneInventoryAndLinearReads",
           "role": "boundary",
-          "oracle": "Count independent filesystem probes at multiple inventory sizes; each phase enumerates once and work grows per entry."
+          "oracle": "Count independent filesystem probes at multiple inventory sizes; each phase enumerates once and work grows per entry.",
+          "check": "core"
         },
         {
           "source": "GitXCore/Tests/GitXCoreTests/WorktreeCheckoutEvidenceTests.swift",
           "identifier": "GitXCoreTests/WorktreeCheckoutEvidenceTests/testEquivalentEndpointRawRewriteInvalidatesEvidenceWithoutHistoryOrInventoryChanges",
           "role": "failure",
-          "oracle": "Rewrite a real Gitfile with equivalent endpoint/style and unchanged identity; raw evidence must differ while administrative and history-free projections remain equal."
+          "oracle": "Rewrite a real Gitfile with equivalent endpoint/style and unchanged identity; raw evidence must differ while administrative and history-free projections remain equal.",
+          "check": "core"
         },
         {
           "source": "GitXTests/WorktreeServiceTests.swift",
@@ -484,6 +486,12 @@
           "identifier": "GitXTests/GitXPerformanceTests/testWorktreeRepairEvidenceCaptureScaling",
           "role": "boundary",
           "oracle": "Measure alternating repeated/indexed capture pairs at 8, 32 and 128 registrations in Release, retaining complete filesystem proof and reporting genuine samples without a new timing floor."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testLiveRepairPreparationRejectsAChangedForeignGitfileWithoutOfferingConsent",
+          "role": "boundary",
+          "oracle": "Substitute a real foreign Gitfile after immutable capture but before FIFO admission; refuse repair and preserve both repositories while subsequent work progresses."
         }
       ]
     },
@@ -816,7 +824,8 @@
           "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
           "identifier": "GitXCoreTests/WorktreeScopeTests/testConsentRecordIgnoresAllHistoryFieldsAndPreservesOtherDecisions",
           "role": "boundary",
-          "oracle": "Vary OIDs, symbolic reference names and detached history state independently while locks, availability and links remain sensitive."
+          "oracle": "Vary OIDs, symbolic reference names and detached history state independently while locks, availability and links remain sensitive.",
+          "check": "core"
         },
         {
           "source": "GitXTests/WorktreeAppKitTests.swift",
@@ -834,7 +843,62 @@
           "source": "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
           "identifier": "GitXCoreTests/SidebarPolicyTests/testNestedSelectionControlUpdatesFlushOnlyWhenTheOuterOwnerFinishes",
           "role": "boundary",
-          "oracle": "Nested synchronous controller scopes refresh controls once, after the outer scope finishes; no navigation delegate replay is needed."
+          "oracle": "Nested synchronous controller scopes refresh controls once, after the outer scope finishes; no navigation delegate replay is needed.",
+          "check": "core"
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testCapabilityChangePublishesInputsBeforeCancellingAnAdmittedReadAndUsesItsOwnTaskFlags",
+          "role": "boundary",
+          "oracle": "Re-enter refresh synchronously from admitted read cancellation, require one new probe, and prove both clipping outcomes use its own task while queued work cancels exactly once."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testAvailabilityObserverChangingThePreferenceAgainDoesNotTerminateOrSupersedeTheNewestProbe",
+          "role": "boundary",
+          "oracle": "A one-shot availability observer selects another executable; only the newest probe launches and remains uncancelled, old callbacks cannot publish, and queued writers never start."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testAvailabilityObserverClosingTheServiceCancelsReadsWithoutLaunchingAnotherProbe",
+          "role": "boundary",
+          "oracle": "Close during availability publication; cancel reads and queued work exactly once, construct no replacement probe, and reject late revival."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testExecutableUpgradeDuringCapabilityProbeRecoversAtTheSamePathWithoutRevivingConsent",
+          "role": "boundary",
+          "oracle": "Atomically replace the real selected executable during a held probe, reject stale consent/writes, recertify at the same path, and preserve links, refs, indexes and contents."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testAcceptedCapabilityPublicationDoesNotOverwriteAProbeStartedByItsGitVersionObserver",
+          "role": "boundary",
+          "oracle": "Re-enter a successful version publication through gitVersion KVO; preserve the newer unavailable state, defer discovery until certification, and reject the obsolete callback."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testAcceptedCapabilityPublicationDoesNotOverwriteAProbeStartedByItsAvailabilityObserver",
+          "role": "boundary",
+          "oracle": "Preserve existing isSupported observer re-entry semantics after publication ordering changes; the newest probe controls availability and discovery."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testHistoryReturnKeepsViewedRevisionWhenTheSelectedRegistrationIsNoLongerPublished",
+          "role": "boundary",
+          "oracle": "Remove the real detached registration, retain its outlined capture across service replacement, invoke History, and preserve the actual browsed revision/rendering without writing or stale Other insertion."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testHeldRepairPreparationDiscardsConsentAfterOwnerReplacementOrAnOccupiedSheet",
+          "role": "boundary",
+          "oracle": "Hold immutable capture behind the FIFO, replace/restore its owner or occupy its sheet, discard through the original service, preserve ownership evidence, and prove fresh consent/queue progress."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testHeldPrunePreparationPreservesAnOccupiedSheetAndCanStartAFreshJourney",
+          "role": "boundary",
+          "oracle": "A report delivered while another presenter owns the sheet must not replace it or authorize prune; preserve registration evidence and allow a fresh confirmed journey."
         }
       ]
     },
@@ -920,6 +984,24 @@
           "identifier": "GitXTests/IndexMutationServiceTests/testBackgroundCommitWriterFollowsAlreadyScheduledStagingWork",
           "role": "valid",
           "oracle": "The existing background Git command still executes after previously queued staging."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testLivePrunePreparationPresentsItsRealReportFailureAndReleasesFIFO",
+          "role": "boundary",
+          "oracle": "Deliver real Git report failure to the live owner, preserve administrative state, show no confirmation, and allow the following real preview."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testDelayedFirstRemoveFailureIsShownOnlyInItsCurrentOwnerWithoutAForceRetry",
+          "role": "boundary",
+          "oracle": "Deliver the first real Remove failure after admission in live and replaced owners; route the error only to its origin, perform no force retry, and prove following writer progress."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testRenewedRepairRequiresItsNewClickThenPresentsARealWriterFailureAndReleasesFIFO",
+          "role": "boundary",
+          "oracle": "Change Reclaim evidence to proven links, require another Repair click, then reconcile a real Git failure while preserving links, HEAD/index/refs and FIFO progress."
         }
       ]
     },

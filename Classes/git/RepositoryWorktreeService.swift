@@ -285,10 +285,14 @@ private final class WorktreeOperation {
         release?()
     }
 
-    func cancelPreparation() {
+    func markPreparationCancelled() {
         guard isActive, !drainsAfterOwnerChange else { return }
         isCancelled = true
-        guard phase != .reserved else { return }
+    }
+
+    func cancelPreparation() {
+        markPreparationCancelled()
+        guard isActive, isCancelled, phase != .reserved else { return }
         task?.terminate()
         cancellation?()
     }
@@ -323,6 +327,7 @@ final class PBRepositoryWorktreeService: NSObject {
     private var discovery: PBTask?
     private var versionTask: PBTask?
     private var executable = ""
+    private var lastProbeExecutable: WorktreeFileFingerprint?
     private var checkedExecutable: WorktreeFileFingerprint?
     private var versionGeneration = 0
     private var snapshot: [GitWorktree] = []
@@ -402,7 +407,7 @@ final class PBRepositoryWorktreeService: NSObject {
         let selected = Self.selectedExecutable()
         let changed = !selected.utf8.elementsEqual(executable.utf8)
             || configuredPreference != UserDefaults.standard.string(forKey: "gitExecutable")
-            || (checkedExecutable != nil && (try? WorktreeFileFingerprint.capture(path: selected)) != checkedExecutable)
+            || (try? WorktreeFileFingerprint.capture(path: selected)) != lastProbeExecutable
         if changed {
             checkVersion()
         }
@@ -413,34 +418,42 @@ final class PBRepositoryWorktreeService: NSObject {
         guard !state.isClosed else { return }
         versionGeneration += 1
         let generation = versionGeneration
-        setAvailability(version: nil, supported: false)
+        // Cancellation and availability observers may synchronously enter this
+        // service again. Publish the attempted selection before either callback.
+        executable = Self.selectedExecutable()
+        configuredPreference = UserDefaults.standard.string(forKey: "gitExecutable")
+        let checking = try? WorktreeFileFingerprint.capture(path: executable)
+        lastProbeExecutable = checking
+        checkedExecutable = nil
         prunePreviews.removeAll()
         repairPreviews.removeAll()
         legacyPrunePreview = nil
-        checkedExecutable = nil
-        versionTask?.terminate()
-        discovery?.terminate()
+        let retiredVersion = versionTask
+        let retiredDiscovery = discovery
+        versionTask = nil
         discovery = nil
         state.invalidate()
+        retiredVersion?.terminate()
+        retiredDiscovery?.terminate()
+        setAvailability(version: nil, supported: false)
+        guard generation == versionGeneration, !state.isClosed else { return }
         cancelPreparationOperations()
-        executable = Self.selectedExecutable()
-        configuredPreference = UserDefaults.standard.string(forKey: "gitExecutable")
-        guard !executable.isEmpty else { return }
-        let checking = try? WorktreeFileFingerprint.capture(path: executable)
+        guard generation == versionGeneration, !state.isClosed, !executable.isEmpty else { return }
         let task = makeTask(["--version"])
         task.timeout = 10
         versionTask = task
         logEvent(["--version"], stage: "started", phase: "capability")
-        task.perform { [weak self] data, error in
+        task.perform { [weak self, weak task] data, error in
+            let complete = task?.standardOutputTruncated == false && task?.standardErrorTruncated == false
             // swift6-safety-justification: PBTask’s PBMainQueuePerform category guarantees main-queue delivery.
             MainActor.assumeIsolated {
                 guard let self, generation == self.versionGeneration, !self.state.isClosed else { return }
-                let complete = self.versionTask?.standardOutputTruncated == false && self.versionTask?.standardErrorTruncated == false
                 self.versionTask = nil
                 let version = error == nil && complete ? data.flatMap { String(data: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
                 let stable = checking != nil && (try? WorktreeFileFingerprint.capture(path: self.executable)) == checking
                 self.checkedExecutable = stable ? checking : nil
                 self.setAvailability(version: version, supported: stable && WorktreePolicy.supports(version: version))
+                guard generation == self.versionGeneration, !self.state.isClosed else { return }
                 self.logEvent(["--version"], stage: self.isSupported ? "completed" : "failed", phase: "capability", category: self.isSupported ? "none" : "capability")
                 if self.isSupported {
                     self.refresh()
@@ -451,10 +464,14 @@ final class PBRepositoryWorktreeService: NSObject {
 
     private func setAvailability(version: String?, supported: Bool) {
         guard gitVersion != version || isSupported != supported else { return }
+        let generation = versionGeneration
+        let repository = repository
         repository?.willChangeValue(forKey: "worktreeFeatureAvailable")
-        gitVersion = version
+        defer { repository?.didChangeValue(forKey: "worktreeFeatureAvailable") }
+        guard generation == versionGeneration, !state.isClosed else { return }
         isSupported = supported
-        repository?.didChangeValue(forKey: "worktreeFeatureAvailable")
+        guard generation == versionGeneration, !state.isClosed else { return }
+        gitVersion = version
     }
 
     @objc(refresh)
@@ -533,7 +550,11 @@ final class PBRepositoryWorktreeService: NSObject {
     }
 
     private func cancelPreparationOperations() {
-        for operation in Array(operations.values) {
+        let pending = Array(operations.values)
+        // A read's completion can release the FIFO synchronously. Every queued
+        // reservation must already be cancelled before that release admits it.
+        pending.forEach { $0.markPreparationCancelled() }
+        for operation in pending {
             if operation.drainsAfterOwnerChange {
                 logEvent(operation.eventArguments, stage: "draining", phase: operation.phaseName, count: 1)
             }
