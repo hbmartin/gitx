@@ -72,9 +72,10 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testOwnerSettersAndObjectiveCWorktreeCallbacksDoNotLoadAnUnloadedWindow() {
-        let controller = RecordingWindowController(window: nil)
+        let controller = RecordingWindowController(windowNibName: "RepositoryWindow")
         controller.presentsErrors = false
         XCTAssertFalse(controller.isWindowLoaded)
+        XCTAssertEqual(controller.loadWindowCount, 0)
         controller.window = nil
         controller.document = nil
         controller.repository = nil
@@ -82,8 +83,7 @@ final class WorktreePresentationTests: XCTestCase {
         _ = controller.perform(NSSelectorFromString("repairWorktreeLinks:"), with: nil)
         controller.addWorktree(nil)
         controller.pruneWorktrees(nil)
-        XCTAssertFalse(controller.isWindowLoaded)
-        XCTAssertNil(controller.window)
+        XCTAssertEqual(controller.loadWindowCount, 0)
         XCTAssertNil(controller.repository)
         XCTAssertEqual(controller.errors.count, 0)
 
@@ -99,18 +99,32 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertTrue(controller.document === document)
         controller.document = nil
         controller.document = nil
+        var repositoryNotifications = 0
+        let observation = controller.observe(\.repository) { _, _ in
+            // swift6-safety-justification: This main-actor test invokes setters synchronously; KVO delivers their notifications on the same thread.
+            MainActor.assumeIsolated { repositoryNotifications += 1 }
+        }
         controller.repository = repository
+        XCTAssertGreaterThan(repositoryNotifications, 0)
         controller.repository = repository
         XCTAssertTrue(controller.repository === repository)
         controller.repository = nil
         controller.repository = nil
+        observation.invalidate()
         controller.window = nil
         controller.window = nil
         XCTAssertNil(controller.document)
         XCTAssertNil(controller.repository)
-        XCTAssertFalse(controller.isWindowLoaded)
-        XCTAssertNil(controller.window)
+        XCTAssertEqual(controller.loadWindowCount, 0)
         window.close()
+
+        // Prove this probe observes AppKit's actual lazy-load boundary.
+        let positive = RecordingWindowController(windowNibName: "RepositoryWindow")
+        XCTAssertFalse(positive.isWindowLoaded)
+        XCTAssertEqual(positive.loadWindowCount, 0)
+        positive.showWindow(nil)
+        XCTAssertGreaterThan(positive.loadWindowCount, 0)
+        positive.close()
     }
 
     func testUnchangedOwnersAndDocumentRepositoryPrecedenceKeepALiveGitFailurePresentable() async throws {
@@ -596,9 +610,17 @@ final class WorktreePresentationTests: XCTestCase {
         return [view] + view.subviews.flatMap { descendants($0) }
     }
 
-    private final class RecordingWindowController: PBGitWindowController {
+    /// AppKit creates KVO subclasses when ordering this window. The existing
+    /// Objective-C base separates the imported mirror from the Swift layout.
+    private final class RecordingWindowController: PBHistoryWindowControllerTestBase {
         private(set) var errors: [NSError] = []
+        private(set) var loadWindowCount = 0
         var presentsErrors = true
+
+        override func loadWindow() {
+            loadWindowCount += 1
+            super.loadWindow()
+        }
 
         override func showErrorSheet(_ error: Error) {
             errors.append(error as NSError)
