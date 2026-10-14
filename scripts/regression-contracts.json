@@ -1115,7 +1115,7 @@
           "source": "GitXTests/WorktreePresentationTests.swift",
           "identifier": "GitXTests/WorktreePresentationTests/testOwnerSettersAndObjectiveCWorktreeCallbacksDoNotLoadAnUnloadedWindow",
           "role": "compatibility",
-          "oracle": "Nil and same owner setters plus Objective-C-imported callbacks keep the unloaded window unloaded; existing Cocoa selectors and final generation access survive foreign-subclass dispatch."
+          "oracle": "A nib-backed loadWindow probe stays at zero across owner setters and Objective-C-imported callbacks; explicit KVO delivers the real repository change through the existing layout barrier, and showWindow provides a positive load control."
         }
       ]
     },

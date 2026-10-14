@@ -321,7 +321,8 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertFalse(actionButton.isEnabled)
         let menu = try XCTUnwrap(actionButton.menu)
         sidebar.menuNeedsUpdate(menu)
-        XCTAssertFalse(menu.items.contains { $0.action != nil }, "No selection must not be mistaken for a missing Worktrees group")
+        XCTAssertEqual(menu.items.count, 1, "An unselected action menu contains only its icon")
+        XCTAssertTrue(applicationMenuItems(menu).isEmpty, "No selection must not be mistaken for a missing Worktrees group")
     }
 
     func testNonlocalSymbolicWorktreeBrowsesCapturedHistoryWithLifecycleMenus() async throws {
@@ -380,10 +381,13 @@ final class WorktreeAppKitTests: XCTestCase {
         let actionMenu = try XCTUnwrap(actionButton.menu)
         sidebar.menuNeedsUpdate(actionMenu)
         for menu in [sidebar.menu(forRow: selectedRow), actionMenu] {
-            XCTAssertEqual(menu.items.compactMap(\.action), ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "removeWorktree:"].map(NSSelectorFromString))
-            for action in menu.items.filter({ $0.action != nil }) {
+            let applicationItems = applicationMenuItems(menu)
+            XCTAssertEqual(applicationItems.count, 4)
+            XCTAssertEqual(applicationItems.compactMap(\.action), ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "removeWorktree:"].map(NSSelectorFromString))
+            for action in applicationItems {
                 XCTAssertEqual((action.representedObject as? PBGitWorktree)?.path, item.worktree.path)
                 XCTAssertNil(action.target)
+                XCTAssertTrue(action.isEnabled)
             }
         }
         await waitUntil {
@@ -405,6 +409,8 @@ final class WorktreeAppKitTests: XCTestCase {
         try attachScreenshot(of: window, named: "Worktrees-Nonlocal-Symbolic-Captured-History")
 
         let viewedRevision = try XCTUnwrap(repository.currentBranch)
+        let renderedCommitOIDs = history.webCommits.map(\.sha)
+        XCTAssertEqual(renderedCommitOIDs, [capturedOID])
         _ = controller.perform(NSSelectorFromString("changeContentController:"), with: alternate)
         let updatedOID = try fixture.git(["commit-tree", "HEAD^{tree}", "-p", capturedOID, "-m", "Updated non-local symbolic history"])
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -421,10 +427,9 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertTrue(alternate.view.window === window)
         XCTAssertNil(history.view.window)
         XCTAssertEqual(history.selectedCommits.first?.sha, capturedOID)
-        XCTAssertTrue(descendants(history.view).compactMap { $0 as? NSTextView }.contains {
-            $0.accessibilityIdentifier() == "NativeContentText" && $0.string.contains("Non-local symbolic history")
-                && !$0.string.contains("Updated non-local symbolic history")
-        })
+        // Worktree publication does not drain the native renderer's separate
+        // queue. Preserve its commit input rather than sample a hidden view.
+        XCTAssertEqual(history.webCommits.map(\.sha), renderedCommitOIDs)
 
         try selectWorktree(updatedItem, in: sidebar)
         XCTAssertTrue(history.view.window === window)
@@ -503,8 +508,14 @@ final class WorktreeAppKitTests: XCTestCase {
             let actionMenu = try XCTUnwrap(actionButton.menu)
             sidebar.menuNeedsUpdate(actionMenu)
             for menu in [sidebar.menu(forRow: selectedRow), actionMenu] {
-                XCTAssertEqual(menu.items.compactMap(\.action), ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "removeWorktree:"].map(NSSelectorFromString))
-                XCTAssertTrue(menu.items.filter { $0.action != nil }.allSatisfy { $0.representedObject is PBGitWorktree })
+                let applicationItems = applicationMenuItems(menu)
+                XCTAssertEqual(applicationItems.count, 4)
+                XCTAssertEqual(applicationItems.compactMap(\.action), ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "removeWorktree:"].map(NSSelectorFromString))
+                for action in applicationItems {
+                    XCTAssertEqual((action.representedObject as? PBGitWorktree)?.path, selectedItem.worktree.path)
+                    XCTAssertNil(action.target)
+                    XCTAssertTrue(action.isEnabled)
+                }
             }
             XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), mainHead)
             XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked), linkedHead)
@@ -1676,6 +1687,12 @@ final class WorktreeAppKitTests: XCTestCase {
         [item] + item.sortedChildren.flatMap { sourceItems($0) }
     }
 
+    private func applicationMenuItems(_ menu: NSMenu) -> [NSMenuItem] {
+        // NSPopUpButton installs its own action on icon and separator items.
+        // Their public presentation distinguishes them from application actions.
+        menu.items.filter { !$0.isSeparatorItem && !$0.title.isEmpty }
+    }
+
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         let deadline = ContinuousClock.now + .seconds(15)
         while !condition(), ContinuousClock.now < deadline {
@@ -1871,7 +1888,9 @@ final class WorktreeAppKitTests: XCTestCase {
         }
     }
 
-    private final class RepairWindowControllerFixture: PBGitWindowController {}
+    /// Keep the compatibility mirror separated from the runtime Swift layout
+    /// when AppKit creates a notifying subclass of this imported test fixture.
+    private final class RepairWindowControllerFixture: PBHistoryWindowControllerTestBase {}
 
     private final class WorktreeReferenceCellFake: NSTableCellView {
         var referenceIndex: Int32 = -1
