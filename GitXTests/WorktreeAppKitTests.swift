@@ -17,6 +17,50 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertNil(window.attachedSheet)
     }
 
+    func testSidebarNestedBranchReferencesReuseOneFolderAndPreserveHierarchy() throws {
+        let branches = PBSourceViewItem.groupItem(withTitle: "Branches")
+        let unrelatedRevision = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/main"))
+        let firstRevision = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/feature/topic10"))
+        let secondRevision = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/feature/topic2"))
+        branches.addRev(unrelatedRevision, toPath: ["main"])
+        let unrelatedItem = try XCTUnwrap(branches.findRev(unrelatedRevision))
+        branches.addRev(firstRevision, toPath: ["feature", "topic10"])
+        let sharedFolder = try XCTUnwrap(branches.sortedChildren.first { $0.title == "feature" })
+        let firstItem = try XCTUnwrap(sharedFolder.findRev(firstRevision))
+        XCTAssertEqual(sharedFolder.sortedChildren, [firstItem])
+
+        branches.addRev(secondRevision, toPath: ["feature", "topic2"])
+        let secondItem = try XCTUnwrap(branches.findRev(secondRevision))
+        let folders = branches.sortedChildren.filter { $0.title == "feature" }
+        XCTAssertEqual(folders.count, 1, "Adding a sibling branch must reuse the existing sidebar folder")
+        XCTAssertTrue(folders.first === sharedFolder)
+        XCTAssertFalse(firstItem === secondItem)
+        XCTAssertEqual(branches.sortedChildren.map(\.title), ["feature", "main"])
+        XCTAssertEqual(sharedFolder.sortedChildren.map(\.title), ["topic2", "topic10"])
+        XCTAssertEqual(sharedFolder.sortedChildren, [secondItem, firstItem])
+        XCTAssertEqual(sharedFolder.sortedChildren.compactMap { $0.ref()?.ref }.map { Data($0.utf8) }, [Data("refs/heads/feature/topic2".utf8), Data("refs/heads/feature/topic10".utf8)])
+        XCTAssertTrue(sharedFolder.parent === branches)
+        XCTAssertTrue(firstItem.parent === sharedFolder)
+        XCTAssertTrue(secondItem.parent === sharedFolder)
+        XCTAssertTrue(branches.findRev(firstRevision) === firstItem)
+        XCTAssertTrue(branches.findRev(secondRevision) === secondItem)
+        XCTAssertTrue(branches.findRev(unrelatedRevision) === unrelatedItem)
+        XCTAssertEqual(unrelatedItem.title, "main")
+        XCTAssertEqual(unrelatedItem.ref()?.ref, "refs/heads/main")
+        XCTAssertTrue(unrelatedItem.parent === branches)
+
+        let sortedRoots = branches.sortedChildren
+        let sortedNestedBranches = sharedFolder.sortedChildren
+        branches.addChild(nil)
+        XCTAssertEqual(branches.sortedChildren, sortedRoots)
+        XCTAssertEqual(sharedFolder.sortedChildren, sortedNestedBranches)
+        XCTAssertTrue(sharedFolder.parent === branches)
+        XCTAssertTrue(unrelatedItem.parent === branches)
+        XCTAssertTrue(firstItem.parent === sharedFolder)
+        XCTAssertTrue(secondItem.parent === sharedFolder)
+        XCTAssertTrue(branches.findRev(secondRevision) === secondItem)
+    }
+
     func testExplicitBranchSelectionReturnsMountedContentToHistoryWithoutCheckout() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
