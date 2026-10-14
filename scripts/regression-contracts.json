@@ -116,7 +116,8 @@
         "GitXCore/Sources/GitXCore/Worktree.swift",
         "GitXCore/Sources/GitXCore/WorktreeLinks.swift",
         "GitXCore/Sources/GitXCore/WorktreePolicy.swift",
-        "Classes/Views/PBSourceViewGitWorktreeItem.swift"
+        "Classes/Views/PBSourceViewGitWorktreeItem.swift",
+        "Classes/git/RepositoryWorktreeService.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -245,6 +246,12 @@
           "identifier": "GitXTests/WorktreeAppKitTests/testNonlocalTagAndRemoteSymbolicHeadsPreserveNormalReferenceRows",
           "role": "boundary",
           "oracle": "Real Git tag and remote symbolic HEADs remain lifecycle-only worktree rows, preserve the normal reference rows and disable branch remote controls without changing refs or HEADs."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testObjectiveCFacadeEqualityBindsRawSymbolicHeadAcrossUnchangedRefresh",
+          "role": "boundary",
+          "oracle": "Independent real-Git discoveries retain NSObject equality/hash for the same captured value; a raw symbolic HEAD target change at the same path/OID produces unequal immutable snapshots while read-only discovery preserves Git/filesystem ownership bytes."
         }
       ]
     },
@@ -1076,7 +1083,8 @@
         "Classes/Util/PBTask*",
         "GitX.xcodeproj/project.pbxproj",
         "Resources/GitX.h",
-        "GitXTests/GitXTests-Bridging-Header.h"
+        "GitXTests/GitXTests-Bridging-Header.h",
+        "Classes/git/RepositoryWorktreeService.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -1116,6 +1124,12 @@
           "identifier": "GitXTests/WorktreePresentationTests/testOwnerSettersAndObjectiveCWorktreeCallbacksDoNotLoadAnUnloadedWindow",
           "role": "compatibility",
           "oracle": "A nib-backed loadWindow probe stays at zero across owner setters and Objective-C-imported callbacks; explicit KVO delivers the real repository change through the existing layout barrier, and showWindow provides a positive load control."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testObjectiveCFacadeMetadataMatchesRealLocalDetachedPrunableAndBareWorktrees",
+          "role": "compatibility",
+          "oracle": "Objective-C KVC metadata matches isolated real local/locked, detached, missing/prunable and bare Git records; HEAD/index/gitfile/backlink/content/ref bytes remain unchanged and no lifecycle writer runs."
         }
       ]
     },

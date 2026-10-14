@@ -1,4 +1,5 @@
 import Foundation
+import GitXCore
 import XCTest
 
 // swift6-safety-justification: The lock protects every callback, output, and cancellation access, including delivery from the discovery queue.
@@ -137,9 +138,201 @@ private final class WorktreeCompletionRecorder {
 }
 
 @MainActor
+private final class WorktreeFacadeFixture {
+    let root: URL
+    let main: URL
+    let linked: URL
+    private var services: [WorktreeMutationFixture.Service] = []
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-worktree-facade-\(UUID().uuidString)")
+        main = root.appendingPathComponent("main")
+        linked = root.appendingPathComponent("linked")
+        try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+        _ = try git(["init", "-b", "main"])
+        try Data("facade fixture content\n".utf8).write(to: main.appendingPathComponent("tracked.txt"))
+        _ = try git(["add", "tracked.txt"])
+        _ = try git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture"])
+        _ = try git(["worktree", "add", "-b", "topic", linked.path])
+    }
+
+    func makeService(gitDirectory: URL? = nil) -> WorktreeMutationFixture.Service {
+        let repository = LocatedWorktreeRepository(directory: gitDirectory ?? main.appendingPathComponent(".git"))
+        let tasks = WorktreeTaskRecorder()
+        let service = PBRepositoryWorktreeService(repository: repository, taskFactory: tasks.makeTask)
+        let result = WorktreeMutationFixture.Service(repository: repository, tasks: tasks, service: service)
+        services.append(result)
+        return result
+    }
+
+    @discardableResult
+    func git(_ arguments: [String], at directory: URL? = nil) throws -> String {
+        try GitXTestGitFixture.run(arguments, in: directory ?? main).standardOutput
+    }
+
+    func listing(at directory: URL? = nil) throws -> Data {
+        try Data(git(["worktree", "list", "--porcelain", "-z"], at: directory).utf8)
+    }
+
+    func ownershipProof() throws -> [String: Data] {
+        let common = main.appendingPathComponent(".git")
+        let administrative = try URL(fileURLWithPath: git(["rev-parse", "--absolute-git-dir"], at: linked).trimmingCharacters(in: .newlines))
+        var proof = try Dictionary(uniqueKeysWithValues: ["HEAD", "index", "gitdir", "commondir"].map {
+            try ($0, Data(contentsOf: administrative.appendingPathComponent($0)))
+        })
+        proof["mainHEAD"] = try Data(contentsOf: common.appendingPathComponent("HEAD"))
+        proof["mainIndex"] = try Data(contentsOf: common.appendingPathComponent("index"))
+        proof["linkedGitfile"] = try Data(contentsOf: linked.appendingPathComponent(".git"))
+        proof["mainContent"] = try Data(contentsOf: main.appendingPathComponent("tracked.txt"))
+        proof["linkedContent"] = try Data(contentsOf: linked.appendingPathComponent("tracked.txt"))
+        proof["mainOID"] = try Data(git(["rev-parse", "HEAD"]).utf8)
+        proof["linkedOID"] = try Data(git(["rev-parse", "HEAD"], at: linked).utf8)
+        proof["refs"] = try Data(git(["show-ref", "--head"]).utf8)
+        return proof
+    }
+
+    func cleanup() {
+        services.forEach { $0.service.cancel() }
+        for request in services.flatMap({ $0.tasks.requests }) {
+            request.task.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+        }
+        try? FileManager.default.removeItem(at: root)
+    }
+}
+
+@MainActor
 final class WorktreeServiceTests: XCTestCase {
     private let snapshot = Data("worktree /main\0HEAD abc\0branch refs/heads/main\0\0worktree /linked\0HEAD def\0branch refs/heads/topic\0locked offline disk\0\0".utf8)
     private let discoveryArguments = ["worktree", "list", "--porcelain", "-z"]
+
+    func testObjectiveCFacadeEqualityBindsRawSymbolicHeadAcrossUnchangedRefresh() async throws {
+        let fixture = try WorktreeFacadeFixture()
+        defer { fixture.cleanup() }
+        let head = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let originalRef = "refs/gitx/facade/original"
+        let changedRef = "refs/gitx/facade/changed"
+        for reference in [originalRef, changedRef] {
+            _ = try fixture.git(["update-ref", reference, head])
+        }
+        _ = try fixture.git(["symbolic-ref", "HEAD", originalRef], at: fixture.linked)
+        let initialListing = try fixture.listing()
+        let initialProof = try fixture.ownershipProof()
+        let first = fixture.makeService()
+        let second = fixture.makeService()
+        try await startFacade(first, snapshot: initialListing)
+        try await startFacade(second, snapshot: initialListing)
+        let original = try XCTUnwrap(first.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) })
+        let equivalent = try XCTUnwrap(second.service.worktrees.first { $0.path == original.path })
+        XCTAssertFalse(original === equivalent, "Independent discoveries create independent NSObject wrappers")
+        XCTAssertTrue(original.isEqual(equivalent))
+        XCTAssertTrue(equivalent.isEqual(original))
+        XCTAssertEqual(original.hash, equivalent.hash)
+        XCTAssertTrue(original.isEqual(original))
+        XCTAssertFalse(original.isEqual(nil))
+        XCTAssertFalse(original.isEqual(NSObject()))
+        XCTAssertFalse(original.isEqual(first.service.worktrees.first(where: \.isMain)))
+        XCTAssertEqual(original.value(forKey: "HEAD") as? String, head)
+        XCTAssertEqual(original.headRefName.map { Data($0.utf8) }, Data(originalRef.utf8))
+        XCTAssertNil(original.branchRefName)
+        XCTAssertNil(first.service.worktree(forBranch: originalRef))
+        let main = try XCTUnwrap(first.service.worktree(forBranch: "refs/heads/main"))
+        XCTAssertEqual(main.headRefName, "refs/heads/main")
+        XCTAssertEqual(main.branchRefName, main.headRefName)
+
+        let unchangedRequested = first.tasks.expect(discoveryArguments)
+        first.service.refresh()
+        await fulfillment(of: [unchangedRequested], timeout: 5)
+        let coalescedRequested = first.tasks.expect(discoveryArguments)
+        first.service.refresh()
+        try first.tasks.task(discoveryArguments, occurrence: 1).finish(initialListing)
+        // The follow-up can start only after the unchanged snapshot was compared.
+        await fulfillment(of: [coalescedRequested], timeout: 5)
+        XCTAssertTrue(first.service.worktrees.first { $0.path == original.path } === original)
+        XCTAssertTrue(original.isEqual(equivalent))
+        XCTAssertEqual(original.hash, equivalent.hash)
+        XCTAssertEqual(try fixture.ownershipProof(), initialProof)
+
+        _ = try fixture.git(["symbolic-ref", "HEAD", changedRef], at: fixture.linked)
+        let changedProof = try fixture.ownershipProof()
+        let changed = expectation(description: "same-commit symbolic target changed")
+        let observation = first.service.observe(\.worktrees) { _, _ in changed.fulfill() }
+        defer { observation.invalidate() }
+        try first.tasks.task(discoveryArguments, occurrence: 2).finish(fixture.listing())
+        await fulfillment(of: [changed], timeout: 5)
+        let refreshed = try XCTUnwrap(first.service.worktrees.first { $0.path == original.path })
+        XCTAssertFalse(refreshed === original)
+        XCTAssertFalse(refreshed.isEqual(original), "A different raw symbolic target changes the value even at the same path and commit")
+        XCTAssertFalse(original.isEqual(refreshed))
+        XCTAssertEqual(refreshed.hash, original.hash, "Hash remains consistent with path identity across unequal metadata snapshots")
+        XCTAssertEqual(refreshed.value(forKey: "HEAD") as? String, original.value(forKey: "HEAD") as? String)
+        XCTAssertEqual(refreshed.headRefName.map { Data($0.utf8) }, Data(changedRef.utf8))
+        XCTAssertEqual(original.headRefName, originalRef, "Published wrappers retain their captured value")
+        XCTAssertNil(refreshed.branchRefName)
+        XCTAssertEqual(try fixture.ownershipProof(), changedProof)
+        XCTAssertEqual(changedProof["refs"], initialProof["refs"])
+        XCTAssertEqual(changedProof["mainHEAD"], initialProof["mainHEAD"])
+        XCTAssertEqual(changedProof["linkedOID"], initialProof["linkedOID"])
+        XCTAssertTrue(first.tasks.mutations.isEmpty)
+        XCTAssertTrue(second.tasks.mutations.isEmpty)
+    }
+
+    func testObjectiveCFacadeMetadataMatchesRealLocalDetachedPrunableAndBareWorktrees() async throws {
+        let fixture = try WorktreeFacadeFixture()
+        defer { fixture.cleanup() }
+        let reason = "offline\ndisk"
+        _ = try fixture.git(["worktree", "lock", "--reason", reason, fixture.linked.path])
+        let detachedPath = fixture.root.appendingPathComponent("detached")
+        let missingPath = fixture.root.appendingPathComponent("missing")
+        let barePath = fixture.root.appendingPathComponent("bare")
+        _ = try fixture.git(["worktree", "add", "--detach", detachedPath.path, "HEAD"])
+        _ = try fixture.git(["worktree", "add", "-b", "missing", missingPath.path])
+        try FileManager.default.removeItem(at: missingPath)
+        _ = try fixture.git(["init", "--bare", barePath.path])
+        let listing = try fixture.listing()
+        let initialProof = try fixture.ownershipProof()
+        let installed = fixture.makeService()
+        try await startFacade(installed, snapshot: listing)
+        let local = try XCTUnwrap(installed.service.worktree(forBranch: "refs/heads/topic"))
+        XCTAssertEqual(local.headRefName, local.branchRefName)
+        XCTAssertEqual(local.value(forKey: "HEAD") as? String, try fixture.git(["rev-parse", "HEAD"], at: fixture.linked).trimmingCharacters(in: .newlines))
+        XCTAssertEqual((local.value(forKey: "isBare") as? NSNumber)?.boolValue, false)
+        XCTAssertEqual((local.value(forKey: "isDetached") as? NSNumber)?.boolValue, false)
+        XCTAssertEqual((local.value(forKey: "isPrunable") as? NSNumber)?.boolValue, false)
+        XCTAssertNil(local.value(forKey: "prunableReason"))
+        XCTAssertEqual(local.value(forKey: "linkStyle") as? NSNumber, NSNumber(value: WorktreeLinkStyle.absolute.rawValue))
+        XCTAssertTrue(local.isLocked)
+        XCTAssertEqual(local.lockReason, reason)
+        XCTAssertTrue(local.folderExists)
+        let detached = try XCTUnwrap(installed.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(detachedPath.path) })
+        XCTAssertEqual((detached.value(forKey: "isDetached") as? NSNumber)?.boolValue, true)
+        XCTAssertEqual((detached.value(forKey: "isBare") as? NSNumber)?.boolValue, false)
+        XCTAssertEqual(detached.value(forKey: "HEAD") as? String, local.value(forKey: "HEAD") as? String)
+        XCTAssertNil(detached.headRefName)
+        XCTAssertNil(detached.branchRefName)
+        let missing = try XCTUnwrap(installed.service.worktree(forBranch: "refs/heads/missing"))
+        let prunableField = try XCTUnwrap(listing.split(separator: 0).first { $0.starts(with: Data("prunable ".utf8)) })
+        let reportedReason = String(decoding: prunableField.dropFirst("prunable ".utf8.count), as: UTF8.self)
+        XCTAssertFalse(reportedReason.isEmpty)
+        XCTAssertEqual((missing.value(forKey: "isPrunable") as? NSNumber)?.boolValue, true)
+        XCTAssertEqual(missing.value(forKey: "prunableReason") as? String, reportedReason)
+        XCTAssertFalse(missing.folderExists)
+        XCTAssertEqual(missing.value(forKey: "linkStyle") as? NSNumber, NSNumber(value: WorktreeLinkStyle.unknown.rawValue))
+        let bare = fixture.makeService(gitDirectory: barePath)
+        try await startFacade(bare, snapshot: fixture.listing(at: barePath))
+        let bareRecord = try XCTUnwrap(bare.service.worktrees.first)
+        XCTAssertEqual(bare.service.worktrees.count, 1)
+        XCTAssertTrue(bareRecord.isMain)
+        XCTAssertEqual((bareRecord.value(forKey: "isBare") as? NSNumber)?.boolValue, true)
+        XCTAssertEqual((bareRecord.value(forKey: "isDetached") as? NSNumber)?.boolValue, false)
+        XCTAssertEqual((bareRecord.value(forKey: "isPrunable") as? NSNumber)?.boolValue, false)
+        XCTAssertNil(bareRecord.value(forKey: "HEAD"))
+        XCTAssertNil(bareRecord.headRefName)
+        XCTAssertNil(bareRecord.branchRefName)
+        XCTAssertNil(bareRecord.value(forKey: "prunableReason"))
+        XCTAssertEqual(try fixture.ownershipProof(), initialProof)
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        XCTAssertTrue(bare.tasks.mutations.isEmpty)
+    }
 
     func testCommonDirectoryWritersRunInFIFOAndHoldAdmissionUntilDiscoveryCompletes() async throws {
         let fixture = try WorktreeMutationFixture()
@@ -540,6 +733,20 @@ final class WorktreeServiceTests: XCTestCase {
         await drainMainQueue()
         XCTAssertTrue(fixture.service.isSupported)
         XCTAssertEqual(fixture.service.worktrees.count, 2)
+    }
+
+    private func startFacade(_ fixture: WorktreeMutationFixture.Service, snapshot: Data) async throws {
+        let requested = fixture.tasks.expect(discoveryArguments)
+        let published = expectation(description: "real Git facade snapshot published")
+        let observation = fixture.service.observe(\.worktrees) { _, _ in published.fulfill() }
+        defer { observation.invalidate() }
+        fixture.service.start()
+        try fixture.tasks.task(["--version"]).finish(Data("git version 2.48.0".utf8))
+        await fulfillment(of: [requested], timeout: 5)
+        try fixture.tasks.task(discoveryArguments).finish(snapshot)
+        await fulfillment(of: [published], timeout: 5)
+        XCTAssertTrue(fixture.service.isSupported)
+        XCTAssertFalse(fixture.service.worktrees.isEmpty)
     }
 
     /// Calling the completion selectors synchronously preserves immediate FIFO admission;
