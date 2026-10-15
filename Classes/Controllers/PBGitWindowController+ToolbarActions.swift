@@ -1,5 +1,3 @@
-import AppKit
-
 extension PBGitWindowController {
     @IBAction dynamic func toolbarFetch(_ sender: Any?) {
         fetchAllRemotes(sender)
