@@ -1252,6 +1252,12 @@
         },
         {
           "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testCancellingAdmittedRepairEvidenceReleasesCompletionAndFIFOBeforeWorkerReturns",
+          "role": "boundary",
+          "oracle": "Hold an admitted repair evidence worker, cancel its owner, and require exactly-once Cocoa cancellation, deferred completion release, unchanged metadata except the following real writer's lock, and FIFO progress before the worker resumes."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testDefaultDocumentOwnedWriterAndReconciliationKeepTheOriginalGitAfterPreferencesChange",
           "role": "boundary",
           "oracle": "Use the default document-owned service and distinct executable proxies to prove both the admitted write and its reconciliation run the captured canonical Git after preferences change."
