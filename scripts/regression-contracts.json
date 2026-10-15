@@ -622,6 +622,12 @@
           "oracle": "Fixture deletion waits for validation enqueued by earlier main callbacks to complete on the writer."
         },
         {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testFixtureDrainWaitsForWriterAdmittedByAnotherDrainCompletion",
+          "role": "boundary",
+          "oracle": "A batched drain waits for a writer admitted by an earlier drain completion, completes exactly once after release, restores mutation admission and preserves checkout contents."
+        },
+        {
           "source": "GitXTests/IndexMutationCoordinatorTests.swift",
           "identifier": "GitXTests/IndexMutationCoordinatorTests/testDiscardAuthorizationRequiresTheExactCallerRawPathSet",
           "role": "boundary",
@@ -1252,6 +1258,12 @@
         },
         {
           "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testCancellingAdmittedRepairEvidenceReleasesCompletionAndFIFOBeforeWorkerReturns",
+          "role": "boundary",
+          "oracle": "Hold an admitted repair evidence worker, cancel its owner, and require exactly-once Cocoa cancellation, deferred completion release, unchanged metadata except the following real writer's lock, and FIFO progress before the worker resumes."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testDefaultDocumentOwnedWriterAndReconciliationKeepTheOriginalGitAfterPreferencesChange",
           "role": "boundary",
           "oracle": "Use the default document-owned service and distinct executable proxies to prove both the admitted write and its reconciliation run the captured canonical Git after preferences change."
@@ -1314,7 +1326,7 @@
           "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testLifecyclePublicEventsExcludePrivateArgumentsAndOutputsFromRealRoutes",
           "role": "failure",
-          "oracle": "Read actual current-process lifecycle log entries after real service routes and reject raw argument, output and lock-reason canaries."
+          "oracle": "After real service routes, poll current-process lifecycle logs on a utility executor with a monotonic deadline and visible query errors; require both exact positive events and reject every raw argument, output and lock-reason canary in the same successful snapshot."
         }
       ]
     },
@@ -1394,7 +1406,7 @@
     {
       "id": "INTEROP-001",
       "family": "Debug and Release interoperability",
-      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations; Objective-C-imported subclasses can execute controller callbacks without Swift-only virtual dispatch failures. Legacy worktree service selectors and the programmatic showHistoryView: entry remain available alongside the separate returnToHistory: responder action in Debug and Release.",
+      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations; Objective-C-imported subclasses can execute controller callbacks without Swift-only virtual dispatch failures. Legacy worktree service selectors and the programmatic showHistoryView: entry remain available alongside the separate returnToHistory: responder action in Debug and Release. Sendable capability callbacks read their exact imported task's flags only through a main-actor boundary, preserving weak retention and generation guards under fresh compiler analysis.",
       "rootCause": "Conditional runtime/test surfaces or bridge annotations compile in Debug but fail in Release; new Swift-only virtual state accessors can have missing dispatch slots in Objective-C-imported subclasses.",
       "sourcePaths": [
         "Classes/*.h",
@@ -1414,7 +1426,8 @@
         "interop",
         "debug-test-build",
         "release-test-build",
-        "release-contracts"
+        "release-contracts",
+        "analyze"
       ],
       "tests": [
         {

@@ -1386,6 +1386,92 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertEqual(following.worktree(forBranch: "refs/heads/topic")?.lockReason, "after utility capture")
     }
 
+    func testCancellingAdmittedRepairEvidenceReleasesCompletionAndFIFOBeforeWorkerReturns() async throws {
+        let fixture = try RepairFixture(label: "cancel-held-evidence")
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let workerEntered = expectation(description: "repair evidence worker is held")
+        let workerResumed = expectation(description: "cancelled evidence worker resumes")
+        let checkpoint = WorktreeWorkerCheckpoint()
+        var repairCommands = 0
+        let service = PBRepositoryWorktreeService(repository: repository, taskFactory: { arguments in
+            if arguments.contains("repair") {
+                repairCommands += 1
+            }
+            let task = PBTask(launchPath: "/usr/bin/git", arguments: ["--git-dir=" + fixture.main.appendingPathComponent(".git").path] + arguments, inDirectory: fixture.main.path)
+            GitXTestGitFixture.prepare(task)
+            return task
+        }, repairPreparationObserver: {
+            workerEntered.fulfill()
+            checkpoint.wait()
+            workerResumed.fulfill()
+        })
+        var followingCommands = 0
+        let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            if arguments.contains("lock") {
+                followingCommands += 1
+            }
+            return nil
+        })
+        defer { checkpoint.resume(); service.cancel(); following.cancel() }
+        try await ready(service)
+        try await ready(following)
+        let before = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        let result = RepairCompletion()
+        var completions = 0
+        var completionOwner: NSObject? = NSObject()
+        weak let retainedCompletionOwner = completionOwner
+        let cancelled = expectation(description: "held preparation cancels exactly once")
+        cancelled.assertForOverFulfill = true
+        enqueue {
+            service.prepareRepairLinks(relativePaths: false) { [owner = completionOwner] preview, error in
+                // swift6-safety-justification: The service delivers preview completion on the main queue.
+                MainActor.assumeIsolated {
+                    withExtendedLifetime(owner) {}
+                    result.preview = preview
+                    result.error = error as NSError?
+                    completions += 1
+                    cancelled.fulfill()
+                }
+            }
+        }
+        completionOwner = nil
+        await fulfillment(of: [workerEntered], timeout: 5)
+        XCTAssertNotNil(retainedCompletionOwner)
+        let progressed = expectation(description: "following real writer finishes while evidence worker remains held")
+        progressed.assertForOverFulfill = true
+        enqueue {
+            following.lockWorktree(path: fixture.linked.path, reason: "following") { _, error in
+                XCTAssertNil(error)
+                progressed.fulfill()
+            }
+        }
+        XCTAssertEqual(followingCommands, 0)
+        service.cancel()
+        await fulfillment(of: [cancelled, progressed], timeout: 5)
+        XCTAssertEqual(completions, 1)
+        XCTAssertNil(result.preview)
+        XCTAssertEqual(result.error?.domain, NSCocoaErrorDomain)
+        XCTAssertEqual(result.error?.code, NSUserCancelledError)
+        XCTAssertNil(retainedCompletionOwner, "Cancellation must release the deferred completion before its utility worker returns")
+        XCTAssertFalse(checkpoint.didTimeout)
+        XCTAssertEqual(service.repairPreparationCount, 0)
+        XCTAssertEqual(repairCommands, 0)
+        XCTAssertEqual(followingCommands, 1)
+        XCTAssertEqual(following.worktree(forBranch: "refs/heads/topic")?.lockReason, "following")
+        XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/locked") }, before)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
+        checkpoint.resume()
+        await fulfillment(of: [workerResumed], timeout: 5)
+        XCTAssertFalse(checkpoint.didTimeout)
+        XCTAssertEqual(completions, 1)
+    }
+
     func testDefaultDocumentOwnedWriterAndReconciliationKeepTheOriginalGitAfterPreferencesChange() async throws {
         let fixture = try RepairFixture(label: "default-frozen-git")
         defer { fixture.cleanup() }
@@ -1540,8 +1626,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         })
         defer { service.cancel(); failedTask.finish(nil, error: CancellationError()) }
         try await ready(service)
-        let store = try OSLogStore(scope: .currentProcessIdentifier)
-        let position = store.position(date: Date())
+        let logStart = Date()
         let locked = expectation(description: "real lock retains exact private execution reason")
         enqueue { service.lockWorktree(path: fixture.linked.path, reason: secretReason) { _, error in XCTAssertNil(error); locked.fulfill() } }
         await fulfillment(of: [locked], timeout: 10)
@@ -1555,23 +1640,43 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         await fulfillment(of: [failureLaunched], timeout: 10)
         failedTask.finish(Data(secretOutput.utf8), error: NSError(domain: "fixture", code: 1))
         await fulfillment(of: [failed], timeout: 10)
-        let filter = NSPredicate(format: "subsystem == %@ AND category == %@", "com.gitx.gitx", "PBGitWorktrees")
-        let observable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            let events = (try? store.getEntries(at: position, matching: filter).compactMap { $0 as? OSLogEntryLog }.map(\.composedMessage)) ?? []
-            return events.contains { $0.contains("worktree.lock.started phase=writing count=1 category=none") }
-                && events.contains { $0.contains("worktree.add.failed phase=writing count=1 category=task") }
-        }, object: nil)
-        await fulfillment(of: [observable], timeout: 10)
-        let entries = try store.getEntries(at: position, matching: filter).compactMap { $0 as? OSLogEntryLog }.map(\.composedMessage)
+        let required = ["worktree.lock.started phase=writing count=1 category=none", "worktree.add.failed phase=writing count=1 category=task"]
+        let clock = ContinuousClock()
+        let started = clock.now
+        let deadline = started.advanced(by: .seconds(30))
+        var queryDurations: [Duration] = []
+        var entries: [String] = []
+        repeat {
+            let queryStarted = clock.now
+            entries = try await Self.lifecycleLogEntries(since: logStart)
+            queryDurations.append(queryStarted.duration(to: clock.now))
+            if required.allSatisfy({ entries.contains($0) }) || clock.now >= deadline {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        } while true
+        let observation = "Log visibility after \(queryDurations.count) queries over \(started.duration(to: clock.now)); query durations: \(queryDurations)"
         let events = entries.filter { $0.hasPrefix("worktree.") }
-        XCTAssertTrue(events.contains { $0.contains("worktree.lock.started phase=writing count=1 category=none") })
-        XCTAssertTrue(events.contains { $0.contains("worktree.add.failed phase=writing count=1 category=task") })
+        for event in required {
+            XCTAssertTrue(events.contains(event), "Missing \(event). \(observation)")
+        }
         for event in events {
             for secret in [secretReason, secretPath, secretBranch, secretOutput, "credential-secret"] {
                 XCTAssertFalse(event.contains(secret))
             }
         }
         XCTAssertEqual(PBWorktreeLifecycleDiagnostics.publicEvent(arguments: ["worktree", "lock", "--reason", secretReason, secretPath], stage: secretOutput, phase: secretBranch, count: -1, category: secretReason), "worktree.lock.unknown phase=unknown count=0 category=unknown")
+    }
+
+    private static func lifecycleLogEntries(since date: Date) async throws -> [String] {
+        try await Task.detached(priority: .utility) {
+            let store = try OSLogStore(scope: .currentProcessIdentifier)
+            let filter = NSPredicate(format: "subsystem == %@ AND category == %@", "com.gitx.gitx", "PBGitWorktrees")
+            return try store.getEntries(at: store.position(date: date), matching: filter)
+                .compactMap { $0 as? OSLogEntryLog }
+                .filter { $0.date >= date }
+                .map(\.composedMessage)
+        }.value
     }
 
     @MainActor

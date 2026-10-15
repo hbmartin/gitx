@@ -443,11 +443,14 @@ final class PBRepositoryWorktreeService: NSObject {
         task.timeout = 10
         versionTask = task
         logEvent(["--version"], stage: "started", phase: "capability")
-        task.perform { [weak self, weak task] data, error in
-            let complete = task?.standardOutputTruncated == false && task?.standardErrorTruncated == false
+        let hasCompleteOutput: @MainActor @Sendable () -> Bool = { [weak task] in
+            task?.standardOutputTruncated == false && task?.standardErrorTruncated == false
+        }
+        task.perform { [weak self] data, error in
             // swift6-safety-justification: PBTask’s PBMainQueuePerform category guarantees main-queue delivery.
             MainActor.assumeIsolated {
                 guard let self, generation == self.versionGeneration, !self.state.isClosed else { return }
+                let complete = hasCompleteOutput()
                 self.versionTask = nil
                 let version = error == nil && complete ? data.flatMap { String(data: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
                 let stable = checking != nil && (try? WorktreeFileFingerprint.capture(path: self.executable)) == checking

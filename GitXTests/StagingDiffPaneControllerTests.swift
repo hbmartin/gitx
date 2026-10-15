@@ -410,6 +410,48 @@ final class StagingDiffPaneControllerTests: XCTestCase, @unchecked Sendable {
             XCTAssertTrue(completed)
         }
 
+        func testFixtureDrainWaitsForWriterAdmittedByAnotherDrainCompletion() async throws {
+            try await snapshotFixture { directory, repository, file in
+                let contents = try Data(contentsOf: directory.appendingPathComponent(file.path))
+                let index = repository.index
+                let entered = expectation(description: "new writer holds capture")
+                let checkpoint = expectation(description: "second drain has checked writer ownership")
+                let validated = expectation(description: "new writer validation completed once")
+                let drained = expectation(description: "second drain completed once")
+                let runner = makeRunner(paths: [file.path], captureEntered: entered, captureRelease: DispatchSemaphore(value: 0))
+                var drainCompletions = 0
+                var validationCompletions = 0
+                XCTAssertTrue(PBIndexWriterCommandTestHarness.allowsMutation(index: index))
+
+                // Both requests join the same writer-drain batch. Its empty
+                // pane-group notifications are queued in registration order.
+                PBStagingDiffRevalidationTestHarness.closeAndDrain(repository: repository, panes: []) {
+                    PBStagingDiffRevalidationTestHarness.startValidation(repository: repository, runner: runner, files: [file]) { error in
+                        XCTAssertNil(error)
+                        validationCompletions += 1
+                        validated.fulfill()
+                    }
+                    // The second drain's notification was already queued. It
+                    // must observe the newly admitted writer before this runs.
+                    DispatchQueue.main.async { checkpoint.fulfill() }
+                }
+                PBStagingDiffRevalidationTestHarness.closeAndDrain(repository: repository, panes: []) {
+                    drainCompletions += 1
+                    drained.fulfill()
+                }
+
+                await fulfillment(of: [entered, checkpoint], timeout: 2)
+                XCTAssertEqual(drainCompletions, 0, "Cleanup must wait for the newly admitted writer")
+                XCTAssertFalse(PBIndexWriterCommandTestHarness.allowsMutation(index: index))
+                runner.releaseGate()
+                await fulfillment(of: [validated, drained], timeout: 3)
+                XCTAssertEqual(validationCompletions, 1)
+                XCTAssertEqual(drainCompletions, 1)
+                XCTAssertTrue(PBIndexWriterCommandTestHarness.allowsMutation(index: index))
+                XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(file.path)), contents)
+            }
+        }
+
         func testBoundedDrainRetainsFixtureUntilQueuesFinish() async throws {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
