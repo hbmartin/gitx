@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		F0BA93000000000000000001 /* WorktreeGitProxy.sh in Resources */ = {isa = PBXBuildFile; fileRef = F0BA93000000000000000002 /* WorktreeGitProxy.sh */; };
 		C0D085A00000000000000001 /* GitXFixtureRepositoryPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */; };
 		C0D085A00000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */; };
 		C0DE90010000000000000001 /* StagingImageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90010000000000000002 /* StagingImageReader.swift */; };
@@ -695,6 +696,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F0BA93000000000000000002 /* WorktreeGitProxy.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = WorktreeGitProxy.sh; sourceTree = "<group>"; };
 		C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXFixtureRepositoryPolicyTests.swift; sourceTree = "<group>"; };
 		C0DE90010000000000000002 /* StagingImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingImageReader.swift; sourceTree = "<group>"; };
 		8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFileIdentityTests.swift; sourceTree = "<group>"; };
@@ -1925,6 +1927,7 @@
 		CC0000040000004 /* GitXUITests */ = {
 			isa = PBXGroup;
 			children = (
+				F0BA93000000000000000002 /* WorktreeGitProxy.sh */,
 				D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */,
 				73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */,
 				D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */,
@@ -2030,6 +2033,7 @@
 			buildPhases = (
 				CC0000050000005 /* Sources */,
 				CC0000060000006 /* Frameworks */,
+				F0BA93000000000000000003 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -2248,6 +2252,14 @@
 /* End PBXReferenceProxy section */
 
 /* Begin PBXResourcesBuildPhase section */
+		F0BA93000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F0BA93000000000000000001 /* WorktreeGitProxy.sh in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8D1107290486CEB800E47090 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;

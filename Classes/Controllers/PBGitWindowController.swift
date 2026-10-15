@@ -49,9 +49,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     final var offeredWorktreeRepair = false
     /// Presentation authority expires when the originating window or owner changes.
     private(set) final var worktreePresentationGeneration: UInt64 = 0
+    final var worktreeErrorPresentationQueue: WorktreeErrorPresentationQueue?
 
     private final func invalidateWorktreePresentation() {
         worktreePresentationGeneration &+= 1
+        worktreeErrorPresentationQueue?.invalidate()
+        worktreeErrorPresentationQueue = nil
         NSLog("[GitX] Invalidated worktree presentation generation %llu", worktreePresentationGeneration)
     }
 

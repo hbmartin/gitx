@@ -51,22 +51,126 @@ private final nonisolated class ControlledWorktreeTask: PBTask, @unchecked Senda
     }
 }
 
-// swift6-safety-justification: The lock protects timeout state and the semaphore synchronizes the utility worker with its main-actor owner.
+// swift6-safety-justification: The lock guards every state transition and waiter; the semaphore is only a bounded failure backstop.
 private final nonisolated class WorktreeWorkerCheckpoint: @unchecked Sendable {
     private let semaphore = DispatchSemaphore(value: 0)
     private let lock = NSLock()
+    private let timeout: TimeInterval
+    let entered = XCTestExpectation(description: "utility worker entered its held phase")
+    private var waiting = false
+    private var released = false
+    private var expectedResult = false
     private var timedOut = false
+    private var finishedCount = 0
+    private var waiters: [XCTestExpectation] = []
+
+    init(timeout: TimeInterval = 60) {
+        self.timeout = timeout
+        entered.assertForOverFulfill = true
+    }
+
     var didTimeout: Bool {
         lock.lock(); defer { lock.unlock() }; return timedOut
     }
 
+    var isWaiting: Bool {
+        lock.lock(); defer { lock.unlock() }; return waiting
+    }
+
+    var wasReleased: Bool {
+        lock.lock(); defer { lock.unlock() }; return released
+    }
+
+    var expectsResult: Bool {
+        lock.lock(); defer { lock.unlock() }; return expectedResult
+    }
+
+    var deliveryCount: Int {
+        lock.lock(); defer { lock.unlock() }; return finishedCount
+    }
+
+    func expectResult() {
+        lock.lock(); expectedResult = true; lock.unlock()
+    }
+
     func wait() {
-        let result = semaphore.wait(timeout: .now() + 10)
-        lock.lock(); timedOut = result == .timedOut; lock.unlock()
+        lock.lock(); waiting = true; lock.unlock()
+        entered.fulfill()
+        let result = semaphore.wait(timeout: .now() + timeout)
+        lock.lock(); timedOut = result == .timedOut; waiting = false; lock.unlock()
     }
 
     func resume() {
-        semaphore.signal()
+        lock.lock()
+        let firstRelease = !released
+        released = true
+        lock.unlock()
+        if firstRelease {
+            semaphore.signal()
+        }
+    }
+
+    /// Called only by the service's initial-preparation main-result acknowledgement.
+    func finish() {
+        lock.lock()
+        finishedCount += 1
+        let pending = waiters
+        waiters.removeAll()
+        lock.unlock()
+        pending.forEach { $0.fulfill() }
+    }
+
+    /// Each waiter is fresh, so normal assertions and async teardown never re-wait one expectation.
+    func finishedExpectation() -> XCTestExpectation {
+        let result = XCTestExpectation(description: "utility result handled on main, including cancellation discard")
+        result.assertForOverFulfill = true
+        lock.lock()
+        let finished = finishedCount > 0
+        if !finished {
+            waiters.append(result)
+        }
+        lock.unlock()
+        if finished {
+            result.fulfill()
+        }
+        return result
+    }
+}
+
+// swift6-safety-justification: The lock guards counts and waiter registration; each direct XCTest expectation asserts overfulfillment.
+private final nonisolated class WorktreeObservationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    private var waiters: [(Int, XCTestExpectation)] = []
+    var value: Int {
+        lock.lock(); defer { lock.unlock() }; return count
+    }
+
+    @discardableResult
+    func advance() -> Int {
+        lock.lock()
+        count += 1
+        let value = count
+        let ready = waiters.filter { $0.0 <= value }.map(\.1)
+        waiters.removeAll { $0.0 <= value }
+        lock.unlock()
+        ready.forEach { $0.fulfill() }
+        return value
+    }
+
+    func expectation(atLeast target: Int) -> XCTestExpectation {
+        let expectation = XCTestExpectation(description: "observed at least \(target) worker results")
+        expectation.assertForOverFulfill = true
+        lock.lock()
+        let ready = count >= target
+        if !ready {
+            waiters.append((target, expectation))
+        }
+        lock.unlock()
+        if ready {
+            expectation.fulfill()
+        }
+        return expectation
     }
 }
 
@@ -421,6 +525,43 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertEqual(second.tasks.mutations, [secondArguments])
     }
 
+    func testReconciliationRetiresEarlierOrdinaryDiscoveryBeforeItCanRepublishRemovedWorktree() async throws {
+        let fixture = try WorktreeFacadeFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        let initial = try fixture.listing()
+        try await startFacade(installed, snapshot: initial)
+        let ordinaryStarted = installed.tasks.expect(discoveryArguments)
+        installed.service.refresh()
+        await fulfillment(of: [ordinaryStarted], timeout: 5)
+        let ordinary = try installed.tasks.task(discoveryArguments, occurrence: 1)
+        let removed = expectation(description: "real removal reconciled")
+        let removeArguments = ["worktree", "remove", fixture.linked.path]
+        enqueueRemoval(installed.service, path: fixture.linked.path) { _, error in
+            XCTAssertNil(error)
+            removed.fulfill()
+        }
+        _ = try fixture.git(removeArguments)
+        let reconciled = installed.tasks.expect(discoveryArguments)
+        try installed.tasks.task(removeArguments).finish(Data())
+        await fulfillment(of: [reconciled], timeout: 5)
+        try installed.tasks.task(discoveryArguments, occurrence: 2).finish(fixture.listing())
+        await fulfillment(of: [removed], timeout: 5)
+        XCTAssertEqual(installed.service.worktrees.map { WorktreePaths.identity($0.path) }, [WorktreePaths.identity(fixture.main.path)])
+        XCTAssertTrue(ordinary.wasCancelled, "Reconciliation must retire any earlier ordinary snapshot")
+
+        // A late PBTask callback must remain harmless. In the old implementation
+        // this refresh coalesces behind its inspection, so the next request is an
+        // observable boundary after the stale snapshot would have been published.
+        let refreshed = installed.tasks.expect(discoveryArguments)
+        ordinary.finish(initial)
+        installed.service.refresh()
+        await fulfillment(of: [refreshed], timeout: 5)
+        XCTAssertEqual(installed.service.worktrees.map { WorktreePaths.identity($0.path) }, [WorktreePaths.identity(fixture.main.path)])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.path))
+        XCTAssertEqual(installed.tasks.mutations, [removeArguments])
+    }
+
     func testCloseRetainsAdmissionAndDrainsTheActiveWriterThroughReconciliation() async throws {
         let fixture = try WorktreeMutationFixture()
         defer { fixture.cleanup() }
@@ -748,13 +889,20 @@ final class WorktreeServiceTests: XCTestCase {
             defaults.set(previous, forKey: "gitExecutable")
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
         }
-        for currentClipped in [false, true] {
+        for clipped in [(output: false, error: false), (output: true, error: false), (output: false, error: true)] {
             defaults.set("/usr/bin/git", forKey: "gitExecutable")
             let fixture = try WorktreeMutationFixture()
             defer { fixture.cleanup() }
             let installed = fixture.makeService()
             let service = installed.service
-            try await start(installed)
+            var previousProbe: ControlledWorktreeTask?
+            var previousCallback: ((Data?, Error?) -> Void)?
+            try await start(installed, observingInitialProbe: {
+                previousProbe = $0
+                previousCallback = $0.retainedCallback()
+            })
+            let obsolete = try XCTUnwrap(previousProbe)
+            let lateObsolete = try XCTUnwrap(previousCallback)
             XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 1)
             let reading = installed.tasks.expect(discoveryArguments)
             let readCancelled = expectation(description: "admitted preview cancels once")
@@ -787,25 +935,26 @@ final class WorktreeServiceTests: XCTestCase {
             XCTAssertTrue(oldRead.wasCancelled)
             XCTAssertTrue(installed.tasks.mutations.isEmpty)
             let current = try installed.tasks.task(["--version"], occurrence: 1)
-            current.setTruncationFlags(standardOutput: currentClipped)
-            // In the broken implementation this is the outer, superseded task stored in
-            // self.versionTask after recursive checkVersion returns. Its flags must not
-            // decide whether the newest-generation task output is complete.
-            for obsolete in probes.dropFirst(2) {
-                obsolete.task.setTruncationFlags(standardOutput: !currentClipped)
-            }
+            let currentComplete = !clipped.output && !clipped.error
+            current.setTruncationFlags(standardOutput: clipped.output, standardError: clipped.error)
+            obsolete.setTruncationFlags(standardOutput: currentComplete, standardError: currentComplete)
+            lateObsolete(Data("git version 1.0.0".utf8), nil)
+            await drainMainQueue()
+            XCTAssertFalse(service.isSupported, "A real old callback cannot certify the pending current probe")
+            XCTAssertNil(service.gitVersion)
+            XCTAssertFalse(current.wasCancelled)
+            XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 2)
             let version = "git version 2.50.1"
             current.finish(Data(version.utf8))
             await drainMainQueue()
-            XCTAssertEqual(service.isSupported, !currentClipped)
-            XCTAssertEqual(service.gitVersion, currentClipped ? nil : version)
-            for obsolete in probes.dropFirst(2) {
-                obsolete.task.finish(Data("git version 1.0.0".utf8))
-            }
+            XCTAssertEqual(service.isSupported, currentComplete)
+            XCTAssertEqual(service.gitVersion, currentComplete ? version : nil)
+            lateObsolete(Data("git version 1.0.0".utf8), nil)
             oldRead.finish(nil, error: CancellationError())
             await drainMainQueue()
-            XCTAssertEqual(service.isSupported, !currentClipped)
-            XCTAssertEqual(service.gitVersion, currentClipped ? nil : version)
+            XCTAssertEqual(service.isSupported, currentComplete)
+            XCTAssertEqual(service.gitVersion, currentComplete ? version : nil)
+            XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 2)
             // Complete any automatic successful-probe discovery so no fake read remains.
             for request in installed.tasks.requests.filter({ $0.arguments == discoveryArguments }) {
                 request.task.finish(snapshot)
@@ -826,7 +975,14 @@ final class WorktreeServiceTests: XCTestCase {
         defer { fixture.cleanup() }
         let installed = fixture.makeService()
         let service = installed.service
-        try await start(installed)
+        var previousProbe: ControlledWorktreeTask?
+        var previousCallback: ((Data?, Error?) -> Void)?
+        try await start(installed, observingInitialProbe: {
+            previousProbe = $0
+            previousCallback = $0.retainedCallback()
+        })
+        let obsolete = try XCTUnwrap(previousProbe)
+        let lateObsolete = try XCTUnwrap(previousCallback)
         let reading = installed.tasks.expect(discoveryArguments)
         let readCancelled = expectation(description: "availability transition cancels admitted read once")
         let queuedCancelled = expectation(description: "availability transition cancels queued writer once")
@@ -876,9 +1032,8 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertTrue(service.isSupported)
         XCTAssertEqual(service.gitVersion, "git version 2.50.3")
         // A superseded callback cannot replace the newest accepted result.
-        for obsolete in probes.dropFirst(2) {
-            obsolete.task.finish(Data("git version 1.0.0".utf8))
-        }
+        obsolete.setTruncationFlags(standardOutput: true, standardError: true)
+        lateObsolete(Data("git version 1.0.0".utf8), nil)
         oldRead.finish(nil, error: CancellationError())
         try installed.tasks.task(discoveryArguments, occurrence: 2).finish(snapshot)
         await drainMainQueue()
@@ -950,6 +1105,146 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertFalse(service.isSupported)
         XCTAssertEqual(service.worktrees, initial)
         XCTAssertEqual(reentry.names, ["closed-once"])
+    }
+
+    func testPreferenceFingerprintBurstKeepsMainActorResponsiveAndCoalescesOneLatestCheck() async throws {
+        try await assertPreferenceFingerprintHandling(.unchangedBurst)
+    }
+
+    func testReleasedOldPreferenceFingerprintCannotReplaceAnAcceptedNewGeneration() async throws {
+        try await assertPreferenceFingerprintHandling(.replacedGeneration)
+    }
+
+    func testClosedServiceDiscardsItsReleasedPreferenceFingerprintWithoutLaunchingGit() async throws {
+        try await assertPreferenceFingerprintHandling(.closed)
+    }
+
+    private enum PreferenceFingerprintScenario: Equatable { case unchangedBurst, replacedGeneration, closed }
+
+    @MainActor
+    private final class PreferenceFingerprintCleanupState {
+        var posted = false
+        var burstPosted = false
+    }
+
+    private func assertPreferenceFingerprintHandling(_ scenario: PreferenceFingerprintScenario) async throws {
+        let fixture = try WorktreeMutationFixture()
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable")
+        defaults.set("/usr/bin/git", forKey: "gitExecutable")
+        let installed = fixture.makeService()
+        let service = installed.service
+        let worker = WorktreeWorkerCheckpoint()
+        let starts = WorktreeObservationCounter()
+        let results = WorktreeObservationCounter()
+        let cleanup = PreferenceFingerprintCleanupState()
+        addTeardownBlock { @MainActor in
+            // Closing before releasing the held worker prevents pending checks
+            // from becoming new work. If its first result already ran, a single
+            // pending job was scheduled before that result's acknowledgement.
+            let expected = cleanup.burstPosted && results.value > 0 ? 2 : 1
+            service.cancel()
+            worker.resume()
+            if cleanup.posted {
+                await self.fulfillment(of: [results.expectation(atLeast: expected)], timeout: 10)
+            }
+            service.preferenceFingerprintObserver = nil
+            service.preferenceFingerprintResultObserver = nil
+            service.acceptedDiscoveryObserver = nil
+            if !cleanup.posted || results.value >= expected, !worker.isWaiting {
+                fixture.cleanup()
+            } else {
+                let path = installed.repository.gitURL()?.deletingLastPathComponent().path ?? "unknown"
+                XCTFail("Preference teardown could not observe terminal drainage; preserving fixture at " + path)
+            }
+            defaults.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        try await start(installed)
+        let initial = service.worktrees
+        service.preferenceFingerprintObserver = {
+            if starts.advance() == 1 {
+                worker.wait()
+            }
+        }
+        service.preferenceFingerprintResultObserver = {
+            if results.advance() == 1 {
+                worker.finish()
+            }
+        }
+        cleanup.posted = true
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        await fulfillment(of: [worker.entered], timeout: 5)
+        let mainProgress = expectation(description: "main actor runs while preference fingerprint is held")
+        DispatchQueue.main.async { mainProgress.fulfill() }
+        await fulfillment(of: [mainProgress], timeout: 5)
+        XCTAssertTrue(worker.isWaiting)
+        XCTAssertFalse(worker.wasReleased)
+        XCTAssertEqual(starts.value, 1)
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 1)
+        if scenario == .closed {
+            service.cancel()
+        } else {
+            if scenario == .replacedGeneration {
+                let requested = installed.tasks.expect(["--version"])
+                defaults.set("/usr/bin/true", forKey: "gitExecutable")
+                // Public entry validation remains fresh even while notification
+                // fingerprinting is held. It certifies a newer generation now.
+                service.refresh()
+                await fulfillment(of: [requested], timeout: 5)
+                let discovered = installed.tasks.expect(discoveryArguments)
+                let accepted = expectation(description: "new generation discovery accepted")
+                service.acceptedDiscoveryObserver = { accepted.fulfill() }
+                try installed.tasks.task(["--version"], occurrence: 1).finish(Data("git version 2.50.3".utf8))
+                await fulfillment(of: [discovered], timeout: 5)
+                try installed.tasks.task(discoveryArguments, occurrence: 1).finish(snapshot)
+                await fulfillment(of: [accepted], timeout: 5)
+                service.acceptedDiscoveryObserver = nil
+                XCTAssertTrue(service.isSupported)
+                XCTAssertEqual(service.gitVersion, "git version 2.50.3")
+            }
+            cleanup.burstPosted = true
+            for _ in 0 ..< 20 {
+                NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+            }
+            // These are the known main scheduling blocks enqueued by the
+            // synchronous posts above, not a substitute for a worker drain.
+            await drainMainQueue()
+            XCTAssertTrue(worker.isWaiting)
+            XCTAssertEqual(starts.value, 1)
+        }
+        worker.resume()
+        let expectedChecks = scenario == .closed ? 1 : 2
+        await fulfillment(of: [results.expectation(atLeast: expectedChecks)], timeout: 10)
+        XCTAssertFalse(worker.didTimeout)
+        XCTAssertFalse(worker.isWaiting)
+        XCTAssertTrue(worker.wasReleased)
+        XCTAssertEqual(worker.deliveryCount, 1)
+        XCTAssertEqual(starts.value, expectedChecks)
+        XCTAssertEqual(results.value, expectedChecks)
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count,
+                       scenario == .replacedGeneration ? 2 : 1)
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        XCTAssertEqual(service.worktrees, initial)
+        if scenario == .closed {
+            let requests = installed.tasks.requests.count
+            service.refresh(); service.start()
+            XCTAssertEqual(installed.tasks.requests.count, requests)
+        } else if scenario == .replacedGeneration {
+            XCTAssertTrue(service.isSupported)
+            XCTAssertEqual(service.gitVersion, "git version 2.50.3")
+        } else {
+            XCTAssertTrue(service.isSupported)
+            XCTAssertEqual(service.gitVersion, "git version 2.48.0")
+            let discovered = installed.tasks.expect(discoveryArguments)
+            let accepted = expectation(description: "ordinary discovery remains usable after burst")
+            service.acceptedDiscoveryObserver = { accepted.fulfill() }
+            service.refresh()
+            await fulfillment(of: [discovered], timeout: 5)
+            try installed.tasks.task(discoveryArguments, occurrence: 1).finish(snapshot)
+            await fulfillment(of: [accepted], timeout: 5)
+            service.acceptedDiscoveryObserver = nil
+        }
     }
 
     private func enqueuePrunePreview(_ service: PBRepositoryWorktreeService, completion: @escaping @MainActor @Sendable (PBWorktreePrunePreview?, NSError?) -> Void) {
@@ -1062,13 +1357,15 @@ final class WorktreeServiceTests: XCTestCase {
         await fulfillment(of: [drained], timeout: 5)
     }
 
-    private func start(_ fixture: WorktreeMutationFixture.Service) async throws {
+    private func start(_ fixture: WorktreeMutationFixture.Service, observingInitialProbe: ((ControlledWorktreeTask) -> Void)? = nil) async throws {
         let requested = fixture.tasks.expect(discoveryArguments)
         let published = expectation(description: "initial worktree snapshot published")
         let observation = fixture.service.observe(\.worktrees) { _, _ in published.fulfill() }
         defer { observation.invalidate() }
         fixture.service.start()
-        try fixture.tasks.task(["--version"]).finish(Data("git version 2.48.0".utf8))
+        let probe = try fixture.tasks.task(["--version"])
+        observingInitialProbe?(probe)
+        probe.finish(Data("git version 2.48.0".utf8))
         await fulfillment(of: [requested], timeout: 5)
         try fixture.tasks.task(discoveryArguments).finish(snapshot)
         await fulfillment(of: [published], timeout: 5)
@@ -1101,6 +1398,13 @@ final class WorktreeServiceTests: XCTestCase {
 
     private func enqueueUnlock(_ service: PBRepositoryWorktreeService, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
         service.unlockWorktree(path: "/linked") { output, error in
+            // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+            MainActor.assumeIsolated { completion(output, error as NSError?) }
+        }
+    }
+
+    private func enqueueRemoval(_ service: PBRepositoryWorktreeService, path: String, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+        service.removeWorktree(path: path, force: false) { output, error in
             // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
             MainActor.assumeIsolated { completion(output, error as NSError?) }
         }
@@ -1333,89 +1637,636 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         }
     }
 
-    func testRepairPreparationKeepsMainActorResponsiveAndReservesFIFOBeforeUtilityCapture() async throws {
-        let fixture = try RepairFixture(label: "utility-worker-fifo")
+    func testRepairWithoutAcceptedOwnershipSeedsRequiresRefreshAndLeavesFIFOAvailable() async throws {
+        let fixture = try RepairFixture(label: "missing-ownership-seeds")
         defer { fixture.cleanup() }
-        let repository = try RepositoryTestGitRepository(url: fixture.main)
-        let workerEntered = expectation(description: "actual repair evidence worker begins")
-        let checkpoint = WorktreeWorkerCheckpoint()
+        let repository = LocatedWorktreeRepository(directory: fixture.main.appendingPathComponent(".git"))
+        let heldDiscovery = ControlledWorktreeTask()
+        let discoveryStarted = expectation(description: "initial discovery is held before any seeds are accepted")
         var repairCommands = 0
-        let service = PBRepositoryWorktreeService(repository: repository, taskFactory: { arguments in
-            if arguments.contains("repair") {
+        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            if arguments == ["worktree", "list", "--porcelain", "-z"] {
+                discoveryStarted.fulfill(); return heldDiscovery
+            }
+            if arguments.starts(with: ["worktree", "repair"]) {
                 repairCommands += 1
             }
-            let task = PBTask(launchPath: "/usr/bin/git", arguments: ["--git-dir=" + fixture.main.appendingPathComponent(".git").path] + arguments, inDirectory: fixture.main.path)
-            GitXTestGitFixture.prepare(task)
-            return task
-        }, repairPreparationObserver: {
-            workerEntered.fulfill()
-            checkpoint.wait()
+            return nil
         })
-        var followingCommands = 0
-        let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: {
-            arguments in if arguments.contains("lock") {
-                followingCommands += 1
-            }; return nil
-        })
-        defer { checkpoint.resume(); service.cancel(); following.cancel() }
-        try await ready(service); try await ready(following)
-        let result = RepairCompletion()
-        let prepared = expectation(description: "prepared once after worker resumes")
-        prepared.assertForOverFulfill = true
-        enqueue { service.prepareRepairLinks(relativePaths: false) { preview, error in
-            // swift6-safety-justification: The service delivers preview completion on the main queue.
-            MainActor.assumeIsolated { result.preview = preview; result.error = error as NSError?; prepared.fulfill() }
+        let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"))
+        defer {
+            service.cancel(); following.cancel()
+            heldDiscovery.finish(nil, error: CancellationError())
+        }
+        try await ready(following)
+        service.start()
+        await fulfillment(of: [discoveryStarted], timeout: 10)
+        XCTAssertTrue(service.isSupported)
+        XCTAssertTrue(service.worktrees.isEmpty)
+        let before = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        let rejected = expectation(description: "repair requires an accepted ownership discovery")
+        let result = WriterCharacterizationResult()
+        enqueue { service.repairLinks(relativePaths: false) { error in
+            // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+            MainActor.assumeIsolated { result.error = error as NSError?; rejected.fulfill() }
         } }
-        await fulfillment(of: [workerEntered], timeout: 5)
-        let mainProgress = expectation(description: "main actor continues while inventory worker is held")
-        DispatchQueue.main.async { mainProgress.fulfill() }
-        await fulfillment(of: [mainProgress], timeout: 5)
-        XCTAssertFalse(checkpoint.didTimeout)
-        XCTAssertNil(result.preview)
+        await fulfillment(of: [rejected], timeout: 5)
+        let error = try XCTUnwrap(result.error)
+        let message = error.localizedDescription + " " + (error.localizedFailureReason ?? "")
+        XCTAssertTrue(message.contains("Refresh"), message)
         XCTAssertEqual(repairCommands, 0)
-        let followingDone = expectation(description: "following writer runs only after preparation releases its reservation")
-        enqueue { following.lockWorktree(path: fixture.linked.path, reason: "after utility capture") { _, error in XCTAssertNil(error); followingDone.fulfill() } }
-        XCTAssertEqual(followingCommands, 0)
-        checkpoint.resume()
-        await fulfillment(of: [prepared, followingDone], timeout: 10)
-        XCTAssertFalse(checkpoint.didTimeout)
-        XCTAssertNil(result.error)
-        try service.discardRepairPreview(XCTUnwrap(result.preview))
-        XCTAssertEqual(followingCommands, 1)
-        XCTAssertEqual(repairCommands, 0)
-        XCTAssertEqual(following.worktree(forBranch: "refs/heads/topic")?.lockReason, "after utility capture")
+        let progressed = expectation(description: "following real writer uses the same common FIFO")
+        enqueue { following.lockWorktree(path: fixture.linked.path, reason: "after missing seeds") { _, error in
+            XCTAssertNil(error); progressed.fulfill()
+        } }
+        await fulfillment(of: [progressed], timeout: 10)
+        XCTAssertEqual(following.worktree(forBranch: "refs/heads/topic")?.lockReason, "after missing seeds")
+        XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/locked") }, before)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
     }
 
-    func testCancellingAdmittedRepairEvidenceReleasesCompletionAndFIFOBeforeWorkerReturns() async throws {
-        let fixture = try RepairFixture(label: "cancel-held-evidence")
+    func testAcceptedEqualDiscoveryRefreshesOwnershipSeedsForANewRepair() async throws {
+        let fixture = try RepairFixture(label: "equal-discovery-fresh-seeds")
         defer { fixture.cleanup() }
-        let repository = try RepositoryTestGitRepository(url: fixture.main)
-        let workerEntered = expectation(description: "repair evidence worker is held")
-        let workerResumed = expectation(description: "cancelled evidence worker resumes")
-        let checkpoint = WorktreeWorkerCheckpoint()
+        let repository = LocatedWorktreeRepository(directory: fixture.main.appendingPathComponent(".git"))
         var repairCommands = 0
+        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            if arguments.starts(with: ["worktree", "repair"]) {
+                repairCommands += 1
+            }
+            return nil
+        })
+        defer { service.cancel() }
+        try await ready(service)
+        let initial = service.worktrees
+        let before = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        try replaceAdministrativeRegistration(in: fixture)
+        XCTAssertEqual(try metadata(in: fixture), before)
+        var publications = 0
+        let observation = service.observe(\.worktrees) { _, _ in
+            // swift6-safety-justification: The service publishes worktree values on its main actor.
+            MainActor.assumeIsolated { publications += 1 }
+        }
+        defer { observation.invalidate() }
+        let accepted = expectation(description: "equal discovery still accepts refreshed ownership seeds")
+        service.acceptedDiscoveryObserver = { accepted.fulfill() }
+        service.refresh()
+        await fulfillment(of: [accepted], timeout: 10)
+        service.acceptedDiscoveryObserver = nil
+        XCTAssertEqual(service.worktrees, initial)
+        XCTAssertEqual(publications, 0)
+        let completed = expectation(description: "new repair uses the newly accepted administrative identity")
+        let selected = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+        enqueue { service.repair(worktree: selected, movedTo: selected.path) { error in
+            XCTAssertNil(error); completed.fulfill()
+        } }
+        await fulfillment(of: [completed], timeout: 10)
+        XCTAssertEqual(repairCommands, 1)
+        XCTAssertEqual(try metadata(in: fixture), before)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
+    }
+
+    @MainActor
+    private final class RepairOperationCleanupState {
+        var repairRequests = 0
+        var followingRequested = false
+        var successfulCompletionRequired = false
+        var completedSuccessfully = false
+    }
+
+    func testQueuedRepairRetainsItsSeedsWhileAcceptedEqualDiscoveryUpdatesTheCache() async throws {
+        let fixture = try RepairFixture(label: "queued-request-retains-seeds")
+        var cleanupRegistered = false
+        defer {
+            if !cleanupRegistered {
+                fixture.cleanup()
+            }
+        }
+        let repository = LocatedWorktreeRepository(directory: fixture.main.appendingPathComponent(".git"))
+        let barrier = ControlledWorktreeTask()
+        let writerStarted = expectation(description: "earlier writer owns the FIFO before the old request")
+        let blocker = makeService(repository: repository, fixture: fixture, blocked: barrier, launched: writerStarted)
+        let checkpoint = WorktreeWorkerCheckpoint()
+        let starts = WorktreeObservationCounter()
+        var repairCommands = 0
+        let cleanup = RepairOperationCleanupState()
+        let repairResults = WorktreeObservationCounter()
+        let followingResults = WorktreeObservationCounter()
         let service = PBRepositoryWorktreeService(repository: repository, taskFactory: { arguments in
-            if arguments.contains("repair") {
+            if arguments.starts(with: ["worktree", "repair"]) {
                 repairCommands += 1
             }
             let task = PBTask(launchPath: "/usr/bin/git", arguments: ["--git-dir=" + fixture.main.appendingPathComponent(".git").path] + arguments, inDirectory: fixture.main.path)
             GitXTestGitFixture.prepare(task)
             return task
         }, repairPreparationObserver: {
-            workerEntered.fulfill()
-            checkpoint.wait()
-            workerResumed.fulfill()
+            if starts.advance() == 1 {
+                checkpoint.wait()
+            }
         })
+        service.repairPreparationResultObserver = { checkpoint.finish() }
+        let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"))
+        addTeardownBlock { @MainActor in
+            blocker.cancel(); service.cancel(); following.cancel()
+            barrier.finish(nil, error: CancellationError())
+            checkpoint.resume()
+            if checkpoint.expectsResult {
+                await self.fulfillment(of: [checkpoint.finishedExpectation()], timeout: 10)
+            }
+            if cleanup.repairRequests > 0 {
+                await self.fulfillment(of: [repairResults.expectation(atLeast: cleanup.repairRequests)], timeout: 10)
+            }
+            if cleanup.followingRequested {
+                await self.fulfillment(of: [followingResults.expectation(atLeast: 1)], timeout: 10)
+            }
+            let workerDrained = !checkpoint.expectsResult || (checkpoint.deliveryCount > 0 && !checkpoint.isWaiting)
+            guard workerDrained, repairResults.value == cleanup.repairRequests,
+                  !cleanup.followingRequested || followingResults.value == 1,
+                  !cleanup.successfulCompletionRequired || cleanup.completedSuccessfully
+            else {
+                XCTFail("Seed-cache teardown could not observe terminal drainage; preserving fixture at " + fixture.root.path)
+                return
+            }
+            service.repairPreparationResultObserver = nil
+            service.acceptedDiscoveryObserver = nil
+            fixture.cleanup()
+        }
+        cleanupRegistered = true
+        try await ready(blocker); try await ready(service); try await ready(following)
+        let selected = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+        let initial = service.worktrees
+        let before = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        let completed = WriterCharacterizationResult()
+        let blockerDone = expectation(description: "earlier no-op writer finishes")
+        enqueue { blocker.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in
+            XCTAssertNil(error); blockerDone.fulfill()
+        } }
+        await fulfillment(of: [writerStarted], timeout: 5)
+        let rejected = expectation(description: "old queued request refuses a replaced registration despite the newer cache")
+        checkpoint.expectResult()
+        cleanup.repairRequests += 1
+        enqueue { service.repair(worktree: selected, movedTo: selected.path) { error in
+            // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+            MainActor.assumeIsolated {
+                defer { repairResults.advance() }
+                completed.error = error as NSError?; completed.names.append("old"); rejected.fulfill()
+            }
+        } }
+        await fulfillment(of: [checkpoint.entered], timeout: 5)
+        try replaceAdministrativeRegistration(in: fixture)
+        let accepted = expectation(description: "new equal discovery updates only future request seeds")
+        service.acceptedDiscoveryObserver = { accepted.fulfill() }
+        service.refresh()
+        await fulfillment(of: [accepted], timeout: 10)
+        service.acceptedDiscoveryObserver = nil
+        XCTAssertEqual(service.worktrees, initial)
+        XCTAssertTrue(checkpoint.isWaiting)
+        let progressed = expectation(description: "following real writer advances after old request rejection")
+        cleanup.followingRequested = true
+        enqueue { following.lockWorktree(path: fixture.linked.path, reason: "after retained seeds") { _, error in
+            defer { followingResults.advance() }
+            XCTAssertNil(error); progressed.fulfill()
+        } }
+        checkpoint.resume()
+        await fulfillment(of: [checkpoint.finishedExpectation()], timeout: 10)
+        XCTAssertEqual(checkpoint.deliveryCount, 1)
+        XCTAssertFalse(checkpoint.didTimeout)
+        XCTAssertNil(completed.error)
+        XCTAssertEqual(repairCommands, 0)
+        barrier.finish(Data())
+        await fulfillment(of: [blockerDone, rejected, progressed], timeout: 15)
+        XCTAssertNotNil(completed.error)
+        XCTAssertEqual(completed.names, ["old"])
+        XCTAssertEqual(repairCommands, 0)
+        service.repairPreparationResultObserver = nil
+        let freshDone = expectation(description: "fresh request uses accepted replacement seeds and really repairs")
+        let fresh = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+        cleanup.repairRequests += 1
+        cleanup.successfulCompletionRequired = true
+        enqueue { service.repair(worktree: fresh, movedTo: fresh.path) { error in
+            defer { repairResults.advance() }
+            cleanup.completedSuccessfully = error == nil
+            XCTAssertNil(error); freshDone.fulfill()
+        } }
+        await fulfillment(of: [freshDone], timeout: 10)
+        XCTAssertEqual(starts.value, 2)
+        XCTAssertEqual(repairCommands, 1)
+        XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/locked") }, before)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
+    }
+
+    private func replaceAdministrativeRegistration(in fixture: RepairFixture) throws {
+        let original = fixture.main.appendingPathComponent(".git/worktrees/linked")
+        let copied = fixture.root.appendingPathComponent("replacement-administrative-registration")
+        let before = try WorktreeFileIdentity.capture(path: original.path)
+        // Copy while the original exists: inode reuse cannot make these the same object.
+        try FileManager.default.copyItem(at: original, to: copied)
+        try FileManager.default.removeItem(at: original)
+        try FileManager.default.moveItem(at: copied, to: original)
+        XCTAssertNotEqual(try WorktreeFileIdentity.capture(path: original.path), before)
+    }
+
+    func testCompletedRepairAllowsSameStrayObjectContentChangesAndReconcilesBeforeFollowingWriter() async throws {
+        let fixture = try RepairFixture(label: "repair-postwrite-stray-content")
+        defer { fixture.cleanup() }
+        let repository = LocatedWorktreeRepository(directory: fixture.main.appendingPathComponent(".git"))
+        let stray = fixture.main.appendingPathComponent(".git/worktrees/.DS_Store")
+        let originalStray = Data("before".utf8)
+        let changedStray = Data("same object, different byte length after Git completed repair\n".utf8)
+        try originalStray.write(to: stray)
+        let strayIdentity = try WorktreeFileIdentity.capture(path: stray.path)
+        let writer = ControlledWorktreeTask()
+        let launched = expectation(description: "approved repair writer admitted")
+        var repairArguments: [String]?
+        var repairCommands = 0
+        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            if arguments.starts(with: ["worktree", "repair"]) {
+                repairArguments = arguments; repairCommands += 1
+                launched.fulfill(); return writer
+            }
+            return nil
+        })
+        let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"))
+        defer {
+            service.cancel(); following.cancel()
+            writer.finish(nil, error: CancellationError())
+        }
+        try await ready(service); try await ready(following)
+        let previewResult = await prepareRepairPreview(service)
+        XCTAssertNil(previewResult.error)
+        let preview = try XCTUnwrap(previewResult.preview)
+        XCTAssertFalse(preview.requiresReclaim)
+        let before = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let mainHEAD = try Data(contentsOf: fixture.main.appendingPathComponent(".git/HEAD"))
+        let mainIndex = try Data(contentsOf: fixture.main.appendingPathComponent(".git/index"))
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let mainContent = try Data(contentsOf: fixture.main.appendingPathComponent("marker.txt"))
+        let linkedContent = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        let completed = expectation(description: "completed real repair reconciles despite incidental stray content changes")
+        let progressed = expectation(description: "following writer progresses after successful reconciliation")
+        let order = WriterCharacterizationResult()
+        enqueue { service.repair(confirmedPreview: preview) { updated, error in
+            // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+            MainActor.assumeIsolated {
+                XCTAssertNil(updated); order.error = error as NSError?
+                order.names.append("repair"); completed.fulfill()
+            }
+        } }
+        await fulfillment(of: [launched], timeout: 10)
+        enqueue { following.lockWorktree(path: fixture.linked.path, reason: "after repaired stray") { _, error in
+            // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+            MainActor.assumeIsolated { XCTAssertNil(error); order.names.append("following"); progressed.fulfill() }
+        } }
+        XCTAssertTrue(order.names.isEmpty)
+        let command = try XCTUnwrap(repairArguments)
+        XCTAssertEqual(repairCommands, 1)
+        // The fake controls only terminal delivery. Execute its captured command
+        // exactly once with real Git before reporting success to the service.
+        _ = try fixture.git(command)
+        try changedStray.write(to: stray)
+        XCTAssertNotEqual(changedStray.count, originalStray.count)
+        XCTAssertEqual(try WorktreeFileIdentity.capture(path: stray.path), strayIdentity)
+        writer.finish(Data())
+        await fulfillment(of: [completed, progressed], timeout: 15)
+        XCTAssertNil(order.error)
+        XCTAssertEqual(order.names, ["repair", "following"])
+        XCTAssertEqual(repairCommands, 1)
+        XCTAssertEqual(try Data(contentsOf: stray), changedStray)
+        XCTAssertEqual(try WorktreeFileIdentity.capture(path: stray.path), strayIdentity)
+        let administrative = fixture.main.appendingPathComponent(".git/worktrees/linked")
+        let forward = try String(contentsOf: fixture.linked.appendingPathComponent(".git"), encoding: .utf8).trimmingCharacters(in: .newlines)
+        XCTAssertTrue(forward.hasPrefix("gitdir: "))
+        XCTAssertEqual(WorktreePaths.identity(String(forward.dropFirst("gitdir: ".count))), WorktreePaths.identity(administrative.path))
+        let backlink = try String(contentsOf: administrative.appendingPathComponent("gitdir"), encoding: .utf8).trimmingCharacters(in: .newlines)
+        XCTAssertEqual(WorktreePaths.identity(backlink), WorktreePaths.identity(fixture.linked.appendingPathComponent(".git").path))
+        XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/locked") }, before)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent(".git/HEAD")), mainHEAD)
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent(".git/index")), mainIndex)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent("marker.txt")), mainContent)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), linkedContent)
+    }
+
+    func testInitialQueuedRepairRecapturesAnAddedUnrelatedSiblingBeforeWriting() async throws {
+        try await assertInitialQueuedRepairRecapturesSibling(adding: true)
+    }
+
+    func testInitialQueuedRepairRecapturesARemovedUnrelatedSiblingBeforeWriting() async throws {
+        try await assertInitialQueuedRepairRecapturesSibling(adding: false)
+    }
+
+    private func assertInitialQueuedRepairRecapturesSibling(adding: Bool) async throws {
+        let fixture = try RepairFixture(label: adding ? "initial-added-sibling" : "initial-removed-sibling")
+        var cleanupRegistered = false
+        defer {
+            if !cleanupRegistered {
+                fixture.cleanup()
+            }
+        }
+        let sibling = fixture.root.appendingPathComponent("unrelated-sibling")
+        if !adding {
+            _ = try fixture.git(["worktree", "add", "-b", "unrelated-sibling", sibling.path])
+        }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let barrier = ControlledWorktreeTask()
+        let writerStarted = expectation(description: "earlier controlled writer owns the common FIFO")
+        let blocker = makeService(repository: repository, fixture: fixture, blocked: barrier, launched: writerStarted)
+        let checkpoint = WorktreeWorkerCheckpoint(timeout: 60)
+        var repairCommands: [[String]] = []
+        let service = PBRepositoryWorktreeService(repository: repository, taskFactory: { arguments in
+            if arguments.starts(with: ["worktree", "repair"]) {
+                repairCommands.append(arguments)
+            }
+            let task = PBTask(launchPath: "/usr/bin/git", arguments: ["--git-dir=" + fixture.main.appendingPathComponent(".git").path] + arguments, inDirectory: fixture.main.path)
+            GitXTestGitFixture.prepare(task)
+            return task
+        }, repairPreparationObserver: {
+            checkpoint.wait()
+        })
+        service.repairPreparationResultObserver = { checkpoint.finish() }
+        let followingArguments = ["worktree", "lock", "--reason", "after sibling recapture", fixture.linked.path]
         var followingCommands = 0
+        let cleanup = RepairOperationCleanupState()
+        let followingResults = WorktreeObservationCounter()
         let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
-            if arguments.contains("lock") {
+            if arguments == followingArguments {
                 followingCommands += 1
             }
             return nil
         })
-        defer { checkpoint.resume(); service.cancel(); following.cancel() }
-        try await ready(service)
-        try await ready(following)
+        addTeardownBlock { @MainActor in
+            blocker.cancel(); service.cancel(); following.cancel()
+            barrier.finish(nil, error: CancellationError())
+            checkpoint.resume()
+            if checkpoint.expectsResult {
+                await self.fulfillment(of: [checkpoint.finishedExpectation()], timeout: 10)
+            }
+            if cleanup.followingRequested {
+                await self.fulfillment(of: [followingResults.expectation(atLeast: 1)], timeout: 10)
+            }
+            let workerDrained = !checkpoint.expectsResult || (checkpoint.deliveryCount > 0 && !checkpoint.isWaiting)
+            let followingDrained = !cleanup.followingRequested || followingResults.value == 1
+            guard workerDrained, followingDrained,
+                  !cleanup.successfulCompletionRequired || cleanup.completedSuccessfully
+            else {
+                XCTFail("Sibling recapture teardown could not observe terminal drainage; preserving fixture at " + fixture.root.path)
+                return
+            }
+            service.repairPreparationResultObserver = nil
+            fixture.cleanup()
+        }
+        cleanupRegistered = true
+        let initialCount = adding ? 2 : 3
+        try await ready(blocker, expectedWorktreeCount: initialCount)
+        try await ready(service, expectedWorktreeCount: initialCount)
+        try await ready(following, expectedWorktreeCount: initialCount)
+        let selected = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+        let completions = WriterCharacterizationResult()
+        let blockerDone = expectation(description: "earlier controlled writer completes")
+        let repairDone = expectation(description: "chosen repair recaptures the admitted inventory and completes")
+        let followingDone = expectation(description: "following real writer completes after repair")
+        enqueue {
+            blocker.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in
+                // swift6-safety-justification: The service delivers lifecycle completions on the main queue.
+                MainActor.assumeIsolated {
+                    XCTAssertNil(error)
+                    completions.names.append("blocker")
+                    blockerDone.fulfill()
+                }
+            }
+        }
+        await fulfillment(of: [writerStarted], timeout: 5)
+        checkpoint.expectResult()
+        cleanup.successfulCompletionRequired = true
+        enqueue {
+            service.repair(worktree: selected, movedTo: fixture.linked.path) { error in
+                // swift6-safety-justification: The service delivers lifecycle completions on the main queue.
+                MainActor.assumeIsolated {
+                    completions.error = error as NSError?
+                    cleanup.completedSuccessfully = error == nil
+                    completions.names.append("repair")
+                    repairDone.fulfill()
+                }
+            }
+        }
+        await fulfillment(of: [checkpoint.entered], timeout: 5)
+        if adding {
+            _ = try fixture.git(["worktree", "add", "-b", "unrelated-sibling", sibling.path])
+        } else {
+            _ = try fixture.git(["worktree", "remove", sibling.path])
+        }
+        XCTAssertEqual(FileManager.default.fileExists(atPath: sibling.path), adding)
+        let listing = try fixture.git(["worktree", "list", "--porcelain"])
+        XCTAssertEqual(listing.contains("worktree " + WorktreePaths.canonical(sibling.path) + "\n"), adding)
+        let before = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        cleanup.followingRequested = true
+        enqueue {
+            following.lockWorktree(path: fixture.linked.path, reason: "after sibling recapture") { _, error in
+                // swift6-safety-justification: The service delivers lifecycle completions on the main queue.
+                MainActor.assumeIsolated {
+                    defer { followingResults.advance() }
+                    XCTAssertNil(error)
+                    completions.names.append("following")
+                    followingDone.fulfill()
+                }
+            }
+        }
+        XCTAssertTrue(completions.names.isEmpty)
+        XCTAssertTrue(repairCommands.isEmpty)
+        XCTAssertEqual(followingCommands, 0)
+        checkpoint.resume()
+        // This task is an intentional no-op FIFO barrier; the chosen repair and
+        // following lock use real Git, so their output and filesystem proof are independent.
+        barrier.finish(Data())
+        await fulfillment(of: [blockerDone, repairDone, followingDone], timeout: 20)
+        await fulfillment(of: [checkpoint.finishedExpectation()], timeout: 10)
+        XCTAssertFalse(checkpoint.didTimeout)
+        XCTAssertTrue(checkpoint.wasReleased)
+        XCTAssertFalse(checkpoint.isWaiting)
+        XCTAssertEqual(checkpoint.deliveryCount, 1)
+        XCTAssertNil(completions.error)
+        XCTAssertEqual(completions.names, ["blocker", "repair", "following"])
+        XCTAssertEqual(repairCommands.count, 1)
+        XCTAssertEqual(followingCommands, 1)
+        XCTAssertEqual(following.worktree(forBranch: "refs/heads/topic")?.lockReason, "after sibling recapture")
+        XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/locked") }, before.filter { !$0.key.hasSuffix("/locked") })
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
+    }
+
+    @MainActor
+    private final class HeldRepairPreparationFixture {
+        @MainActor
+        private final class CommandCounts {
+            var repair = 0
+            var following = 0
+        }
+
+        let fixture: RepairFixture
+        let repository: RepositoryTestGitRepository
+        let checkpoint: WorktreeWorkerCheckpoint
+        let service: PBRepositoryWorktreeService
+        let following: PBRepositoryWorktreeService
+        private let counts: CommandCounts
+        let followingResults = WorktreeObservationCounter()
+        let cleanup = RepairOperationCleanupState()
+        private(set) var followingRequested = false
+
+        var repairCommands: Int {
+            counts.repair
+        }
+
+        var followingCommands: Int {
+            counts.following
+        }
+
+        func lockFollowing(reason: String, completion: @escaping @MainActor (Error?) -> Void) {
+            XCTAssertFalse(followingRequested)
+            followingRequested = true
+            following.lockWorktree(path: fixture.linked.path, reason: reason) { _, error in
+                // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+                MainActor.assumeIsolated {
+                    defer { self.followingResults.advance() }
+                    completion(error)
+                }
+            }
+        }
+
+        init(label: String) throws {
+            let created = try RepairFixture(label: label)
+            fixture = created
+            let checkpoint = WorktreeWorkerCheckpoint()
+            self.checkpoint = checkpoint
+            let counts = CommandCounts()
+            self.counts = counts
+            do {
+                let repository = try RepositoryTestGitRepository(url: created.main)
+                self.repository = repository
+                func task(_ arguments: [String]) -> PBTask {
+                    let task = PBTask(launchPath: "/usr/bin/git", arguments: ["--git-dir=" + created.main.appendingPathComponent(".git").path] + arguments, inDirectory: created.main.path)
+                    GitXTestGitFixture.prepare(task)
+                    return task
+                }
+                let service = PBRepositoryWorktreeService(repository: repository, taskFactory: { arguments in
+                    if arguments.starts(with: ["worktree", "repair"]) {
+                        counts.repair += 1
+                    }
+                    return task(arguments)
+                }, repairPreparationObserver: { checkpoint.wait() })
+                self.service = service
+                service.repairPreparationResultObserver = { checkpoint.finish() }
+                following = PBRepositoryWorktreeService(repository: repository, taskFactory: { arguments in
+                    if arguments.starts(with: ["worktree", "lock"]) {
+                        counts.following += 1
+                    }
+                    return task(arguments)
+                })
+            } catch {
+                created.cleanup()
+                throw error
+            }
+        }
+    }
+
+    private func heldRepairPreparationFixture(label: String) async throws -> HeldRepairPreparationFixture {
+        let held = try HeldRepairPreparationFixture(label: label)
+        // Register before readiness or any test assertions can fail. The shared
+        // async teardown owns release, true result drainage, and final deletion.
+        addTeardownBlock { @MainActor in
+            held.service.cancel(); held.following.cancel()
+            held.checkpoint.resume()
+            if held.checkpoint.expectsResult {
+                await self.fulfillment(of: [held.checkpoint.finishedExpectation()], timeout: 10)
+            }
+            if held.followingRequested {
+                await self.fulfillment(of: [held.followingResults.expectation(atLeast: 1)], timeout: 10)
+            }
+            let workerDrained = !held.checkpoint.expectsResult || (held.checkpoint.deliveryCount > 0 && !held.checkpoint.isWaiting)
+            let followingDrained = !held.followingRequested || held.followingResults.value == 1
+            guard workerDrained, followingDrained,
+                  !held.cleanup.successfulCompletionRequired || held.cleanup.completedSuccessfully
+            else {
+                XCTFail("Held repair teardown could not observe terminal drainage; preserving fixture at " + held.fixture.root.path)
+                return
+            }
+            held.service.repairPreparationResultObserver = nil
+            held.fixture.cleanup()
+        }
+        try await ready(held.service)
+        try await ready(held.following)
+        return held
+    }
+
+    func testRepairPreparationKeepsMainActorResponsiveAndReservesFIFOBeforeUtilityCapture() async throws {
+        let held = try await heldRepairPreparationFixture(label: "utility-worker-fifo")
+        let checkpoint = held.checkpoint
+        let service = held.service
+        let following = held.following
+        let result = RepairCompletion()
+        let prepared = expectation(description: "prepared once after worker resumes")
+        prepared.assertForOverFulfill = true
+        checkpoint.expectResult()
+        held.cleanup.successfulCompletionRequired = true
+        enqueue { service.prepareRepairLinks(relativePaths: false) { preview, error in
+            // swift6-safety-justification: The service delivers preview completion on the main queue.
+            MainActor.assumeIsolated {
+                result.preview = preview; result.error = error as NSError?
+                held.cleanup.completedSuccessfully = preview != nil && error == nil
+                prepared.fulfill()
+            }
+        } }
+        await fulfillment(of: [checkpoint.entered], timeout: 5)
+        let mainProgress = expectation(description: "main actor continues while inventory worker is held")
+        DispatchQueue.main.async { mainProgress.fulfill() }
+        await fulfillment(of: [mainProgress], timeout: 5)
+        XCTAssertTrue(checkpoint.isWaiting)
+        XCTAssertFalse(checkpoint.wasReleased)
+        XCTAssertNil(result.preview)
+        XCTAssertEqual(held.repairCommands, 0)
+        let followingDone = expectation(description: "following writer runs only after preparation releases its reservation")
+        enqueue { held.lockFollowing(reason: "after utility capture") { error in XCTAssertNil(error); followingDone.fulfill() } }
+        XCTAssertEqual(held.followingCommands, 0)
+        checkpoint.resume()
+        await fulfillment(of: [prepared, followingDone], timeout: 10)
+        await fulfillment(of: [checkpoint.finishedExpectation()], timeout: 10)
+        XCTAssertFalse(checkpoint.didTimeout)
+        XCTAssertTrue(checkpoint.wasReleased)
+        XCTAssertFalse(checkpoint.isWaiting)
+        XCTAssertEqual(checkpoint.deliveryCount, 1)
+        XCTAssertNil(result.error)
+        try service.discardRepairPreview(XCTUnwrap(result.preview))
+        XCTAssertEqual(held.followingCommands, 1)
+        XCTAssertEqual(held.repairCommands, 0)
+        XCTAssertEqual(following.worktree(forBranch: "refs/heads/topic")?.lockReason, "after utility capture")
+    }
+
+    func testCancellingAdmittedRepairEvidenceReleasesCompletionAndFIFOBeforeWorkerReturns() async throws {
+        let held = try await heldRepairPreparationFixture(label: "cancel-held-evidence")
+        let fixture = held.fixture
+        let checkpoint = held.checkpoint
+        let service = held.service
+        let following = held.following
         let before = try metadata(in: fixture)
         let refs = try fixture.git(["show-ref", "--head"])
         let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
@@ -1426,6 +2277,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         weak let retainedCompletionOwner = completionOwner
         let cancelled = expectation(description: "held preparation cancels exactly once")
         cancelled.assertForOverFulfill = true
+        checkpoint.expectResult()
         enqueue {
             service.prepareRepairLinks(relativePaths: false) { [owner = completionOwner] preview, error in
                 // swift6-safety-justification: The service delivers preview completion on the main queue.
@@ -1439,17 +2291,17 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             }
         }
         completionOwner = nil
-        await fulfillment(of: [workerEntered], timeout: 5)
+        await fulfillment(of: [checkpoint.entered], timeout: 5)
         XCTAssertNotNil(retainedCompletionOwner)
         let progressed = expectation(description: "following real writer finishes while evidence worker remains held")
         progressed.assertForOverFulfill = true
         enqueue {
-            following.lockWorktree(path: fixture.linked.path, reason: "following") { _, error in
+            held.lockFollowing(reason: "following") { error in
                 XCTAssertNil(error)
                 progressed.fulfill()
             }
         }
-        XCTAssertEqual(followingCommands, 0)
+        XCTAssertEqual(held.followingCommands, 0)
         service.cancel()
         await fulfillment(of: [cancelled, progressed], timeout: 5)
         XCTAssertEqual(completions, 1)
@@ -1457,19 +2309,159 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertEqual(result.error?.domain, NSCocoaErrorDomain)
         XCTAssertEqual(result.error?.code, NSUserCancelledError)
         XCTAssertNil(retainedCompletionOwner, "Cancellation must release the deferred completion before its utility worker returns")
-        XCTAssertFalse(checkpoint.didTimeout)
+        XCTAssertTrue(checkpoint.isWaiting)
+        XCTAssertFalse(checkpoint.wasReleased)
         XCTAssertEqual(service.repairPreparationCount, 0)
-        XCTAssertEqual(repairCommands, 0)
-        XCTAssertEqual(followingCommands, 1)
+        XCTAssertEqual(held.repairCommands, 0)
+        XCTAssertEqual(held.followingCommands, 1)
+        checkpoint.resume()
+        await fulfillment(of: [checkpoint.finishedExpectation()], timeout: 5)
+        XCTAssertFalse(checkpoint.didTimeout)
+        XCTAssertTrue(checkpoint.wasReleased)
+        XCTAssertFalse(checkpoint.isWaiting)
+        XCTAssertEqual(checkpoint.deliveryCount, 1)
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(service.repairPreparationCount, 0)
+        XCTAssertNil(retainedCompletionOwner)
+        XCTAssertEqual(held.repairCommands, 0)
+        XCTAssertEqual(held.followingCommands, 1)
         XCTAssertEqual(following.worktree(forBranch: "refs/heads/topic")?.lockReason, "following")
         XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/locked") }, before)
         XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
         XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
         XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
-        checkpoint.resume()
-        await fulfillment(of: [workerResumed], timeout: 5)
-        XCTAssertFalse(checkpoint.didTimeout)
-        XCTAssertEqual(completions, 1)
+    }
+
+    func testFailedOldExecutableReconciliationStillRefreshesTheSupportedCurrentGeneration() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable")
+        defer {
+            defaults.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        let fixture = try RepairFixture(label: "old-executable-reconciliation")
+        defer { fixture.cleanup() }
+        let originalGit = fixture.root.appendingPathComponent("git-a")
+        let currentGit = fixture.root.appendingPathComponent("git-b")
+        try writeVersionedGitProxy(originalGit, version: "2.50.1", atomic: true)
+        try writeVersionedGitProxy(currentGit, version: "2.50.2", atomic: true)
+        defaults.set(originalGit.path, forKey: "gitExecutable")
+        let repository = LocatedWorktreeRepository(directory: fixture.main.appendingPathComponent(".git"))
+        let writer = ControlledWorktreeTask()
+        let retiredCurrentRead = ControlledWorktreeTask()
+        let refreshedCurrentRead = ControlledWorktreeTask()
+        let writerStarted = expectation(description: "Git A writer admitted")
+        let currentReadStarted = expectation(description: "Git B capability checked and ordinary read pending")
+        let replacementReadStarted = expectation(description: "post-write Git B read replaces the retired snapshot")
+        [writerStarted, currentReadStarted, replacementReadStarted].forEach { $0.assertForOverFulfill = true }
+        let listArguments = ["worktree", "list", "--porcelain", "-z"]
+        let lockArguments = ["worktree", "lock", "--reason", "writer A", fixture.linked.path]
+        var currentReads = 0
+        var requestedReplacement = false
+        var commands: [[String]] = []
+        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            commands.append(arguments)
+            if arguments == ["--version"], let selected = defaults.string(forKey: "gitExecutable") {
+                return PBTask(launchPath: selected, arguments: ["--version"], inDirectory: nil)
+            }
+            if arguments == lockArguments {
+                writerStarted.fulfill()
+                return writer
+            }
+            if arguments == listArguments, defaults.string(forKey: "gitExecutable") == currentGit.path {
+                currentReads += 1
+                if currentReads == 1 {
+                    currentReadStarted.fulfill()
+                    return retiredCurrentRead
+                }
+                if currentReads == 2 {
+                    requestedReplacement = true
+                    replacementReadStarted.fulfill()
+                    return refreshedCurrentRead
+                }
+            }
+            return nil
+        })
+        let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"))
+        defer {
+            service.cancel(); following.cancel()
+            writer.finish(nil, error: CancellationError())
+            retiredCurrentRead.finish(nil, error: CancellationError())
+            refreshedCurrentRead.finish(nil, error: CancellationError())
+        }
+        try await ready(service)
+        XCTAssertEqual(service.gitVersion, "git version 2.50.1")
+        let initialListing = try Data(fixture.git(listArguments).utf8)
+        let protected = try metadata(in: fixture)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+        let result = WriterCharacterizationResult()
+        let writerDone = expectation(description: "old writer reports reconciliation failure exactly once")
+        writerDone.assertForOverFulfill = true
+        enqueue { service.lockWorktree(path: fixture.linked.path, reason: "writer A") { _, error in
+            // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+            MainActor.assumeIsolated {
+                result.error = error as NSError?
+                result.names.append("writer")
+                writerDone.fulfill()
+            }
+        } }
+        await fulfillment(of: [writerStarted], timeout: 5)
+        defaults.set(currentGit.path, forKey: "gitExecutable")
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        await fulfillment(of: [currentReadStarted], timeout: 10)
+        XCTAssertTrue(service.isSupported)
+        XCTAssertEqual(service.gitVersion, "git version 2.50.2")
+        XCTAssertFalse(writer.wasCancelled)
+        try await ready(following)
+        let followingDone = expectation(description: "following preview proves shared FIFO released after old-context failure")
+        followingDone.assertForOverFulfill = true
+        enqueue { following.preparePrunePreview { preview, error in
+            // swift6-safety-justification: The service delivers preview completion on the main queue.
+            MainActor.assumeIsolated {
+                XCTAssertNil(error)
+                XCTAssertNotNil(preview)
+                if let preview {
+                    following.discardPrunePreview(preview)
+                }
+                result.names.append("following")
+                followingDone.fulfill()
+            }
+        } }
+        XCTAssertTrue(result.names.isEmpty)
+        try FileManager.default.removeItem(at: originalGit)
+        _ = try fixture.git(lockArguments)
+        writer.finish(Data())
+        await fulfillment(of: [writerDone, replacementReadStarted, followingDone], timeout: 10)
+        XCTAssertEqual(result.names, ["writer", "following"])
+        let error = try XCTUnwrap(result.error)
+        XCTAssertTrue(error.localizedFailureReason?.contains("Git completed") == true)
+        XCTAssertTrue(retiredCurrentRead.wasCancelled)
+        XCTAssertTrue(service.isSupported)
+        XCTAssertEqual(service.gitVersion, "git version 2.50.2")
+        guard requestedReplacement else { return }
+        let published = expectation(description: "fresh Git B snapshot publishes the completed writer's lock")
+        published.assertForOverFulfill = true
+        let observation = service.observe(\.worktrees) { observed, _ in
+            // swift6-safety-justification: The service publishes worktree KVO on the main queue.
+            MainActor.assumeIsolated {
+                if observed.worktree(forBranch: "refs/heads/topic")?.lockReason == "writer A" {
+                    published.fulfill()
+                }
+            }
+        }
+        defer { observation.invalidate() }
+        try refreshedCurrentRead.finish(Data(fixture.git(listArguments).utf8))
+        await fulfillment(of: [published], timeout: 10)
+        retiredCurrentRead.finish(initialListing)
+        XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.lockReason, "writer A")
+        XCTAssertEqual(commands.filter { $0 == lockArguments }.count, 1)
+        XCTAssertGreaterThanOrEqual(currentReads, 2)
+        XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/locked") }, protected)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
     }
 
     func testDefaultDocumentOwnedWriterAndReconciliationKeepTheOriginalGitAfterPreferencesChange() async throws {
@@ -1641,21 +2633,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         failedTask.finish(Data(secretOutput.utf8), error: NSError(domain: "fixture", code: 1))
         await fulfillment(of: [failed], timeout: 10)
         let required = ["worktree.lock.started phase=writing count=1 category=none", "worktree.add.failed phase=writing count=1 category=task"]
-        let clock = ContinuousClock()
-        let started = clock.now
-        let deadline = started.advanced(by: .seconds(30))
-        var queryDurations: [Duration] = []
-        var entries: [String] = []
-        repeat {
-            let queryStarted = clock.now
-            entries = try await Self.lifecycleLogEntries(since: logStart)
-            queryDurations.append(queryStarted.duration(to: clock.now))
-            if required.allSatisfy({ entries.contains($0) }) || clock.now >= deadline {
-                break
-            }
-            try await Task.sleep(for: .milliseconds(100))
-        } while true
-        let observation = "Log visibility after \(queryDurations.count) queries over \(started.duration(to: clock.now)); query durations: \(queryDurations)"
+        let snapshot = try await Self.lifecycleLogObservation(since: logStart, required: required)
+        let entries = snapshot.entries
+        let observation = "Log visibility after \(snapshot.queryDurations.count) queries over \(snapshot.elapsed); query durations: \(snapshot.queryDurations)"
         let events = entries.filter { $0.hasPrefix("worktree.") }
         for event in required {
             XCTAssertTrue(events.contains(event), "Missing \(event). \(observation)")
@@ -1668,14 +2648,44 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertEqual(PBWorktreeLifecycleDiagnostics.publicEvent(arguments: ["worktree", "lock", "--reason", secretReason, secretPath], stage: secretOutput, phase: secretBranch, count: -1, category: secretReason), "worktree.lock.unknown phase=unknown count=0 category=unknown")
     }
 
-    private static func lifecycleLogEntries(since date: Date) async throws -> [String] {
+    private nonisolated struct LifecycleLogObservation: Sendable {
+        let entries: [String]
+        let queryDurations: [Duration]
+        let elapsed: Duration
+    }
+
+    private static func lifecycleLogObservation(since date: Date, required: [String]) async throws -> LifecycleLogObservation {
         try await Task.detached(priority: .utility) {
-            let store = try OSLogStore(scope: .currentProcessIdentifier)
             let filter = NSPredicate(format: "subsystem == %@ AND category == %@", "com.gitx.gitx", "PBGitWorktrees")
-            return try store.getEntries(at: store.position(date: date), matching: filter)
-                .compactMap { $0 as? OSLogEntryLog }
-                .filter { $0.date >= date }
-                .map(\.composedMessage)
+            let clock = ContinuousClock()
+            let started = clock.now
+            let deadline = started.advanced(by: .seconds(30))
+            let pauses: [Duration] = [.zero, .milliseconds(250), .milliseconds(500), .seconds(1)]
+            var entries: [String] = []
+            var queryDurations: [Duration] = []
+            var attempt = 0
+            while true {
+                if attempt > 0 {
+                    guard clock.now < deadline else { break }
+                    let next = min(deadline, clock.now.advanced(by: pauses[min(attempt, pauses.count - 1)]))
+                    try await clock.sleep(until: next)
+                    guard clock.now < deadline else { break }
+                }
+                let queryStarted = clock.now
+                // OSLogStore represents a fixed range as of creation. Each retry
+                // needs a fresh snapshot; the predicate and utility task are reused.
+                let store = try OSLogStore(scope: .currentProcessIdentifier)
+                entries = try store.getEntries(at: store.position(date: date), matching: filter)
+                    .compactMap { $0 as? OSLogEntryLog }
+                    .filter { $0.date >= date }
+                    .map(\.composedMessage)
+                queryDurations.append(queryStarted.duration(to: clock.now))
+                if required.allSatisfy({ entries.contains($0) }) || clock.now >= deadline {
+                    break
+                }
+                attempt += 1
+            }
+            return LifecycleLogObservation(entries: entries, queryDurations: queryDurations, elapsed: started.duration(to: clock.now))
         }.value
     }
 
@@ -2048,6 +3058,76 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertFalse(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked).isEmpty)
     }
 
+    func testLocateUsesAndVerifiesCapturedRelativeStyle() async throws {
+        for (hasHealthySibling, writesWrongStyle) in [(true, false), (true, true), (false, false), (false, true)] {
+            let fixture = try RepairFixture(label: "relative-locate")
+            defer { fixture.cleanup() }
+            let sibling = fixture.root.appendingPathComponent("relative-sibling")
+            let located = fixture.root.appendingPathComponent("located")
+            _ = try fixture.git(["config", "worktree.useRelativePaths", "false"])
+            _ = try fixture.git(["worktree", "repair", "--relative-paths"])
+            if hasHealthySibling {
+                _ = try fixture.git(["worktree", "add", "--relative-paths", "-b", "relative-sibling", sibling.path])
+            }
+            try FileManager.default.moveItem(at: fixture.linked, to: located)
+            let before = try metadata(in: fixture).filter { !$0.key.hasSuffix("/gitdir") }
+            let refs = try fixture.git(["show-ref", "--head"])
+            let siblingGitfile: Data?
+            if hasHealthySibling {
+                siblingGitfile = try Data(contentsOf: sibling.appendingPathComponent(".git"))
+            } else {
+                siblingGitfile = nil
+            }
+            let content = try Data(contentsOf: located.appendingPathComponent("marker.txt"))
+            let repository = try RepositoryTestGitRepository(url: fixture.main)
+            var repairCommands: [[String]] = []
+            let service = PBRepositoryWorktreeService(repository: repository) { arguments in
+                var executed = arguments
+                if arguments.starts(with: ["worktree", "repair"]) {
+                    repairCommands.append(arguments)
+                    if writesWrongStyle {
+                        executed = ["worktree", "repair", "--no-relative-paths"] + arguments.dropFirst(2).filter { !["--relative-paths", "--no-relative-paths"].contains($0) }
+                    }
+                }
+                let task = PBTask(launchPath: "/usr/bin/git", arguments: ["--git-dir=" + fixture.main.appendingPathComponent(".git").path] + executed, inDirectory: fixture.main.path)
+                GitXTestGitFixture.prepare(task)
+                return task
+            }
+            defer { service.cancel() }
+            let discovered = expectation(description: "relative checkout inventory published; healthy sibling: \(hasHealthySibling)")
+            let observation = service.observe(\.worktrees) { _, _ in discovered.fulfill() }
+            service.start()
+            await fulfillment(of: [discovered], timeout: 10)
+            observation.invalidate()
+            XCTAssertTrue(service.isSupported)
+            XCTAssertEqual(service.worktrees.count, hasHealthySibling ? 3 : 2)
+            let selected = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+            let result = WriterCharacterizationResult()
+            let repaired = expectation(description: "Locate style operation finished")
+            enqueue { service.repair(worktree: selected, movedTo: located.path) { error in
+                // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+                MainActor.assumeIsolated { result.error = error as NSError?; repaired.fulfill() }
+            } }
+            await fulfillment(of: [repaired], timeout: 10)
+            XCTAssertEqual(repairCommands.count, 1)
+            XCTAssertEqual(try XCTUnwrap(repairCommands.first), ["worktree", "repair", "--relative-paths", WorktreePaths.canonical(fixture.main.path), WorktreePaths.canonical(located.path)])
+            if writesWrongStyle {
+                let error = try XCTUnwrap(result.error)
+                XCTAssertTrue(error.localizedFailureReason?.contains("exact bidirectional links") == true)
+            } else {
+                XCTAssertNil(result.error)
+                XCTAssertEqual(try String(contentsOf: located.appendingPathComponent(".git"), encoding: .utf8), "gitdir: ../main/.git/worktrees/linked\n")
+                XCTAssertEqual(try String(contentsOf: fixture.main.appendingPathComponent(".git/worktrees/linked/gitdir"), encoding: .utf8), "../../../../located/.git\n")
+                if let siblingGitfile {
+                    XCTAssertEqual(try Data(contentsOf: sibling.appendingPathComponent(".git")), siblingGitfile)
+                }
+            }
+            XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/gitdir") }, before)
+            XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+            XCTAssertEqual(try Data(contentsOf: located.appendingPathComponent("marker.txt")), content)
+        }
+    }
+
     func testLocateRepairsEveryCapturedMovedCheckoutInsteadOfPartiallyCompleting() async throws {
         let fixture = try RepairFixture(label: "multi-moved")
         defer { fixture.cleanup() }
@@ -2267,6 +3347,212 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["--git-dir=" + bare.path, "show-ref", "--head"]), refs)
         XCTAssertEqual(try Data(contentsOf: linked.appendingPathComponent(".git")), gitfile)
         XCTAssertEqual(try protectedPaths.map { try Data(contentsOf: $0) }, protected)
+    }
+
+    @MainActor
+    private final class PruneReadBoundaryState {
+        var ready = false
+        var tearingDown = false
+        var requests = 0
+        var normalCompletions = 0
+        let results = WorktreeObservationCounter()
+
+        func completed() {
+            if !tearingDown {
+                normalCompletions += 1
+            }
+            results.advance()
+        }
+    }
+
+    func testDirectInitialPruneDiscoveryCancellationWithALiveOwnerIsExpectedCancellationAndReleasesFIFO() async throws {
+        let cancellations: [Error] = [CancellationError(), NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)]
+        for cancellation in cancellations {
+            let fixture = try RepairFixture(label: "cancel-live-initial-discovery")
+            let repository = LocatedWorktreeRepository(directory: fixture.main.appendingPathComponent(".git"))
+            let discovery = ControlledWorktreeTask()
+            let reading = expectation(description: "live owner reaches operation-owned initial discovery")
+            var holdNextDiscovery = false
+            var arguments: [[String]] = []
+            let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { command in
+                arguments.append(command)
+                if holdNextDiscovery, command == ["worktree", "list", "--porcelain", "-z"] {
+                    holdNextDiscovery = false
+                    reading.fulfill()
+                    return discovery
+                }
+                return nil
+            })
+            let state = PruneReadBoundaryState()
+            addTeardownBlock { @MainActor in
+                state.tearingDown = true
+                service.cancel()
+                discovery.finish(nil, error: CancellationError())
+                if state.requests > 0 {
+                    await self.fulfillment(of: [state.results.expectation(atLeast: state.requests)], timeout: 10)
+                }
+                guard state.ready, state.results.value == state.requests, state.normalCompletions == state.requests else {
+                    XCTFail("Initial discovery cancellation did not finish normally before teardown; preserving fixture at " + fixture.root.path)
+                    return
+                }
+                fixture.cleanup()
+            }
+            try await ready(service)
+            state.ready = service.isSupported && service.worktrees.count == 2
+            let before = try metadata(in: fixture)
+            let refs = try fixture.git(["show-ref", "--head"])
+            let mainHEAD = try Data(contentsOf: fixture.main.appendingPathComponent(".git/HEAD"))
+            let mainIndex = try Data(contentsOf: fixture.main.appendingPathComponent(".git/index"))
+            let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+            let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
+            let result = PruneCompletion()
+            let order = WriterCharacterizationResult()
+            let cancelled = expectation(description: "live initial discovery cancellation completes exactly once")
+            let progressed = expectation(description: "following real writer uses the released preview reservation")
+            let following = ["worktree", "lock", "--reason", "after initial discovery cancellation", fixture.linked.path]
+            holdNextDiscovery = true
+            state.requests += 1
+            enqueue { service.preparePrunePreview { preview, error in
+                // swift6-safety-justification: The service delivers preview completion on the main queue before releasing FIFO.
+                MainActor.assumeIsolated {
+                    defer { state.completed() }
+                    result.preview = preview; result.error = error as NSError?
+                    order.names.append("cancelled")
+                    XCTAssertFalse(arguments.contains(following))
+                    cancelled.fulfill()
+                }
+            } }
+            await fulfillment(of: [reading], timeout: 10)
+            state.requests += 1
+            enqueue { service.lockWorktree(path: fixture.linked.path, reason: "after initial discovery cancellation") { _, error in
+                // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+                MainActor.assumeIsolated {
+                    defer { state.completed() }
+                    XCTAssertNil(error)
+                    order.names.append("following"); progressed.fulfill()
+                }
+            } }
+            XCTAssertFalse(arguments.contains(following))
+            discovery.finish(nil, error: cancellation)
+            await fulfillment(of: [cancelled, progressed], timeout: 15)
+            XCTAssertEqual(state.results.value, 2)
+            XCTAssertEqual(state.normalCompletions, 2)
+            XCTAssertEqual(order.names, ["cancelled", "following"])
+            XCTAssertNil(result.preview)
+            XCTAssertEqual(result.error?.domain, NSCocoaErrorDomain)
+            XCTAssertEqual(result.error?.code, NSUserCancelledError)
+            XCTAssertTrue(service.isSupported)
+            XCTAssertFalse(discovery.wasCancelled, "The owner remains open; cancellation came from the operation-owned read")
+            XCTAssertEqual(arguments.filter { $0 == following }.count, 1)
+            XCTAssertFalse(arguments.contains(["worktree", "prune", "--dry-run", "--verbose"]), "Cancellation happened before the raw report phase")
+            XCTAssertFalse(arguments.contains(["worktree", "prune"]))
+            XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.lockReason, "after initial discovery cancellation")
+            XCTAssertEqual(try metadata(in: fixture).filter { !$0.key.hasSuffix("/locked") }, before)
+            XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+            XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent(".git/HEAD")), mainHEAD)
+            XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent(".git/index")), mainIndex)
+            XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+            XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
+        }
+    }
+
+    func testLegacyPruneConfirmationUsesTheLatestReportPreviewAndActuallyPrunesItsCandidate() async throws {
+        let fixture = try RepairFixture(label: "legacy-latest-prune-preview")
+        let repository = LocatedWorktreeRepository(directory: fixture.main.appendingPathComponent(".git"))
+        var arguments: [[String]] = []
+        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { command in
+            arguments.append(command)
+            return nil
+        })
+        let state = PruneReadBoundaryState()
+        addTeardownBlock { @MainActor in
+            state.tearingDown = true
+            service.cancel()
+            if state.requests > 0 {
+                await self.fulfillment(of: [state.results.expectation(atLeast: state.requests)], timeout: 10)
+            }
+            guard state.ready, state.results.value == state.requests, state.normalCompletions == state.requests else {
+                XCTFail("Legacy prune did not finish normally before teardown; preserving fixture at " + fixture.root.path)
+                return
+            }
+            fixture.cleanup()
+        }
+        try await ready(service)
+        state.ready = service.isSupported && service.worktrees.count == 2
+        let mainHEAD = try Data(contentsOf: fixture.main.appendingPathComponent(".git/HEAD"))
+        let mainIndex = try Data(contentsOf: fixture.main.appendingPathComponent(".git/index"))
+        let mainContent = try Data(contentsOf: fixture.main.appendingPathComponent("marker.txt"))
+        let refs = try fixture.git(["show-ref", "--head"])
+        let administrative = fixture.main.appendingPathComponent(".git/worktrees/linked")
+        let first = expectation(description: "legacy report captures the healthy empty preview")
+        state.requests += 1
+        enqueue { service.pruneWorktrees(reportOnly: true) { report, error in
+            // swift6-safety-justification: The service delivers legacy report completion on the main queue.
+            MainActor.assumeIsolated {
+                defer { state.completed() }
+                XCTAssertNil(error)
+                XCTAssertEqual(report?.trimmingCharacters(in: .whitespacesAndNewlines), "")
+                first.fulfill()
+            }
+        } }
+        await fulfillment(of: [first], timeout: 10)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: administrative.path))
+        XCTAssertFalse(arguments.contains(["worktree", "prune"]))
+        try FileManager.default.removeItem(at: fixture.linked)
+        let retained = try metadata(in: fixture)
+        let listing = try fixture.git(["worktree", "list", "--porcelain"])
+        XCTAssertTrue(listing.contains("prunable "), "Real Git must independently recognize the removed checkout as a candidate")
+        let second = expectation(description: "second legacy report replaces the prior empty preview")
+        state.requests += 1
+        enqueue { service.pruneWorktrees(reportOnly: true) { report, error in
+            // swift6-safety-justification: The service delivers legacy report completion on the main queue.
+            MainActor.assumeIsolated {
+                defer { state.completed() }
+                XCTAssertNil(error)
+                XCTAssertFalse(report?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                XCTAssertTrue(report?.contains("linked") == true)
+                second.fulfill()
+            }
+        } }
+        await fulfillment(of: [second], timeout: 10)
+        XCTAssertEqual(arguments.filter { $0 == ["worktree", "prune", "--dry-run", "--verbose"] }.count, 2)
+        XCTAssertEqual(try metadata(in: fixture), retained, "Neither legacy preview may mutate registration metadata")
+        let confirmed = expectation(description: "legacy confirmation consumes the latest preview and really prunes")
+        state.requests += 1
+        enqueue { service.pruneWorktrees(reportOnly: false) { output, error in
+            // swift6-safety-justification: The service delivers lifecycle completion after actual post-write discovery on the main queue.
+            MainActor.assumeIsolated {
+                defer { state.completed() }
+                XCTAssertNil(error)
+                XCTAssertNil(output)
+                confirmed.fulfill()
+            }
+        } }
+        await fulfillment(of: [confirmed], timeout: 10)
+        XCTAssertEqual(state.results.value, 3)
+        XCTAssertEqual(state.normalCompletions, 3)
+        XCTAssertEqual(arguments.filter { $0 == ["worktree", "prune"] }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: administrative.path))
+        let consumed = expectation(description: "legacy confirmation cannot reuse its consumed preview")
+        state.requests += 1
+        enqueue { service.pruneWorktrees(reportOnly: false) { output, error in
+            // swift6-safety-justification: The legacy facade rejects a consumed preview synchronously on its main-actor caller.
+            MainActor.assumeIsolated {
+                defer { state.completed() }
+                XCTAssertNil(output)
+                XCTAssertNotNil(error)
+                consumed.fulfill()
+            }
+        } }
+        await fulfillment(of: [consumed], timeout: 10)
+        XCTAssertEqual(state.results.value, 4)
+        XCTAssertEqual(state.normalCompletions, 4)
+        XCTAssertEqual(arguments.filter { $0 == ["worktree", "prune"] }.count, 1)
+        XCTAssertEqual(service.worktrees.map { WorktreePaths.identity($0.path) }, [WorktreePaths.identity(fixture.main.path)])
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent(".git/HEAD")), mainHEAD)
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent(".git/index")), mainIndex)
+        XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent("marker.txt")), mainContent)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
     }
 
     func testDirectPruneReportCancellationWithALiveOwnerIsExpectedCancellationAndReleasesFIFO() async throws {
@@ -3369,14 +4655,14 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         }
     }
 
-    private func ready(_ service: PBRepositoryWorktreeService) async throws {
+    private func ready(_ service: PBRepositoryWorktreeService, expectedWorktreeCount: Int = 2) async throws {
         let published = expectation(description: "initial worktrees discovered")
         let observation = service.observe(\.worktrees) { _, _ in published.fulfill() }
         defer { observation.invalidate() }
         service.start()
         await fulfillment(of: [published], timeout: 10)
         XCTAssertTrue(service.isSupported)
-        XCTAssertEqual(service.worktrees.count, 2)
+        XCTAssertEqual(service.worktrees.count, expectedWorktreeCount)
     }
 
     private final class RepairFixture {
@@ -3386,14 +4672,19 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         init(label: String) throws {
             root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-repair-safety-\(UUID().uuidString)")
             main = root.appendingPathComponent("main"); linked = root.appendingPathComponent("linked")
-            try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
-            _ = try git(["init", "-b", "main"])
-            _ = try git(["config", "user.name", "Worktree Fixture"])
-            _ = try git(["config", "user.email", "fixture@gitx.invalid"])
-            try (label + "\n").write(to: main.appendingPathComponent("marker.txt"), atomically: true, encoding: .utf8)
-            _ = try git(["add", "marker.txt"])
-            _ = try git(["commit", "-m", label])
-            _ = try git(["worktree", "add", "-b", "topic", linked.path])
+            do {
+                try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+                _ = try git(["init", "-b", "main"])
+                _ = try git(["config", "user.name", "Worktree Fixture"])
+                _ = try git(["config", "user.email", "fixture@gitx.invalid"])
+                try (label + "\n").write(to: main.appendingPathComponent("marker.txt"), atomically: true, encoding: .utf8)
+                _ = try git(["add", "marker.txt"])
+                _ = try git(["commit", "-m", label])
+                _ = try git(["worktree", "add", "-b", "topic", linked.path])
+            } catch {
+                cleanup()
+                throw error
+            }
         }
 
         func git(_ arguments: [String], in directory: URL? = nil) throws -> String {

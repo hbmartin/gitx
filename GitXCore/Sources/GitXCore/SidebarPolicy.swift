@@ -38,6 +38,14 @@ public enum WorktreePresentationPolicy {
         return changed ? .renewed : .perform
     }
 
+    /// An already-approved proven plan needs no further sheet. New consent always does.
+    public static func canDeliverRepair(_ presentation: WorktreeRepairPresentation, hasAttachedSheet: Bool) -> Bool {
+        switch presentation {
+        case .perform: true
+        case .reclaim, .renewed: !hasAttachedSheet
+        }
+    }
+
     public static func repairOffer(hasManualRepairPaths: Bool, hasBrokenLinks: Bool) -> WorktreeRepairOfferPresentation {
         if hasManualRepairPaths {
             return .manualGuidance

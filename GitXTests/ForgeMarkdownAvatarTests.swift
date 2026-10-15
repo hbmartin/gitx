@@ -900,6 +900,22 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         XCTAssertEqual(notificationValues.values, [false, true, false, true])
     }
 
+    func testFailedAvatarDecodeCompletesWithAccessibleInitials() async {
+        let transport = RecordingAvatarTransport(payload: ForgeAvatarPayload(
+            data: Data([0, 1, 2]), mediaType: .png
+        ))
+        let loader = ForgeAvatarLoader(transport: transport)
+        let view = ForgeAvatarView(loader: loader, loadingEnabled: true)
+        view.configure(displayName: "Ada Lovelace", avatarURL: URL(string: "https://avatars.githubusercontent.com/u/79"))
+
+        await view.waitForPendingLoad()
+
+        let fetchCount = await transport.fetchCount
+        XCTAssertEqual(fetchCount, 1)
+        XCTAssertEqual(view.initials, "AL")
+        XCTAssertEqual(view.accessibilityLabel(), "Ada Lovelace, initials AL")
+    }
+
     func testInitialsFallbackIsImmediateAccessibleAndHasDiagnosticScreenshot() throws {
         XCTAssertEqual(ForgeAvatarView.initials(for: "Ada Lovelace"), "AL")
         XCTAssertEqual(ForgeAvatarView.initials(for: "octocat"), "O")
