@@ -622,6 +622,12 @@
           "oracle": "Fixture deletion waits for validation enqueued by earlier main callbacks to complete on the writer."
         },
         {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testFixtureDrainWaitsForWriterAdmittedByAnotherDrainCompletion",
+          "role": "boundary",
+          "oracle": "A batched drain waits for a writer admitted by an earlier drain completion, completes exactly once after release, restores mutation admission and preserves checkout contents."
+        },
+        {
           "source": "GitXTests/IndexMutationCoordinatorTests.swift",
           "identifier": "GitXTests/IndexMutationCoordinatorTests/testDiscardAuthorizationRequiresTheExactCallerRawPathSet",
           "role": "boundary",
