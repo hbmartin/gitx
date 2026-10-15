@@ -264,5 +264,107 @@
       "evidenceStatus": "valid",
       "durationSeconds": 175.543
     }
-  ]
+  ],
+  "followUp": {
+    "characterizationCommit": "2a786b77621d7fa7219850dd69b11fa92c768c75",
+    "implementationCommit": "9fa482a1f937ddfb244143a39b36f7c4bbe3585f",
+    "runIds": {
+      "characterization": "worktree-hardening-additional-characterization-v2",
+      "red": "worktree-hardening-capability-red-v3",
+      "green": "worktree-hardening-capability-green-v3",
+      "completeCoverage": "worktree-hardening-postcommit-coverage-v2"
+    },
+    "characterizationMethods": 12,
+    "redMethods": 5,
+    "redAssertions": 19,
+    "greenNativeMethods": 122,
+    "completeNativeMethods": 1882,
+    "coreMethods": 111,
+    "forgeKitMethods": 184,
+    "githubAdapterMethods": 310,
+    "sourceWasUncommittedForFocusedRuns": true,
+    "completeCoverageWasPostcommit": true,
+    "completeCoverageMeasurements": {
+      "app": {
+        "coveredLines": 72519,
+        "executableLines": 77948,
+        "lineCoverage": 0.9303510032329245
+      },
+      "files": {
+        "PBGitSidebarController.swift": {
+          "coveredLines": 1152,
+          "executableLines": 1154,
+          "lineCoverage": 0.9982668977469671
+        },
+        "HistoryMenuBuilder.swift": {
+          "coveredLines": 247,
+          "executableLines": 255,
+          "lineCoverage": 0.9686274509803922
+        },
+        "RepositoryWorktreeService.swift": {
+          "coveredLines": 1678,
+          "executableLines": 1704,
+          "lineCoverage": 0.9847417840375586
+        },
+        "PBGitWindowController+Worktrees.swift": {
+          "coveredLines": 635,
+          "executableLines": 690,
+          "lineCoverage": 0.9202898550724637
+        }
+      }
+    },
+    "coverageFloors": {
+      "scripts/coverage-baseline.json": {
+        "before": 0.9297,
+        "after": 0.9303,
+        "changedFiles": {
+          "Classes/Controllers/HistoryMenuBuilder.swift": {
+            "before": 0.9666,
+            "after": 0.9686
+          },
+          "Classes/Controllers/PBGitSidebarController.swift": {
+            "before": 0.9981,
+            "after": 0.9982
+          },
+          "Classes/Controllers/PBGitWindowController+Worktrees.swift": {
+            "before": 0.9169,
+            "after": 0.9202
+          },
+          "Classes/Controllers/StagingDiffPaneController.swift": {
+            "before": 0.9719,
+            "after": 0.9727
+          },
+          "Classes/PBCommitList.swift": {
+            "before": 0.815,
+            "after": 0.8287
+          },
+          "Classes/git/RepositoryWorktreeService.swift": {
+            "before": 0.9757,
+            "after": 0.9847
+          }
+        }
+      },
+      "GitXCore/coverage-baseline.json": {
+        "before": 0.9991,
+        "after": 0.9993,
+        "changedFiles": {}
+      },
+      "scripts/forgekit-coverage-baseline.json": {
+        "before": 0.9965,
+        "after": 0.9965,
+        "changedFiles": {}
+      }
+    },
+    "plainCoverageGatesAfterRatchet": "passed",
+    "productionSourceSHA256": {
+      "Classes/git/RepositoryWorktreeService.swift": "a0c1a0481405d3aae363b853fccc2da21ec5698dd7ec0f6746bd22807cfbed96"
+    },
+    "independentReviews": [
+      "immutable-core-service-review-9fa482a1.json",
+      "immutable-core-service-review-9fa482a1-supplement.json",
+      "independent-ui-review-9fa482a1.json"
+    ],
+    "finalFullProfile": "required after final baseline/evidence commit; no selectors; all 14 checks",
+    "currentFinalScreenshots": "export from the final full UI result; original tracked captures above remain precommit diagnostics"
+  }
 }

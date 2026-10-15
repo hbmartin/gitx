@@ -898,7 +898,7 @@
           "source": "GitXTests/WorktreePresentationTests.swift",
           "identifier": "GitXTests/WorktreePresentationTests/testHeldPrunePreparationPreservesAnOccupiedSheetAndCanStartAFreshJourney",
           "role": "boundary",
-          "oracle": "A report delivered while another presenter owns the sheet must not replace it or authorize prune; preserve registration evidence and allow a fresh confirmed journey."
+          "oracle": "A report delivered while another presenter owns the sheet must not replace it or authorize prune; preserve registration evidence and allow a fresh cancelled preview journey."
         }
       ]
     },
@@ -1001,7 +1001,7 @@
           "source": "GitXTests/WorktreePresentationTests.swift",
           "identifier": "GitXTests/WorktreePresentationTests/testRenewedRepairRequiresItsNewClickThenPresentsARealWriterFailureAndReleasesFIFO",
           "role": "boundary",
-          "oracle": "Change Reclaim evidence to proven links, require another Repair click, then reconcile a real Git failure while preserving links, HEAD/index/refs and FIFO progress."
+          "oracle": "Change Reclaim evidence to proven links, require another Repair click, then present a real Git writer failure while preserving links, HEAD/index/refs and FIFO progress."
         }
       ]
     },
