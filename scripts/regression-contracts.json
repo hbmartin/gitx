@@ -1320,7 +1320,7 @@
           "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testLifecyclePublicEventsExcludePrivateArgumentsAndOutputsFromRealRoutes",
           "role": "failure",
-          "oracle": "Read actual current-process lifecycle log entries after real service routes and reject raw argument, output and lock-reason canaries."
+          "oracle": "After real service routes, poll current-process lifecycle logs on a utility executor with a monotonic deadline and visible query errors; require both exact positive events and reject every raw argument, output and lock-reason canary in the same successful snapshot."
         }
       ]
     },

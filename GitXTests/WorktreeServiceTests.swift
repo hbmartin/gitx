@@ -1626,8 +1626,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         })
         defer { service.cancel(); failedTask.finish(nil, error: CancellationError()) }
         try await ready(service)
-        let store = try OSLogStore(scope: .currentProcessIdentifier)
-        let position = store.position(date: Date())
+        let logStart = Date()
         let locked = expectation(description: "real lock retains exact private execution reason")
         enqueue { service.lockWorktree(path: fixture.linked.path, reason: secretReason) { _, error in XCTAssertNil(error); locked.fulfill() } }
         await fulfillment(of: [locked], timeout: 10)
@@ -1641,23 +1640,43 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         await fulfillment(of: [failureLaunched], timeout: 10)
         failedTask.finish(Data(secretOutput.utf8), error: NSError(domain: "fixture", code: 1))
         await fulfillment(of: [failed], timeout: 10)
-        let filter = NSPredicate(format: "subsystem == %@ AND category == %@", "com.gitx.gitx", "PBGitWorktrees")
-        let observable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            let events = (try? store.getEntries(at: position, matching: filter).compactMap { $0 as? OSLogEntryLog }.map(\.composedMessage)) ?? []
-            return events.contains { $0.contains("worktree.lock.started phase=writing count=1 category=none") }
-                && events.contains { $0.contains("worktree.add.failed phase=writing count=1 category=task") }
-        }, object: nil)
-        await fulfillment(of: [observable], timeout: 10)
-        let entries = try store.getEntries(at: position, matching: filter).compactMap { $0 as? OSLogEntryLog }.map(\.composedMessage)
+        let required = ["worktree.lock.started phase=writing count=1 category=none", "worktree.add.failed phase=writing count=1 category=task"]
+        let clock = ContinuousClock()
+        let started = clock.now
+        let deadline = started.advanced(by: .seconds(30))
+        var queryDurations: [Duration] = []
+        var entries: [String] = []
+        repeat {
+            let queryStarted = clock.now
+            entries = try await Self.lifecycleLogEntries(since: logStart)
+            queryDurations.append(queryStarted.duration(to: clock.now))
+            if required.allSatisfy({ entries.contains($0) }) || clock.now >= deadline {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        } while true
+        let observation = "Log visibility after \(queryDurations.count) queries over \(started.duration(to: clock.now)); query durations: \(queryDurations)"
         let events = entries.filter { $0.hasPrefix("worktree.") }
-        XCTAssertTrue(events.contains { $0.contains("worktree.lock.started phase=writing count=1 category=none") })
-        XCTAssertTrue(events.contains { $0.contains("worktree.add.failed phase=writing count=1 category=task") })
+        for event in required {
+            XCTAssertTrue(events.contains(event), "Missing \(event). \(observation)")
+        }
         for event in events {
             for secret in [secretReason, secretPath, secretBranch, secretOutput, "credential-secret"] {
                 XCTAssertFalse(event.contains(secret))
             }
         }
         XCTAssertEqual(PBWorktreeLifecycleDiagnostics.publicEvent(arguments: ["worktree", "lock", "--reason", secretReason, secretPath], stage: secretOutput, phase: secretBranch, count: -1, category: secretReason), "worktree.lock.unknown phase=unknown count=0 category=unknown")
+    }
+
+    private static func lifecycleLogEntries(since date: Date) async throws -> [String] {
+        try await Task.detached(priority: .utility) {
+            let store = try OSLogStore(scope: .currentProcessIdentifier)
+            let filter = NSPredicate(format: "subsystem == %@ AND category == %@", "com.gitx.gitx", "PBGitWorktrees")
+            return try store.getEntries(at: store.position(date: date), matching: filter)
+                .compactMap { $0 as? OSLogEntryLog }
+                .filter { $0.date >= date }
+                .map(\.composedMessage)
+        }.value
     }
 
     @MainActor
