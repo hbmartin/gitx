@@ -210,7 +210,7 @@
     "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
     "Classes/git/RepositoryWatchPaths.swift": 0.98,
-    "Classes/git/RepositoryWorktreeService.swift": 0.9847,
+    "Classes/git/RepositoryWorktreeService.swift": 0.9848,
     "Classes/main.m": 1.0
   },
   "groups": {
