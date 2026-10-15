@@ -2771,9 +2771,9 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 		for (NSString *selectorName in @[ @"copyBranchName:", @"createBranch:", @"createTag:", @"diffWithHEAD:" ]) {
 			SEL action = NSSelectorFromString(selectorName);
 			NSArray<NSMenuItem *> *matching = [menu.itemArray filteredArrayUsingPredicate:
-				[NSPredicate predicateWithBlock:^BOOL(NSMenuItem *item, NSDictionary *bindings) {
-					return item.action == action;
-				}]];
+																  [NSPredicate predicateWithBlock:^BOOL(NSMenuItem *item, NSDictionary *bindings) {
+																	  return item.action == action;
+																  }]];
 			XCTAssertEqual(matching.count, (NSUInteger)1, @"Expected exactly one %@ action", selectorName);
 			NSMenuItem *item = matching.firstObject;
 			XCTAssertTrue(item.enabled);

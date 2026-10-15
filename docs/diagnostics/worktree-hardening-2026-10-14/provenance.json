@@ -280,8 +280,8 @@
     "greenNativeMethods": 122,
     "completeNativeMethods": 1882,
     "coreMethods": 111,
-    "forgeKitMethods": 184,
-    "githubAdapterMethods": 310,
+    "forgeKitMethods": 310,
+    "githubAdapterMethods": 184,
     "sourceWasUncommittedForFocusedRuns": true,
     "completeCoverageWasPostcommit": true,
     "completeCoverageMeasurements": {
