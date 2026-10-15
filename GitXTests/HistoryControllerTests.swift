@@ -2349,6 +2349,47 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertLessThan(adjustedUpperRect.origin.y, upperProposedRect.origin.y)
     }
 
+    func testCommitListUnmodifiedArrowKeysUseNativeRowNavigation() throws {
+        let commitListClass = try XCTUnwrap(NSClassFromString("GitX.PBCommitList") as? NSTableView.Type)
+        let frame = NSRect(x: 0, y: 0, width: 300, height: 200)
+        let commitList = commitListClass.init(frame: frame)
+        let dataSource = CommitListDataSource(rowCount: 3)
+        defer { withExtendedLifetime(dataSource) {} }
+        commitList.dataSource = dataSource
+        commitList.allowsMultipleSelection = false
+        commitList.allowsEmptySelection = false
+        commitList.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SubjectColumn")))
+        commitList.reloadData()
+        XCTAssertEqual(commitList.numberOfRows, 3)
+        commitList.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        XCTAssertEqual(commitList.selectedRowIndexes, IndexSet(integer: 1))
+
+        let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = commitList
+        XCTAssertFalse(window.isVisible)
+        XCTAssertTrue(window.makeFirstResponder(commitList))
+
+        for (characters, keyCode, expectedRow) in [("\u{F701}", UInt16(125), 2), ("\u{F700}", UInt16(126), 1)] {
+            let event = try XCTUnwrap(NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCode
+            ))
+            commitList.keyDown(with: event)
+            XCTAssertEqual(commitList.selectedRow, expectedRow)
+            XCTAssertEqual(commitList.selectedRowIndexes, IndexSet(integer: expectedRow))
+        }
+    }
+
     func testApplicationDelegateCoversActivationAndFileOpens() throws {
         // These app-delegate paths only run when the host application is
         // activated or receives file-open events, which never happens
