@@ -26,7 +26,7 @@
     "Classes/Controllers/GitXCoreAdapters.swift": 1.0,
     "Classes/Controllers/HistoryFlowRevisionProvider.swift": 0.9841,
     "Classes/Controllers/HistoryForgeOverlayPresentation.swift": 0.9448,
-    "Classes/Controllers/HistoryMenuBuilder.swift": 0.9666,
+    "Classes/Controllers/HistoryMenuBuilder.swift": 0.9686,
     "Classes/Controllers/HistoryStateCoordinator.swift": 1.0,
     "Classes/Controllers/HistoryTableInteractionCoordinator.swift": 0.9509,
     "Classes/Controllers/HistoryTreePresentation.swift": 0.9262,
@@ -38,10 +38,10 @@
     "Classes/Controllers/PBGitHistoryController+UI.m": 0.9234,
     "Classes/Controllers/PBGitHistoryController.m": 1.0,
     "Classes/Controllers/PBGitRepositoryDocument.m": 0.258,
-    "Classes/Controllers/PBGitSidebarController.swift": 0.9981,
+    "Classes/Controllers/PBGitSidebarController.swift": 0.9982,
     "Classes/Controllers/PBGitWindowController+Dialogs.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
-    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9169,
+    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9202,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
     "Classes/Controllers/PBHistorySearchController.m": 0.9285,
     "Classes/Controllers/PBHistorySearchMode.m": 0.8333,
@@ -80,7 +80,7 @@
     "Classes/Controllers/RepositoryStatusBarPresentation.swift": 1.0,
     "Classes/Controllers/RepositoryToolbarController.swift": 0.995,
     "Classes/Controllers/StagingDiffLoadCoordinator.swift": 0.9965,
-    "Classes/Controllers/StagingDiffPaneController.swift": 0.9719,
+    "Classes/Controllers/StagingDiffPaneController.swift": 0.9727,
     "Classes/Controllers/StagingFileListController.swift": 0.9526,
     "Classes/Controllers/StagingImageReader.swift": 0.9619,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
@@ -92,7 +92,7 @@
     "Classes/NSColor+RGB.m": 1.0,
     "Classes/NSSplitView+GitX.m": 0.85,
     "Classes/PBChangedFile.m": 1.0,
-    "Classes/PBCommitList.swift": 0.815,
+    "Classes/PBCommitList.swift": 0.8287,
     "Classes/PBGraphCellInfo.m": 1.0,
     "Classes/PBMacros.m": 1.0,
     "Classes/PBNSURLPathUserDefaultsTransfomer.m": 0.5,
@@ -210,7 +210,7 @@
     "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
     "Classes/git/RepositoryWatchPaths.swift": 0.98,
-    "Classes/git/RepositoryWorktreeService.swift": 0.9757,
+    "Classes/git/RepositoryWorktreeService.swift": 0.9847,
     "Classes/main.m": 1.0
   },
   "groups": {
@@ -231,7 +231,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9297,
+  "minimumLineCoverage": 0.9303,
   "target": "Half Dark.app",
   "version": 1
 }

@@ -96,6 +96,16 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertTrue(history.view.window === window.window)
         XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), "refs/heads/main")
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
+        let viewedRevision = try XCTUnwrap(repository.currentBranch)
+        let action = NSSelectorFromString("returnToHistory:")
+        XCTAssertTrue(window.responds(to: action))
+        XCTAssertTrue(NSApp.sendAction(action, to: window, from: nil))
+        XCTAssertTrue(history.view.window === window.window)
+        XCTAssertNil(content.view.window)
+        XCTAssertTrue(repository.currentBranch === viewedRevision)
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), "refs/heads/main")
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
     }
 
     func testNormalBranchSidebarMenusDispatchCopyAfterConstructionReturns() async throws {
@@ -160,6 +170,600 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(repository.currentBranch?.simpleRef(), refName)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
         XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+    }
+
+    func testHealthyWorktreeMenusDispatchUnlockWithoutLoadingHistory() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        _ = try fixture.git(["worktree", "lock", "--reason", "characterized", fixture.linked.path])
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked)
+            .trimmingCharacters(in: .whitespacesAndNewlines))
+        let originalMetadata = try registrationMetadata(administrative)
+        let originalRefs = try fixture.git(["show-ref", "--head"])
+        let originalMainHead = try fixture.git(["rev-parse", "HEAD"])
+        let originalLinkedHead = try fixture.git(["rev-parse", "HEAD"], in: fixture.linked)
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = RepairWindowControllerFixture(windowNibName: "RepositoryWindow")
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: .titled, backing: .buffered, defer: false)
+        controller.window = window
+        controller.repository = repository
+        window.orderFront(nil)
+        defer { controller.close(); service.cancel() }
+        XCTAssertTrue(window.isVisible)
+        XCTAssertNil(controller.historyViewController)
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: controller))
+        _ = sidebar.view
+        XCTAssertNil(controller.historyViewController, "Loading the sidebar must not require History")
+        let row = try worktreeItem(in: sidebar, at: fixture.linked.path)
+        try selectWorktree(row, in: sidebar)
+        let actionButton = try XCTUnwrap(sidebar.value(forKey: "actionButton") as? NSPopUpButton)
+        let actionMenu = try XCTUnwrap(actionButton.menu)
+
+        for usesActionMenu in [false, true] {
+            if usesActionMenu {
+                _ = try fixture.git(["worktree", "lock", "--reason", "characterized-again", fixture.linked.path])
+                service.refresh()
+                await waitUntil { service.worktree(forBranch: "refs/heads/topic")?.isLocked == true }
+            }
+            let selected = try worktreeItem(in: sidebar, at: fixture.linked.path)
+            XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, selected.identity)
+            let outline = try XCTUnwrap(sidebar.sourceView)
+            let selectedRow = outline.row(forItem: selected)
+            XCTAssertGreaterThanOrEqual(selectedRow, 0)
+            let menu: NSMenu
+            if usesActionMenu {
+                autoreleasepool { sidebar.menuNeedsUpdate(actionMenu) }
+                menu = actionMenu
+            } else {
+                menu = autoreleasepool { sidebar.menu(forRow: selectedRow) }
+            }
+            let unlockItems = menu.items.filter { $0.action == NSSelectorFromString("unlockWorktree:") }
+            XCTAssertEqual(unlockItems.count, 1)
+            let unlock = try XCTUnwrap(unlockItems.first)
+            XCTAssertTrue(unlock.isEnabled)
+            XCTAssertNil(unlock.target, "Lifecycle actions continue through the responder chain")
+            XCTAssertEqual((unlock.representedObject as? PBGitWorktree)?.path, selected.worktree.path)
+            XCTAssertFalse(menu.items.contains { $0.action == NSSelectorFromString("checkout:") || $0.action == NSSelectorFromString("deleteRef:") })
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(unlock.action), to: controller, from: unlock))
+            await waitUntil { service.worktree(forBranch: "refs/heads/topic")?.isLocked == false }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: administrative.appendingPathComponent("locked").path))
+            XCTAssertEqual(try registrationMetadata(administrative), originalMetadata)
+            XCTAssertEqual(try fixture.git(["show-ref", "--head"]), originalRefs)
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), originalMainHead)
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked), originalLinkedHead)
+            XCTAssertNil(controller.historyViewController, "Menu dispatch must not load History")
+            XCTAssertNil(window.attachedSheet)
+        }
+    }
+
+    func testDuplicateBranchWorktreeMenusTargetTheClickedCheckout() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let duplicate = fixture.root.appendingPathComponent("duplicate-topic")
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        _ = try fixture.git(["worktree", "add", "--force", duplicate.path, "topic"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let initialFirst = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+        let clickedPath = WorktreePaths.identity(initialFirst.path) == WorktreePaths.identity(fixture.linked.path) ? duplicate : fixture.linked
+        _ = try fixture.git(["worktree", "lock", "--reason", "keep-first-locked", initialFirst.path])
+        service.refresh()
+        await waitUntil { service.worktree(forBranch: "refs/heads/topic")?.isLocked == true }
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        defer { controller.close(); service.cancel() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let first = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+        XCTAssertNotEqual(WorktreePaths.identity(first.path), WorktreePaths.identity(clickedPath.path))
+        XCTAssertTrue(first.isLocked)
+        let clicked = try worktreeItem(in: sidebar, at: clickedPath.path)
+        try selectWorktree(clicked, in: sidebar)
+        let current = try worktreeItem(in: sidebar, at: clickedPath.path)
+        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, current.identity)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let row = outline.row(forItem: current)
+        XCTAssertGreaterThanOrEqual(row, 0)
+        let actionMenu = try XCTUnwrap((sidebar.value(forKey: "actionButton") as? NSPopUpButton)?.menu)
+        let contextMenu = autoreleasepool { sidebar.menu(forRow: row) }
+        autoreleasepool { sidebar.menuNeedsUpdate(actionMenu) }
+        for menu in [contextMenu, actionMenu] {
+            for selectorName in ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "removeWorktree:"] {
+                let matching = menu.items.filter { $0.action == NSSelectorFromString(selectorName) }
+                XCTAssertEqual(matching.count, 1, selectorName)
+                let item = matching.first
+                XCTAssertTrue(item?.isEnabled == true, selectorName)
+                XCTAssertEqual((item?.representedObject as? PBGitWorktree).map { WorktreePaths.identity($0.path) }, current.identity, selectorName)
+                XCTAssertNil(item?.target)
+            }
+            XCTAssertFalse(menu.items.contains { $0.action == NSSelectorFromString("unlockWorktree:") })
+            XCTAssertFalse(menu.items.contains { $0.action == NSSelectorFromString("checkout:") || $0.action == NSSelectorFromString("deleteRef:") })
+        }
+        guard let lock = contextMenu.items.first(where: { $0.action == NSSelectorFromString("lockWorktree:") }) else { return }
+        let firstAdministrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: URL(fileURLWithPath: first.path)).trimmingCharacters(in: .whitespacesAndNewlines))
+        let selectedAdministrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: clickedPath).trimmingCharacters(in: .whitespacesAndNewlines))
+        let firstLock = try Data(contentsOf: firstAdministrative.appendingPathComponent("locked"))
+        let firstMetadata = try registrationMetadata(firstAdministrative)
+        let selectedMetadata = try registrationMetadata(selectedAdministrative)
+        XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(lock.action), to: controller, from: lock))
+        let sheet = try await waitForSheet(in: window, containing: "Lock")
+        XCTAssertTrue(sheetText(sheet).contains(WorktreePaths.canonical(clickedPath.path)))
+        let reason = try XCTUnwrap(descendants(sheet.contentView).compactMap { $0 as? NSTextField }.first { $0.placeholderString == "Reason (optional)" })
+        reason.stringValue = "clicked-duplicate"
+        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == current.identity }?.isLocked == true && window.attachedSheet == nil }
+        XCTAssertEqual(try Data(contentsOf: firstAdministrative.appendingPathComponent("locked")), firstLock)
+        XCTAssertEqual(try String(contentsOf: selectedAdministrative.appendingPathComponent("locked"), encoding: .utf8), "clicked-duplicate\n")
+        XCTAssertEqual(try registrationMetadata(firstAdministrative), firstMetadata)
+        XCTAssertEqual(try registrationMetadata(selectedAdministrative), selectedMetadata)
+        try attachScreenshot(of: window, named: "Worktrees-Clicked-Duplicate-Branch")
+    }
+
+    func testSidebarReferenceMenusDispatchCopyWithoutLoadingHistory() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["branch", "ordinary-copy"])
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let refs = try fixture.git(["show-ref", "--head"])
+        let mainHead = try fixture.git(["rev-parse", "HEAD"])
+        let linkedHead = try fixture.git(["rev-parse", "HEAD"], in: fixture.linked)
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        defer { service.cancel() }
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        _ = sidebar.view
+        XCTAssertNil(sidebar.windowController)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let actionMenu = try XCTUnwrap((sidebar.value(forKey: "actionButton") as? NSPopUpButton)?.menu)
+        let pasteboard = NSPasteboard.general
+        let originalItems: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { original in
+            let copy = NSPasteboardItem()
+            for type in original.types {
+                if let data = original.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        } ?? []
+        defer { pasteboard.clearContents(); pasteboard.writeObjects(originalItems.map { $0 as NSPasteboardWriting }) }
+        for branchName in ["ordinary-copy", "topic"] {
+            let expectedRef = "refs/heads/" + branchName
+            let item: PBSourceViewItem
+            if branchName == "topic" {
+                item = try worktreeItem(in: sidebar, at: fixture.linked.path)
+            } else {
+                let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+                item = try XCTUnwrap(sourceItems(branches).first { $0.revSpecifier?.simpleRef() == expectedRef })
+            }
+            var parents: [PBSourceViewItem] = []
+            var parent = item.parent
+            while let current = parent {
+                parents.append(current)
+                parent = current.parent
+            }
+            for parent in parents.reversed() {
+                outline.expandItem(parent)
+            }
+            let visibleRow = outline.row(forItem: item)
+            XCTAssertGreaterThanOrEqual(visibleRow, 0, expectedRef)
+            guard visibleRow >= 0 else { continue }
+            outline.deselectAll(nil)
+            outline.selectRowIndexes(IndexSet(integer: visibleRow), byExtendingSelection: false)
+            sidebar.outlineViewSelectionDidChange(Notification(name: NSOutlineView.selectionDidChangeNotification))
+            let selected = try XCTUnwrap(sidebar.selectedItem())
+            XCTAssertEqual(selected.revSpecifier?.simpleRef(), expectedRef)
+            let row = outline.row(forItem: selected)
+            XCTAssertGreaterThanOrEqual(row, 0)
+            let contextMenu = autoreleasepool { sidebar.menu(forRow: row) }
+            autoreleasepool { sidebar.menuNeedsUpdate(actionMenu) }
+            for menu in [contextMenu, actionMenu] {
+                let copies = menu.items.filter { $0.action == NSSelectorFromString("copyBranchName:") }
+                XCTAssertEqual(copies.count, 1, branchName)
+                guard let copy = copies.first else { continue }
+                XCTAssertTrue(copy.isEnabled)
+                XCTAssertNotNil(copy.target)
+                XCTAssertEqual((copy.representedObject as? PBGitRef)?.ref, expectedRef)
+                pasteboard.clearContents()
+                pasteboard.setString("unchanged sentinel", forType: .string)
+                XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(copy.action), to: copy.target, from: copy))
+                XCTAssertEqual(pasteboard.string(forType: .string), branchName)
+            }
+        }
+        XCTAssertNil(sidebar.windowController)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), mainHead)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked), linkedHead)
+    }
+
+    func testCapturedWorktreeSynchronizationKeepsItsOriginAfterBothSameOIDRowsChange() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let second = fixture.root.appendingPathComponent("second-detached")
+        let mainHead = try fixture.git(["rev-parse", "HEAD"])
+        let capturedOID = try fixture.git(["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Pinned old worktree history"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let latestOID = try fixture.git(["commit-tree", "HEAD^{tree}", "-p", capturedOID, "-m", "Latest worktree history"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try fixture.git(["worktree", "add", "--detach", fixture.linked.path, capturedOID])
+        _ = try fixture.git(["worktree", "add", "--detach", second.path, capturedOID])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        defer { controller.close(); service.cancel() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let history = try XCTUnwrap(controller.historyViewController)
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let first = try worktreeItem(in: sidebar, at: fixture.linked.path)
+        let clicked = try worktreeItem(in: sidebar, at: second.path)
+        try selectWorktree(first, in: sidebar)
+        await waitUntil { history.selectedCommits.first?.sha == capturedOID }
+        let capturedRevision = try XCTUnwrap(repository.currentBranch)
+        try selectWorktree(clicked, in: sidebar)
+        XCTAssertTrue(repository.currentBranch === capturedRevision, "Equal OIDs do not replace the viewed revision")
+        let renderedOIDs = history.webCommits.map(\.sha)
+        let alternate = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
+        alternate.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        _ = controller.perform(NSSelectorFromString("changeContentController:"), with: alternate)
+        _ = try fixture.git(["checkout", "--detach", latestOID], in: fixture.linked)
+        _ = try fixture.git(["checkout", "--detach", latestOID], in: second)
+        service.refresh()
+        await waitUntil {
+            let linked = service.worktrees.filter { !$0.isMain }
+            return linked.count == 2 && linked.allSatisfy { ($0.value(forKey: "HEAD") as? String) == latestOID }
+        }
+        await waitUntil {
+            guard let group = sidebar.items.compactMap({ $0 as? PBSourceViewItem }).first(where: { $0.title == "WORKTREES" }) else { return false }
+            let identities = Set([WorktreePaths.identity(fixture.linked.path), WorktreePaths.identity(second.path)])
+            let rows = group.sortedChildren.compactMap { $0 as? PBSourceViewGitWorktreeItem }.filter { identities.contains($0.identity) }
+            return rows.count == 2 && rows.allSatisfy { $0.revSpecifier?.parameters == [latestOID + "^{commit}"] }
+        }
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        await waitUntil {
+            let identities = Set([WorktreePaths.identity(fixture.linked.path), WorktreePaths.identity(second.path)])
+            let outlined = (0 ..< outline.numberOfRows).compactMap { outline.item(atRow: $0) as? PBSourceViewGitWorktreeItem }.filter { identities.contains($0.identity) }
+            return outlined.count == 2 && outlined.allSatisfy { $0.revSpecifier?.parameters == [latestOID + "^{commit}"] }
+        }
+        let selectedBeforeSynchronization = try XCTUnwrap(sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)
+        XCTAssertEqual(selectedBeforeSynchronization.revSpecifier?.parameters, [latestOID + "^{commit}"], "The selected outlined row must expose the published captured HEAD before synchronization")
+        XCTAssertTrue(repository.currentBranch === capturedRevision)
+        XCTAssertTrue(alternate.view.window === window)
+        XCTAssertEqual(selectedBeforeSynchronization.identity, clicked.identity)
+        sidebar.selectCurrentBranch()
+        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity)
+        XCTAssertTrue(repository.currentBranch === capturedRevision)
+        XCTAssertTrue(alternate.view.window === window)
+        XCTAssertNil(history.view.window)
+        XCTAssertEqual(history.selectedCommits.first?.sha, capturedOID)
+        XCTAssertEqual(history.webCommits.map(\.sha), renderedOIDs)
+        let others = try XCTUnwrap(sidebar.value(forKey: "others") as? PBSourceViewItem)
+        XCTAssertFalse(sourceItems(others).contains { $0.revSpecifier === capturedRevision }, "Synchronizing the selected checkout must not add its stale captured revision to Other")
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), mainHead)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines), latestOID)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: second).trimmingCharacters(in: .whitespacesAndNewlines), latestOID)
+    }
+
+    func testSelectedLinkedMainWorktreeDoesNotFollowTheRepositoryCheckoutDuringPassiveReferencesReload() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["branch", "elsewhere"])
+        _ = try fixture.git(["worktree", "add", "--force", fixture.linked.path, "main"])
+        let originalMainOID = try fixture.git(["rev-parse", "HEAD"])
+        let linkedHead = try fixture.git(["symbolic-ref", "HEAD"], in: fixture.linked)
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
+        let metadata = try registrationMetadata(administrative)
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        defer { controller.close(); service.cancel() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let history = try XCTUnwrap(controller.historyViewController)
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let clicked = try worktreeItem(in: sidebar, at: fixture.linked.path)
+        try selectWorktree(clicked, in: sidebar)
+        await waitUntil { history.selectedCommits.first?.sha == originalMainOID.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let viewedRevision = try XCTUnwrap(repository.currentBranch)
+        XCTAssertEqual(viewedRevision.simpleRef(), "refs/heads/main")
+        let selectedOID = history.selectedCommits.first?.sha
+        let renderingInput = history.webCommits.map(\.sha)
+        let alternate = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
+        alternate.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        _ = controller.perform(NSSelectorFromString("changeContentController:"), with: alternate)
+        _ = try fixture.git(["checkout", "elsewhere"])
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"]), "refs/heads/elsewhere\n")
+        repository.reloadRefs()
+        await waitUntil { repository.headRef()?.simpleRef() == "refs/heads/elsewhere" }
+        XCTAssertEqual(repository.headRef()?.simpleRef(), "refs/heads/elsewhere", "The probe must use GitX's refreshed HEAD snapshot, not only raw Git output")
+        sidebar.reloadSidebarAfterReferencesChange()
+        XCTAssertTrue(repository.currentBranch === viewedRevision, "The selected linked checkout must not follow another checkout's HEAD")
+        XCTAssertEqual(repository.currentBranch?.simpleRef(), "refs/heads/main")
+        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity)
+        XCTAssertTrue(alternate.view.window === window)
+        XCTAssertNil(history.view.window)
+        XCTAssertEqual(history.selectedCommits.first?.sha, selectedOID)
+        XCTAssertEqual(history.webCommits.map(\.sha), renderingInput)
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"]), "refs/heads/elsewhere\n")
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: fixture.linked), linkedHead)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), originalMainOID)
+        XCTAssertEqual(try registrationMetadata(administrative), metadata)
+    }
+
+    func testReturnToHistoryAdoptsLatestCapturedCheckoutWhileDeepLinksKeepTheirTarget() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let refName = "refs/gitx/return-history"
+        let mainHead = try fixture.git(["rev-parse", "HEAD"])
+        let capturedOID = try fixture.git(["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Return old symbolic history"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let latestOID = try fixture.git(["commit-tree", "HEAD^{tree}", "-p", capturedOID, "-m", "Return latest symbolic history"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try fixture.git(["worktree", "add", "--detach", fixture.linked.path, capturedOID])
+        _ = try fixture.git(["update-ref", refName, capturedOID])
+        _ = try fixture.git(["symbolic-ref", "HEAD", refName], in: fixture.linked)
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        defer { controller.close(); service.cancel() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let history = try XCTUnwrap(controller.historyViewController)
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let clicked = try worktreeItem(in: sidebar, at: fixture.linked.path)
+        try selectWorktree(clicked, in: sidebar)
+        await waitUntil { history.selectedCommits.first?.sha == capturedOID }
+        let oldRevision = try XCTUnwrap(repository.currentBranch)
+        let alternate = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
+        alternate.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        _ = controller.perform(NSSelectorFromString("changeContentController:"), with: alternate)
+        _ = try fixture.git(["update-ref", refName, latestOID])
+        service.refresh()
+        await waitUntil { (service.worktrees.first { WorktreePaths.identity($0.path) == clicked.identity }?.value(forKey: "HEAD") as? String) == latestOID }
+        await waitUntil {
+            guard let selected = sidebar.selectedItem() as? PBSourceViewGitWorktreeItem else { return false }
+            return selected.identity == clicked.identity && selected.revSpecifier?.parameters == [latestOID + "^{commit}"]
+        }
+        XCTAssertTrue(repository.currentBranch === oldRevision)
+        XCTAssertTrue(alternate.view.window === window)
+        let historyAction = NSMenuItem(title: "History", action: NSSelectorFromString("returnToHistory:"), keyEquivalent: "1")
+        let action = try XCTUnwrap(historyAction.action)
+        let responds = controller.responds(to: action)
+        XCTAssertTrue(responds, "The explicit History command must have its own responder entry point")
+        guard responds else { return }
+        let dispatched = NSApp.sendAction(action, to: controller, from: historyAction)
+        XCTAssertTrue(dispatched, "The explicit History command must have its own responder entry point")
+        guard dispatched else { return }
+        await waitUntil { history.view.window === window && history.selectedCommits.first?.sha == latestOID }
+        let latestRevision = try XCTUnwrap(repository.currentBranch)
+        XCTAssertEqual(latestRevision.parameters, [latestOID + "^{commit}"])
+        XCTAssertEqual(latestRevision.description, "HEAD → " + refName + " (" + latestOID + ")")
+        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity)
+        XCTAssertNil(alternate.view.window)
+        await waitUntil { self.descendants(history.view).compactMap { $0 as? NSTextView }.contains { $0.accessibilityIdentifier() == "NativeContentText" && $0.string.contains("Return latest symbolic history") && !$0.string.contains("Loading diff…") } }
+        try attachScreenshot(of: window, named: "Worktrees-Explicit-Return-Latest-History")
+        XCTAssertTrue(controller.openForgeRevision(capturedOID))
+        await waitUntil { history.selectedCommits.first?.sha == capturedOID }
+        XCTAssertTrue(repository.currentBranch === latestRevision, "Selecting a deep-linked commit must not adopt another history origin")
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), mainHead)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines), latestOID)
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines), refName)
+    }
+
+    func testPruneMenuUsesFreshDiscoveryWhenHealthySnapshotHasBecomeStale() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
+        let originalMetadata = try registrationMetadata(administrative)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        defer { controller.close(); service.cancel() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let group = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "WORKTREES" })
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        XCTAssertTrue(service.worktrees.allSatisfy(\.folderExists))
+        try FileManager.default.removeItem(at: fixture.linked)
+        // No await or event-loop drain: published discovery still says healthy.
+        XCTAssertTrue(service.worktrees.allSatisfy(\.folderExists))
+        let expectedReport = try fixture.git(["worktree", "prune", "--dry-run", "--verbose"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(expectedReport.isEmpty)
+        let contextMenu = sidebar.menu(forRow: outline.row(forItem: group))
+        let prune = try XCTUnwrap(contextMenu.items.first { $0.title == "Prune Worktrees…" })
+        XCTAssertTrue(prune.isEnabled, "A supported repository must be allowed to request an authoritative preview")
+        XCTAssertEqual(prune.action, NSSelectorFromString("pruneWorktrees:"))
+        if let action = prune.action {
+            XCTAssertTrue(NSApp.sendAction(action, to: controller, from: prune))
+        } else {
+            // The baseline red must still prove the independent backend preview.
+            controller.pruneWorktrees(nil)
+        }
+        let preview = try await waitForSheet(in: window, containing: "Prune")
+        XCTAssertTrue(sheetText(preview).contains(expectedReport))
+        try attachScreenshot(of: preview, named: "Worktrees-Prune-Fresh-From-Stale-Healthy-Snapshot")
+        window.endSheet(preview, returnCode: .alertSecondButtonReturn)
+        await waitUntil { window.attachedSheet == nil }
+        XCTAssertEqual(try registrationMetadata(administrative), originalMetadata)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: administrative.path))
+    }
+
+    func testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let gitfile = fixture.linked.appendingPathComponent(".git")
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
+        let originalMetadata = try registrationMetadata(administrative)
+        let originalHead = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        defer { controller.close(); service.cancel() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        try FileManager.default.removeItem(at: gitfile)
+        service.refresh()
+        await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
+        let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        window.endSheet(style, returnCode: .alertFirstButtonReturn)
+        await waitUntil { FileManager.default.fileExists(atPath: gitfile.path) || window.attachedSheet.map { self.descendants($0.contentView).contains { ($0 as? NSButton)?.title == "Reclaim" } } == true }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path), "A missing ownership anchor must not be reconstructed before separate reclaim consent")
+        guard let consent = window.attachedSheet else { return }
+        let reclaim = try XCTUnwrap(descendants(consent.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Reclaim" })
+        let cancel = try XCTUnwrap(descendants(consent.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Cancel" })
+        let cancelCell = try XCTUnwrap(cancel.cell as? NSButtonCell)
+        XCTAssertTrue(consent.defaultButtonCell === cancelCell)
+        XCTAssertEqual(reclaim.keyEquivalent, "")
+        XCTAssertTrue(reclaim.hasDestructiveAction)
+        XCTAssertTrue(sheetText(consent).contains(WorktreePaths.canonical(fixture.linked.path)))
+        try attachScreenshot(of: consent, named: "Worktrees-Reclaim-Missing-Link-Default-Cancel")
+        window.endSheet(consent, returnCode: .alertSecondButtonReturn)
+        await waitUntil { window.attachedSheet == nil }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path))
+        XCTAssertEqual(try registrationMetadata(administrative), originalMetadata)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), originalHead)
+        controller.repairWorktreeLinks(nil)
+        let nextStyle = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        window.endSheet(nextStyle, returnCode: .alertFirstButtonReturn)
+        let nextConsent = try await waitForSheet(in: window, containing: "Reclaim")
+        window.endSheet(nextConsent, returnCode: .alertFirstButtonReturn)
+        await waitUntil { FileManager.default.fileExists(atPath: gitfile.path) && service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == false && window.attachedSheet == nil }
+        XCTAssertEqual(try registrationMetadata(administrative), originalMetadata)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), originalHead)
+        XCTAssertEqual(try fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines), WorktreePaths.canonical(administrative.path))
+    }
+
+    func testChangedRepairOwnershipRenewsConsentAndRequiresAnotherExplicitRepairClick() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let gitfile = fixture.linked.appendingPathComponent(".git")
+        let originalGitfile = try Data(contentsOf: gitfile)
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
+        let metadata = try registrationMetadata(administrative)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let gate = PruneTaskGate(fixture: fixture)
+        let service = try await installPruneService(in: repository, gate: gate)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        let window = try XCTUnwrap(controller.window)
+        defer { controller.close(); service.cancel() }
+        await waitUntil { controller.historyViewController?.view.window === window }
+        try FileManager.default.removeItem(at: gitfile)
+        service.refresh()
+        await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
+        let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        window.endSheet(style, returnCode: .alertFirstButtonReturn)
+        let initialConsent = try await waitForSheet(in: window, containing: "Reclaim")
+        XCTAssertFalse(gate.repairWasRequested)
+
+        // A competing, controlled restoration changes the ownership evidence
+        // without changing the registration or checkout directory identities.
+        try originalGitfile.write(to: gitfile)
+        window.endSheet(initialConsent, returnCode: .alertFirstButtonReturn)
+        let renewed = try await waitForSheet(in: window, containing: "Repair")
+        XCTAssertTrue(sheetText(renewed).contains("The worktree state changed. Review this updated list and choose Repair again."))
+        XCTAssertTrue(sheetText(renewed).contains(WorktreePaths.canonical(fixture.linked.path)))
+        XCTAssertFalse(descendants(renewed.contentView).contains { ($0 as? NSButton)?.title == "Reclaim" })
+        let action = try XCTUnwrap(descendants(renewed.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Repair" })
+        let cancel = try XCTUnwrap(descendants(renewed.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Cancel" })
+        XCTAssertEqual(action.keyEquivalent, "")
+        XCTAssertFalse(action.hasDestructiveAction)
+        let cancelCell = try XCTUnwrap(cancel.cell as? NSButtonCell)
+        XCTAssertTrue(renewed.defaultButtonCell === cancelCell)
+        XCTAssertFalse(gate.repairWasRequested, "The original click must not authorize the renewed plan")
+        XCTAssertEqual(try Data(contentsOf: gitfile), originalGitfile)
+        XCTAssertEqual(try registrationMetadata(administrative), metadata)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        try attachScreenshot(of: renewed, named: "Worktrees-Renewed-Repair-Requires-New-Click")
+        window.endSheet(renewed, returnCode: .alertSecondButtonReturn)
+        await waitUntil { window.attachedSheet == nil }
+        XCTAssertFalse(gate.repairWasRequested)
+        try await operation(.lock(path: fixture.linked.path, reason: "after cancelled renewal"), service: service)
+        XCTAssertTrue(service.worktree(forBranch: "refs/heads/topic")?.isLocked == true)
+        XCTAssertEqual(try registrationMetadata(administrative), metadata)
+        XCTAssertEqual(try Data(contentsOf: gitfile), originalGitfile)
+    }
+
+    func testReclaimConsentCannotSurviveHiddenOrReplacedAndRestoredPresentation() async throws {
+        for hidesWindow in [false, true] {
+            let fixture = try Fixture()
+            defer { fixture.cleanup() }
+            _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+            let gitfile = fixture.linked.appendingPathComponent(".git")
+            let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
+            let metadata = try registrationMetadata(administrative)
+            let head = try fixture.git(["rev-parse", "HEAD"])
+            let repository = try RepositoryTestGitRepository(url: fixture.main)
+            let alternative = try RepositoryTestGitRepository(url: fixture.main)
+            let gate = PruneTaskGate(fixture: fixture)
+            let service = try await installPruneService(in: repository, gate: gate)
+            let controller = PBGitWindowController()
+            controller.repository = repository
+            controller.showWindow(nil)
+            let window = try XCTUnwrap(controller.window)
+            defer { controller.close(); service.cancel(); alternative.worktreeService.cancel() }
+            await waitUntil { controller.historyViewController?.view.window === window }
+            try FileManager.default.removeItem(at: gitfile)
+            service.refresh()
+            await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
+            let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+            window.endSheet(style, returnCode: .alertFirstButtonReturn)
+            let consent = try await waitForSheet(in: window, containing: "Reclaim")
+            if hidesWindow {
+                window.orderOut(nil)
+                XCTAssertFalse(window.isVisible)
+            } else {
+                controller.repository = alternative
+                controller.repository = repository
+                XCTAssertTrue(controller.repository === repository)
+            }
+            window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+            await drainPruneCallbacks()
+            await waitUntil { window.attachedSheet == nil }
+            XCTAssertFalse(gate.repairWasRequested)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path))
+            XCTAssertEqual(try registrationMetadata(administrative), metadata)
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+            if hidesWindow {
+                controller.showWindow(nil)
+                await waitUntil { window.isVisible }
+            }
+            controller.repairWorktreeLinks(nil)
+            let freshStyle = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+            window.endSheet(freshStyle, returnCode: .alertFirstButtonReturn)
+            let freshConsent = try await waitForSheet(in: window, containing: "Reclaim")
+            window.endSheet(freshConsent, returnCode: .alertFirstButtonReturn)
+            await waitUntil { FileManager.default.fileExists(atPath: gitfile.path) && window.attachedSheet == nil }
+            XCTAssertTrue(gate.repairWasRequested, "A fresh explicit request must still progress through the shared FIFO")
+            XCTAssertEqual(try registrationMetadata(administrative), metadata)
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+            XCTAssertEqual(try fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines), WorktreePaths.canonical(administrative.path))
+        }
     }
 
     func testBranchWorktreeSidebarMenusRetainReferenceActionsAndSafeLifecycleRouting() async throws {
@@ -314,7 +918,7 @@ final class WorktreeAppKitTests: XCTestCase {
         }
     }
 
-    func testBranchWorktreeMenusFallBackToLifecycleActionsWithoutHistoryCollaborator() async throws {
+    func testBranchWorktreeMenusUseRetainedReferenceBuilderWithoutHistoryCollaborator() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
@@ -344,7 +948,10 @@ final class WorktreeAppKitTests: XCTestCase {
                 XCTAssertTrue(item.isEnabled)
                 XCTAssertNil(item.target)
             }
-            XCTAssertFalse(menu.items.contains { $0.action == NSSelectorFromString("copyBranchName:") || $0.action == NSSelectorFromString("checkout:") || $0.action == NSSelectorFromString("deleteRef:") })
+            let copy = try XCTUnwrap(menu.items.first { $0.action == NSSelectorFromString("copyBranchName:") })
+            XCTAssertNotNil(copy.target)
+            XCTAssertEqual((copy.representedObject as? PBGitRef)?.ref, "refs/heads/topic")
+            XCTAssertFalse(menu.items.contains { $0.action == NSSelectorFromString("checkout:") || $0.action == NSSelectorFromString("deleteRef:") })
         }
     }
 
@@ -632,6 +1239,84 @@ final class WorktreeAppKitTests: XCTestCase {
         }
     }
 
+    func testReturningToUnavailableCapturedWorktreeKeepsItsOriginAcrossSubsequentSynchronization() async throws {
+        let unavailableHeads = [String(repeating: "0", count: 40), String(repeating: "0", count: 64)]
+        for unavailableHead in unavailableHeads {
+            let fixture = try Fixture()
+            defer { fixture.cleanup() }
+            let capturedOID = try fixture.git(["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Available captured history"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = try fixture.git(["worktree", "add", "--detach", fixture.linked.path, capturedOID])
+            let mainHead = try fixture.git(["rev-parse", "HEAD"])
+            let linkedHead = try fixture.git(["rev-parse", "HEAD"], in: fixture.linked)
+            let refs = try fixture.git(["show-ref", "--head"])
+            let repository = try RepositoryTestGitRepository(url: fixture.main)
+            let original = try XCTUnwrap(repository.worktreeService)
+            await ready(original)
+            original.cancel()
+            var listing = try Data(fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8)
+            let service = PBRepositoryWorktreeService(repository: repository) { arguments in
+                if arguments == ["worktree", "list", "--porcelain", "-z"] {
+                    return FixedWorktreeSnapshotTask(data: listing)
+                }
+                let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: fixture.main.path)
+                GitXTestGitFixture.prepare(task)
+                return task
+            }
+            repository.setValue(service, forKey: "worktreeService")
+            service.start()
+            await ready(service)
+            let controller = PBGitWindowController()
+            controller.repository = repository
+            controller.showWindow(nil)
+            defer { controller.close(); service.cancel() }
+            let window = try XCTUnwrap(controller.window)
+            await waitUntil { controller.historyViewController?.view.window === window }
+            let history = try XCTUnwrap(controller.historyViewController)
+            let sidebar = try XCTUnwrap(controller.sidebarViewController)
+            let clicked = try worktreeItem(in: sidebar, at: fixture.linked.path)
+            try selectWorktree(clicked, in: sidebar)
+            await waitUntil { history.selectedCommits.first?.sha == capturedOID }
+            let capturedRevision = try XCTUnwrap(repository.currentBranch)
+            let renderingInputs = history.webCommits.map(\.sha)
+            let alternate = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
+            alternate.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+            _ = controller.perform(NSSelectorFromString("changeContentController:"), with: alternate)
+            let unavailableField = "HEAD \(unavailableHead)\0"
+            // Admission changes only the captured history projection. The
+            // isolated real checkout, registration and references stay intact.
+            listing = Data("worktree \(fixture.main.path)\0HEAD \(mainHead.trimmingCharacters(in: .whitespacesAndNewlines))\0branch refs/heads/main\0\0worktree \(fixture.linked.path)\0\(unavailableField)detached\0\0".utf8)
+            service.refresh()
+            await waitUntil {
+                guard let selected = sidebar.selectedItem() as? PBSourceViewGitWorktreeItem else { return false }
+                return selected.identity == clicked.identity && selected.revSpecifier == nil
+            }
+            XCTAssertTrue(repository.currentBranch === capturedRevision)
+            XCTAssertTrue(alternate.view.window === window)
+            XCTAssertNil(history.view.window)
+            let historyAction = NSMenuItem(title: "History", action: NSSelectorFromString("returnToHistory:"), keyEquivalent: "1")
+            let action = try XCTUnwrap(historyAction.action)
+            XCTAssertTrue(controller.responds(to: action))
+            guard controller.responds(to: action) else { continue }
+            XCTAssertTrue(NSApp.sendAction(action, to: controller, from: historyAction))
+            XCTAssertTrue(history.view.window === window)
+            XCTAssertTrue(repository.currentBranch === capturedRevision)
+            XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity)
+            _ = controller.perform(NSSelectorFromString("changeContentController:"), with: alternate)
+            sidebar.selectCurrentBranch()
+            XCTAssertTrue(repository.currentBranch === capturedRevision)
+            XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity)
+            XCTAssertTrue(alternate.view.window === window)
+            XCTAssertNil(history.view.window)
+            XCTAssertEqual(history.selectedCommits.first?.sha, capturedOID)
+            XCTAssertEqual(history.webCommits.map(\.sha), renderingInputs)
+            let others = try XCTUnwrap(sidebar.value(forKey: "others") as? PBSourceViewItem)
+            XCTAssertFalse(sourceItems(others).contains { $0.revSpecifier?.isEqual(capturedRevision) == true }, "An unavailable captured HEAD must retain its checkout association without adding the prior revision to Other")
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), mainHead)
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked), linkedHead)
+            XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        }
+    }
+
     func testWorktreeSnapshotRefreshPreservesMountedContentAndBranchSelection() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -730,8 +1415,8 @@ final class WorktreeAppKitTests: XCTestCase {
         let groupMenu = sidebar.menu(forRow: outline.row(forItem: group))
         XCTAssertEqual(groupMenu.items.map(\.title), ["Add Worktree…", "Prune Worktrees…"])
         XCTAssertTrue(groupMenu.items[0].isEnabled)
-        XCTAssertFalse(groupMenu.items[1].isEnabled)
-        XCTAssertTrue(groupMenu.items[1].toolTip?.contains("Every worktree") ?? false)
+        XCTAssertTrue(groupMenu.items[1].isEnabled)
+        XCTAssertEqual(groupMenu.items[1].action, NSSelectorFromString("pruneWorktrees:"))
         let worktreeMenu = sidebar.menu(forRow: outline.row(forItem: item))
         XCTAssertEqual(worktreeMenu.items.first?.title, "Open Worktree of Branch “topic”")
         let rowCell = try XCTUnwrap(outline.view(atColumn: 0, row: outline.row(forItem: item), makeIfNecessary: true) as? NSTableCellView)
@@ -1225,6 +1910,17 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["show-ref", "--head"], in: fixture.linked), linkedRefs)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked), linkedHead)
         XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: fixture.linked), linkedBranch)
+        let historyAction = NSMenuItem(title: "History", action: NSSelectorFromString("returnToHistory:"), keyEquivalent: "1")
+        let action = try XCTUnwrap(historyAction.action)
+        XCTAssertTrue(controller.responds(to: action))
+        XCTAssertTrue(NSApp.sendAction(action, to: controller, from: historyAction))
+        XCTAssertTrue(history.view.window === window)
+        XCTAssertNil(alternate.view.window)
+        XCTAssertTrue(repository.currentBranch === viewedRevision)
+        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, bareItem.identity)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"], in: bare), bareRefs)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"], in: fixture.linked), linkedRefs)
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: fixture.linked), linkedBranch)
     }
 
     func testDetachedWorktreeSelectionLoadsCapturedHistoryWithoutCheckout() async throws {
@@ -1434,6 +2130,58 @@ final class WorktreeAppKitTests: XCTestCase {
             await waitUntil { window.attachedSheet == nil }
         }
 
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let manualRow = try worktreeItem(in: sidebar, at: worktree.path)
+        try selectWorktree(manualRow, in: sidebar)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let actionMenu = try XCTUnwrap((sidebar.value(forKey: "actionButton") as? NSPopUpButton)?.menu)
+        let selectedRow = try worktreeItem(in: sidebar, at: worktree.path)
+        let rowNumber = outline.row(forItem: selectedRow)
+        XCTAssertGreaterThanOrEqual(rowNumber, 0)
+        let rowContext = autoreleasepool { sidebar.menu(forRow: rowNumber) }
+        autoreleasepool { sidebar.menuNeedsUpdate(actionMenu) }
+        var guidanceToDispatch: NSMenuItem?
+        for menu in [rowContext, actionMenu] {
+            let guidance = menu.items.filter { $0.title == "Show Link Repair Guidance…" }
+            XCTAssertEqual(guidance.count, 1, "A moved unsupported link needs an enabled recovery route")
+            if let item = guidance.first {
+                XCTAssertTrue(item.isEnabled)
+                XCTAssertEqual(item.action, NSSelectorFromString("repairWorktreeLinks:"))
+                XCTAssertEqual((item.representedObject as? PBGitWorktree)?.path, worktree.path)
+                XCTAssertNil(item.target)
+                guidanceToDispatch = item
+            }
+        }
+        let group = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "WORKTREES" })
+        let groupNumber = outline.row(forItem: group)
+        XCTAssertGreaterThanOrEqual(groupNumber, 0)
+        let groupContext = autoreleasepool { sidebar.menu(forRow: groupNumber) }
+        for menu in [groupContext] {
+            let guidance = menu.items.filter { $0.title == "Show Link Repair Guidance…" }
+            XCTAssertEqual(guidance.count, 1)
+            if let item = guidance.first {
+                XCTAssertTrue(item.isEnabled)
+                XCTAssertEqual(item.action, NSSelectorFromString("repairWorktreeLinks:"))
+                XCTAssertNil(item.target)
+                guidanceToDispatch = item
+            }
+            let prune = try XCTUnwrap(menu.items.first { $0.title == "Prune Worktrees…" })
+            XCTAssertFalse(prune.isEnabled, "Manual recovery does not authorize pruning moved registration evidence")
+        }
+        if let guidanceToDispatch {
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(guidanceToDispatch.action), to: controller, from: guidanceToDispatch))
+            let guidance = try await waitForSheet(in: window)
+            XCTAssertTrue(sheetText(guidance).contains("A moved worktree needs manual link repair"))
+            XCTAssertTrue(sheetText(guidance).contains(WorktreePaths.canonical(movedNested.path)))
+            XCTAssertFalse(descendants(guidance.contentView).contains { ($0 as? NSButton)?.title == "Repair with Absolute Paths" || ($0 as? NSButton)?.title == "Prune" })
+            try attachScreenshot(of: guidance, named: "Worktrees-Manual-Symlink-Menu-Guidance")
+            window.endSheet(guidance, returnCode: .alertFirstButtonReturn)
+            await waitUntil { window.attachedSheet == nil }
+            XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: movedGitfile.path), destination)
+            XCTAssertEqual(try Data(contentsOf: managedGitfile), originalGitfile)
+            XCTAssertEqual(try registrationMetadata(administrative), metadata)
+        }
+
         for pruning in [false, true] {
             if pruning {
                 controller.pruneWorktrees(nil)
@@ -1510,6 +2258,9 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertFalse(sheetText(explicit).contains("repository was moved"))
         XCTAssertTrue(sheetText(explicit).contains(fixture.linked.path))
         window.endSheet(explicit, returnCode: .alertFirstButtonReturn)
+        let reclaim = try await waitForSheet(in: window, containing: "Reclaim")
+        XCTAssertTrue(sheetText(reclaim).contains(fixture.linked.path))
+        window.endSheet(reclaim, returnCode: .alertFirstButtonReturn)
         await waitUntil {
             FileManager.default.fileExists(atPath: link.path)
                 && service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == false
@@ -1522,6 +2273,195 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), mainHead)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked), linkedHead)
         try attachScreenshot(of: window, named: "Worktrees-Missing-Link-Repaired")
+    }
+
+    func testHistoryReturnKeepsViewedRevisionWhenTheSelectedRegistrationIsNoLongerPublished() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let capturedOID = try fixture.git(["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Removed checkout captured history"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try fixture.git(["worktree", "add", "--detach", fixture.linked.path, capturedOID])
+        let refs = try fixture.git(["show-ref", "--head"])
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let origin = try XCTUnwrap(repository.worktreeService)
+        await ready(origin)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        let window = try XCTUnwrap(controller.window)
+        defer { controller.close(); origin.cancel() }
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let history = try XCTUnwrap(controller.historyViewController)
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let clicked = try worktreeItem(in: sidebar, at: fixture.linked.path)
+        try selectWorktree(clicked, in: sidebar)
+        await waitUntil { history.selectedCommits.first?.sha == capturedOID }
+        let revision = try XCTUnwrap(repository.currentBranch)
+        let renderingInputs = history.webCommits.map(\.sha)
+        origin.cancel()
+        _ = try fixture.git(["worktree", "remove", fixture.linked.path])
+        let gate = PruneTaskGate(fixture: fixture)
+        let replacement = PBRepositoryWorktreeService(repository: repository, taskFactory: gate.makeTask)
+        defer { replacement.cancel(); repository.setValue(origin, forKey: "worktreeService") }
+        // Prepare a replacement I/O collaborator before installing it. Its
+        // publications still read the original cached facade in this sidebar.
+        replacement.start()
+        await ready(replacement)
+        await waitUntil { replacement.worktrees.count == 1 }
+        XCTAssertFalse(replacement.worktrees.contains { WorktreePaths.identity($0.path) == clicked.identity })
+        repository.setValue(replacement, forKey: "worktreeService")
+        XCTAssertTrue(repository.worktreeService === replacement)
+        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity, "The retained outlined row is the stale presentation boundary under test")
+        let alternate = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
+        alternate.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        _ = controller.perform(NSSelectorFromString("changeContentController:"), with: alternate)
+        let historyAction = NSMenuItem(title: "History", action: NSSelectorFromString("returnToHistory:"), keyEquivalent: "1")
+        let action = try XCTUnwrap(historyAction.action)
+        XCTAssertTrue(NSApp.sendAction(action, to: controller, from: historyAction))
+        XCTAssertTrue(history.view.window === window)
+        XCTAssertNil(alternate.view.window)
+        XCTAssertTrue(repository.currentBranch === revision)
+        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity)
+        XCTAssertEqual(history.selectedCommits.first?.sha, capturedOID)
+        XCTAssertEqual(history.webCommits.map(\.sha), renderingInputs)
+        let others = try XCTUnwrap(sidebar.value(forKey: "others") as? PBSourceViewItem)
+        XCTAssertFalse(sourceItems(others).contains { $0.revSpecifier?.isEqual(revision) == true })
+        XCTAssertFalse(gate.repairWasRequested)
+        XCTAssertFalse(gate.pruneWasRequested)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.path))
+    }
+
+    func testDirectLocateFromAReferenceCancelsWithoutChangingMovedCheckoutOwnership() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
+        let metadata = try registrationMetadata(administrative)
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let refs = try fixture.git(["show-ref", "--head"])
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let gate = PruneTaskGate(fixture: fixture)
+        let service = try await installPruneService(in: repository, gate: gate)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        let window = try XCTUnwrap(controller.window)
+        defer { controller.close(); service.cancel() }
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let moved = fixture.root.appendingPathComponent("relocated-topic")
+        try FileManager.default.moveItem(at: fixture.linked, to: moved)
+        // Keep the captured branch facade alive until the actual public action
+        // resolves its sender; no event-loop drain may refresh away that row.
+        let sender = NSMenuItem()
+        sender.representedObject = PBGitRef(string: "refs/heads/topic")
+        let selector = NSSelectorFromString("locateWorktreeFolder:")
+        XCTAssertTrue(NSApp.sendAction(selector, to: controller, from: sender))
+        await waitUntil { window.attachedSheet is NSOpenPanel }
+        let panel = try XCTUnwrap(window.attachedSheet as? NSOpenPanel)
+        XCTAssertFalse(panel.canChooseFiles)
+        XCTAssertTrue(panel.canChooseDirectories)
+        XCTAssertFalse(panel.allowsMultipleSelection)
+        XCTAssertEqual(panel.directoryURL.map { WorktreePaths.canonical($0.path) }, WorktreePaths.canonical(fixture.root.path))
+        window.endSheet(panel, returnCode: .cancel)
+        await waitUntil { window.attachedSheet == nil }
+        await drainPruneCallbacks()
+        XCTAssertFalse(gate.repairWasRequested)
+        XCTAssertFalse(gate.pruneWasRequested)
+        XCTAssertEqual(try registrationMetadata(administrative), metadata)
+        XCTAssertEqual(try Data(contentsOf: moved.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.path))
+        try await operation(.pruneReport, service: service)
+        XCTAssertEqual(try registrationMetadata(administrative), metadata)
+    }
+
+    func testPreferredRelativeRepairOffersItsStyleAndReclaimsOnlyAfterExplicitConsent() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
+        let headBytes = try Data(contentsOf: administrative.appendingPathComponent("HEAD"))
+        let indexBytes = try Data(contentsOf: administrative.appendingPathComponent("index"))
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = fixture.linked.appendingPathComponent(".git")
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let gate = PruneTaskGate(fixture: fixture)
+        let service = try await installPruneService(in: repository, gate: gate)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        let window = try XCTUnwrap(controller.window)
+        defer { controller.close(); service.cancel() }
+        await waitUntil { controller.historyViewController?.view.window === window }
+        let stale = Data("gitdir: ../missing-admin\n".utf8)
+        try stale.write(to: gitfile)
+        service.refresh()
+        await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
+        let style = try await waitForSheet(in: window, containing: "Repair with Relative Paths")
+        let relative = try XCTUnwrap(descendants(style.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Repair with Relative Paths" })
+        let absolute = try XCTUnwrap(descendants(style.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Repair with Absolute Paths" })
+        let relativeCell = try XCTUnwrap(relative.cell as? NSButtonCell)
+        XCTAssertTrue(style.defaultButtonCell === relativeCell)
+        XCTAssertEqual(absolute.keyEquivalent, "")
+        XCTAssertFalse(gate.repairWasRequested)
+        try attachScreenshot(of: style, named: "Worktrees-Preferred-Relative-Repair-Style")
+        window.endSheet(style, returnCode: .alertSecondButtonReturn)
+        let consent = try await waitForSheet(in: window, containing: "Reclaim")
+        XCTAssertFalse(gate.repairWasRequested)
+        XCTAssertEqual(try Data(contentsOf: gitfile), stale)
+        XCTAssertEqual(try Data(contentsOf: administrative.appendingPathComponent("HEAD")), headBytes)
+        XCTAssertEqual(try Data(contentsOf: administrative.appendingPathComponent("index")), indexBytes)
+        window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+        await waitUntil { window.attachedSheet == nil && service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == false }
+        XCTAssertTrue(gate.repairWasRequested)
+        let repaired = try String(contentsOf: gitfile, encoding: .utf8)
+        XCTAssertTrue(repaired.hasPrefix("gitdir: ../"))
+        let backlink = try String(contentsOf: administrative.appendingPathComponent("gitdir"), encoding: .utf8)
+        XCTAssertTrue(backlink.hasPrefix("../"))
+        XCTAssertEqual(try fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines), WorktreePaths.canonical(administrative.path))
+        XCTAssertEqual(try Data(contentsOf: administrative.appendingPathComponent("HEAD")), headBytes)
+        XCTAssertEqual(try Data(contentsOf: administrative.appendingPathComponent("index")), indexBytes)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+    }
+
+    func testHealthyRepairActionDoesNotPresentAConfirmationOrAcquireAWriter() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
+        let metadata = try registrationMetadata(administrative)
+        let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
+        let refs = try fixture.git(["show-ref", "--head"])
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let gate = PruneTaskGate(fixture: fixture)
+        let service = try await installPruneService(in: repository, gate: gate)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        let window = try XCTUnwrap(controller.window)
+        defer { controller.close(); service.cancel() }
+        await waitUntil { controller.historyViewController?.view.window === window }
+        XCTAssertTrue(service.isSupported)
+        XCTAssertFalse(service.worktrees.contains(where: \.hasBrokenLink))
+        controller.repairWorktreeLinks(nil)
+        await drainPruneCallbacks()
+        XCTAssertNil(window.attachedSheet)
+        XCTAssertFalse(gate.repairWasRequested)
+        XCTAssertFalse(gate.pruneWasRequested)
+        XCTAssertEqual(try registrationMetadata(administrative), metadata)
+        XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        try await operation(.lock(path: fixture.linked.path, reason: "after healthy repair no-op"), service: service)
+        XCTAssertTrue(service.worktree(forBranch: "refs/heads/topic")?.isLocked == true)
+        XCTAssertEqual(try registrationMetadata(administrative), metadata)
     }
 
     private func worktreeItem(in sidebar: PBGitSidebarController, at path: String) throws -> PBSourceViewGitWorktreeItem {
@@ -1785,7 +2725,7 @@ final class WorktreeAppKitTests: XCTestCase {
                 service.discardPrunePreview(updated)
                 XCTFail("Worktree state changed while the fixture confirmed its preview")
             }
-        case .repairLinks, .repairMoved: XCTFail("Use the typed repair API")
+        case .repairLinks, .repairMoved, .repairMovedPaths: XCTFail("Use the typed repair API")
         }
     }
 
@@ -1860,6 +2800,10 @@ final class WorktreeAppKitTests: XCTestCase {
 
         var pruneWasRequested: Bool {
             commands.contains(WorktreeCommand.prune.arguments)
+        }
+
+        var repairWasRequested: Bool {
+            commands.contains { Array($0.prefix(2)) == ["worktree", "repair"] }
         }
 
         func makeTask(_ arguments: [String]) -> PBTask {

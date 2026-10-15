@@ -47,7 +47,7 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertFalse(WorktreeEligibility(missing, supported: true).canReveal)
         XCTAssertTrue(WorktreeEligibility.canPrune([missing], supported: true))
         XCTAssertFalse(WorktreeEligibility.canPrune([missing], supported: false))
-        XCTAssertFalse(WorktreeEligibility.canPrune([normal], supported: true))
+        XCTAssertTrue(WorktreeEligibility.canPrune([normal], supported: true))
         let moved = GitWorktree(path: "/old", movedPath: "/new", folderExists: false)
         XCTAssertFalse(WorktreeEligibility(moved, supported: true).canLocate)
         XCTAssertFalse(WorktreeEligibility.canPrune([missing, moved], supported: true))
@@ -82,6 +82,7 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertEqual(WorktreeCommand.prune.arguments, ["worktree", "prune"])
         XCTAssertEqual(WorktreeCommand.pruneReport.arguments, ["worktree", "prune", "--dry-run", "--verbose"])
         XCTAssertEqual(WorktreeCommand.repairMoved(path: "/new").arguments, ["worktree", "repair", "/new"])
+        XCTAssertEqual(WorktreeCommand.repairMovedPaths(paths: ["/first", "/second"]).arguments, ["worktree", "repair", "/first", "/second"])
         XCTAssertEqual(WorktreeCommand.repairLinks(style: .relative, movedPaths: ["/a"]).arguments, ["worktree", "repair", "--relative-paths", "/a"])
         XCTAssertEqual(WorktreeCommand.repairLinks(style: .absolute, movedPaths: []).arguments, ["worktree", "repair", "--no-relative-paths"])
         let state = GitWorktree(path: "/old", head: "123456789", branchRefName: "refs/heads/feature/topic", isMain: true,
@@ -167,7 +168,7 @@ final class WorktreeLinkTests: XCTestCase {
         _ = try git(WorktreeCommand.remove(path: main.path, force: true).arguments, at: main, succeeds: false)
     }
 
-    func testMissingEmptyAndMalformedOriginalGitfilesAreBrokenAndRepairable() throws {
+    func testMissingEmptyAndMalformedOriginalGitfilesRequireReclaimAndPreserveCheckout() throws {
         let root = try temporaryDirectory()
         let main = try repository(in: root)
         let tracked = main.appendingPathComponent("tracked.txt")
@@ -195,8 +196,9 @@ final class WorktreeLinkTests: XCTestCase {
             XCTAssertTrue(broken.folderExists, "case \(caseIndex)")
             XCTAssertTrue(broken.hasBrokenLink, "case \(caseIndex)")
             XCTAssertFalse(broken.hasForeignLink, "case \(caseIndex)")
-            XCTAssertTrue(WorktreeLinkInspector.canRepair(broken, at: linked.path, commonDirectory: common.path), "case \(caseIndex)")
+            XCTAssertFalse(WorktreeLinkInspector.canRepair(broken, at: linked.path, commonDirectory: common.path), "case \(caseIndex)")
             let target = try WorktreeLinkInspector.captureRepairTarget(broken, at: linked.path, commonDirectory: common.path)
+            XCTAssertTrue(target.requiresReclaim)
             try WorktreeLinkInspector.validateRepairTarget(target, commonDirectory: common.path)
             _ = try git(WorktreeCommand.repairLinks(style: .absolute, movedPaths: []).arguments, at: main)
             let repaired = try XCTUnwrap(records(at: main).first { !$0.isMain })
@@ -326,6 +328,43 @@ final class WorktreeLinkTests: XCTestCase {
         XCTAssertEqual(try records(at: moved).count, 2)
         _ = try git(WorktreeCommand.prune.arguments, at: moved)
         XCTAssertEqual(try records(at: moved).count, 1)
+    }
+
+    func testGitPrunesRegularAdministrativeStraysWithoutChangingRegisteredCheckout() throws {
+        let root = try temporaryDirectory()
+        let main = try repository(in: root)
+        try Data("tracked content\n".utf8).write(to: main.appendingPathComponent("tracked.txt"))
+        _ = try git(["add", "tracked.txt"], at: main)
+        _ = try git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "tracked fixture"], at: main)
+        let linked = root.appendingPathComponent("linked")
+        _ = try git(WorktreeCommand.addNew(path: linked.path, branch: "topic").arguments, at: main)
+        let common = main.appendingPathComponent(".git")
+        let administrativeRoot = common.appendingPathComponent("worktrees")
+        let administrative = administrativeRoot.appendingPathComponent("linked")
+        let metadataFiles = [common.appendingPathComponent("HEAD"), linked.appendingPathComponent(".git")]
+            + ["gitdir", "commondir", "HEAD", "index"].map { administrative.appendingPathComponent($0) }
+        let originalMetadata = try metadataFiles.map { try Data(contentsOf: $0) }
+        let originalContent = try Data(contentsOf: linked.appendingPathComponent("tracked.txt"))
+        let originalReferences = try git(["show-ref"], at: main)
+        let originalHead = try git(["rev-parse", "HEAD"], at: linked)
+        let originalRecords = try git(["worktree", "list", "--porcelain", "-z"], at: main)
+        let originalFingerprint = try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: common.path)
+        let strays = [".DS_Store", "._linked"].map { administrativeRoot.appendingPathComponent($0) }
+        for stray in strays {
+            try Data("ordinary administrative stray".utf8).write(to: stray)
+        }
+        XCTAssertEqual(try git(["worktree", "list", "--porcelain", "-z"], at: main), originalRecords)
+        let report = try git(["worktree", "prune", "--dry-run", "--verbose", "--expire", "now"], at: main)
+        XCTAssertFalse(report.isEmpty)
+        XCTAssertTrue(strays.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+        _ = try git(["worktree", "prune", "--expire", "now"], at: main)
+        XCTAssertTrue(strays.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+        XCTAssertEqual(try git(["worktree", "list", "--porcelain", "-z"], at: main), originalRecords)
+        XCTAssertEqual(try git(["show-ref"], at: main), originalReferences)
+        XCTAssertEqual(try git(["rev-parse", "HEAD"], at: linked), originalHead)
+        XCTAssertEqual(try metadataFiles.map { try Data(contentsOf: $0) }, originalMetadata)
+        XCTAssertEqual(try Data(contentsOf: linked.appendingPathComponent("tracked.txt")), originalContent)
+        XCTAssertEqual(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: common.path), originalFingerprint)
     }
 
     func testMovedNestedAbsoluteWorktreeIsIdentifiedAndRepairVerified() throws {

@@ -59,7 +59,7 @@ public struct WorktreeEligibility: Equatable, Sendable {
     }
 
     public static func canPrune(_ worktrees: [GitWorktree], supported: Bool) -> Bool {
-        supported && !worktrees.contains { $0.movedPath != nil } && worktrees.contains { $0.isPrunable || !$0.folderExists }
+        supported && !worktrees.contains { $0.movedPath != nil }
     }
 }
 
@@ -80,6 +80,7 @@ public enum WorktreeCommand: Equatable, Sendable {
     case pruneReport
     case prune
     case repairMoved(path: String)
+    case repairMovedPaths(paths: [String])
     case repairLinks(style: WorktreeLinkStyle, movedPaths: [String])
 
     public var arguments: [String] {
@@ -92,8 +93,34 @@ public enum WorktreeCommand: Equatable, Sendable {
         case .pruneReport: ["worktree", "prune", "--dry-run", "--verbose"]
         case .prune: ["worktree", "prune"]
         case let .repairMoved(path): ["worktree", "repair", path]
+        case let .repairMovedPaths(paths): ["worktree", "repair"] + paths
         case let .repairLinks(style, paths): ["worktree", "repair"] + (style == .relative ? ["--relative-paths"] : ["--no-relative-paths"]) + paths
         }
+    }
+}
+
+/// History can change without changing repair ownership or prune eligibility.
+/// Raw text and resolved path endpoints remain part of the consent evidence.
+public struct WorktreeConsentRecord: Equatable, Sendable {
+    private let value: GitWorktree
+    private let canonicalIdentity: Data
+    private let lockReasonIdentity: Data?
+    private let prunableReasonIdentity: Data?
+    private let movedPathIdentity: Data?
+    private let movedEndpointIdentity: Data?
+
+    public init(_ record: GitWorktree) {
+        value = GitWorktree(path: record.path, isMain: record.isMain, isBare: record.isBare,
+                            isLocked: record.isLocked, lockReason: record.lockReason,
+                            isPrunable: record.isPrunable, prunableReason: record.prunableReason,
+                            isCurrent: record.isCurrent, linkStyle: record.linkStyle,
+                            hasBrokenLink: record.hasBrokenLink, movedPath: record.movedPath,
+                            folderExists: record.folderExists, hasForeignLink: record.hasForeignLink)
+        canonicalIdentity = WorktreePaths.identity(record.path)
+        lockReasonIdentity = record.lockReason.map { Data($0.utf8) }
+        prunableReasonIdentity = record.prunableReason.map { Data($0.utf8) }
+        movedPathIdentity = record.movedPath.map { Data($0.utf8) }
+        movedEndpointIdentity = record.movedPath.map(WorktreePaths.identity)
     }
 }
 

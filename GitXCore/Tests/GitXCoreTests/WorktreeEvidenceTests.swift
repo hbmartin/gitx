@@ -46,6 +46,70 @@ final class WorktreeEvidenceTests: XCTestCase {
         WorktreeEvidenceFileSystem(metadata: { try change($0, base.metadata($0)) }, read: base.read, names: base.names)
     }
 
+    func testMultipleRegistrationsPreserveUniqueAttributionAndIndependentTargets() throws {
+        let value = try fixture()
+        let second = value.root.appendingPathComponent("second")
+        let unavailable = value.root.appendingPathComponent("unavailable")
+        let secondAdmin = value.common.appendingPathComponent("worktrees/second")
+        let unavailableAdmin = value.common.appendingPathComponent("worktrees/unavailable")
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: false)
+        for (checkout, administrative) in [(second, secondAdmin), (unavailable, unavailableAdmin)] {
+            try FileManager.default.createDirectory(at: administrative, withIntermediateDirectories: false)
+            try Data((checkout.appendingPathComponent(".git").path + "\n").utf8).write(to: administrative.appendingPathComponent("gitdir"))
+            try Data("../..\n".utf8).write(to: administrative.appendingPathComponent("commondir"))
+            try Data("ref: refs/heads/other\n".utf8).write(to: administrative.appendingPathComponent("HEAD"))
+        }
+        let secondGitfile = second.appendingPathComponent(".git")
+        try Data(("gitdir: " + secondAdmin.path + "\n").utf8).write(to: secondGitfile)
+        let secondRecord = GitWorktree(path: second.path, head: "abc", branchRefName: "refs/heads/other")
+        let unavailableRecord = GitWorktree(path: unavailable.path, isPrunable: true, folderExists: false)
+        let records = [GitWorktree(path: value.common.deletingLastPathComponent().path, isMain: true), value.record, secondRecord, unavailableRecord]
+        let administrativeFiles = [value.administrative, secondAdmin, unavailableAdmin].flatMap { directory in
+            ["gitdir", "commondir", "HEAD"].map { directory.appendingPathComponent($0) }
+        }
+        let originalMetadata = try administrativeFiles.map { try Data(contentsOf: $0) }
+        let fingerprint = try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path)
+        XCTAssertEqual(fingerprint.registrationCount, 3)
+        XCTAssertTrue(fingerprint.matchesRegistrationPaths(records: records))
+        XCTAssertFalse(fingerprint.matchesRegistrationPaths(records: records + [secondRecord]))
+        let firstTarget = try WorktreeLinkInspector.captureRepairTarget(value.record, at: value.original.path, commonDirectory: value.common.path)
+        let secondTarget = try WorktreeLinkInspector.captureRepairTarget(secondRecord, at: second.path, commonDirectory: value.common.path)
+        XCTAssertNotEqual(firstTarget.administrativePath, secondTarget.administrativePath)
+        for target in [firstTarget, secondTarget] {
+            try WorktreeLinkInspector.validateRepairTarget(target, commonDirectory: value.common.path)
+            try WorktreeLinkInspector.verifyRepairTarget(target, records: records, commonDirectory: value.common.path, style: .absolute)
+        }
+        XCTAssertEqual(try administrativeFiles.map { try Data(contentsOf: $0) }, originalMetadata)
+        try Data("not a gitfile\n".utf8).write(to: secondGitfile)
+        try WorktreeLinkInspector.validateRepairTarget(firstTarget, commonDirectory: value.common.path)
+        try WorktreeLinkInspector.verifyRepairTarget(firstTarget, records: records, commonDirectory: value.common.path)
+        XCTAssertThrowsError(try WorktreeLinkInspector.validateRepairTarget(secondTarget, commonDirectory: value.common.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: unavailable.path))
+    }
+
+    func testFileIdentitySeparatesOwnershipFromOrdinaryContentsChanges() throws {
+        let value = try fixture()
+        let directory = try WorktreeFileIdentity.capture(path: value.original.path)
+        let file = value.original.appendingPathComponent("executable-fixture")
+        try Data("initial".utf8).write(to: file)
+        let initialFile = try WorktreeFileIdentity.capture(path: file.path)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.write(contentsOf: Data("same inode, changed contents".utf8))
+        try handle.close()
+        XCTAssertEqual(try WorktreeFileIdentity.capture(path: file.path), initialFile)
+        XCTAssertEqual(try WorktreeFileIdentity.capture(path: value.original.path), directory)
+        try Data("index".utf8).write(to: value.administrative.appendingPathComponent("index"))
+        try FileManager.default.createDirectory(at: value.administrative.appendingPathComponent("logs"), withIntermediateDirectories: false)
+        try Data("log".utf8).write(to: value.administrative.appendingPathComponent("logs/HEAD"))
+        XCTAssertEqual(try WorktreeFileIdentity.capture(path: value.original.path), directory)
+        let held = value.root.appendingPathComponent("held-executable")
+        try FileManager.default.moveItem(at: file, to: held)
+        try Data("replacement".utf8).write(to: file)
+        XCTAssertNotEqual(try WorktreeFileIdentity.capture(path: file.path), initialFile)
+        XCTAssertEqual(try WorktreeFileIdentity.capture(path: value.original.path), directory)
+        XCTAssertEqual(try Data(contentsOf: held), Data("same inode, changed contents".utf8))
+    }
+
     func testFileIdentitiesResolveAliasesAndRejectMissingUnsupportedObjects() throws {
         let value = try fixture()
         let file = try WorktreeFileIdentity.capture(path: value.gitfile.path)
@@ -253,6 +317,72 @@ final class WorktreeEvidenceTests: XCTestCase {
             XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairTarget(value.record, at: value.original.path, commonDirectory: value.common.path))
             XCTAssertFalse(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path).matchesRegistrationPaths(records: [value.record]))
         }
+    }
+
+    func testAmbiguousOriginalGitfilesCannotAuthorizeGenericRepair() throws {
+        let value = try fixture()
+        let originalGitfile = try Data(contentsOf: value.gitfile)
+        let administrativeFiles = ["gitdir", "commondir", "HEAD"].map { value.administrative.appendingPathComponent($0) }
+        let originalMetadata = try administrativeFiles.map { try Data(contentsOf: $0) }
+        let records = [GitWorktree(path: value.common.deletingLastPathComponent().path, isMain: true), value.record]
+        let unresolved = Data(("gitdir: " + value.root.appendingPathComponent("unrelated-missing-admin").path + "\n").utf8)
+        let damage: [Data?] = [nil, Data(), Data([255]), Data("gitdir: \n".utf8), Data("not a gitfile\n".utf8), unresolved]
+        for (index, contents) in damage.enumerated() {
+            try FileManager.default.removeItem(at: value.gitfile)
+            if let contents {
+                try contents.write(to: value.gitfile)
+            }
+            let inspected = WorktreeLinkInspector.inspect(records, commonDirectory: value.common.path, currentPath: nil)[1]
+            XCTAssertTrue(inspected.hasBrokenLink, "damage \(index)")
+            XCTAssertFalse(inspected.hasForeignLink, "damage \(index)")
+            XCTAssertFalse(WorktreeLinkInspector.canRepair(inspected, at: value.original.path, commonDirectory: value.common.path), "Unproven damage \(index) requires explicit reclaim consent")
+            XCTAssertEqual(try? Data(contentsOf: value.gitfile), contents)
+            XCTAssertEqual(try administrativeFiles.map { try Data(contentsOf: $0) }, originalMetadata)
+            try originalGitfile.write(to: value.gitfile)
+        }
+        XCTAssertTrue(WorktreeLinkInspector.canRepair(value.record, at: value.original.path, commonDirectory: value.common.path))
+    }
+
+    func testRecreatedRegisteredFolderWithoutGitfileCannotAuthorizeGenericRepair() throws {
+        let value = try fixture()
+        let originalGitfile = try Data(contentsOf: value.gitfile)
+        let administrativeFiles = ["gitdir", "commondir", "HEAD"].map { value.administrative.appendingPathComponent($0) }
+        let originalMetadata = try administrativeFiles.map { try Data(contentsOf: $0) }
+        let held = value.root.appendingPathComponent("held-original")
+        try FileManager.default.moveItem(at: value.original, to: held)
+        try FileManager.default.createDirectory(at: value.original, withIntermediateDirectories: false)
+        let unrelatedFile = value.original.appendingPathComponent("unrelated.txt")
+        try Data("unrelated recreated directory\n".utf8).write(to: unrelatedFile)
+        let records = [GitWorktree(path: value.common.deletingLastPathComponent().path, isMain: true), value.record]
+        let inspected = WorktreeLinkInspector.inspect(records, commonDirectory: value.common.path, currentPath: nil)[1]
+        XCTAssertTrue(inspected.folderExists)
+        XCTAssertTrue(inspected.hasBrokenLink)
+        XCTAssertFalse(inspected.hasForeignLink)
+        XCTAssertFalse(WorktreeLinkInspector.canRepair(inspected, at: value.original.path, commonDirectory: value.common.path), "A backlink path cannot authorize attaching an unrelated recreated directory")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: value.gitfile.path))
+        XCTAssertEqual(try Data(contentsOf: unrelatedFile), Data("unrelated recreated directory\n".utf8))
+        XCTAssertEqual(try Data(contentsOf: held.appendingPathComponent(".git")), originalGitfile)
+        XCTAssertEqual(try administrativeFiles.map { try Data(contentsOf: $0) }, originalMetadata)
+    }
+
+    func testRegularAdministrativeStraysDoNotPoisonRegistrationInventory() throws {
+        let value = try fixture()
+        let administrativeFiles = ["gitdir", "commondir", "HEAD"].map { value.administrative.appendingPathComponent($0) }
+        let originalMetadata = try administrativeFiles.map { try Data(contentsOf: $0) }
+        let originalGitfile = try Data(contentsOf: value.gitfile)
+        let root = value.common.appendingPathComponent("worktrees")
+        let strays = [".DS_Store", "._topic", "ordinary-file"].map { root.appendingPathComponent($0) }
+        for stray in strays {
+            try Data("opaque regular stray\n".utf8).write(to: stray)
+        }
+        XCTAssertNoThrow(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path))
+        if let fingerprint = try? WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path) {
+            XCTAssertEqual(fingerprint.registrationCount, 1)
+            XCTAssertTrue(fingerprint.matchesRegistrationPaths(records: [value.record]))
+        }
+        XCTAssertEqual(try administrativeFiles.map { try Data(contentsOf: $0) }, originalMetadata)
+        XCTAssertEqual(try Data(contentsOf: value.gitfile), originalGitfile)
+        XCTAssertEqual(try strays.map { try Data(contentsOf: $0) }, Array(repeating: Data("opaque regular stray\n".utf8), count: strays.count))
     }
 
     func testLocatedRepairRequiresExactCurrentAdministrativeLink() throws {

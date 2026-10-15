@@ -1,5 +1,6 @@
 import AppKit
 import ForgeKit
+import GitXCore
 import XCTest
 
 /// Scheduled microbenchmarks for deterministic parsing and presentation policy.
@@ -1344,5 +1345,95 @@ private actor PerformanceAvatarTransport: ForgeAvatarTransport {
     func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
         fetchCount += 1
         return payload
+    }
+}
+
+extension GitXPerformanceTests {
+    /// The same healthy local inventory is reused across samples. Fixture I/O
+    /// and proof collection stay outside the measured capture workload.
+    func testWorktreeRepairEvidenceCaptureScaling() throws {
+        for count in [8, 32, 128] {
+            let fixture = try worktreeCaptureInventory(count: count)
+            let proof = try worktreeCaptureProof(fixture)
+            let expectedPaths = fixture.records.map { WorktreePaths.canonical($0.path) }
+            let repeatedCapture = {
+                try fixture.records.map {
+                    try WorktreeLinkInspector.captureRepairTarget($0, at: $0.path, commonDirectory: fixture.common.path)
+                }
+            }
+            let indexedCapture = {
+                try WorktreeLinkInspector.captureRepairScope(records: fixture.records, commonDirectory: fixture.common.path)
+            }
+            XCTAssertEqual(try repeatedCapture().map(\.path), expectedPaths)
+            XCTAssertEqual(try indexedCapture().targets.map(\.path), expectedPaths)
+            var repeatedSamples: [TimeInterval] = []
+            var indexedSamples: [TimeInterval] = []
+            for sample in 0 ..< 5 {
+                var targets: [WorktreeRepairTarget] = []
+                var scope: WorktreeRepairScope?
+                let measureRepeated = {
+                    let duration = try self.elapsedThrowing { targets = try repeatedCapture() }
+                    XCTAssertEqual(targets.map(\.path), expectedPaths)
+                    XCTAssertEqual(Set(targets.map(\.administrativePath)).count, count)
+                    return duration
+                }
+                let measureIndexed = {
+                    let duration = try self.elapsedThrowing { scope = try indexedCapture() }
+                    let captured = try XCTUnwrap(scope)
+                    XCTAssertEqual(captured.targets.map(\.path), expectedPaths)
+                    XCTAssertEqual(Set(captured.targets.map(\.administrativePath)).count, count)
+                    XCTAssertFalse(captured.requiresReclaim)
+                    XCTAssertTrue(captured.absentLocations.isEmpty)
+                    return duration
+                }
+                // Alternate the pair order so warm filesystem caches do not
+                // consistently benefit one capture path.
+                if sample.isMultiple(of: 2) {
+                    try repeatedSamples.append(measureRepeated())
+                    try indexedSamples.append(measureIndexed())
+                } else {
+                    try indexedSamples.append(measureIndexed())
+                    try repeatedSamples.append(measureRepeated())
+                }
+            }
+            XCTAssertEqual(try worktreeCaptureProof(fixture), proof)
+            attachMeasurements("Worktree repeated target capture: \(count) registrations", samples: repeatedSamples)
+            attachMeasurements("Worktree indexed scope capture: \(count) registrations", samples: indexedSamples)
+        }
+    }
+
+    private struct WorktreeCaptureInventory {
+        let common: URL
+        let records: [GitWorktree]
+    }
+
+    private func worktreeCaptureInventory(count: Int) throws -> WorktreeCaptureInventory {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-worktree-capture-performance-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let common = root.appendingPathComponent("main/.git")
+        var records: [GitWorktree] = []
+        for index in 0 ..< count {
+            let name = "topic-\(index)"
+            let administrative = common.appendingPathComponent("worktrees/\(name)")
+            let checkout = root.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: administrative, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+            try Data((checkout.appendingPathComponent(".git").path + "\n").utf8).write(to: administrative.appendingPathComponent("gitdir"))
+            try Data("../..\n".utf8).write(to: administrative.appendingPathComponent("commondir"))
+            try Data(("ref: refs/heads/" + name + "\n").utf8).write(to: administrative.appendingPathComponent("HEAD"))
+            try Data(("gitdir: " + administrative.path + "\n").utf8).write(to: checkout.appendingPathComponent(".git"))
+            records.append(GitWorktree(path: checkout.path, head: String(repeating: "a", count: 40), branchRefName: "refs/heads/" + name))
+        }
+        return WorktreeCaptureInventory(common: common, records: records)
+    }
+
+    private func worktreeCaptureProof(_ fixture: WorktreeCaptureInventory) throws -> [Data] {
+        try fixture.records.flatMap { record in
+            let checkout = URL(fileURLWithPath: record.path)
+            let administrative = fixture.common.appendingPathComponent("worktrees/" + checkout.lastPathComponent)
+            return try ([checkout.appendingPathComponent(".git")]
+                + ["gitdir", "commondir", "HEAD"].map { administrative.appendingPathComponent($0) })
+                .map { try Data(contentsOf: $0) }
+        }
     }
 }

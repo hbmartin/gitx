@@ -50,7 +50,21 @@ final class HistoryMenuBuilder: NSObject {
             return stashItems(ref)
         }
 
-        let worktree = worktreeService.worktree(forBranch: ref.ref)
+        return referenceMenuItems(for: ref, worktree: worktreeService.worktree(forBranch: ref.ref))
+    }
+
+    /// A checkout row carries its own lifecycle identity even when Git permits
+    /// the same local branch in more than one worktree.
+    func menuItems(for ref: PBGitRef, selectedWorktree: PBGitWorktree) -> [NSMenuItem] {
+        guard SidebarWorktreeMenuPolicy.canUseReferenceMenu(reference: ref.ref, branchIdentity: selectedWorktree.value.branchIdentity) else {
+            logger.info("Worktree menu fallback: count=1 category=reference-mismatch")
+            return menuItems(forWorktree: selectedWorktree)
+        }
+        logger.info("Worktree branch menu: count=1 category=clicked-checkout")
+        return referenceMenuItems(for: ref, worktree: selectedWorktree)
+    }
+
+    private func referenceMenuItems(for ref: PBGitRef, worktree: PBGitWorktree?) -> [NSMenuItem] {
         let refName = ref.shortName()
         let headRef = repository.headRef()?.ref()
         let headName = headRef?.shortName() ?? "HEAD"
@@ -65,7 +79,8 @@ final class HistoryMenuBuilder: NSObject {
 
         if !remoteOnly {
             if let worktree {
-                items.append(worktreeItem("Open Worktree of Branch “\(refName)”", action: #selector(PBGitWindowController.openWorktree(_:)), worktree: worktree, enabled: worktreeService.isSupported))
+                items.append(worktreeItem("Open Worktree of Branch “\(refName)”", action: #selector(PBGitWindowController.openWorktree(_:)), worktree: worktree,
+                                          enabled: WorktreeEligibility(worktree.value, supported: worktreeService.isSupported).canOpen))
             } else {
                 items.append(item("Checkout “\(refName)”", action: #selector(PBGitWindowController.checkout(_:)), enabled: !isHead))
             }
@@ -207,7 +222,9 @@ extension HistoryMenuBuilder {
     private func worktreeFolderItems(_ worktree: PBGitWorktree) -> [NSMenuItem] {
         let eligibility = WorktreeEligibility(worktree.value, supported: worktreeService.isSupported)
         let folder: NSMenuItem
-        if worktree.hasBrokenLink {
+        if !WorktreePolicy.manualRepairPaths([worktree.value]).isEmpty {
+            folder = worktreeItem("Show Link Repair Guidance…", action: #selector(PBGitWindowController.repairWorktreeLinks(_:)), worktree: worktree, enabled: worktreeService.isSupported)
+        } else if worktree.hasBrokenLink {
             folder = worktreeItem("Repair Worktree Links…", action: #selector(PBGitWindowController.repairWorktreeLinks(_:)), worktree: worktree, enabled: worktreeService.isSupported)
         } else if worktree.value.folderExists {
             folder = worktreeItem("Reveal Worktree in Finder", action: #selector(PBGitWindowController.revealWorktreeInFinder(_:)), worktree: worktree, enabled: eligibility.canReveal)
@@ -235,9 +252,11 @@ extension HistoryMenuBuilder {
 
     @objc(menuItemsForWorktreeGroup)
     func menuItemsForWorktreeGroup() -> [NSMenuItem] {
-        [worktreeItem("Add Worktree…", action: #selector(PBGitWindowController.addWorktree(_:)), enabled: worktreeService.isSupported),
-         worktreeItem("Prune Worktrees…", action: #selector(PBGitWindowController.pruneWorktrees(_:)),
-                      enabled: WorktreeEligibility.canPrune(worktreeService.worktrees.map(\.value), supported: worktreeService.isSupported),
-                      reason: worktreeService.worktrees.contains { $0.movedPath != nil } ? "Repair the worktree links first; these worktrees moved with the repository." : "Every worktree still has its folder.")]
+        let items = [worktreeItem("Add Worktree…", action: #selector(PBGitWindowController.addWorktree(_:)), enabled: worktreeService.isSupported),
+                     worktreeItem("Prune Worktrees…", action: #selector(PBGitWindowController.pruneWorktrees(_:)),
+                                  enabled: WorktreeEligibility.canPrune(worktreeService.worktrees.map(\.value), supported: worktreeService.isSupported),
+                                  reason: "Repair the worktree links first; these worktrees moved with the repository.")]
+        guard !WorktreePolicy.manualRepairPaths(worktreeService.worktrees.map(\.value)).isEmpty else { return items }
+        return items + [.separator(), worktreeItem("Show Link Repair Guidance…", action: #selector(PBGitWindowController.repairWorktreeLinks(_:)), enabled: worktreeService.isSupported)]
     }
 }

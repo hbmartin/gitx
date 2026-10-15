@@ -20,4 +20,29 @@ final class GitXInteropContractTests: XCTestCase {
         let task = PBTask(launchPath: "/usr/bin/true", arguments: [], inDirectory: nil)
         XCTAssertEqual(task.timeout, 30)
     }
+
+    func testWorktreeCompatibilityAndExplicitHistorySelectorsRemainAvailable() {
+        let serviceSelectors = [
+            "addWorktreeAtPath:branch:createBranch:completion:",
+            "removeWorktreeAtPath:force:completion:",
+            "lockWorktreeAtPath:reason:completion:",
+            "unlockWorktreeAtPath:completion:",
+            "pruneWorktreesReportOnly:completion:",
+            "preparePrunePreviewWithCompletion:",
+            "pruneWithConfirmedPreview:completion:",
+            "discardPrunePreview:",
+            "repairLinksWithRelativePaths:completion:",
+            "repairWorktree:movedTo:completion:",
+            "prepareRepairLinksWithRelativePaths:completion:",
+            "prepareRepairWorktree:movedTo:completion:",
+            "repairWithConfirmedPreview:completion:",
+            "discardRepairPreview:",
+        ]
+        for name in serviceSelectors {
+            XCTAssertNotNil(class_getInstanceMethod(PBRepositoryWorktreeService.self, NSSelectorFromString(name)), name)
+        }
+        for name in ["showHistoryView:", "returnToHistory:"] {
+            XCTAssertNotNil(class_getInstanceMethod(PBGitWindowController.self, NSSelectorFromString(name)), name)
+        }
+    }
 }

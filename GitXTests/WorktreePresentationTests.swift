@@ -83,6 +83,7 @@ final class WorktreePresentationTests: XCTestCase {
         _ = controller.perform(NSSelectorFromString("repairWorktreeLinks:"), with: nil)
         controller.addWorktree(nil)
         controller.pruneWorktrees(nil)
+        _ = controller.perform(NSSelectorFromString("returnToHistory:"), with: nil)
         XCTAssertEqual(controller.loadWindowCount, 0)
         XCTAssertNil(controller.repository)
         XCTAssertEqual(controller.errors.count, 0)
@@ -440,6 +441,343 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertEqual(controller.errors.count, 0)
         XCTAssertFalse(origin.gate.commands.contains { $0.first == "worktree" && $0.dropFirst().first == "lock" })
         XCTAssertEqual(try fixture.ownershipProof(), initial)
+    }
+
+    func testHeldRepairPreparationDiscardsConsentAfterOwnerReplacementOrAnOccupiedSheet() async throws {
+        let previousGit = selectGit()
+        defer { restoreGit(previousGit) }
+        for replacesOwner in [true, false] {
+            let fixture = try Fixture()
+            defer { fixture.cleanup() }
+            let blocker = try await installService(in: fixture, holdsWriter: true)
+            let origin = try await installService(in: fixture)
+            let alternative = try await installService(in: fixture)
+            let following = try await installService(in: fixture)
+            let controller = recordingController(for: origin)
+            let window = try XCTUnwrap(controller.window)
+            defer {
+                if let sheet = window.attachedSheet {
+                    window.endSheet(sheet, returnCode: .cancel)
+                }
+                controller.close()
+            }
+            let administrative = try fixture.administrativeDirectory()
+            let protected = try fixture.registrationProof(at: administrative)
+            let refs = try fixture.git(["show-ref", "--head"])
+            let content = try Data(contentsOf: fixture.linked.appendingPathComponent("content.txt"))
+            let barrierDone = expectation(description: "held writer reconciles before preparation")
+            let followingDone = expectation(description: "real writer follows discarded repair preparation")
+            barrierDone.assertForOverFulfill = true
+            followingDone.assertForOverFulfill = true
+            enqueue(blocker.service, command: .lock(path: fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); barrierDone.fulfill() }
+            XCTAssertTrue(blocker.gate.writer.isPending)
+            let gitfile = fixture.linked.appendingPathComponent(".git")
+            try FileManager.default.removeItem(at: gitfile)
+            origin.service.refresh()
+            await waitUntil { origin.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
+            let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+            let preparationCount = origin.service.repairPreparationCount
+            window.endSheet(style, returnCode: .alertFirstButtonReturn)
+            await waitUntil { origin.service.repairPreparationCount > preparationCount && window.attachedSheet == nil }
+            XCTAssertTrue(blocker.gate.writer.isPending, "The immutable capture completed while FIFO admission still waits")
+            let occupant: NSAlert?
+            if replacesOwner {
+                replaceAndRestore(.repository, controller: controller, origin: origin, alternative: alternative, window: window)
+                occupant = nil
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "Unrelated inspector keeps its own sheet"
+                alert.addButton(withTitle: "Close Inspector")
+                alert.beginSheetModal(for: window) { _ in }
+                XCTAssertTrue(window.attachedSheet === alert.window)
+                occupant = alert
+            }
+            enqueue(following.service, command: .unlock(path: fixture.linked.path)) { _, error in XCTAssertNil(error); followingDone.fulfill() }
+            XCTAssertFalse(following.gate.commands.contains(["worktree", "unlock", fixture.linked.path]))
+            blocker.gate.writer.finish(Data())
+            await fulfillment(of: [barrierDone, followingDone], timeout: 15)
+            await drainCallbacks()
+            XCTAssertEqual(controller.errors.count, 0)
+            XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+            XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path))
+            XCTAssertEqual(try fixture.registrationProof(at: administrative), protected)
+            XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+            XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("content.txt")), content)
+            XCTAssertEqual(following.gate.commands.filter { $0 == ["worktree", "unlock", fixture.linked.path] }.count, 1)
+            if let occupant {
+                XCTAssertTrue(window.attachedSheet === occupant.window, "Repair preparation must not replace another presenter's sheet")
+                window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+                await waitUntil { window.attachedSheet == nil }
+            } else {
+                XCTAssertNil(window.attachedSheet)
+            }
+            controller.repairWorktreeLinks(nil)
+            let freshStyle = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+            window.endSheet(freshStyle, returnCode: .alertFirstButtonReturn)
+            let freshConsent = try await waitForSheet(in: window, containing: "Reclaim")
+            window.endSheet(freshConsent, returnCode: .alertSecondButtonReturn)
+            await waitUntil { window.attachedSheet == nil }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path))
+            XCTAssertEqual(try fixture.registrationProof(at: administrative), protected)
+        }
+    }
+
+    func testHeldPrunePreparationPreservesAnOccupiedSheetAndCanStartAFreshJourney() async throws {
+        let previousGit = selectGit()
+        defer { restoreGit(previousGit) }
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+        let administrative = try fixture.administrativeDirectory()
+        let origin = try await installService(in: fixture)
+        let following = try await installService(in: fixture)
+        let controller = recordingController(for: origin)
+        let window = try XCTUnwrap(controller.window)
+        defer {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet, returnCode: .cancel)
+            }
+            controller.close()
+        }
+        try FileManager.default.removeItem(at: fixture.linked)
+        let protected = try fixture.registrationProof(at: administrative)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let report = try fixture.pruneReport()
+        XCTAssertFalse(report.isEmpty)
+        origin.gate.holdNextArguments = WorktreeCommand.pruneReport.arguments
+        controller.pruneWorktrees(nil)
+        await waitUntil { origin.gate.writer.isPending }
+        let occupant = NSAlert()
+        occupant.messageText = "Another presenter owns this sheet"
+        occupant.addButton(withTitle: "Close Inspector")
+        occupant.beginSheetModal(for: window) { _ in }
+        XCTAssertTrue(window.attachedSheet === occupant.window)
+        let followingDone = expectation(description: "discarded occupied-owner preview releases FIFO")
+        followingDone.assertForOverFulfill = true
+        enqueuePreview(following.service) { preview, error in
+            XCTAssertNil(error)
+            XCTAssertEqual(preview?.report, String(decoding: report, as: UTF8.self))
+            if let preview {
+                following.service.discardPrunePreview(preview)
+            }
+            followingDone.fulfill()
+        }
+        origin.gate.writer.finish(report)
+        await fulfillment(of: [followingDone], timeout: 15)
+        await drainCallbacks()
+        XCTAssertTrue(window.attachedSheet === occupant.window)
+        XCTAssertEqual(controller.errors.count, 0)
+        XCTAssertFalse(origin.gate.commands.contains(WorktreeCommand.prune.arguments))
+        XCTAssertEqual(try fixture.registrationProof(at: administrative), protected)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+        await waitUntil { window.attachedSheet == nil }
+        controller.pruneWorktrees(nil)
+        let fresh = try await waitForSheet(in: window, containing: "Prune")
+        window.endSheet(fresh, returnCode: .alertSecondButtonReturn)
+        await waitUntil { window.attachedSheet == nil }
+        XCTAssertEqual(try fixture.registrationProof(at: administrative), protected)
+    }
+
+    func testLiveRepairPreparationRejectsAChangedForeignGitfileWithoutOfferingConsent() async throws {
+        let previousGit = selectGit()
+        defer { restoreGit(previousGit) }
+        let fixture = try Fixture()
+        let foreign = try Fixture()
+        defer { fixture.cleanup(); foreign.cleanup() }
+        let blocker = try await installService(in: fixture, holdsWriter: true)
+        let origin = try await installService(in: fixture)
+        let following = try await installService(in: fixture)
+        let controller = recordingController(for: origin)
+        let window = try XCTUnwrap(controller.window)
+        defer {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet, returnCode: .cancel)
+            }
+            controller.close()
+        }
+        let administrative = try fixture.administrativeDirectory()
+        let protected = try fixture.registrationProof(at: administrative)
+        let refs = try fixture.git(["show-ref", "--head"])
+        let foreignProof = try foreign.ownershipProof()
+        let foreignLink = try Data(contentsOf: foreign.linked.appendingPathComponent(".git"))
+        let barrierDone = expectation(description: "writer preceding rejected repair completes")
+        let followingDone = expectation(description: "writer after rejected repair completes")
+        barrierDone.assertForOverFulfill = true
+        followingDone.assertForOverFulfill = true
+        enqueue(blocker.service, command: .lock(path: fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); barrierDone.fulfill() }
+        let gitfile = fixture.linked.appendingPathComponent(".git")
+        try FileManager.default.removeItem(at: gitfile)
+        origin.service.refresh()
+        await waitUntil { origin.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
+        let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        let preparationCount = origin.service.repairPreparationCount
+        window.endSheet(style, returnCode: .alertFirstButtonReturn)
+        await waitUntil { origin.service.repairPreparationCount > preparationCount && window.attachedSheet == nil }
+        try foreignLink.write(to: gitfile)
+        enqueue(following.service, command: .unlock(path: fixture.linked.path)) { _, error in XCTAssertNil(error); followingDone.fulfill() }
+        blocker.gate.writer.finish(Data())
+        await fulfillment(of: [barrierDone, followingDone], timeout: 15)
+        await waitUntil { controller.errors.count == 1 }
+        let error = try XCTUnwrap(controller.errors.first)
+        XCTAssertEqual(error.domain, "PBGitXErrorDomain")
+        XCTAssertFalse((error.localizedFailureReason ?? "").isEmpty)
+        XCTAssertNil(window.attachedSheet, "Preparation must not manufacture a Reclaim permit for a foreign link")
+        XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+        XCTAssertEqual(try Data(contentsOf: gitfile), foreignLink)
+        XCTAssertEqual(try fixture.registrationProof(at: administrative), protected)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(try foreign.ownershipProof(), foreignProof)
+        XCTAssertEqual(following.gate.commands.filter { $0 == ["worktree", "unlock", fixture.linked.path] }.count, 1)
+    }
+
+    func testLivePrunePreparationPresentsItsRealReportFailureAndReleasesFIFO() async throws {
+        let previousGit = selectGit()
+        defer { restoreGit(previousGit) }
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+        let administrative = try fixture.administrativeDirectory()
+        let origin = try await installService(in: fixture)
+        let following = try await installService(in: fixture)
+        let controller = recordingController(for: origin)
+        let window = try XCTUnwrap(controller.window)
+        defer { controller.close() }
+        try FileManager.default.removeItem(at: fixture.linked)
+        let protected = try fixture.registrationProof(at: administrative)
+        let report = try fixture.pruneReport()
+        XCTAssertFalse(report.isEmpty)
+        let refused = try fixture.gitFailure(["worktree", "prune", "--unknown-preview-option"])
+        XCTAssertTrue(String(decoding: refused.data, as: UTF8.self).contains("unknown"))
+        origin.gate.holdNextArguments = WorktreeCommand.pruneReport.arguments
+        controller.pruneWorktrees(nil)
+        await waitUntil { origin.gate.writer.isPending }
+        let followingDone = expectation(description: "real preview after visible report error progresses")
+        followingDone.assertForOverFulfill = true
+        enqueuePreview(following.service) { preview, error in
+            XCTAssertNil(error)
+            XCTAssertEqual(preview?.report, String(decoding: report, as: UTF8.self))
+            if let preview {
+                following.service.discardPrunePreview(preview)
+            }
+            followingDone.fulfill()
+        }
+        origin.gate.writer.finish(refused.data, error: refused.error)
+        await fulfillment(of: [followingDone], timeout: 15)
+        await waitUntil { controller.errors.count == 1 }
+        XCTAssertEqual(controller.errors.first?.domain, "PBGitXErrorDomain")
+        XCTAssertTrue(controller.errors.first?.localizedFailureReason?.contains("unknown") == true)
+        XCTAssertNil(window.attachedSheet, "No confirmation sheet exists after preparation fails")
+        XCTAssertFalse(origin.gate.commands.contains(WorktreeCommand.prune.arguments))
+        XCTAssertEqual(try fixture.registrationProof(at: administrative), protected)
+    }
+
+    func testDelayedFirstRemoveFailureIsShownOnlyInItsCurrentOwnerWithoutAForceRetry() async throws {
+        let previousGit = selectGit()
+        defer { restoreGit(previousGit) }
+        for replacesOwner in [false, true] {
+            let fixture = try Fixture()
+            defer { fixture.cleanup() }
+            _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+            let origin = try await installService(in: fixture)
+            let alternative = try await installService(in: fixture)
+            let following = try await installService(in: fixture)
+            let controller = recordingController(for: origin)
+            let window = try XCTUnwrap(controller.window)
+            defer {
+                if let sheet = window.attachedSheet {
+                    window.endSheet(sheet, returnCode: .cancel)
+                }
+                controller.close()
+            }
+            let initial = try fixture.ownershipProof()
+            let refs = try fixture.git(["show-ref", "--head"])
+            let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
+            let item = NSMenuItem(); item.representedObject = tree
+            let removeArguments = ["worktree", "remove", tree.path]
+            origin.gate.holdNextArguments = removeArguments
+            controller.removeWorktree(item)
+            let confirmation = try await waitForSheet(in: window, containing: "Remove")
+            window.endSheet(confirmation, returnCode: .alertFirstButtonReturn)
+            await waitUntil { origin.gate.writer.isPending }
+            let refused = try fixture.gitFailure(["worktree", "remove", "--unknown-remove-option", fixture.linked.path])
+            XCTAssertTrue(String(decoding: refused.data, as: UTF8.self).contains("unknown"))
+            if replacesOwner {
+                replaceAndRestore(.repository, controller: controller, origin: origin, alternative: alternative, window: window)
+            }
+            let followingDone = expectation(description: "writer after first-remove error progresses")
+            followingDone.assertForOverFulfill = true
+            enqueue(following.service, command: .lock(path: fixture.linked.path, reason: "following")) { _, error in XCTAssertNil(error); followingDone.fulfill() }
+            origin.gate.writer.finish(refused.data, error: refused.error)
+            await fulfillment(of: [followingDone], timeout: 15)
+            await drainCallbacks()
+            XCTAssertEqual(controller.errors.count, replacesOwner ? 0 : 1)
+            if !replacesOwner {
+                XCTAssertEqual(controller.errors.first?.domain, "PBGitXErrorDomain")
+                XCTAssertTrue(controller.errors.first?.localizedFailureReason?.contains("unknown") == true)
+            }
+            XCTAssertNil(window.attachedSheet, "This error must not offer a destructive Remove Anyway retry")
+            XCTAssertEqual(origin.gate.commands.filter { $0 == removeArguments }.count, 1)
+            XCTAssertFalse(origin.gate.commands.contains(["worktree", "remove", "--force", tree.path]))
+            XCTAssertEqual(try fixture.ownershipProof(), initial)
+            XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+            XCTAssertEqual(following.gate.commands.filter { $0 == ["worktree", "lock", "--reason", "following", fixture.linked.path] }.count, 1)
+        }
+    }
+
+    func testRenewedRepairRequiresItsNewClickThenPresentsARealWriterFailureAndReleasesFIFO() async throws {
+        let previousGit = selectGit()
+        defer { restoreGit(previousGit) }
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let origin = try await installService(in: fixture)
+        let following = try await installService(in: fixture)
+        let controller = recordingController(for: origin)
+        let window = try XCTUnwrap(controller.window)
+        defer {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet, returnCode: .cancel)
+            }
+            controller.close()
+        }
+        let initial = try fixture.ownershipProof()
+        let refs = try fixture.git(["show-ref", "--head"])
+        let gitfile = fixture.linked.appendingPathComponent(".git")
+        let originalLink = try Data(contentsOf: gitfile)
+        try FileManager.default.removeItem(at: gitfile)
+        origin.service.refresh()
+        await waitUntil { origin.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
+        let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        window.endSheet(style, returnCode: .alertFirstButtonReturn)
+        let initialConsent = try await waitForSheet(in: window, containing: "Reclaim")
+        XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+        try originalLink.write(to: gitfile)
+        window.endSheet(initialConsent, returnCode: .alertFirstButtonReturn)
+        let renewed = try await waitForSheet(in: window, containing: "Repair")
+        XCTAssertTrue(sheetText(renewed).contains("The worktree state changed"))
+        XCTAssertTrue(descendants(renewed.contentView).contains { ($0 as? NSButton)?.title == "Repair" })
+        XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) }, "Changed evidence cannot launch from the old Reclaim click")
+        let repairArguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(fixture.main.path)]
+        origin.gate.holdNextArguments = repairArguments
+        window.endSheet(renewed, returnCode: .alertFirstButtonReturn)
+        await waitUntil { origin.gate.writer.isPending }
+        XCTAssertEqual(origin.gate.commands.filter { $0 == repairArguments }.count, 1)
+        let followingDone = expectation(description: "writer follows confirmed repair failure")
+        followingDone.assertForOverFulfill = true
+        enqueue(following.service, command: .unlock(path: fixture.linked.path)) { _, error in XCTAssertNil(error); followingDone.fulfill() }
+        XCTAssertFalse(following.gate.commands.contains(["worktree", "unlock", fixture.linked.path]))
+        let refused = try fixture.gitFailure(["worktree", "repair", "--unknown-repair-option"])
+        XCTAssertTrue(String(decoding: refused.data, as: UTF8.self).contains("unknown"))
+        origin.gate.writer.finish(refused.data, error: refused.error)
+        await fulfillment(of: [followingDone], timeout: 15)
+        await waitUntil { controller.errors.count == 1 }
+        XCTAssertEqual(controller.errors.first?.domain, "PBGitXErrorDomain")
+        XCTAssertTrue(controller.errors.first?.localizedFailureReason?.contains("unknown") == true)
+        XCTAssertNil(window.attachedSheet)
+        XCTAssertEqual(origin.gate.commands.filter { $0 == repairArguments }.count, 1)
+        XCTAssertEqual(try fixture.ownershipProof(), initial)
+        XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+        XCTAssertEqual(following.gate.commands.filter { $0 == ["worktree", "unlock", fixture.linked.path] }.count, 1)
     }
 
     private func queuedCancellation(closesAndReopensWindow: Bool) async throws {

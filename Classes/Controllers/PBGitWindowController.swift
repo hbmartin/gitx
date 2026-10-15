@@ -266,7 +266,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             menuItem.state = isUncommittedChangesSelected ? .on : .off
             return repository?.isBare() != true
         }
-        if menuItem.action == #selector(showHistoryView(_:)) {
+        if menuItem.action == #selector(showHistoryView(_:)) || menuItem.action == #selector(returnToHistory(_:)) {
             menuItem.state = isUncommittedChangesSelected ? .off : .on
             return repository?.isBare() != true
         }
@@ -522,6 +522,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @IBAction dynamic func showHistoryView(_ sender: Any?) {
         NSLog("Switching repository window to History view")
         _sidebarController?.selectCurrentBranch()
+        changeContentController(_historyViewController)
+    }
+
+    @IBAction dynamic func returnToHistory(_ sender: Any?) {
+        NSLog("[GitX] Explicitly returning to the selected checkout's latest History")
+        if _sidebarController?.browseSelectedWorktreeHistory() != true {
+            _sidebarController?.selectCurrentBranch()
+        }
         changeContentController(_historyViewController)
     }
 

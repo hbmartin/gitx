@@ -611,7 +611,7 @@ DQ
                             </menuItem>
                             <menuItem title="History" keyEquivalent="1" id="927">
                                 <connections>
-                                    <action selector="showHistoryView:" target="-1" id="930"/>
+                                    <action selector="returnToHistory:" target="-1" id="930"/>
                                 </connections>
                             </menuItem>
                             <menuItem title="Uncommitted Changes" keyEquivalent="2" id="928">
