@@ -57,7 +57,7 @@ final class WorktreeScopeTests: XCTestCase {
                 XCTAssertFalse(path.hasSuffix("/HEAD") || path.hasSuffix("/locked") || path.hasSuffix("/index"))
                 XCTAssertNotEqual(path, stray.path)
                 return try base.read(path)
-            }, names: { path in names += 1; return try base.names(path) })
+            }, names: { path in names += 1; return try base.names(path) }, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             let seeds = try WorktreeLinkInspector.captureRepairOwnershipSeeds(records: value.records, commonDirectory: value.common.path, fileSystem: cheap)
             XCTAssertEqual(seeds.registrations.count, count)
             XCTAssertEqual(names, 2)
@@ -67,7 +67,7 @@ final class WorktreeScopeTests: XCTestCase {
             XCTAssertEqual(names, 0)
             XCTAssertEqual(prepared.targets.count, count)
             XCTAssertNil(prepared.selection)
-            let admitted = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: { path in names += 1; return try base.names(path) })
+            let admitted = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: { path in names += 1; return try base.names(path) }, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             let scope = try WorktreeLinkInspector.captureRepairScope(records: value.records, commonDirectory: value.common.path, preparation: prepared, fileSystem: admitted)
             XCTAssertEqual(names, 2)
             XCTAssertEqual(scope.targets.map(\.path), value.originals.map { WorktreePaths.canonical($0.path) })
@@ -247,7 +247,7 @@ final class WorktreeScopeTests: XCTestCase {
                         throw WorktreeEvidenceError.unavailable(path)
                     }
                     return try base.read(path)
-                }, names: base.names)
+                }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
                 if let preparation {
                     let records = [value.records[0], GitWorktree(path: value.originals[0].path, folderExists: false)]
                     XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairScope(records: records, commonDirectory: value.common.path, preparation: preparation, fileSystem: fileSystem), change)
@@ -371,7 +371,7 @@ final class WorktreeScopeTests: XCTestCase {
         XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairScope(records: Array(value.records.dropLast()), commonDirectory: value.common.path, preparation: prepared))
         XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairScope(records: value.records + [value.records[1]], commonDirectory: value.common.path, preparation: prepared))
         let base = WorktreeEvidenceFileSystem.live
-        let unreadable = WorktreeEvidenceFileSystem(metadata: base.metadata, read: { path in throw WorktreeEvidenceError.unavailable(path) }, names: base.names)
+        let unreadable = WorktreeEvidenceFileSystem(metadata: base.metadata, read: { path in throw WorktreeEvidenceError.unavailable(path) }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairOwnershipSeeds(records: value.records, commonDirectory: value.common.path, fileSystem: unreadable))
         try FileManager.default.removeItem(at: value.originals[0])
         try Data("not a folder".utf8).write(to: value.originals[0])
@@ -391,7 +391,7 @@ final class WorktreeScopeTests: XCTestCase {
                 payloadReads += 1; XCTFail("Postcondition must not read stray payloads")
             }
             return try base.read(path)
-        }, names: base.names, readableNode: { path in
+        }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: { path in
             XCTAssertEqual(path, stray.path)
             opens += 1
             try Data("different content and size".utf8).write(to: stray)
@@ -432,7 +432,7 @@ final class WorktreeScopeTests: XCTestCase {
             }, read: { path in
                 XCTAssertNotEqual(path, stray.path)
                 return try base.read(path)
-            }, names: base.names, readableNode: { path in
+            }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: { path in
                 change == "during-open" ? different : try base.readableNode(path)
             })
             XCTAssertThrowsError(try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path, fileSystem: replaced))
@@ -469,7 +469,7 @@ final class WorktreeScopeTests: XCTestCase {
                         throw WorktreeEvidenceError.unavailable(current)
                     }
                     return try base.read(current)
-                }, names: base.names, readableNode: { current in
+                }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: { current in
                     if current == path.path {
                         throw WorktreeEvidenceError.unavailable(current)
                     }
@@ -506,7 +506,7 @@ final class WorktreeScopeTests: XCTestCase {
                     throw WorktreeEvidenceError.unavailable(path)
                 }
                 return try base.read(path)
-            }, names: base.names)
+            }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             let records = value.records + [sibling]
             if condition == "foreign" || condition == "unreadable" {
                 XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairScope(records: records, commonDirectory: value.common.path, preparation: prepared, fileSystem: fileSystem), condition)
@@ -646,7 +646,7 @@ final class WorktreeScopeTests: XCTestCase {
             }, names: { path in
                 names += 1
                 return try base.names(path)
-            })
+            }, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             let scope = try WorktreeLinkInspector.captureRepairScope(records: value.records, commonDirectory: value.common.path, fileSystem: counted)
             XCTAssertEqual(scope.targets.count, count)
             XCTAssertEqual(scope.fingerprint.registrationCount, count)
@@ -924,12 +924,12 @@ final class WorktreeScopeTests: XCTestCase {
                 strayReads += 1; throw WorktreeEvidenceError.unavailable(path)
             }
             return try base.read(path)
-        }, names: base.names)
+        }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path, fileSystem: opaque))
         XCTAssertEqual(strayReads, 1)
         let changedBytes = WorktreeEvidenceFileSystem(metadata: base.metadata, read: { path in
             path == stray.path ? Data("OPAQUE".utf8) : try base.read(path)
-        }, names: base.names)
+        }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         let sameMetadata = try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path, fileSystem: changedBytes)
         XCTAssertEqual(sameMetadata.strays.map(\.fingerprint), withStray.fingerprint.strays.map(\.fingerprint))
         XCTAssertFalse(sameMetadata.hasSameConsentEvidence(as: withStray.fingerprint))
@@ -943,7 +943,7 @@ final class WorktreeScopeTests: XCTestCase {
                     return WorktreeEvidenceNode(value)
                 }
                 return try base.metadata(path)
-            }, read: base.read, names: base.names)
+            }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             XCTAssertThrowsError(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path, fileSystem: unsupported))
         }
         var calls = 0
@@ -952,7 +952,7 @@ final class WorktreeScopeTests: XCTestCase {
                 return nil
             }
             return try base.metadata(path)
-        }, read: base.read, names: base.names)
+        }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path, fileSystem: disappeared))
         let replaced = WorktreeEvidenceFileSystem(metadata: { path in
             if path == stray.path {
@@ -962,7 +962,7 @@ final class WorktreeScopeTests: XCTestCase {
                 }
             }
             return try base.metadata(path)
-        }, read: base.read, names: base.names)
+        }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path, fileSystem: replaced))
     }
 
@@ -1111,7 +1111,7 @@ final class WorktreeScopeTests: XCTestCase {
             let base = WorktreeEvidenceFileSystem.live
             let metadata = WorktreeEvidenceFileSystem(metadata: { path in
                 path == executable.path ? WorktreeEvidenceNode(altered) : try base.metadata(path)
-            }, read: base.read, names: base.names)
+            }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             let fingerprint = try WorktreeFileFingerprint.capture(path: executable.path, fileSystem: metadata)
             XCTAssertEqual(fingerprint.identity, changed.identity)
             XCTAssertNotEqual(fingerprint, changed)
@@ -1129,7 +1129,7 @@ final class WorktreeScopeTests: XCTestCase {
         let bounded = WorktreeEvidenceFileSystem(metadata: { path in
             metadataCalls += 1
             return try base.metadata(path)
-        }, read: { path in XCTFail("Scheduling must not read \(path)"); return Data() }, names: { path in XCTFail("Scheduling must not enumerate \(path)"); return [] })
+        }, read: { path in XCTFail("Scheduling must not read \(path)"); return Data() }, names: { path in XCTFail("Scheduling must not enumerate \(path)"); return [] }, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         let anchor = try WorktreeAdministrativeAnchor.capture(commonDirectory: value.common.path, fileSystem: bounded)
         XCTAssertEqual(metadataCalls, 2)
         XCTAssertEqual(anchor.commonIdentity, try WorktreeFileIdentity.capture(path: value.common.path))
@@ -1143,7 +1143,7 @@ final class WorktreeScopeTests: XCTestCase {
         info.st_mtimespec.tv_nsec += 1
         let changed = WorktreeEvidenceFileSystem(metadata: { path in
             path == root.path ? WorktreeEvidenceNode(info) : try base.metadata(path)
-        }, read: base.read, names: base.names)
+        }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try anchor.validate(commonDirectory: value.common.path, fileSystem: changed))
         let holding = value.root.appendingPathComponent("held-worktrees")
         try FileManager.default.moveItem(at: root, to: holding)

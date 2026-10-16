@@ -43,7 +43,7 @@ final class WorktreeEvidenceTests: XCTestCase {
     }
 
     private func replacingMetadata(_ base: WorktreeEvidenceFileSystem = .live, _ change: @escaping (String, WorktreeEvidenceNode?) throws -> WorktreeEvidenceNode?) -> WorktreeEvidenceFileSystem {
-        WorktreeEvidenceFileSystem(metadata: { try change($0, base.metadata($0)) }, read: base.read, names: base.names)
+        WorktreeEvidenceFileSystem(metadata: { try change($0, base.metadata($0)) }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
     }
 
     func testMultipleRegistrationsPreserveUniqueAttributionAndIndependentTargets() throws {
@@ -213,7 +213,7 @@ final class WorktreeEvidenceTests: XCTestCase {
                 throw WorktreeEvidenceError.unavailable(path)
             }
             return try base.read(path)
-        }, names: base.names)
+        }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         let unsupported = replacingMetadata { path, original in
             WorktreePaths.identity(path) == WorktreePaths.identity(value.gitfile.path) ? self.node(S_IFIFO) : original
         }
@@ -276,10 +276,10 @@ final class WorktreeEvidenceTests: XCTestCase {
         let value = try fixture()
         let base = WorktreeEvidenceFileSystem.live
         for names in [[""], [".."], ["."], ["a/b"], ["topic", "topic"]] {
-            let invalid = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: { _ in names })
+            let invalid = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: { _ in names }, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             XCTAssertThrowsError(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path, fileSystem: invalid))
         }
-        let unreadable = WorktreeEvidenceFileSystem(metadata: base.metadata, read: { path in throw WorktreeEvidenceError.unavailable(path) }, names: base.names)
+        let unreadable = WorktreeEvidenceFileSystem(metadata: base.metadata, read: { path in throw WorktreeEvidenceError.unavailable(path) }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path, fileSystem: unreadable))
         let foreign = value.root.appendingPathComponent("foreign")
         try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: false)
@@ -295,7 +295,7 @@ final class WorktreeEvidenceTests: XCTestCase {
         let renamed = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: { path in
             nameCalls += 1
             return nameCalls == 1 ? try base.names(path) : []
-        })
+        }, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.administrativeFingerprint(commonDirectory: value.common.path, fileSystem: renamed))
         for url in [value.common, value.common.appendingPathComponent("worktrees"), value.administrative] {
             var calls = 0
@@ -469,7 +469,7 @@ final class WorktreeEvidenceTests: XCTestCase {
                 throw WorktreeEvidenceError.unavailable(path)
             }
             return try base.read(path)
-        }, names: base.names)
+        }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairTarget(value.record, at: value.original.path, commonDirectory: value.common.path, fileSystem: unreadable))
     }
 

@@ -502,7 +502,8 @@ struct WorktreeEvidenceNode: Equatable, Sendable {
     }
 }
 
-/// Per-call seams keep failures deterministic without shared test overrides.
+/// Per-call I/O seams keep failures deterministic without shared overrides.
+/// Inject every operation explicitly; path canonicalization still uses the live filesystem.
 struct WorktreeEvidenceFileSystem {
     let metadata: (String) throws -> WorktreeEvidenceNode?
     let read: (String) throws -> Data
@@ -510,19 +511,10 @@ struct WorktreeEvidenceFileSystem {
     let readLink: (String) throws -> Data
     let readableNode: (String) throws -> WorktreeEvidenceNode
 
-    init(metadata: @escaping (String) throws -> WorktreeEvidenceNode?, read: @escaping (String) throws -> Data,
-         names: @escaping (String) throws -> [String], readLink: @escaping (String) throws -> Data = { try WorktreeEvidenceFileSystem.readSymbolicLink($0) },
-         readableNode: @escaping (String) throws -> WorktreeEvidenceNode = { try WorktreeEvidenceFileSystem.readableRegularNode($0) })
-    {
-        self.metadata = metadata
-        self.read = read
-        self.names = names
-        self.readLink = readLink
-        self.readableNode = readableNode
-    }
-
     static var live: Self {
-        Self(metadata: metadataAtPath, read: { try readRegularFile($0) }, names: { try FileManager.default.contentsOfDirectory(atPath: $0) })
+        Self(metadata: metadataAtPath, read: { try readRegularFile($0) },
+             names: { try FileManager.default.contentsOfDirectory(atPath: $0) },
+             readLink: { try readSymbolicLink($0) }, readableNode: { try readableRegularNode($0) })
     }
 
     static func metadataAtPath(_ path: String) throws -> WorktreeEvidenceNode? {
