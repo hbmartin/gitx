@@ -52,7 +52,7 @@ private final nonisolated class ControlledWorktreeTask: PBTask, @unchecked Senda
 }
 
 // swift6-safety-justification: The lock guards every state transition and waiter; the semaphore is only a bounded failure backstop.
-private final nonisolated class WorktreeWorkerCheckpoint: @unchecked Sendable {
+final nonisolated class WorktreeWorkerCheckpoint: @unchecked Sendable {
     private let semaphore = DispatchSemaphore(value: 0)
     private let lock = NSLock()
     private let timeout: TimeInterval
@@ -110,7 +110,7 @@ private final nonisolated class WorktreeWorkerCheckpoint: @unchecked Sendable {
         }
     }
 
-    /// Called only by the service's initial-preparation main-result acknowledgement.
+    /// Called by the service after the held worker result is acknowledged on main.
     func finish() {
         lock.lock()
         finishedCount += 1

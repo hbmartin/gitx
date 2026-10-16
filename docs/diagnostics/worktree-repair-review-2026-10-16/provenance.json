@@ -1,0 +1,46 @@
+{
+  "runId": "repair-review-prepared-native-green-v2",
+  "purpose": "Diagnostic native AppKit screenshots; no screenshot comparisons.",
+  "files": {
+    "A4E7FE95-AB20-47B7-A70C-B01EB6F48747.png": "deferred-error-restores-minimized-window.png",
+    "8FCAB202-419B-41CC-9CDB-2D22F97B8D3D.png": "deferred-reclaim-restores-original-window.png"
+  },
+  "attachments": [
+    {
+      "attachments": [
+        {
+          "configurationName": "Default",
+          "deviceId": "00006020-000C11362ED3C01E",
+          "deviceName": "My Mac",
+          "exportedFileName": "A4E7FE95-AB20-47B7-A70C-B01EB6F48747.png",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "Worktrees-Deferred-Failure-Restores-Minimized-Window_0_EB8F8C5B-A93C-49D4-8676-91D5BEE57533.png",
+          "timestamp": 1792184073.546
+        }
+      ],
+      "testIdentifier": "WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce()",
+      "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce"
+    },
+    {
+      "attachments": [
+        {
+          "configurationName": "Default",
+          "deviceId": "00006020-000C11362ED3C01E",
+          "deviceName": "My Mac",
+          "exportedFileName": "8FCAB202-419B-41CC-9CDB-2D22F97B8D3D.png",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "Worktrees-Deferred-Reclaim-Restores-Original-Window_0_96C721B6-4515-4276-9030-09AAFF1396EA.png",
+          "timestamp": 1792184076.987
+        }
+      ],
+      "testIdentifier": "WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet()",
+      "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet"
+    }
+  ],
+  "sourceSnapshot": "artifacts/verification/repair-review-final-prototype/manifest.json",
+  "verifiedFlows": [
+    "Original minimized error owner is restored and activated.",
+    "Deferred Reclaim refreshes its single-use scope; Cancel remains the default."
+  ],
+  "deliveryEvidence": "Canonical commit-specific full verification receipts are recorded in the PR description."
+}

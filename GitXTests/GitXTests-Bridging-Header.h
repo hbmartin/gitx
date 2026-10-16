@@ -35,6 +35,8 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface PBRepositoryWorktreeService (FixtureDrainTesting)
+@property (nonatomic, copy, nullable) PBWorktreePreparationObserver repairValidationObserver;
+@property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^repairValidationResultObserver)(void);
 @property (nonatomic, copy, nullable) PBWorktreePreparationObserver discoveryEvidenceObserver;
 @property (nonatomic, readonly) NSUInteger ownershipCaptureCount;
 @property (nonatomic, readonly) BOOL isSnapshotStale;
