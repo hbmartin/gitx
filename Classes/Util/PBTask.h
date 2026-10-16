@@ -122,14 +122,14 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 /// This uses the main queue
 ///
 /// @see performTaskOnQueue:terminationHandler:
-- (void)performTaskWithTerminationHandler:(void (^)(NSError *__nullable error))terminationHandler;
+- (void)performTaskWithTerminationHandler:(void(NS_SWIFT_UI_ACTOR ^)(NSError *__nullable error))terminationHandler;
 
 /// Execute a task
 ///
 /// This uses the main queue
 ///
 /// @see performTaskOnQueue:completionHandler:
-- (void)performTaskWithCompletionHandler:(void (^)(NSData *__nullable readData, NSError *__nullable error))completionHandler;
+- (void)performTaskWithCompletionHandler:(void(NS_SWIFT_UI_ACTOR ^)(NSData *__nullable readData, NSError *__nullable error))completionHandler;
 
 @end
 
@@ -161,7 +161,7 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 /// @param completionHandler A block that will be called when the executable exits.
 ///							 If readData is nil, it means an error occurred.
 ///
-+ (void)launchTask:(NSString *)launchPath arguments:(nullable NSArray<NSString *> *)arguments inDirectory:(nullable NSString *)directory completionHandler:(void (^)(NSData *__nullable readData, NSError *__nullable error))completionHandler;
++ (void)launchTask:(NSString *)launchPath arguments:(nullable NSArray<NSString *> *)arguments inDirectory:(nullable NSString *)directory completionHandler:(void(NS_SWIFT_UI_ACTOR ^)(NSData *__nullable readData, NSError *__nullable error))completionHandler;
 
 /// Return the standard output data as a string
 ///

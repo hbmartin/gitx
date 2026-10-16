@@ -13,6 +13,123 @@ private final class WorktreePresentationContext {
         self.service = service
         self.generation = generation
     }
+
+    @MainActor
+    func discardPrunePreview(_ preview: PBWorktreePrunePreview?) {
+        guard let preview else { return }
+        service.discardPrunePreview(preview)
+    }
+
+    @MainActor
+    func discardRepairPreview(_ preview: PBWorktreeRepairPreview?) {
+        guard let preview else { return }
+        service.discardRepairPreview(preview)
+    }
+}
+
+/// Participates in the alert's key-equivalent traversal without changing its default button.
+private final class WorktreeConsentKeyView: NSView {
+    weak var cancelButton: NSButton?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.keyCode == 53 || event.charactersIgnoringModifiers == "\u{1b}",
+              event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+              let cancelButton, let window, let parent = window.sheetParent, window.isVisible,
+              parent.attachedSheet === window else { return super.performKeyEquivalent(with: event) }
+        let source = event.window ?? NSApp.keyWindow
+        guard source === window || source === parent else { return super.performKeyEquivalent(with: event) }
+        NSLog("[GitX] Cancelled worktree consent with Escape")
+        cancelButton.performClick(nil)
+        return true
+    }
+}
+
+@MainActor
+final class WorktreeErrorPresentationQueue {
+    private struct PendingError {
+        let error: NSError
+        weak var window: NSWindow?
+        let isCurrent: @MainActor () -> Bool
+        let present: @MainActor (NSError) -> Void
+    }
+
+    private var pending: [PendingError] = []
+    private var observer: NSObjectProtocol?
+    private var flushScheduled = false
+    private var isPresenting = false
+
+    var hasPendingErrors: Bool {
+        !pending.isEmpty || isPresenting
+    }
+
+    isolated deinit { removeObserver() }
+
+    fileprivate func enqueue(_ error: NSError, window: NSWindow,
+                             isCurrent: @escaping @MainActor () -> Bool,
+                             present: @escaping @MainActor (NSError) -> Void)
+    {
+        pending.append(PendingError(error: error, window: window, isCurrent: isCurrent, present: present))
+        if observer == nil {
+            observer = NotificationCenter.default.addObserver(forName: NSWindow.didEndSheetNotification, object: window, queue: .main) { [weak self] _ in
+                // swift6-safety-justification: NotificationCenter's explicit main queue confines presentation state to MainActor.
+                MainActor.assumeIsolated { self?.scheduleFlush() }
+            }
+        }
+        NSLog("[GitX] Deferred %ld worktree failure(s) for their original presentation owner", pending.count)
+        scheduleFlush()
+    }
+
+    func invalidate() {
+        let discarded = pending.count
+        pending.removeAll()
+        flushScheduled = false
+        isPresenting = false
+        removeObserver()
+        if discarded > 0 {
+            NSLog("[GitX] Discarded %ld deferred worktree failure(s) after owner revocation", discarded)
+        }
+    }
+
+    private func scheduleFlush() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            flushScheduled = false
+            flush()
+        }
+    }
+
+    private func flush() {
+        while let next = pending.first {
+            guard next.isCurrent(), let window = next.window else {
+                pending.removeFirst()
+                NSLog("[GitX] Discarded a deferred worktree failure after its visible presentation ended")
+                continue
+            }
+            guard window.attachedSheet == nil else { return }
+            pending.removeFirst()
+            if pending.isEmpty {
+                removeObserver()
+            }
+            // A reentrant error joins the FIFO before the presenter creates its sheet.
+            isPresenting = true
+            next.present(next.error)
+            isPresenting = false
+            if !pending.isEmpty {
+                scheduleFlush()
+            }
+            return
+        }
+        removeObserver()
+    }
+
+    private func removeObserver() {
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observer = nil
+    }
 }
 
 extension PBGitWindowController {
@@ -43,6 +160,16 @@ extension PBGitWindowController {
         }
         guard !WorktreePresentationPolicy.isExpectedCancellation(error as NSError) else {
             NSLog("[GitX] Suppressed expected worktree cancellation")
+            return
+        }
+        if let window = context.window, window.attachedSheet != nil || worktreeErrorPresentationQueue?.hasPendingErrors == true {
+            let queue = worktreeErrorPresentationQueue ?? WorktreeErrorPresentationQueue()
+            worktreeErrorPresentationQueue = queue
+            queue.enqueue(error as NSError, window: window, isCurrent: { [weak self] in
+                self?.canReceiveWorktreeResult(context) == true
+            }, present: { [weak self] error in
+                self?.showErrorSheet(error)
+            })
             return
         }
         showErrorSheet(error)
@@ -115,9 +242,7 @@ extension PBGitWindowController {
             guard let self, self.canUseWorktreePreview(context), response == .OK, let url = panel.url else { return }
             context.service.prepareRepair(worktree: worktree, movedTo: url.path) { [weak self] preview, error in
                 guard let self else {
-                    if let preview {
-                        context.service.discardRepairPreview(preview)
-                    }
+                    context.discardRepairPreview(preview)
                     NSLog("[GitX] Discarded Locate repair consent after its controller was released")
                     return
                 }
@@ -168,8 +293,12 @@ extension PBGitWindowController {
                     NSLog("[GitX] Discarded a Remove error after its controller was released")
                     return
                 }
-                guard self.isCurrentWorktreePresentation(context), !WorktreePresentationPolicy.isExpectedCancellation(error) else {
-                    self.showWorktreeError(error, context: context)
+                guard self.isCurrentWorktreePresentation(context) else {
+                    NSLog("[GitX] Discarded a Remove error after its presentation owner changed")
+                    return
+                }
+                guard !WorktreePresentationPolicy.isExpectedCancellation(error) else {
+                    NSLog("[GitX] Suppressed expected worktree cancellation")
                     return
                 }
                 let reason = error.localizedFailureReason ?? error.localizedDescription
@@ -192,17 +321,13 @@ extension PBGitWindowController {
         guard let context = captureWorktreePresentation(), let window = context.window, window.attachedSheet == nil,
               context.service.isSupported else { return }
         context.service.preparePrunePreview { [weak self] preview, error in
-            guard let self, self.canUseWorktreePreview(context) else {
-                if let preview {
-                    context.service.discardPrunePreview(preview)
-                }
+            guard let self, self.canReceiveWorktreeResult(context) else {
+                context.discardPrunePreview(preview)
                 NSLog("[GitX] Discarded prune preparation after its visible presentation ended")
                 return
             }
             if let error {
-                if let preview {
-                    context.service.discardPrunePreview(preview)
-                }
+                context.discardPrunePreview(preview)
                 self.showWorktreeError(error, context: context)
                 return
             }
@@ -211,8 +336,12 @@ extension PBGitWindowController {
         }
     }
 
+    private func canReceiveWorktreeResult(_ context: WorktreePresentationContext) -> Bool {
+        isCurrentWorktreePresentation(context) && context.window?.isVisible == true
+    }
+
     private func canUseWorktreePreview(_ context: WorktreePresentationContext) -> Bool {
-        isCurrentWorktreePresentation(context) && context.window?.isVisible == true && context.service.isSupported
+        canReceiveWorktreeResult(context) && context.service.isSupported
     }
 
     private func presentPrunePreview(_ preview: PBWorktreePrunePreview, context: WorktreePresentationContext, changed: Bool) {
@@ -250,17 +379,13 @@ extension PBGitWindowController {
                 return
             }
             context.service.prune(confirmedPreview: preview) { [weak self] updated, error in
-                guard let self, self.canUseWorktreePreview(context) else {
-                    if let updated {
-                        context.service.discardPrunePreview(updated)
-                    }
+                guard let self, self.canReceiveWorktreeResult(context) else {
+                    context.discardPrunePreview(updated)
                     NSLog("[GitX] Discarded renewed prune consent after its visible presentation ended")
                     return
                 }
                 if let error {
-                    if let updated {
-                        context.service.discardPrunePreview(updated)
-                    }
+                    context.discardPrunePreview(updated)
                     self.showWorktreeError(error, context: context)
                 } else if let updated {
                     self.presentPrunePreview(updated, context: context, changed: true)
@@ -370,9 +495,7 @@ extension PBGitWindowController {
             guard self.canUseWorktreePreview(context) else { return }
             service.prepareRepairLinks(style: style) { [weak self] preview, error in
                 guard let self else {
-                    if let preview {
-                        context.service.discardRepairPreview(preview)
-                    }
+                    context.discardRepairPreview(preview)
                     NSLog("[GitX] Discarded repository repair consent after its controller was released")
                     return
                 }
@@ -382,17 +505,13 @@ extension PBGitWindowController {
     }
 
     private func receiveRepairPreparation(_ preview: PBWorktreeRepairPreview?, error: Error?, context: WorktreePresentationContext) {
-        guard canUseWorktreePreview(context) else {
-            if let preview {
-                context.service.discardRepairPreview(preview)
-            }
+        guard canReceiveWorktreeResult(context) else {
+            context.discardRepairPreview(preview)
             NSLog("[GitX] Discarded repair preparation after its visible presentation ended")
             return
         }
         if let error {
-            if let preview {
-                context.service.discardRepairPreview(preview)
-            }
+            context.discardRepairPreview(preview)
             showWorktreeError(error, context: context)
             return
         }
@@ -404,17 +523,27 @@ extension PBGitWindowController {
     }
 
     private func presentRepairPreview(_ preview: PBWorktreeRepairPreview, context: WorktreePresentationContext, changed: Bool) {
-        guard canUseWorktreePreview(context), let window = context.window, window.attachedSheet == nil else {
+        guard canUseWorktreePreview(context), let window = context.window else {
             context.service.discardRepairPreview(preview)
             NSLog("[GitX] Discarded repair consent without an available presentation")
             return
         }
         let presentation = WorktreePresentationPolicy.repair(requiresReclaim: preview.requiresReclaim, changed: changed)
-        if case .perform = presentation {
-            performRepair(preview, context: context)
+        guard WorktreePresentationPolicy.canDeliverRepair(presentation, hasAttachedSheet: window.attachedSheet != nil) else {
+            context.service.discardRepairPreview(preview)
+            NSLog("[GitX] Discarded repair consent while another presenter owns the sheet")
             return
         }
-        let reclaim = preview.requiresReclaim
+        let reclaim: Bool
+        switch presentation {
+        case .perform:
+            performRepair(preview, context: context)
+            return
+        case .reclaim:
+            reclaim = true
+        case .renewed:
+            reclaim = false
+        }
         let actionTitle = reclaim ? "Reclaim" : "Repair"
         let alert = NSAlert()
         alert.messageText = reclaim ? "Reclaim these worktree folders?" : "Repair these worktree links?"
@@ -432,6 +561,10 @@ extension PBGitWindowController {
         action.hasDestructiveAction = reclaim
         action.keyEquivalent = ""
         let cancel = alert.addButton(withTitle: "Cancel")
+        let keyView = WorktreeConsentKeyView(frame: .zero)
+        keyView.cancelButton = cancel
+        keyView.setAccessibilityElement(false)
+        alert.accessoryView = keyView
         cancel.keyEquivalent = "\r"
         alert.window.defaultButtonCell = cancel.cell as? NSButtonCell
         NSLog("[GitX] Presented %@ consent for %ld worktree folders (renewed: %@)", actionTitle, preview.paths.count, changed ? "yes" : "no")
@@ -454,17 +587,13 @@ extension PBGitWindowController {
             return
         }
         context.service.repair(confirmedPreview: preview) { [weak self] updated, error in
-            guard let self, self.canUseWorktreePreview(context) else {
-                if let updated {
-                    context.service.discardRepairPreview(updated)
-                }
+            guard let self, self.canReceiveWorktreeResult(context) else {
+                context.discardRepairPreview(updated)
                 NSLog("[GitX] Discarded renewed repair consent after its visible presentation ended")
                 return
             }
             if let error {
-                if let updated {
-                    context.service.discardRepairPreview(updated)
-                }
+                context.discardRepairPreview(updated)
                 self.showWorktreeError(error, context: context)
             } else if let updated {
                 self.presentRepairPreview(updated, context: context, changed: true)

@@ -139,6 +139,39 @@ final class WorktreeEvidenceTests: XCTestCase {
         }
     }
 
+    func testReadableRegularNodeChecksDescriptorAccessWithoutReadingPayloadAndClosesEveryOpen() throws {
+        let value = try fixture()
+        let regular = try XCTUnwrap(WorktreeEvidenceFileSystem.live.metadata(value.gitfile.path))
+        for failure in ["none", "open", "info", "type"] {
+            var opens = 0
+            var reads = 0
+            var closes = 0
+            let operations = WorktreeReadOperations(open: { path in
+                XCTAssertEqual(path, value.gitfile.path)
+                opens += 1
+                return failure == "open" ? -1 : 41
+            }, info: { descriptor in
+                XCTAssertEqual(descriptor, 41)
+                switch failure {
+                case "info": return nil
+                case "type": return self.node(S_IFIFO)
+                default: return regular
+                }
+            }, read: { _, _, _ in reads += 1; XCTFail("Readability probe must not read bytes"); return 0 }, close: { descriptor in
+                XCTAssertEqual(descriptor, 41)
+                closes += 1
+            })
+            if failure == "none" {
+                XCTAssertEqual(try WorktreeEvidenceFileSystem.readableRegularNode(value.gitfile.path, operations: operations), regular)
+            } else {
+                XCTAssertThrowsError(try WorktreeEvidenceFileSystem.readableRegularNode(value.gitfile.path, operations: operations))
+            }
+            XCTAssertEqual(opens, 1)
+            XCTAssertEqual(reads, 0)
+            XCTAssertEqual(closes, failure == "open" ? 0 : 1)
+        }
+    }
+
     func testDescriptorReadHandlesAllFailuresAndInterruptions() throws {
         var closes = 0
         func operations(open: Int32 = 3, info: WorktreeEvidenceNode? = nil, read: @escaping (Int32, UnsafeMutableRawPointer, Int) -> Int = { _, _, _ in 0 }) -> WorktreeReadOperations {

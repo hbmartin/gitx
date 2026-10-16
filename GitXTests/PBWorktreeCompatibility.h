@@ -42,6 +42,10 @@ typedef void(NS_SWIFT_SENDABLE ^ PBWorktreePreparationObserver)(void);
 NS_SWIFT_UI_ACTOR
 @interface PBRepositoryWorktreeService : NSObject
 @property (readonly) uint64_t repairPreparationCount;
+@property (copy, nullable) void (NS_SWIFT_UI_ACTOR ^repairPreparationResultObserver)(void);
+@property (copy, nullable) PBWorktreePreparationObserver preferenceFingerprintObserver;
+@property (copy, nullable) void (NS_SWIFT_UI_ACTOR ^preferenceFingerprintResultObserver)(void);
+@property (copy, nullable) void (NS_SWIFT_UI_ACTOR ^acceptedDiscoveryObserver)(void);
 @property (readonly, copy) NSArray<PBGitWorktree *> *worktrees;
 @property (readonly, copy, nullable) NSString *gitVersion;
 @property (readonly) BOOL isSupported;

@@ -30,6 +30,20 @@ final class SidebarPolicyTests: XCTestCase {
         }
     }
 
+    func testOnlyAnInitiallyApprovedProvenRepairCanProceedBehindAnotherSheet() {
+        let cases: [(WorktreeRepairPresentation, Bool, Bool)] = [
+            (.perform, false, true),
+            (.perform, true, true),
+            (.reclaim, false, true),
+            (.reclaim, true, false),
+            (.renewed, false, true),
+            (.renewed, true, false),
+        ]
+        for (presentation, occupied, expected) in cases {
+            XCTAssertEqual(WorktreePresentationPolicy.canDeliverRepair(presentation, hasAttachedSheet: occupied), expected)
+        }
+    }
+
     func testRepairOfferKeepsUnsafeObjectsOnTheManualGuidanceRoute() {
         let cases: [(Bool, Bool, WorktreeRepairOfferPresentation)] = [
             (false, false, .none),
