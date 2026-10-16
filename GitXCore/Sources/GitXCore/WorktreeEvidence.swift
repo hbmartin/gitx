@@ -709,8 +709,10 @@ extension WorktreeLinkInspector {
     }
 
     private static func administrativeInventory<Stray: Sendable>(commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem, includingHistory: Bool,
+                                                                 checkCancellation: () throws -> Void = {},
                                                                  stray: (Data, String, WorktreeEvidenceNode) throws -> Stray) throws -> WorktreeAdministrativeInventory<Stray>
     {
+        try checkCancellation()
         let commonPath = WorktreePaths.canonical(commonDirectory)
         let common = try fileSystem.directory(commonPath)
         let rootPath = (commonPath as NSString).appendingPathComponent("worktrees")
@@ -724,6 +726,7 @@ extension WorktreeLinkInspector {
         var strays: [Stray] = []
         var seen = Set<Data>()
         for name in names {
+            try checkCancellation()
             guard !name.isEmpty, !name.contains("/"), name != ".", name != "..", seen.insert(Data(name.utf8)).inserted else { throw WorktreeEvidenceError.unsupportedObject(rootPath) }
             let directoryPath = (rootPath as NSString).appendingPathComponent(name)
             guard let node = try fileSystem.metadata(directoryPath) else { throw WorktreeEvidenceError.changed(directoryPath) }
@@ -963,18 +966,23 @@ extension WorktreeLinkInspector {
 }
 
 extension WorktreeLinkInspector {
-    public static func captureRepairOwnershipSeeds(records: [GitWorktree], commonDirectory: String) throws -> WorktreeRepairOwnershipSeeds {
-        try captureRepairOwnershipSeeds(records: records, commonDirectory: commonDirectory, fileSystem: .live)
+    public static func captureRepairOwnershipSeeds(records: [GitWorktree], commonDirectory: String,
+                                                   checkCancellation: () throws -> Void = {}) throws -> WorktreeRepairOwnershipSeeds
+    {
+        try captureRepairOwnershipSeeds(records: records, commonDirectory: commonDirectory, fileSystem: .live, checkCancellation: checkCancellation)
     }
 
-    static func captureRepairOwnershipSeeds(records: [GitWorktree], commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem) throws -> WorktreeRepairOwnershipSeeds {
-        let inventory = try administrativeInventory(commonDirectory: commonDirectory, fileSystem: fileSystem, includingHistory: false) { name, path, node in
+    static func captureRepairOwnershipSeeds(records: [GitWorktree], commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem,
+                                            checkCancellation: () throws -> Void = {}) throws -> WorktreeRepairOwnershipSeeds
+    {
+        let inventory = try administrativeInventory(commonDirectory: commonDirectory, fileSystem: fileSystem, includingHistory: false, checkCancellation: checkCancellation) { name, path, node in
             try WorktreeRepairPostconditionInventory.Stray(name: name, fingerprint: WorktreeFileFingerprint(path: path, node: node))
         }
         let fingerprint = WorktreeAdministrativeFingerprint(common: inventory.common, root: inventory.root, registrations: inventory.registrations)
         guard fingerprint.matchesRegistrationPaths(records: records) else { throw WorktreeEvidenceError.unidentifiedRegistrations(commonDirectory) }
         let recordsByPath = Dictionary(grouping: records.filter { !$0.isMain && !$0.isBare }, by: { WorktreePaths.identity($0.path) })
         let registrations = try inventory.registrations.map { registration in
+            try checkCancellation()
             guard let originalIdentity = registration.originalPathIdentity, let gitfileIdentity = registration.backlinkIdentity,
                   let backlink = registration.gitdir, let commonLink = registration.commondir,
                   let record = recordsByPath[originalIdentity]?.first else { throw WorktreeEvidenceError.unidentifiedRegistrations(commonDirectory) }
@@ -985,6 +993,7 @@ extension WorktreeLinkInspector {
                                                                  moved: record.movedPath.map { try captureRepairFolder($0, fileSystem: fileSystem) },
                                                                  hasForeignLink: record.hasForeignLink)
         }
+        try checkCancellation()
         return WorktreeRepairOwnershipSeeds(common: inventory.common, root: inventory.root, registrations: registrations,
                                             mainPath: records.first(where: \.isMain).map { WorktreePaths.canonical($0.path) })
     }

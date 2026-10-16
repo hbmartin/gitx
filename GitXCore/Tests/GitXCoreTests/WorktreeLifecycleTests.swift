@@ -2,6 +2,87 @@
 import XCTest
 
 final class WorktreePolicyTests: XCTestCase {
+    func testReconciliationRetiresOrdinaryReadAndPreservesInvalidations() throws {
+        var state = WorktreeRefreshState()
+        let ordinary = try XCTUnwrap(state.request())
+        XCTAssertNil(state.request())
+        let owned = try XCTUnwrap(state.beginReconciliation())
+        XCTAssertFalse(state.accepts(ordinary))
+        XCTAssertNil(state.complete(ordinary))
+        XCTAssertNil(state.request())
+        XCTAssertTrue(state.isStale)
+        let followup = try XCTUnwrap(state.completeReconciliation(owned, succeeded: true))
+        XCTAssertFalse(state.isStale)
+        XCTAssertTrue(state.accepts(followup))
+        XCTAssertNil(state.completeReconciliation(owned, succeeded: false))
+        XCTAssertNil(state.complete(followup))
+        XCTAssertFalse(state.isStale)
+    }
+
+    func testSuccessfulOwnedPassNeedsNoRecoveryWithoutAnInvalidation() throws {
+        var state = WorktreeRefreshState()
+        let owned = try XCTUnwrap(state.beginReconciliation())
+        XCTAssertNil(state.completeReconciliation(owned, succeeded: true))
+        XCTAssertFalse(state.isStale)
+        XCTAssertNotNil(state.request())
+    }
+
+    func testFailedReconciliationSchedulesOnlyOneAutomaticRecoveryRead() throws {
+        var state = WorktreeRefreshState()
+        let owned = try XCTUnwrap(state.beginReconciliation())
+        let retry = try XCTUnwrap(state.completeReconciliation(owned, succeeded: false))
+        XCTAssertTrue(state.isStale)
+        XCTAssertNil(state.complete(retry, succeeded: false))
+        XCTAssertTrue(state.isStale)
+        let explicit = try XCTUnwrap(state.request())
+        XCTAssertNil(state.complete(explicit))
+        XCTAssertFalse(state.isStale)
+    }
+
+    func testEventsDuringRecoveryRequestAnotherPassWithoutLoopingOnFailure() throws {
+        var state = WorktreeRefreshState()
+        let owned = try XCTUnwrap(state.beginReconciliation())
+        let retry = try XCTUnwrap(state.completeReconciliation(owned, succeeded: false))
+        XCTAssertNil(state.request())
+        let next = try XCTUnwrap(state.complete(retry, succeeded: false))
+        XCTAssertTrue(state.isStale)
+        XCTAssertNil(state.complete(next))
+        XCTAssertFalse(state.isStale)
+    }
+
+    func testReconciliationCompletionCannotCrossExecutableInvalidationOrClose() throws {
+        for closing in [false, true] {
+            var state = WorktreeRefreshState()
+            let owned = try XCTUnwrap(state.beginReconciliation())
+            if closing {
+                state.close()
+            } else {
+                state.invalidate()
+            }
+            XCTAssertNil(state.completeReconciliation(owned, succeeded: false))
+            XCTAssertTrue(state.isStale)
+            if closing {
+                XCTAssertNil(state.request())
+                XCTAssertNil(state.beginReconciliation())
+            } else {
+                let fresh = try XCTUnwrap(state.request())
+                XCTAssertNil(state.complete(fresh))
+                XCTAssertFalse(state.isStale)
+            }
+        }
+    }
+
+    func testOverlappingOwnedPassCannotReplaceTheCurrentReconciliation() throws {
+        var state = WorktreeRefreshState()
+        let owned = try XCTUnwrap(state.beginReconciliation())
+        XCTAssertNil(state.beginReconciliation())
+        XCTAssertNil(state.completeReconciliation(owned + 1, succeeded: false))
+        XCTAssertNil(state.complete(owned))
+        let next = try XCTUnwrap(state.completeReconciliation(owned, succeeded: true))
+        XCTAssertNil(state.complete(next))
+        XCTAssertNil(state.completeReconciliation(owned, succeeded: true))
+    }
+
     func testDiscoveryCoalescesAndRejectsStaleCompletions() throws {
         var state = WorktreeRefreshState()
         let first = try XCTUnwrap(state.request())

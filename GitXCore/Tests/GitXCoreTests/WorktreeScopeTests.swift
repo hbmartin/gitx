@@ -93,6 +93,37 @@ final class WorktreeScopeTests: XCTestCase {
         XCTAssertFalse(historyReads.isEmpty, "Preparation must retain complete consent evidence")
     }
 
+    func testCancelledOwnershipInventoryStopsBeforeOrBetweenAdministrativeEntries() throws {
+        let value = try fixture(count: 8)
+        let base = WorktreeEvidenceFileSystem.live
+        for cancellationCheck in [1, 3] {
+            var checks = 0
+            var reads = 0
+            var metadata = 0
+            let fileSystem = WorktreeEvidenceFileSystem(metadata: { path in
+                metadata += 1
+                return try base.metadata(path)
+            }, read: { path in
+                reads += 1
+                return try base.read(path)
+            }, names: base.names, readLink: base.readLink, readableNode: base.readableNode)
+            XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairOwnershipSeeds(records: value.records, commonDirectory: value.common.path, fileSystem: fileSystem,
+                                                                                       checkCancellation: {
+                                                                                           checks += 1
+                                                                                           if checks == cancellationCheck {
+                                                                                               throw CancellationError()
+                                                                                           }
+                                                                                       })) { error in
+                XCTAssertTrue(error is CancellationError)
+            }
+            XCTAssertLessThan(reads, 2 * value.administrative.count)
+            if cancellationCheck == 1 {
+                XCTAssertEqual(metadata, 0)
+            }
+        }
+        XCTAssertEqual(try WorktreeLinkInspector.captureRepairOwnershipSeeds(records: value.records, commonDirectory: value.common.path).registrations.count, 8)
+    }
+
     func testOwnershipSeedsAndPreparationAvoidHistoryPayloadsAndPreparationEnumeration() throws {
         for count in [0, 1, 8] {
             let value = try fixture(count: count)

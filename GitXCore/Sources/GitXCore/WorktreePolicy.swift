@@ -4,8 +4,10 @@ import Foundation
 /// barrier for close and executable changes.
 public struct WorktreeRefreshState: Sendable {
     public private(set) var isClosed = false
+    public private(set) var isStale = true
     private var generation: UInt64 = 0
     private var inFlight = false
+    private var reconciling = false
     private var needsRefresh = false
 
     public init() {}
@@ -19,13 +21,38 @@ public struct WorktreeRefreshState: Sendable {
     }
 
     public func accepts(_ candidate: UInt64) -> Bool {
-        !isClosed && inFlight && candidate == generation
+        !isClosed && inFlight && !reconciling && candidate == generation
     }
 
-    public mutating func complete(_ candidate: UInt64) -> UInt64? {
+    public mutating func complete(_ candidate: UInt64, succeeded: Bool = true) -> UInt64? {
         guard accepts(candidate) else { return nil }
         inFlight = false
+        isStale = !succeeded
         let refresh = needsRefresh
+        needsRefresh = false
+        return refresh ? request() : nil
+    }
+
+    /// Retire an ordinary reader while carrying its invalidations across the owned pass.
+    public mutating func beginReconciliation() -> UInt64? {
+        guard !isClosed else { return nil }
+        guard !reconciling else { needsRefresh = true; return nil }
+        needsRefresh = needsRefresh || inFlight
+        generation &+= 1
+        inFlight = true
+        reconciling = true
+        isStale = true
+        return generation
+    }
+
+    /// Only this failed owned pass earns an automatic recovery read. A failed
+    /// ordinary recovery stays stale until another event or explicit refresh.
+    public mutating func completeReconciliation(_ candidate: UInt64, succeeded: Bool) -> UInt64? {
+        guard !isClosed, inFlight, reconciling, candidate == generation else { return nil }
+        inFlight = false
+        reconciling = false
+        isStale = !succeeded
+        let refresh = needsRefresh || !succeeded
         needsRefresh = false
         return refresh ? request() : nil
     }
@@ -33,7 +60,9 @@ public struct WorktreeRefreshState: Sendable {
     public mutating func invalidate() {
         generation &+= 1
         inFlight = false
+        reconciling = false
         needsRefresh = false
+        isStale = true
     }
 
     public mutating func close() {
