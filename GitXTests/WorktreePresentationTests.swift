@@ -1461,6 +1461,7 @@ final class WorktreePresentationTests: XCTestCase {
         }
         await drainCallbacks()
         fixture.services.removeAll()
+        fixture.retiredServices.removeAll()
         fixture.removeFiles()
         return true
     }
@@ -1532,6 +1533,7 @@ final class WorktreePresentationTests: XCTestCase {
     private func installService(in fixture: Fixture, holdsWriter: Bool = false, executable: URL? = nil) async throws -> InstalledService {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let original = try XCTUnwrap(repository.worktreeService)
+        fixture.retiredServices.append(original)
         original.cancel()
         let gate = TaskGate(fixture: fixture, holdsWriter: holdsWriter, executable: executable?.path ?? "/usr/bin/git")
         let service = PBRepositoryWorktreeService(repository: repository, taskFactory: gate.makeTask)
@@ -1663,6 +1665,7 @@ final class WorktreePresentationTests: XCTestCase {
         private(set) var main: URL
         private(set) var linked: URL
         var services: [InstalledService] = []
+        var retiredServices: [PBRepositoryWorktreeService] = []
         var retainedAfterDrainFailure = false
 
         init(nested: Bool = false) throws {
@@ -1757,9 +1760,10 @@ final class WorktreePresentationTests: XCTestCase {
 
         @discardableResult
         func cancelServices() -> [PBRepositoryWorktreeService] {
-            services.forEach { $0.service.cancel() }
+            let draining = retiredServices + services.map(\.service)
+            draining.forEach { $0.cancel() }
             services.forEach { $0.gate.writer.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)) }
-            return services.map(\.service)
+            return draining
         }
 
         func removeFiles() {

@@ -1068,6 +1068,7 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 + (void)captureWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files timeout:(double)timeout cancelAfterChecks:(NSInteger)cancelAfterChecks completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(capture(repository:runner:files:timeout:cancelAfterChecks:completion:));
 #endif
 + (void)prepareAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files beforeValidation:(void (^)(void))beforeValidation completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareAndValidate(repository:runner:files:beforeValidation:completion:));
++ (void)prepareAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files beforeValidation:(void (NS_SWIFT_UI_ACTOR ^)(void))beforeValidation eligibility:(BOOL (NS_SWIFT_UI_ACTOR ^)(void))eligibility completion:(void (NS_SWIFT_UI_ACTOR ^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareAndValidate(repository:runner:files:beforeValidation:eligibility:completion:));
 + (void)prepareAndValidateWithRepository:(PBGitRepository *)repository
 								  runner:(id<PBIndexCommandRunning>)runner
 								   files:(NSArray<PBChangedFile *> *)files

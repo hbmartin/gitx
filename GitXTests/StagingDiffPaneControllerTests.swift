@@ -726,6 +726,37 @@ final class StagingDiffPaneControllerTests: XCTestCase, @unchecked Sendable {
             }
         }
 
+        func testConfirmedDiscardRejectsRevokedEligibilityAndLeavesTheWriterUsable() async throws {
+            try await snapshotFixture { directory, repository, file in
+                let contents = try Data(contentsOf: directory.appendingPathComponent(file.path))
+                let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+                let runner = makeRunner(paths: [file.path])
+                var eligible = true
+                var checks = 0
+                do {
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: [file], beforeValidation: {
+                        eligible = false
+                    }, eligibility: {
+                        XCTAssertTrue(Thread.isMainThread)
+                        checks += 1
+                        return eligible
+                    })
+                    XCTFail("Approval cannot authorize discard after selection/submission eligibility changes")
+                } catch {
+                    XCTAssertEqual((error as NSError).code, 8)
+                    XCTAssertTrue(error.localizedDescription.contains("selected diff or repository state changed"))
+                }
+                XCTAssertEqual(checks, 1)
+                XCTAssertEqual(runner.counts, [3, 0, 1], "Revocation prevents a second snapshot and all writes")
+                XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(file.path)), contents)
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted(), names)
+                try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: makeRunner(paths: [file.path]), files: [file])
+                XCTAssertTrue(PBIndexWriterCommandTestHarness.allowsMutation(index: repository.index))
+                XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(file.path)), contents)
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted(), names)
+            }
+        }
+
         func testClosedPaneCancelsConfirmedDiscardBeforeCheckingEligibility() async throws {
             try await snapshotFixture { _, repository, file in
                 var checkedEligibility = false
