@@ -127,67 +127,25 @@ jobs:
           brew unlink openssl@3
           
       # Test (only on arm64 to avoid tripling CI time)
-      - name: Prepare screenshot comparison
-        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
-        run: brew install exiftool imagemagick
-      - name: Checkout fixed repo snapshot for screenshots
-        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
-        run: |
-          git clone --no-checkout "$GITHUB_WORKSPACE" /tmp/gitx-screenshot-repo
-          git -C /tmp/gitx-screenshot-repo checkout 52ff1051d0c8e5cf3ee5
       - name: Run tests
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
-          screenshot_repo_setting=()
-          if [[ -d /tmp/gitx-screenshot-repo ]]; then
-            screenshot_repo_setting=(GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo)
-          fi
           scripts/xcodebuild.sh --run-id "$UI_RUN_ID" test ui \
             --destination "platform=macOS,arch=${{ matrix.abi }}" \
-            ARCHS="${{ matrix.abi }}" \
-            "${screenshot_repo_setting[@]}"
+            ARCHS="${{ matrix.abi }}"
       - name: Extract screenshots from test results
-        if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ always() && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
           python3 scripts/extract_screenshots.py \
             "artifacts/verification/$UI_RUN_ID/Results/GitXUI.xcresult" \
             ./scripts/screenshots-${{ matrix.abi }}
       - name: Upload screenshots
-        if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ always() && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: Screenshots-${{ matrix.abi }}
           path: ./scripts/screenshots-${{ matrix.abi }}
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
-      - name: Compare screenshots
-        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
-        env:
-          CLASSIC_TOKEN: ${{ secrets.CLASSIC_TOKEN }}
-          SCREENSHOT_USER: ${{ secrets.SCREENSHOT_USER }}
-          SCREENSHOT_PASSWORD: ${{ secrets.SCREENSHOT_PASSWORD }}
-          emulatorApi: ${{ matrix.abi }}
-        run: |
-          ls -ls ./scripts/screenshots-${{ matrix.abi }}
-          ./screenShotScript/screenShotCompare.sh false
-      - name: Archive screenshots diffs
-        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: gitx-Screenshots-diffs-${{ matrix.abi }}
-          path: |
-            screenshotDiffs
-          retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
-#      - name: Show git status
-#        if: ${{ always() && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
-#        run: |
-#          rm -rf TestResults-${{ matrix.abi }}.xcresult
-#          rm -rf screenshots-${{ matrix.abi }}
-#          git status
-#          [ "$(git status -s \
-#            -- ':!screenshotsToCompare${{ matrix.abi }}' \
-#               ':!screenshotDiffs')" ] && exit 1 || exit 0
-      # end test
-          
       - name: Build project
         # Do not pass PRODUCT_BUNDLE_IDENTIFIER on the command line: it would
         # override every target in the workspace, including Sparkle's embedded
@@ -210,7 +168,7 @@ jobs:
             "${signing_settings[@]}"
       - name: Verify archived bundle identifiers
         run: python3 scripts/check_bundle_identifiers.py "artifacts/verification/$ARCHIVE_RUN_ID/Products/GitX.xcarchive/Products/Applications/Half Dark.app"
-      - name: Prepare artifact
+      - name: Export signed app
         if: ${{ env.variableSet != '' }}
         env:
           EXPORT_OPTIONS: ${{ secrets.NOTARY_EXPORT_OPTIONS }}
@@ -222,46 +180,32 @@ jobs:
           echo "EXPORT_OPTIONS_PATH=$EXPORT_OPTIONS_PATH"
           mkdir -p "$EXPORT_PATH"
           xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" -exportPath "$EXPORT_PATH" -exportOptionsPlist "$EXPORT_OPTIONS_PATH"
-          echo "Create HalfDark-${{ matrix.abi }}.dmg"
-          mkdir dist && ditto "$EXPORT_PATH/Half Dark.app" "dist/Half Dark.app" && ln -s /Applications dist/
-          hdiutil create -fs HFS+ -srcfolder dist/ -volname "Half Dark" HalfDark-${{ matrix.abi }}.dmg
-          rm -rf dist
-          ditto -c -k --keepParent "$EXPORT_PATH/Half Dark.app" HalfDark-${{ matrix.abi }}.zip
       - name: Notarize App
         if: ${{ env.variableSet != '' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          KEY_ID: ${{ secrets.APPLE_KEY_ID }}
         run: |
           APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app"
           ZIP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/notarization.zip"
           NOTARY_LOG="artifacts/verification/$ARCHIVE_RUN_ID/Logs/notary.log"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
-          xcrun notarytool submit "$ZIP_PATH" --key-id "$KEY_ID" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_PASSWORD" --wait | tee "$NOTARY_LOG"
-          cat "$NOTARY_LOG"
-
-          ID=$(tail -3 "$NOTARY_LOG" | cut -d':' -f2 | head -n 1)
-          echo "Id is: $ID"
-
+          xcrun notarytool submit "$ZIP_PATH" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_PASSWORD" --output-format json --wait > "$NOTARY_LOG"
+          ID=$(python3 -c 'import json, sys; result = json.load(open(sys.argv[1])); assert result["status"] == "Accepted", result["status"]; print(result["id"])' "$NOTARY_LOG")
           xcrun notarytool log "$ID" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_PASSWORD"
       - name: Staple Notarization
         if: ${{ env.variableSet != '' }}
         run: |
-          # While you can notarize a ZIP archive, you can’t staple to it directly.
-          # Instead, run stapler against each item that you added to the archive.
-          # Then create a new ZIP file containing the stapled items for distribution.
-          # Reference: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution/customizing_the_notarization_workflow
           APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app"
-          ZIP_PATH="HalfDark-${{ matrix.abi }}.zip"
-
           xcrun stapler staple "$APP_PATH"
-          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
-      - name: Check Notarization
+      - name: Package and verify distributed app payloads
         if: ${{ env.variableSet != '' }}
-        run: spctl -a -vv "artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app"
+        run: |
+          scripts/package_distribution.sh \
+            "artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app" \
+            "$GITHUB_WORKSPACE" "${{ matrix.abi }}"
       - name: Upload verification receipts and logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -274,13 +218,14 @@ jobs:
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
       - name: Upload dmg
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: ${{ success() }}
+        if: ${{ success() && env.variableSet != '' }}
         with:
           name: HalfDark-${{ matrix.abi }}.dmg
           path: HalfDark-${{ matrix.abi }}.dmg
           overwrite: true
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
       - name: Upload zip
+        if: ${{ success() && env.variableSet != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: HalfDark-${{ matrix.abi }}.zip

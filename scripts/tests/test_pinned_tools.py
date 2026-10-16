@@ -111,19 +111,12 @@ class PinnedToolsTests(unittest.TestCase):
 
         self.assertIn("github.repository == 'gitx/gitx'", release_job.split("\n    needs:", maxsplit=1)[0])
 
-    def test_screenshot_fixture_only_overrides_ui_fixture_when_comparison_enabled(self) -> None:
-        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
-        checkout_step = build_workflow.split(
-            "      - name: Checkout fixed repo snapshot for screenshots\n", maxsplit=1
-        )[1].split("      - name: Run tests\n", maxsplit=1)[0]
-        test_step = build_workflow.split("      - name: Run tests\n", maxsplit=1)[1].split(
-            "      - name: Extract screenshots from test results\n", maxsplit=1
-        )[0]
-
-        self.assertIn("if: ${{ env.variableSet != ''", checkout_step)
-        self.assertIn("if [[ -d /tmp/gitx-screenshot-repo ]]; then", test_step)
-        self.assertIn('"${screenshot_repo_setting[@]}"', test_step)
-        self.assertIn('artifacts/verification/$UI_RUN_ID/Results/GitXUI.xcresult', build_workflow)
+    def test_screenshots_are_diagnostics_from_isolated_ui_fixtures(self) -> None:
+        workflow = (ROOT / ".github/workflows/BuildPR.yml").read_text()
+        self.assertNotIn("/tmp/gitx-screenshot-repo", workflow)
+        self.assertNotIn("screenShotCompare", workflow)
+        self.assertIn('artifacts/verification/$UI_RUN_ID/Results/GitXUI.xcresult', workflow)
+        self.assertIn("scripts/extract_screenshots.py", workflow)
 
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()

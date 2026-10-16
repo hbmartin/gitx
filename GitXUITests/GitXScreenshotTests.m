@@ -71,15 +71,10 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
 
-	// An explicit environment override is useful for local one-off runs. CI
-	// checks out its fixed screenshot repository at the path below.
+	// An explicit environment override is useful for local one-off diagnostics.
+	// Otherwise every run uses its isolated fixture rather than a shared checkout.
 	NSDictionary *env = [[NSProcessInfo processInfo] environment];
 	NSString *repoPath = env[@"GITX_SCREENSHOT_REPO"];
-	NSString *ciRepositoryPath = @"/tmp/gitx-screenshot-repo";
-	if (!repoPath.length && [[NSFileManager defaultManager] fileExistsAtPath:ciRepositoryPath]) {
-		repoPath = ciRepositoryPath;
-	}
-
 	if (!repoPath.length) {
 		// Fallback: a fixture repo bundled with the test target
 		NSBundle *bundle = [NSBundle bundleForClass:[self class]];
