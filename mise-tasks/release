@@ -132,13 +132,9 @@ bundle_identifier=$(build_setting PRODUCT_BUNDLE_IDENTIFIER)
 log "Preflight passed (team $team_id, bundle $bundle_identifier, architecture $artifact_arch)"
 
 temporary_dir=
-mounted_dmg=
 
 cleanup()
 {
-	if [[ -n "$mounted_dmg" ]]; then
-		hdiutil detach "$mounted_dmg" -quiet >/dev/null 2>&1 || true
-	fi
 	if [[ -n "$temporary_dir" ]]; then
 		rm -rf "$temporary_dir"
 	fi
@@ -254,24 +250,7 @@ exported_app="$notarized_export_path/Half Dark.app"
 
 verify_app()
 {
-	local app_path=$1
-	local executable_path="$app_path/Contents/MacOS/GitX"
-	local signature_details
-	local actual_archs
-
-	[[ -x "$executable_path" ]] || fail "GitX executable is missing from $app_path"
-	codesign --verify --deep --strict --verbose=2 "$app_path"
-	signature_details=$(codesign --display --verbose=4 "$app_path" 2>&1)
-	grep -q '^Authority=Developer ID Application:' <<<"$signature_details" ||
-		fail "$app_path is not signed with a Developer ID Application certificate"
-	xcrun stapler validate "$app_path"
-	spctl --assess --type execute --verbose=4 "$app_path"
-	python3 scripts/check_bundle_identifiers.py "$app_path"
-
-	actual_archs=$(lipo -archs "$executable_path")
-	[[ "$actual_archs" == arm64 ]] ||
-		fail "$app_path must contain only arm64; found $actual_archs"
-	log "Verified Developer ID signature, notarization, Gatekeeper, and architectures: $actual_archs"
+	"$root/scripts/verify_distribution_app.sh" "$1" "$artifact_arch"
 }
 
 log "Verifying the exported app"
@@ -280,47 +259,7 @@ verify_app "$exported_app"
 mkdir -p "$final_app_dir"
 ditto "$exported_app" "$final_app_path"
 
-log "Creating HalfDark-$artifact_arch.zip"
-ditto -c -k --sequesterRsrc --keepParent "$final_app_path" "$zip_path"
-
-zip_staging="$temporary_dir/zip"
-mkdir -p "$zip_staging"
-ditto -x -k "$zip_path" "$zip_staging"
-log "Checking the packaged app from the ZIP archive"
-verify_app "$zip_staging/Half Dark.app"
-
-dmg_staging="$temporary_dir/dmg"
-mkdir -p "$dmg_staging"
-ditto "$final_app_path" "$dmg_staging/Half Dark.app"
-ln -s /Applications "$dmg_staging/Applications"
-
-log "Creating HalfDark-$artifact_arch.dmg"
-hdiutil create \
-	-fs HFS+ \
-	-format UDZO \
-	-srcfolder "$dmg_staging" \
-	-volname "Half Dark" \
-	"$dmg_path" >/dev/null
-
-log "Checking the packaged app from the disk image"
-mounted_dmg="$temporary_dir/mounted-dmg"
-mkdir -p "$mounted_dmg"
-hdiutil attach \
-	-nobrowse \
-	-readonly \
-	-mountpoint "$mounted_dmg" \
-	"$dmg_path" >/dev/null
-verify_app "$mounted_dmg/Half Dark.app"
-hdiutil detach "$mounted_dmg" -quiet
-mounted_dmg=
-
-(
-	cd "$output_root"
-	shasum -a 256 \
-		"HalfDark-$artifact_arch.zip" \
-		"HalfDark-$artifact_arch.dmg" \
-		>"HalfDark-$artifact_arch.sha256"
-)
+"$root/scripts/package_distribution.sh" "$final_app_path" "$output_root" "$artifact_arch"
 
 log "Release artifacts are ready:"
 printf '  App:       %s\n' "$final_app_path"

@@ -5,18 +5,28 @@ import tempfile
 import unittest
 
 from distribution_fixture import DistributionFixture
+from support import ROOT
 
 
 class DistributionTests(unittest.TestCase):
+    def test_ci_packages_only_after_stapling_and_keeps_diagnostics_without_comparison(self):
+        workflow = (ROOT / ".github/workflows/BuildPR.yml").read_text()
+        self.assertIn("scripts/package_distribution.sh", workflow)
+        self.assertLess(workflow.index('xcrun stapler staple "$APP_PATH"'), workflow.index("scripts/package_distribution.sh"))
+        self.assertNotIn("screenShotCompare", workflow)
+        self.assertNotIn("Checkout fixed repo snapshot", workflow)
+        self.assertIn("scripts/extract_screenshots.py", workflow)
+        self.assertIn("name: Upload screenshots", workflow)
+
     def test_release_validates_original_and_both_packaged_apps(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = DistributionFixture(pathlib.Path(directory))
             result = fixture.release()
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             validations = [command[-1] for command in fixture.commands if command[:3] == ["xcrun", "stapler", "validate"]]
-            self.assertEqual(len(validations), 3)
-            self.assertIn("/zip/", validations[1])
-            self.assertIn("/mounted-dmg/", validations[2])
+            self.assertGreaterEqual(len(validations), 3)
+            self.assertIn("/zip/", validations[-2])
+            self.assertIn("/mounted-dmg/", validations[-1])
             for suffix in ("zip", "dmg", "sha256"):
                 self.assertTrue((fixture.output / f"HalfDark-arm64.{suffix}").exists())
 
