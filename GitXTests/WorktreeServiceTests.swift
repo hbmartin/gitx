@@ -1119,6 +1119,20 @@ final class WorktreeServiceTests: XCTestCase {
         try await assertPreferenceFingerprintHandling(.closed)
     }
 
+    func testClosedServiceDrainDeliversIdleWaitersAsynchronouslyAndExactlyOnce() async throws {
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let service = fixture.makeService().service
+        service.cancel()
+        let drained = WorktreeObservationCounter()
+        enqueueDrain(service) { drained.advance() }
+        enqueueDrain(service) { drained.advance() }
+        XCTAssertEqual(drained.value, 0)
+        await fulfillment(of: [drained.expectation(atLeast: 2)], timeout: 5)
+        await drainMainQueue()
+        XCTAssertEqual(drained.value, 2)
+    }
+
     private enum PreferenceFingerprintScenario: Equatable { case unchangedBurst, replacedGeneration, closed }
 
     @MainActor
@@ -1138,6 +1152,7 @@ final class WorktreeServiceTests: XCTestCase {
         let starts = WorktreeObservationCounter()
         let results = WorktreeObservationCounter()
         let cleanup = PreferenceFingerprintCleanupState()
+        let drains = WorktreeObservationCounter()
         addTeardownBlock { @MainActor in
             // Closing before releasing the held worker prevents pending checks
             // from becoming new work. If its first result already ran, a single
@@ -1184,6 +1199,9 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 1)
         if scenario == .closed {
             service.cancel()
+            enqueueDrain(service) { drains.advance() }
+            await drainMainQueue()
+            XCTAssertEqual(drains.value, 0, "Cancellation must not acknowledge a still-running worker")
         } else {
             if scenario == .replacedGeneration {
                 let requested = installed.tasks.expect(["--version"])
@@ -1216,6 +1234,10 @@ final class WorktreeServiceTests: XCTestCase {
         worker.resume()
         let expectedChecks = scenario == .closed ? 1 : 2
         await fulfillment(of: [results.expectation(atLeast: expectedChecks)], timeout: 10)
+        if scenario == .closed {
+            await fulfillment(of: [drains.expectation(atLeast: 1)], timeout: 5)
+            XCTAssertEqual(drains.value, 1)
+        }
         XCTAssertFalse(worker.didTimeout)
         XCTAssertFalse(worker.isWaiting)
         XCTAssertTrue(worker.wasReleased)
@@ -1349,6 +1371,10 @@ final class WorktreeServiceTests: XCTestCase {
         await drainMainQueue()
         XCTAssertEqual(reentry.names, ["C"])
         XCTAssertTrue(installed.tasks.mutations.isEmpty)
+    }
+
+    private func enqueueDrain(_ service: PBRepositoryWorktreeService, completion: @escaping @MainActor @Sendable () -> Void) {
+        service.drainForTesting(completion: completion)
     }
 
     private func drainMainQueue() async {

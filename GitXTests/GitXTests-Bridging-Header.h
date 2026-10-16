@@ -34,6 +34,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBRepositoryWorktreeService (FixtureDrainTesting)
+- (void)drainForTestingWithCompletion:(void(NS_SWIFT_UI_ACTOR ^)(void))completion NS_SWIFT_NAME(drainForTesting(completion:));
+@end
+
 @interface PBTaskExecutionContext : NSObject
 @property (readonly) NSString *launchPath;
 @property (readonly) NSArray<NSString *> *arguments;

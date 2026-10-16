@@ -411,6 +411,14 @@ final class StagingDiffPaneControllerTests: XCTestCase, @unchecked Sendable {
         }
 
         func testFixtureDrainWaitsForWriterAdmittedByAnotherDrainCompletion() async throws {
+            try await assertFixtureDrainWaitsForSiblingWriter(deferred: false)
+        }
+
+        func testFixtureDrainWaitsForWriterDeferredByAnotherDrainCompletion() async throws {
+            try await assertFixtureDrainWaitsForSiblingWriter(deferred: true)
+        }
+
+        private func assertFixtureDrainWaitsForSiblingWriter(deferred: Bool) async throws {
             try await snapshotFixture { directory, repository, file in
                 let contents = try Data(contentsOf: directory.appendingPathComponent(file.path))
                 let index = repository.index
@@ -426,10 +434,17 @@ final class StagingDiffPaneControllerTests: XCTestCase, @unchecked Sendable {
                 // Both requests join the same writer-drain batch. Its empty
                 // pane-group notifications are queued in registration order.
                 PBStagingDiffRevalidationTestHarness.closeAndDrain(repository: repository, panes: []) {
-                    PBStagingDiffRevalidationTestHarness.startValidation(repository: repository, runner: runner, files: [file]) { error in
-                        XCTAssertNil(error)
-                        validationCompletions += 1
-                        validated.fulfill()
+                    let start: @MainActor @Sendable () -> Void = {
+                        PBStagingDiffRevalidationTestHarness.startValidation(repository: repository, runner: runner, files: [file]) { error in
+                            XCTAssertNil(error)
+                            validationCompletions += 1
+                            validated.fulfill()
+                        }
+                    }
+                    if deferred {
+                        DispatchQueue.main.async(execute: start)
+                    } else {
+                        start()
                     }
                     // The second drain's notification was already queued. It
                     // must observe the newly admitted writer before this runs.

@@ -233,6 +233,42 @@ final nonisolated class PBWorktreeLifecycleDiagnostics: NSObject {
     }
 }
 
+/// Acknowledgements outlive cancelled callbacks without retaining their service.
+@MainActor
+private final class WorktreeActivityDrain {
+    private var active: Set<UUID> = []
+    private var completions: [@MainActor @Sendable () -> Void] = []
+    private var scheduled = false
+
+    func begin() -> @MainActor @Sendable () -> Void {
+        let identifier = UUID()
+        active.insert(identifier)
+        return { [self] in
+            guard active.remove(identifier) != nil else { return }
+            scheduleIfIdle()
+        }
+    }
+
+    func drain(completion: @escaping @MainActor @Sendable () -> Void) {
+        completions.append(completion)
+        NSLog("[GitX] Worktree fixture drain waits for %ld activity acknowledgements", active.count)
+        scheduleIfIdle()
+    }
+
+    private func scheduleIfIdle() {
+        guard active.isEmpty, !completions.isEmpty, !scheduled else { return }
+        scheduled = true
+        DispatchQueue.main.async { [self] in
+            scheduled = false
+            guard active.isEmpty else { return }
+            let ready = completions
+            completions.removeAll()
+            NSLog("[GitX] Worktree fixture drain completed %ld waiter(s)", ready.count)
+            ready.forEach { $0() }
+        }
+    }
+}
+
 /// The reservation owns its retained repository, task and frozen execution context through completion.
 private final class WorktreeOperation {
     enum Phase { case reserved, preparing, writing, reconciling, terminal }
@@ -244,14 +280,16 @@ private final class WorktreeOperation {
     private(set) var phase = Phase.reserved
     private(set) var isCancelled = false
     private var release: (@MainActor @Sendable () -> Void)?
+    private var acknowledged: (@MainActor @Sendable () -> Void)?
     var task: PBTask?
     var cancellation: (() -> Void)?
     var evidenceCancellations: [UUID: () -> Void] = [:]
     var eventArguments: [String] = []
 
-    init(context: WorktreeOperationContext, repository: PBGitRepository) {
+    init(context: WorktreeOperationContext, repository: PBGitRepository, acknowledged: @escaping @MainActor @Sendable () -> Void) {
         self.context = context
         self.repository = repository
+        self.acknowledged = acknowledged
     }
 
     var isActive: Bool {
@@ -302,8 +340,11 @@ private final class WorktreeOperation {
         eventArguments = []
         let release = release
         self.release = nil
+        let acknowledged = acknowledged
+        self.acknowledged = nil
         deliver()
         release?()
+        acknowledged?()
     }
 
     func markPreparationCancelled() {
@@ -384,6 +425,7 @@ final class PBRepositoryWorktreeService: NSObject {
     private let repairPreparationObserver: (@Sendable () -> Void)?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PBGitWorktrees")
     private var state = WorktreeRefreshState()
+    private let activityDrain = WorktreeActivityDrain()
     private var discovery: PBTask?
     private var versionTask: PBTask?
     private var executable = ""
@@ -472,7 +514,7 @@ final class PBRepositoryWorktreeService: NSObject {
         let selection = preferenceSelection()
         let observer = preferenceFingerprintObserver
         let acknowledged = preferenceFingerprintResultObserver
-        Self.evidence({
+        captureEvidence({
             observer?()
             return try WorktreeFileFingerprint.capture(path: selection.executable)
         }) { [weak self] result in
@@ -554,7 +596,7 @@ final class PBRepositoryWorktreeService: NSObject {
         task.timeout = 10
         versionTask = task
         logEvent(["--version"], stage: "started", phase: "capability")
-        task.perform { [weak self] data, error in
+        performTask(task) { [weak self] data, error in
             guard let self, generation == self.versionGeneration, !self.state.isClosed else { return }
             let complete = self.versionTask?.standardOutputTruncated == false && self.versionTask?.standardErrorTruncated == false
             self.versionTask = nil
@@ -600,10 +642,10 @@ final class PBRepositoryWorktreeService: NSObject {
         let common = Self.commonDirectory(gitDirectory: repository?.gitURL()?.path ?? "")
         let current = repository?.workingDirectoryURL()?.path ?? repository?.gitURL()?.path
         logEvent(["worktree", "list"], stage: "started", phase: "discovery")
-        task.perform { [weak self] data, error in
+        performTask(task) { [weak self] data, error in
             guard let self, self.state.accepts(generation) else { return }
             let complete = self.discovery?.standardOutputTruncated == false && self.discovery?.standardErrorTruncated == false
-            Self.evidence({
+            captureEvidence({
                 if let error {
                     throw error
                 }
@@ -1017,7 +1059,7 @@ final class PBRepositoryWorktreeService: NSObject {
             let context = try requestContext()
             guard requested == nil || requested == context else { throw WorktreeEvidenceError.changed(context.gitDirectory) }
             guard let repository else { throw Self.cancelledError() }
-            let operation = WorktreeOperation(context: context, repository: repository)
+            let operation = WorktreeOperation(context: context, repository: repository, acknowledged: activityDrain.begin())
             operations[operation.identifier] = operation
             operation.cancellation = { self.finish(operation) { onFailure(Self.cancelledError()) } }
             // The job retains the service and repository until the reserved admission is released.
@@ -1081,7 +1123,7 @@ final class PBRepositoryWorktreeService: NSObject {
         operation.task = task
         operation.taskCompletion = completion
         logEvent(command.arguments, stage: "started", phase: readOnly ? "preparing" : "writing", count: 1)
-        task.perform { [weak self] data, error in
+        performTask(task) { [weak self] data, error in
             guard let self, operation.isActive, let deliver = operation.taskCompletion else { return }
             operation.taskCompletion = nil
             let ownedTask = operation.task
@@ -1137,7 +1179,7 @@ final class PBRepositoryWorktreeService: NSObject {
         operation.task = task
         operation.discoveryCompletion = completion
         logEvent(arguments, stage: "started", phase: reconciling ? "reconciling" : "preparing")
-        task.perform { [weak self] data, error in
+        performTask(task) { [weak self] data, error in
             guard let self, operation.isActive, let deliver = operation.discoveryCompletion else { return }
             operation.discoveryCompletion = nil
             let complete = operation.task?.standardOutputTruncated == false && operation.task?.standardErrorTruncated == false
@@ -1169,7 +1211,7 @@ final class PBRepositoryWorktreeService: NSObject {
         let identifier = UUID()
         let ticket = WorktreeEvidenceTicket()
         operation.evidenceCancellations[identifier] = { ticket.cancel(); delivery.completion = nil }
-        Self.evidence({
+        captureEvidence({
             try ticket.check()
             try context.validate()
             let value = try work()
@@ -1184,6 +1226,30 @@ final class PBRepositoryWorktreeService: NSObject {
             operation.evidenceCancellations.removeValue(forKey: identifier)
             guard operation.isActive, !operation.isCancelled else { return }
             completion?(result)
+        }
+    }
+
+    /// Fixtures cancel first, then wait for tasks, reservations and worker-result acknowledgements.
+    @objc(drainForTestingWithCompletion:)
+    func drainForTesting(completion: @escaping @MainActor @Sendable () -> Void) {
+        activityDrain.drain(completion: completion)
+    }
+
+    private func performTask(_ task: PBTask, completion: @escaping @MainActor @Sendable (Data?, Error?) -> Void) {
+        let acknowledged = activityDrain.begin()
+        task.perform { data, error in
+            defer { acknowledged() }
+            completion(data, error)
+        }
+    }
+
+    private func captureEvidence<Value: Sendable>(_ work: @escaping @Sendable () throws -> Value,
+                                                  completion: @escaping @MainActor @Sendable (Result<Value, Error>) -> Void)
+    {
+        let acknowledged = activityDrain.begin()
+        Self.evidence(work) { result in
+            defer { acknowledged() }
+            completion(result)
         }
     }
 

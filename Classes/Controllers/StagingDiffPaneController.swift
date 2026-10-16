@@ -934,11 +934,9 @@ final class StagingDiffPaneController: NSObject {
                     group.notify(queue: .main) {
                         // swift6-safety-justification: DispatchGroup delivers this notification on the explicitly selected main queue.
                         MainActor.assumeIsolated {
-                            if writer.isBusy {
-                                closeAndDrain(repository: repository, panes: panes, completion: completion)
-                            } else {
-                                completion()
-                            }
+                            // Producer delivery can admit writer work after
+                            // the first marker. Establish quiescence again.
+                            writer.drainForTesting(completion: completion)
                         }
                     }
                 }

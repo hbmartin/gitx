@@ -206,10 +206,12 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
         private typealias TestDrainCompletion = @MainActor @Sendable () -> Void
         /// Protected by stateLock, including callers whose wait has timed out.
         private var testDrainCompletions: [TestDrainCompletion] = []
+        private var testDrainInFlight = false
 
         func drainForTesting(completion: @escaping @MainActor @Sendable () -> Void) {
             stateLock.lock()
-            let draining = !testDrainCompletions.isEmpty
+            let draining = testDrainInFlight
+            testDrainInFlight = true
             testDrainCompletions.append(completion)
             stateLock.unlock()
             if !draining {
@@ -230,10 +232,22 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
                     // main deliveries also had a chance to enqueue validation.
                     if idle, let previousSequence, sequence == previousSequence &+ 1 {
                         stateLock.lock()
-                        let completions = testDrainCompletions
-                        testDrainCompletions = []
+                        let completion = testDrainCompletions.removeFirst()
                         stateLock.unlock()
-                        completions.forEach { $0() }
+                        completion()
+                        // A sibling completion can enqueue a writer through a
+                        // main-queue hop. Yield before checking the next client.
+                        DispatchQueue.main.async { [self] in
+                            stateLock.lock()
+                            let waiting = !testDrainCompletions.isEmpty
+                            if !waiting {
+                                testDrainInFlight = false
+                            }
+                            stateLock.unlock()
+                            if waiting {
+                                drainForTesting(after: nil)
+                            }
+                        }
                     } else {
                         drainForTesting(after: idle ? sequence : nil)
                     }
