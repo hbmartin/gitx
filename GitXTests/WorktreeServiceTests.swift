@@ -3084,6 +3084,68 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertFalse(try fixture.git(["rev-parse", "HEAD"], in: fixture.linked).isEmpty)
     }
 
+    func testLocateAndReclaimAcceptHealthyMixedSiblingLinksInBothRequestedStyles() async throws {
+        for relative in [false, true] {
+            for reclaim in [false, true] {
+                let fixture = try RepairFixture(label: "mixed-sibling")
+                defer { fixture.cleanup() }
+                let flag = relative ? "--relative-paths" : "--no-relative-paths"
+                _ = try fixture.git(["worktree", "repair", flag])
+                let sibling = fixture.root.appendingPathComponent("sibling")
+                _ = try fixture.git(["worktree", "add", flag, "-b", "sibling", sibling.path])
+                let siblingAdmin = fixture.main.appendingPathComponent(".git/worktrees/sibling")
+                let backlink = siblingAdmin.appendingPathComponent("gitdir")
+                try Data((relative ? sibling.appendingPathComponent(".git").path + "\n" : "../../../../sibling/.git\n").utf8).write(to: backlink)
+                let pair = try [Data(contentsOf: sibling.appendingPathComponent(".git")), Data(contentsOf: backlink)]
+                let selected: URL
+                if reclaim {
+                    selected = fixture.linked
+                    try FileManager.default.removeItem(at: selected.appendingPathComponent(".git"))
+                } else {
+                    selected = fixture.root.appendingPathComponent("located")
+                    try FileManager.default.moveItem(at: fixture.linked, to: selected)
+                }
+                let refs = try fixture.git(["show-ref", "--head"])
+                let contents = try Data(contentsOf: selected.appendingPathComponent("marker.txt"))
+                let repository = try RepositoryTestGitRepository(url: fixture.main)
+                var writes: [[String]] = []
+                let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+                    if arguments.starts(with: ["worktree", "repair"]) {
+                        writes.append(arguments)
+                    }
+                    return nil
+                })
+                defer { service.cancel() }
+                try await ready(service, expectedWorktreeCount: 3)
+                let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+                let previewResult = await prepareRepairPreview(service, worktree: tree, path: selected.path)
+                XCTAssertNil(previewResult.error)
+                let preview = try XCTUnwrap(previewResult.preview)
+                XCTAssertEqual(preview.requiresReclaim, reclaim)
+                let result = await confirmRepairPreview(service, preview: preview)
+                XCTAssertNil(result.error, "Git deliberately preserves an unchanged healthy mixed-style sibling")
+                XCTAssertNil(result.preview)
+                XCTAssertEqual(writes.count, 1)
+                XCTAssertTrue(try XCTUnwrap(writes.first).contains(flag))
+                let actualPair = try [Data(contentsOf: sibling.appendingPathComponent(".git")), Data(contentsOf: backlink)]
+                let siblingLink = String(decoding: actualPair[0], as: UTF8.self)
+                let siblingBacklink = String(decoding: actualPair[1], as: UTF8.self).trimmingCharacters(in: .newlines)
+                let normalized = siblingLink.hasPrefix("gitdir: /") == !relative && (siblingBacklink as NSString).isAbsolutePath == !relative
+                XCTAssertTrue(actualPair == pair || normalized, "Git may preserve its healthy mixed pair or normalize both links to the requested style")
+                XCTAssertEqual(try WorktreePaths.canonical(fixture.git(["rev-parse", "--absolute-git-dir"], in: sibling).trimmingCharacters(in: .newlines)), WorktreePaths.canonical(siblingAdmin.path))
+                let backPath = (siblingBacklink as NSString).isAbsolutePath ? siblingBacklink : siblingAdmin.appendingPathComponent(siblingBacklink).path
+                XCTAssertEqual(WorktreePaths.canonical(backPath), WorktreePaths.canonical(sibling.appendingPathComponent(".git").path))
+                let selectedLink = try String(contentsOf: selected.appendingPathComponent(".git"), encoding: .utf8)
+                let selectedBacklink = try String(contentsOf: fixture.main.appendingPathComponent(".git/worktrees/linked/gitdir"), encoding: .utf8)
+                XCTAssertEqual(selectedLink.hasPrefix("gitdir: /"), !relative)
+                XCTAssertEqual((selectedBacklink.trimmingCharacters(in: .newlines) as NSString).isAbsolutePath, !relative)
+                XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
+                XCTAssertEqual(try Data(contentsOf: selected.appendingPathComponent("marker.txt")), contents)
+                XCTAssertEqual(try WorktreePaths.canonical(fixture.git(["rev-parse", "--absolute-git-dir"], in: selected).trimmingCharacters(in: .newlines)), WorktreePaths.canonical(fixture.main.appendingPathComponent(".git/worktrees/linked").path))
+            }
+        }
+    }
+
     func testLocateUsesAndVerifiesCapturedRelativeStyle() async throws {
         for (hasHealthySibling, writesWrongStyle) in [(true, false), (true, true), (false, false), (false, true)] {
             let fixture = try RepairFixture(label: "relative-locate")

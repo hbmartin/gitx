@@ -258,7 +258,7 @@
     {
       "id": "PATH-002",
       "family": "Literal mutation and atomic rejection",
-      "invariant": "Every selected path is validated before any mutation; raw identities never become shell/display text. Queued worktree locate repair revalidates the captured folder and administrative ownership at writer admission, preserving both repositories' links when either identity changes. Repair scope includes every registration Git may touch. Unproven original-location links require a separate single-use reclaim preview; regular administrative strays participate in consent evidence without becoming checkout registrations. Captured canonical executable fingerprints and the working-directory-or-Git-directory inspection rule bind bare and ordinary repository operations. Locate retains the captured effective link style in Git arguments and verifies that style after the write; rejected known registrations provide recovery guidance without changing ownership requirements.",
+      "invariant": "Every selected path is validated before any mutation; raw identities never become shell/display text. Queued worktree locate repair revalidates the captured folder and administrative ownership at writer admission, preserving both repositories' links when either identity changes. Repair scope includes every registration Git may touch. Unproven original-location links require a separate single-use reclaim preview; regular administrative strays participate in consent evidence without becoming checkout registrations. Captured canonical executable fingerprints and the working-directory-or-Git-directory inspection rule bind bare and ordinary repository operations. Locate retains the captured effective link style in Git arguments and verifies that style after the write; rejected known registrations provide recovery guidance without changing ownership requirements. Repair postconditions ignore history/lock contents and permit an unchanged healthy mixed-style sibling only when its gitfile already matches the requested style. Rewritten targets require both requested link styles and exact endpoints.",
       "rootCause": "Partial validation and pathspec metacharacters can mutate the wrong files or leave a partially applied selection. Validating a locate folder only before queueing allows a replacement folder or reused administrative name to inherit mutation authority. Backlink names cannot prove a recreated folder belongs to the repository; treating regular strays as registrations blocks safe recovery, and validating only one moved destination can leave sibling links broken.",
       "sourcePaths": [
         "Classes/git/IndexMutationService.swift",
@@ -563,6 +563,27 @@
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testCompletedRepairAllowsSameStrayObjectContentChangesAndReconcilesBeforeFollowingWriter",
           "role": "valid",
           "oracle": "Execute the held approved repair command once with real Git, change only the same regular stray object to a different byte length, and require successful post-write reconciliation, exact reciprocal links and HEAD/index/refs/payload preservation before FIFO progresses."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
+          "identifier": "GitXCoreTests/WorktreeScopeTests/testRepairPostconditionsPreserveOnlyHealthyUnchangedMixedSiblingLinks",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Accept both unchanged healthy mixed-style orientations only when the gitfile matches the requested style; reject equivalent-endpoint raw rewrites and incorrect repaired styles, preserving identity and endpoint checks."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
+          "identifier": "GitXCoreTests/WorktreeScopeTests/testRepairPostconditionInventoryDoesNotReadHistoryOrLockPayloads",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Fault injected reads prove postconditions never open HEAD or locked, while preparation and consent still inspect their evidence."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testLocateAndReclaimAcceptHealthyMixedSiblingLinksInBothRequestedStyles",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "Run real absolute/relative Locate and Reclaim, verify unchanged mixed or correctly normalized sibling links and directed endpoints, exact one repair command, rewritten target style and unchanged refs/content."
         }
       ]
     },

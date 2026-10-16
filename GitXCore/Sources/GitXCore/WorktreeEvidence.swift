@@ -699,7 +699,7 @@ extension WorktreeLinkInspector {
     }
 
     static func repairPostconditionInventory(commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem) throws -> WorktreeRepairPostconditionInventory {
-        let inventory = try administrativeInventory(commonDirectory: commonDirectory, fileSystem: fileSystem, includingHistory: true) { name, path, node in
+        let inventory = try administrativeInventory(commonDirectory: commonDirectory, fileSystem: fileSystem, includingHistory: false) { name, path, node in
             let fingerprint = try WorktreeFileFingerprint(path: path, node: node)
             let opened = try WorktreeFileFingerprint(path: path, node: fileSystem.readableNode(path))
             guard fingerprint.hasSameObject(as: opened) else { throw WorktreeEvidenceError.changed(path) }
@@ -910,7 +910,8 @@ extension WorktreeLinkInspector {
     }
 
     private static func verifyRepairTarget(_ target: WorktreeRepairTarget, indexedRecords: [Data: [GitWorktree]], commonDirectory: String,
-                                           style: WorktreeLinkStyle?, fileSystem: WorktreeEvidenceFileSystem) throws
+                                           style: WorktreeLinkStyle?, fileSystem: WorktreeEvidenceFileSystem,
+                                           allowingPreservedMixedLinks: Bool = false) throws
     {
         let matching = indexedRecords[target.selectedDirectory.pathIdentity] ?? []
         guard matching.count == 1, let record = matching.first, !record.isMain, !record.isBare, !record.hasForeignLink, !record.hasBrokenLink,
@@ -929,7 +930,15 @@ extension WorktreeLinkInspector {
         else { throw WorktreeEvidenceError.invalidPostcondition(target.path) }
         if let style {
             let backlinkStyle: WorktreeLinkStyle = (backlink as NSString).isAbsolutePath ? .absolute : .relative
-            guard selectedLink.style == style, backlinkStyle == style else { throw WorktreeEvidenceError.invalidPostcondition(target.path) }
+            // Git can leave a healthy sibling's mixed links untouched.
+            // Only its captured, unchanged pair qualifies for this exception.
+            let preserved = allowingPreservedMixedLinks
+                && target.originalIdentity == target.selectedDirectory.pathIdentity
+                && target.selectedLinkTarget == .administrative
+                && target.selectedGitfile == gitfile && target.originalBacklink == backlinkData
+            guard selectedLink.style == style, backlinkStyle == style || preserved else {
+                throw WorktreeEvidenceError.invalidPostcondition(target.path)
+            }
         }
     }
 
@@ -947,7 +956,8 @@ extension WorktreeLinkInspector {
         try validateAbsentLocations(scope.absentLocations, fileSystem: fileSystem)
         let indexed = Dictionary(grouping: records, by: { WorktreePaths.identity($0.path) })
         for target in scope.targets {
-            try verifyRepairTarget(target, indexedRecords: indexed, commonDirectory: commonDirectory, style: style, fileSystem: fileSystem)
+            try verifyRepairTarget(target, indexedRecords: indexed, commonDirectory: commonDirectory, style: style,
+                                   fileSystem: fileSystem, allowingPreservedMixedLinks: true)
         }
     }
 }

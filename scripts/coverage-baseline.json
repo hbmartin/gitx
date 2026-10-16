@@ -80,7 +80,7 @@
     "Classes/Controllers/RepositoryStatusBarPresentation.swift": 1.0,
     "Classes/Controllers/RepositoryToolbarController.swift": 0.995,
     "Classes/Controllers/StagingDiffLoadCoordinator.swift": 0.9965,
-    "Classes/Controllers/StagingDiffPaneController.swift": 0.9727,
+    "Classes/Controllers/StagingDiffPaneController.swift": 0.9742,
     "Classes/Controllers/StagingFileListController.swift": 0.9526,
     "Classes/Controllers/StagingImageReader.swift": 0.9619,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
@@ -210,7 +210,7 @@
     "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
     "Classes/git/RepositoryWatchPaths.swift": 0.98,
-    "Classes/git/RepositoryWorktreeService.swift": 0.9884,
+    "Classes/git/RepositoryWorktreeService.swift": 0.9888,
     "Classes/main.m": 1.0
   },
   "groups": {
@@ -231,7 +231,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9307,
+  "minimumLineCoverage": 0.9308,
   "target": "Half Dark.app",
   "version": 1
 }

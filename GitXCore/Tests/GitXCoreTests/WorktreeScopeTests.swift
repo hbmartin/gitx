@@ -44,6 +44,55 @@ final class WorktreeScopeTests: XCTestCase {
         return GitWorktree(path: checkout.path)
     }
 
+    func testRepairPostconditionsPreserveOnlyHealthyUnchangedMixedSiblingLinks() throws {
+        for style in [WorktreeLinkStyle.absolute, .relative] {
+            let value = try fixture(count: 1)
+            let checkout = value.originals[0]
+            let gitfile = checkout.appendingPathComponent(".git")
+            let backlink = value.administrative[0].appendingPathComponent("gitdir")
+            let absoluteGitfile = Data(("gitdir: " + value.administrative[0].path + "\n").utf8)
+            let relativeGitfile = Data("gitdir: ../main/.git/worktrees/id-0\n".utf8)
+            let absoluteBacklink = Data((gitfile.path + "\n").utf8)
+            let relativeBacklink = Data("../../../../checkout-0/.git\n".utf8)
+            try (style == .absolute ? absoluteGitfile : relativeGitfile).write(to: gitfile)
+            try (style == .absolute ? relativeBacklink : absoluteBacklink).write(to: backlink)
+            let scope = try WorktreeLinkInspector.captureRepairScope(records: value.records, commonDirectory: value.common.path)
+            XCTAssertNoThrow(try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path, style: style))
+
+            // Equivalent endpoints cannot hide a changed, still wrong-style link.
+            let changed = style == .absolute ? "../../../.././checkout-0/.git\n" : checkout.path + "/./.git\n"
+            try Data(changed.utf8).write(to: backlink)
+            XCTAssertThrowsError(try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path, style: style))
+            try (style == .absolute ? absoluteBacklink : relativeBacklink).write(to: backlink)
+            XCTAssertNoThrow(try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path, style: style))
+
+            // A no-op command must not satisfy an explicit request to change gitfile style.
+            try (style == .absolute ? relativeGitfile : absoluteGitfile).write(to: gitfile)
+            let opposite = try WorktreeLinkInspector.captureRepairScope(records: value.records, commonDirectory: value.common.path)
+            XCTAssertThrowsError(try WorktreeLinkInspector.verifyRepairScope(opposite, records: value.records, commonDirectory: value.common.path, style: style))
+        }
+    }
+
+    func testRepairPostconditionInventoryDoesNotReadHistoryOrLockPayloads() throws {
+        let value = try fixture()
+        try Data("keep locked\n".utf8).write(to: value.administrative[0].appendingPathComponent("locked"))
+        let scope = try WorktreeLinkInspector.captureRepairScope(records: value.records, commonDirectory: value.common.path)
+        let base = WorktreeEvidenceFileSystem.live
+        var historyReads: [String] = []
+        let fileSystem = WorktreeEvidenceFileSystem(metadata: base.metadata, read: { path in
+            if path.hasSuffix("/HEAD") || path.hasSuffix("/locked") {
+                historyReads.append(path)
+                throw WorktreeEvidenceError.changed(path)
+            }
+            return try base.read(path)
+        }, names: base.names, readLink: base.readLink, readableNode: base.readableNode)
+        XCTAssertNoThrow(try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path,
+                                                                     style: .absolute, fileSystem: fileSystem))
+        XCTAssertTrue(historyReads.isEmpty)
+        XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairScope(records: value.records, commonDirectory: value.common.path, fileSystem: fileSystem))
+        XCTAssertFalse(historyReads.isEmpty, "Preparation must retain complete consent evidence")
+    }
+
     func testOwnershipSeedsAndPreparationAvoidHistoryPayloadsAndPreparationEnumeration() throws {
         for count in [0, 1, 8] {
             let value = try fixture(count: count)
@@ -451,8 +500,8 @@ final class WorktreeScopeTests: XCTestCase {
         }
     }
 
-    func testPostconditionStillRejectsUnreadableStraysAndUnsafeAdministrativeFiles() throws {
-        for metadata in ["stray", "HEAD", "locked"] {
+    func testPostconditionRejectsUnreadableStraysAndLinksButIgnoresHistoryPayloads() throws {
+        for metadata in ["stray", "gitdir", "commondir", "HEAD", "locked"] {
             for unsupported in [false, true] {
                 let value = try fixture(count: 1)
                 let stray = value.common.appendingPathComponent("worktrees/.DS_Store")
@@ -475,12 +524,17 @@ final class WorktreeScopeTests: XCTestCase {
                     }
                     return try base.readableNode(current)
                 })
-                // A missing locked file has no payload to fail reading; create it
-                // before the failure seam so the postcondition must inspect it.
+                // Consent must still inspect lock payloads, even though repair
+                // postconditions concern only registration ownership and links.
                 if metadata == "locked", !unsupported {
                     try Data("reason\n".utf8).write(to: path)
                 }
-                XCTAssertThrowsError(try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path, fileSystem: unreadable), metadata)
+                if metadata == "HEAD" || metadata == "locked" {
+                    XCTAssertNoThrow(try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path, fileSystem: unreadable), metadata)
+                    XCTAssertThrowsError(try WorktreeLinkInspector.validateRepairScope(scope, commonDirectory: value.common.path, fileSystem: unreadable), metadata)
+                } else {
+                    XCTAssertThrowsError(try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path, fileSystem: unreadable), metadata)
+                }
             }
         }
     }
@@ -665,8 +719,8 @@ final class WorktreeScopeTests: XCTestCase {
                     try WorktreeLinkInspector.verifyRepairScope(scope, records: value.records, commonDirectory: value.common.path, style: .absolute, fileSystem: counted)
                 }
                 XCTAssertEqual(names, 2)
-                XCTAssertEqual(heads, count)
-                XCTAssertEqual(reads, 6 * count)
+                XCTAssertEqual(heads, phase == 0 ? count : 0)
+                XCTAssertEqual(reads, (phase == 0 ? 6 : 5) * count)
                 XCTAssertLessThanOrEqual(metadata, 24 * count + 8)
             }
         }
