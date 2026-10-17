@@ -2143,9 +2143,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.updateKeys()
         let workingLeaf = try XCTUnwrap(waitForTreeNode(fullPath: "uncommitted.txt"))
         historyController.treeController.setSelectionIndexPath(workingLeaf.indexPath)
+        XCTAssertEqual((historyController.treeController.selectedObjects.first as? PBGitTree)?.fullPath, "uncommitted.txt")
         modeControl.selectedSegment = 3
         fileView.perform(NSSelectorFromString("showFile"))
-        pumpRunLoop(for: 1.0)
         let expectedSyntheticDiff =
             "diff --git a/uncommitted.txt b/uncommitted.txt\n" +
             "new file mode 100644\n" +
@@ -2158,7 +2158,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             expectedSyntheticDiff
         )
         XCTAssertTrue(
-            nativeView.textView.string.contains("+working state"),
+            waitForCondition { nativeView.textView.string.contains("+working state") },
             "Rendered split diff did not contain the synthetic addition:\n\(nativeView.textView.string)"
         )
         let selectedWorkingState = try XCTUnwrap(workingState)

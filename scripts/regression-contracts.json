@@ -1072,6 +1072,12 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Revoke selection/submission eligibility after capture, reject confirmation before a second snapshot or write, preserve fixture names/content and allow the next writer validation."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testSelectionReconciliationWorkingStateStatusAndTreeRestoration",
+          "role": "boundary",
+          "oracle": "Select the actual untracked working-state tree node, then await its rendered synthetic addition instead of a fixed delay; compare the independent full synthetic diff formatter output and preserve selection/restoration assertions."
         }
       ]
     },
