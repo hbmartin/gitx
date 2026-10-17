@@ -4754,9 +4754,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let confirmations = stub.confirmationCount
         try fixture.write("discard me\n", to: "nested/tracked.txt")
         refreshIndex()
-        unstaged.setSelectedObjects(
-            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
+        XCTAssertTrue(waitForCondition(timeout: 20) {
+            (unstaged.arrangedObjects as? [PBChangedFile])?.contains { $0.path == "nested/tracked.txt" } == true
+        }, "the refreshed staging presentation contains the newly modified file")
+        let modified = try XCTUnwrap(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.first { $0.path == "nested/tracked.txt" }
         )
+        XCTAssertTrue(unstaged.setSelectedObjects([modified]))
         waitForIndexUpdate { pane.perform(NSSelectorFromString("discardFiles:"), with: nil) }
         XCTAssertTrue(waitForCondition { stub.confirmationCount > confirmations }, "plain discard confirms first")
         XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
