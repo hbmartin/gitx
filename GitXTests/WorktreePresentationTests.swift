@@ -4,6 +4,51 @@ import XCTest
 
 @MainActor
 final class WorktreePresentationTests: XCTestCase {
+    private var beforeGitPreferenceRestoration: (@MainActor () -> Void)?
+
+    func testFixtureCleanupDrainsHeldDiscoveryBeforeRestoringGitPreferences() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable") as? NSObject
+        var restorationCount = 0
+        addTeardownBlock { @MainActor in
+            XCTAssertEqual(restorationCount, 1)
+            XCTAssertEqual(defaults.object(forKey: "gitExecutable") as? NSObject, previous)
+        }
+        selectGit()
+        let fixture = try makeFixture()
+        let origin = try await installService(in: fixture)
+        let checkpoint = WorktreeWorkerCheckpoint()
+        defer { checkpoint.resume() }
+        origin.service.discoveryEvidenceObserver = { checkpoint.wait() }
+        origin.service.refresh()
+        await fulfillment(of: [checkpoint.entered], timeout: 5)
+        XCTAssertTrue(checkpoint.isWaiting)
+        var cleanupStarted = false
+        var cleanupFinished = false
+        beforeGitPreferenceRestoration = {
+            restorationCount += 1
+            XCTAssertTrue(cleanupFinished, "Preference restoration must follow the worker's main-actor acknowledgement")
+            XCTAssertFalse(checkpoint.isWaiting)
+            XCTAssertTrue(checkpoint.wasReleased)
+            XCTAssertFalse(checkpoint.didTimeout)
+        }
+        let cleanup = Task { @MainActor in
+            cleanupStarted = true
+            let succeeded = await self.cleanupFixture(fixture)
+            cleanupFinished = true
+            return succeeded
+        }
+        await waitUntil { cleanupStarted }
+        await drainCallbacks()
+        XCTAssertFalse(cleanupFinished, "Cancellation alone must not make a held worker appear drained")
+        XCTAssertEqual(restorationCount, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root.path))
+        checkpoint.resume()
+        let succeeded = await cleanup.value
+        XCTAssertTrue(succeeded)
+        XCTAssertFalse(checkpoint.didTimeout)
+    }
+
     #if DEBUG
         @MainActor
         private final class QueueOwnerState { var current = true }
@@ -1819,7 +1864,10 @@ final class WorktreePresentationTests: XCTestCase {
     private func preserveGitPreferenceUntilTeardown() {
         let restoration = GitPreferenceRestoration()
         // Registered first so every later fixture teardown drains before this notification.
-        addTeardownBlock { @MainActor in restoration.restore() }
+        addTeardownBlock { @MainActor in
+            self.beforeGitPreferenceRestoration?()
+            restoration.restore()
+        }
     }
 
     private func selectGit() {
