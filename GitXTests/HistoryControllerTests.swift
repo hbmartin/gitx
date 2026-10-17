@@ -2281,6 +2281,46 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(waitForCondition(timeout: 10) { graphQueue.operationCount == 0 })
     }
 
+    func testBackgroundHistoryRefreshPreservesSelectionUntilAndAfterItsSnapshotArrives() throws {
+        try assertSelectionAcrossHistorySnapshot(changesRevision: false)
+    }
+
+    private func assertSelectionAcrossHistorySnapshot(changesRevision: Bool) throws {
+        let historyList = try XCTUnwrap(repository.revisionList)
+        XCTAssertTrue(waitForCondition(timeout: 20) { !historyList.isUpdating })
+        let commits = loadedCommits()
+        let latest = try XCTUnwrap(commits.first)
+        let previous = try XCTUnwrap(commits.dropFirst().first)
+        historyController.commitController.content = [previous]
+        historyController.selectCommit(previous.oid)
+        XCTAssertEqual(historyController.selectedCommits.first?.sha, previous.sha)
+        defer {
+            // Let any real load requested by currentBranch finish before teardown.
+            XCTAssertTrue(waitForCondition(timeout: 20) {
+                let parser = historyList.value(forKey: "currentRevList") as? NSObject
+                let queue = historyList.value(forKey: "graphQueue") as? OperationQueue
+                return parser?.value(forKey: "parsing") as? Bool != true && (queue?.operationCount ?? 0) == 0
+            })
+            historyList.isUpdating = false
+        }
+
+        historyList.isUpdating = true
+        if changesRevision {
+            repository.currentBranch = PBGitRevSpecifier(parameters: [latest.sha + "^{commit}"])
+            // A load-start notification may arrive after the new revision's KVO.
+            // Main-actor delivery is held here while the old snapshot is mounted.
+            historyList.willChangeValue(forKey: "isUpdating")
+            historyList.didChangeValue(forKey: "isUpdating")
+        }
+        historyController.commitController.content = [latest, previous]
+        historyList.isUpdating = false
+        XCTAssertEqual(
+            historyController.selectedCommits.first?.sha,
+            changesRevision ? latest.sha : previous.sha,
+            "Ordinary refresh preserves selection; explicit revision changes select the new snapshot's tip"
+        )
+    }
+
     func testHistoryFirstCommitAndScrollBoundaries() {
         let commits = loadedCommits()
         let workingState = PBUncommittedChanges(repository: repository)
