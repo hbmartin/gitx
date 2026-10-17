@@ -2143,9 +2143,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.updateKeys()
         let workingLeaf = try XCTUnwrap(waitForTreeNode(fullPath: "uncommitted.txt"))
         historyController.treeController.setSelectionIndexPath(workingLeaf.indexPath)
+        XCTAssertEqual((historyController.treeController.selectedObjects.first as? PBGitTree)?.fullPath, "uncommitted.txt")
         modeControl.selectedSegment = 3
         fileView.perform(NSSelectorFromString("showFile"))
-        pumpRunLoop(for: 1.0)
         let expectedSyntheticDiff =
             "diff --git a/uncommitted.txt b/uncommitted.txt\n" +
             "new file mode 100644\n" +
@@ -2158,7 +2158,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             expectedSyntheticDiff
         )
         XCTAssertTrue(
-            nativeView.textView.string.contains("+working state"),
+            waitForCondition { nativeView.textView.string.contains("+working state") },
             "Rendered split diff did not contain the synthetic addition:\n\(nativeView.textView.string)"
         )
         let selectedWorkingState = try XCTUnwrap(workingState)
@@ -2279,6 +2279,118 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(historyList.isUpdating)
         currentRevList.setValue(currentCommits, forKey: "commits")
         XCTAssertTrue(waitForCondition(timeout: 10) { graphQueue.operationCount == 0 })
+    }
+
+    func testBackgroundHistoryRefreshPreservesSelectionUntilAndAfterItsSnapshotArrives() throws {
+        try assertSelectionAcrossHistorySnapshot(changesRevision: false)
+    }
+
+    func testForcedHistorySelectionWaitsForTheNewRevisionSnapshot() throws {
+        try assertSelectionAcrossHistorySnapshot(changesRevision: true)
+    }
+
+    func testHistorySelectionUpdatePreservesBrowsingOrSelectsTheRequestedRevision() {
+        let coordinator = PBHistoryStateCoordinator()
+        let snapshot = NSObject()
+        let cases: [(Bool, Bool, HistorySelectionUpdate)] = [
+            (false, true, .preserve),
+            (false, false, .selectRevision),
+            (true, true, .selectRevision),
+            (true, false, .selectRevision),
+        ]
+        for (forced, hasSelection, expected) in cases {
+            for isUpdating in [false, true] {
+                XCTAssertEqual(coordinator.selectionUpdate(forceSelection: forced, hasSelection: hasSelection,
+                                                           isUpdating: isUpdating, snapshot: snapshot, hasCommits: true), expected)
+            }
+        }
+    }
+
+    func testForcedHistorySelectionUsesTheFirstNewNonemptySnapshotAndFinishesEmptyLoads() {
+        let coordinator = PBHistoryStateCoordinator()
+        let old = NSObject()
+        let replacement = NSObject()
+        coordinator.beginRevisionSelection(snapshot: old, isUpdating: true)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: old, hasCommits: true), .waitForSnapshot)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: replacement, hasCommits: false), .waitForSnapshot)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: replacement, hasCommits: true), .selectRevision)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: false, hasSelection: true,
+                                                   isUpdating: true, snapshot: replacement, hasCommits: true), .preserve)
+
+        coordinator.beginRevisionSelection(snapshot: nil, isUpdating: true)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: false,
+                                                   isUpdating: true, snapshot: nil, hasCommits: false), .waitForSnapshot)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: false,
+                                                   isUpdating: false, snapshot: nil, hasCommits: false), .selectRevision)
+
+        coordinator.beginRevisionSelection(snapshot: old, isUpdating: false)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: old, hasCommits: true), .selectRevision)
+        coordinator.beginRevisionSelection(snapshot: old, isUpdating: true)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: false, hasSelection: true,
+                                                   isUpdating: true, snapshot: old, hasCommits: true), .preserve)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: old, hasCommits: true), .selectRevision)
+    }
+
+    func testPendingHistorySelectionDoesNotRetainItsPreviousSnapshot() {
+        let coordinator = PBHistoryStateCoordinator()
+        weak var previous: NSObject?
+        autoreleasepool {
+            let snapshot = NSObject()
+            previous = snapshot
+            coordinator.beginRevisionSelection(snapshot: snapshot, isUpdating: true)
+        }
+        XCTAssertNil(previous)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: false,
+                                                   isUpdating: true, snapshot: NSObject(), hasCommits: true), .selectRevision)
+    }
+
+    private func assertSelectionAcrossHistorySnapshot(changesRevision: Bool) throws {
+        let historyList = try XCTUnwrap(repository.revisionList)
+        XCTAssertTrue(waitForCondition(timeout: 20) { !historyList.isUpdating })
+        let commits = loadedCommits()
+        let latest = try XCTUnwrap(commits.first)
+        let previous = try XCTUnwrap(commits.dropFirst().first)
+        historyList.commits = [previous]
+        historyController.commitController.rearrangeObjects()
+        historyController.selectCommit(previous.oid)
+        XCTAssertEqual(historyController.selectedCommits.first?.sha, previous.sha)
+        XCTAssertEqual((historyController.commitController.arrangedObjects as? [PBGitCommit])?.map(\.sha), [previous.sha])
+        defer {
+            // Let any real load requested by currentBranch finish before teardown.
+            XCTAssertTrue(waitForCondition(timeout: 20) {
+                let parser = historyList.value(forKey: "currentRevList") as? NSObject
+                let queue = historyList.value(forKey: "graphQueue") as? OperationQueue
+                return parser?.value(forKey: "parsing") as? Bool != true && (queue?.operationCount ?? 0) == 0
+            })
+            historyList.isUpdating = false
+        }
+
+        historyList.isUpdating = true
+        if changesRevision {
+            repository.currentBranch = PBGitRevSpecifier(parameters: [latest.sha + "^{commit}"])
+            // A load-start notification may arrive after the new revision's KVO.
+            // Main-actor delivery is held here while the old snapshot is mounted.
+            historyList.willChangeValue(forKey: "isUpdating")
+            historyList.didChangeValue(forKey: "isUpdating")
+        }
+        historyList.commits = [latest, previous]
+        historyController.commitController.rearrangeObjects()
+        XCTAssertEqual(
+            historyController.selectedCommits.first?.sha,
+            changesRevision ? latest.sha : previous.sha,
+            "The first replacement snapshot may select the requested tip before the full history load finishes"
+        )
+        historyList.isUpdating = false
+        XCTAssertEqual(
+            historyController.selectedCommits.first?.sha,
+            changesRevision ? latest.sha : previous.sha,
+            "Ordinary refresh preserves selection; explicit revision changes select the new snapshot's tip"
+        )
     }
 
     func testHistoryFirstCommitAndScrollBoundaries() {
@@ -4754,9 +4866,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let confirmations = stub.confirmationCount
         try fixture.write("discard me\n", to: "nested/tracked.txt")
         refreshIndex()
-        unstaged.setSelectedObjects(
-            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
+        XCTAssertTrue(waitForCondition(timeout: 20) {
+            (unstaged.arrangedObjects as? [PBChangedFile])?.contains { $0.path == "nested/tracked.txt" } == true
+        }, "the refreshed staging presentation contains the newly modified file")
+        let modified = try XCTUnwrap(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.first { $0.path == "nested/tracked.txt" }
         )
+        XCTAssertTrue(unstaged.setSelectedObjects([modified]))
         waitForIndexUpdate { pane.perform(NSSelectorFromString("discardFiles:"), with: nil) }
         XCTAssertTrue(waitForCondition { stub.confirmationCount > confirmations }, "plain discard confirms first")
         XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })

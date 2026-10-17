@@ -934,11 +934,9 @@ final class StagingDiffPaneController: NSObject {
                     group.notify(queue: .main) {
                         // swift6-safety-justification: DispatchGroup delivers this notification on the explicitly selected main queue.
                         MainActor.assumeIsolated {
-                            if writer.isBusy {
-                                closeAndDrain(repository: repository, panes: panes, completion: completion)
-                            } else {
-                                completion()
-                            }
+                            // Producer delivery can admit writer work after
+                            // the first marker. Establish quiescence again.
+                            writer.drainForTesting(completion: completion)
                         }
                     }
                 }
@@ -1014,8 +1012,18 @@ final class StagingDiffPaneController: NSObject {
                                        beforeValidation: @escaping @MainActor @Sendable () -> Void,
                                        completion: @escaping @MainActor @Sendable (NSError?) -> Void)
         {
+            prepareAndValidate(repository: repository, runner: runner, files: files, beforeValidation: beforeValidation,
+                               eligibility: { true }, completion: completion)
+        }
+
+        @objc(prepareAndValidateWithRepository:runner:files:beforeValidation:eligibility:completion:)
+        static func prepareAndValidate(repository: PBGitRepository, runner: IndexCommandRunning, files: [PBChangedFile],
+                                       beforeValidation: @escaping @MainActor @Sendable () -> Void,
+                                       eligibility: @escaping @MainActor @Sendable () -> Bool,
+                                       completion: @escaping @MainActor @Sendable (NSError?) -> Void)
+        {
             let pane = StagingDiffPaneController(repository: repository, diffRunner: runner)
-            pane.prepareDiscard(files: files, eligibility: { true }) { authorization, error in
+            pane.prepareDiscard(files: files, eligibility: eligibility) { authorization, error in
                 guard let authorization else { completion(error); return }
                 beforeValidation()
                 let writer = IndexWriterCoordinator.coordinator(for: repository)

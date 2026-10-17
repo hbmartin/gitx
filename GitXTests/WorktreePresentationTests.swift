@@ -4,16 +4,294 @@ import XCTest
 
 @MainActor
 final class WorktreePresentationTests: XCTestCase {
-    func testQueuedGenericGitFailureIsPresentedInItsLiveOriginWindowAndReleasesSharedFIFO() async throws {
+    private var beforeGitPreferenceRestoration: (@MainActor () -> Void)?
+    private var gitPreferenceRestoration: GitPreferenceRestoration?
+    private var drainedFixtures: [Fixture] = []
+
+    func testFixtureCleanupDrainsHeldDiscoveryBeforeRestoringGitPreferences() async throws {
         let defaults = UserDefaults.standard
-        let previousGit = defaults.object(forKey: "gitExecutable")
-        defaults.set("/usr/bin/git", forKey: "gitExecutable")
-        defer {
-            defaults.set(previousGit, forKey: "gitExecutable")
-            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        let previous = defaults.object(forKey: "gitExecutable") as? NSObject
+        var restorationCount = 0
+        addTeardownBlock { @MainActor in
+            XCTAssertEqual(restorationCount, 1)
+            XCTAssertEqual(defaults.object(forKey: "gitExecutable") as? NSObject, previous)
         }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
+        let origin = try await installService(in: fixture)
+        let checkpoint = WorktreeWorkerCheckpoint()
+        defer { checkpoint.resume() }
+        origin.service.discoveryEvidenceObserver = { checkpoint.wait() }
+        origin.service.refresh()
+        await fulfillment(of: [checkpoint.entered], timeout: 5)
+        XCTAssertTrue(checkpoint.isWaiting)
+        var cleanupStarted = false
+        var cleanupFinished = false
+        beforeGitPreferenceRestoration = {
+            restorationCount += 1
+            XCTAssertTrue(cleanupFinished, "Preference restoration must follow the worker's main-actor acknowledgement")
+            XCTAssertFalse(checkpoint.isWaiting)
+            XCTAssertTrue(checkpoint.wasReleased)
+            XCTAssertFalse(checkpoint.didTimeout)
+        }
+        let cleanup = Task { @MainActor in
+            cleanupStarted = true
+            let succeeded = await self.cleanupFixture(fixture)
+            cleanupFinished = true
+            return succeeded
+        }
+        await waitUntil { cleanupStarted }
+        await drainCallbacks()
+        XCTAssertFalse(cleanupFinished, "Cancellation alone must not make a held worker appear drained")
+        XCTAssertEqual(restorationCount, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root.path))
+        checkpoint.resume()
+        let succeeded = await cleanup.value
+        XCTAssertTrue(succeeded)
+        XCTAssertFalse(checkpoint.didTimeout)
+    }
+
+    func testFixtureTeardownRestoresGitOnceBeforeRemovingAllDrainedFixtures() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable") as? NSObject
+        var restorationCount = 0
+        var fixtureRoots: [URL] = []
+        addTeardownBlock { @MainActor in
+            XCTAssertEqual(restorationCount, 1, "One test restores its original preference once, even when setup helpers select Git repeatedly")
+            XCTAssertEqual(defaults.object(forKey: "gitExecutable") as? NSObject, previous)
+            XCTAssertEqual(fixtureRoots.count, 2)
+            for root in fixtureRoots {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: root.path), "A drained fixture is deleted after preference restoration")
+            }
+        }
+        selectGit()
+        let first = try makeFixture()
+        fixtureRoots.append(first.root)
+        _ = try await installService(in: first)
+        selectGit()
+        let second = try makeFixture()
+        fixtureRoots.append(second.root)
+        _ = try await installService(in: second)
+        beforeGitPreferenceRestoration = {
+            restorationCount += 1
+            for fixture in [first, second] {
+                XCTAssertTrue(fixture.services.isEmpty && fixture.retiredServices.isEmpty, "All fixture services must drain before any preference restoration")
+                XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root.path), "Fixture files must outlive preference restoration")
+            }
+        }
+    }
+
+    #if DEBUG
+        @MainActor
+        private final class QueueOwnerState { var current = true }
+
+        func testPresentationQueueDiscardsLatePreparationAfterOwnerRevocation() async throws {
+            for invalidatesQueue in [false, true] {
+                let queue = PBWorktreePresentationQueueTestHarness()
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                defer { queue.invalidate(); window.close() }
+                let owner = QueueOwnerState()
+                var ready: (@MainActor (PBWorktreePreparedPresentationTestValue?) -> Void)?
+                var discarded = 0
+                var presented = 0
+                var retired = 0
+                queue.enqueue(window: window, ownerIsCurrent: { owner.current }, prepare: { ready = $0 }, discard: { retired += 1 })
+                await waitUntil { ready != nil }
+                let delivery = try XCTUnwrap(ready)
+                owner.current = false
+                if invalidatesQueue {
+                    queue.invalidate()
+                }
+                delivery(.init(finishesWhenSheetEnds: false, present: { _ in presented += 1 }, discard: { discarded += 1 }))
+                await waitUntil { !queue.hasPendingPresentations }
+                XCTAssertEqual(presented, 0)
+                XCTAssertEqual(discarded, 1, "A late prepared result relinquishes its single-use authority exactly once")
+                XCTAssertEqual(retired, 1)
+                XCTAssertNil(window.attachedSheet)
+            }
+        }
+
+        func testPresentationQueueRevokesPreparedAndPendingOwnersBehindANewSheet() async throws {
+            let queue = PBWorktreePresentationQueueTestHarness()
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { queue.invalidate(); window.close() }
+            let owner = QueueOwnerState()
+            var ready: (@MainActor (PBWorktreePreparedPresentationTestValue?) -> Void)?
+            var discarded = 0
+            var presented = 0
+            var retired = 0
+            queue.enqueue(window: window, ownerIsCurrent: { owner.current }, prepare: { ready = $0 }, discard: { retired += 1 })
+            queue.enqueue(window: window, ownerIsCurrent: { false }, prepare: { _ in XCTFail("An expired pending owner must not prepare") }, discard: { retired += 1 })
+            await waitUntil { ready != nil }
+            let occupant = unrelatedSheet(on: window)
+            try XCTUnwrap(ready)(.init(finishesWhenSheetEnds: false, present: { _ in presented += 1 }, discard: { discarded += 1 }))
+            await drainCallbacks()
+            XCTAssertTrue(queue.hasPendingPresentations)
+            XCTAssertTrue(window.attachedSheet === occupant.window)
+            owner.current = false
+            window.endSheet(occupant.window, returnCode: .cancel)
+            await waitUntil { !queue.hasPendingPresentations && window.attachedSheet == nil }
+            XCTAssertEqual(presented, 0)
+            XCTAssertEqual(discarded, 1)
+            XCTAssertEqual(retired, 2)
+        }
+
+        func testPresentationQueueInvalidationEndsItsOwnPresentedSheetExactlyOnce() async {
+            let queue = PBWorktreePresentationQueueTestHarness()
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { queue.invalidate(); window.close() }
+            let alert = NSAlert()
+            alert.messageText = "Owner-scoped diagnostic presentation"
+            alert.addButton(withTitle: "Cancel")
+            var responses: [NSApplication.ModalResponse] = []
+            var discarded = 0
+            queue.enqueue(window: window, ownerIsCurrent: { true }, prepare: { ready in
+                ready(.init(finishesWhenSheetEnds: false, present: { done in
+                    alert.beginSheetModal(for: window) { response in responses.append(response); done() }
+                }, discard: { discarded += 1 }))
+            }, discard: {})
+            await waitUntil { window.attachedSheet === alert.window }
+            queue.invalidate()
+            await waitUntil { responses.count == 1 && window.attachedSheet == nil }
+            XCTAssertEqual(responses, [.cancel])
+            XCTAssertEqual(discarded, 1)
+            XCTAssertFalse(queue.hasPendingPresentations)
+        }
+
+        func testSwiftLocateCompletesOrRejectsChangedFinalEvidenceWithoutLosingAdmission() async throws {
+            selectGit()
+            for changesEvidence in [false, true] {
+                let journey = try await movedRepairJourney()
+                let service = journey.origin.service
+                let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+                journey.window.endSheet(journey.style, returnCode: .alertThirdButtonReturn)
+                await waitUntil { journey.window.attachedSheet == nil }
+                let checkpoint = WorktreeWorkerCheckpoint()
+                if changesEvidence {
+                    service.repairValidationObserver = { checkpoint.wait() }
+                    service.repairValidationResultObserver = { checkpoint.finish() }
+                    checkpoint.expectResult()
+                }
+                addTeardownBlock { @MainActor in
+                    checkpoint.resume()
+                    if checkpoint.expectsResult {
+                        await self.fulfillment(of: [checkpoint.finishedExpectation()], timeout: 15)
+                    }
+                    await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
+                }
+                let done = expectation(description: "Swift Locate delivers its terminal result")
+                var completed = 0
+                var failure: NSError?
+                service.beginRepairForTesting(worktree: tree, movedTo: journey.fixture.linked.path, relativePaths: false, ownerIsCurrent: { true }) { preview, succeeded, error in
+                    XCTAssertNil(preview, "A proven moved checkout requires no additional consent")
+                    if succeeded {
+                        completed += 1
+                    }
+                    failure = error as NSError?
+                    done.fulfill()
+                }
+                if changesEvidence {
+                    await fulfillment(of: [checkpoint.entered], timeout: 5)
+                    try Data("foreign link must survive final validation\n".utf8).write(to: journey.fixture.linked.appendingPathComponent(".git"))
+                    checkpoint.resume()
+                }
+                await fulfillment(of: [done], timeout: 15)
+                if changesEvidence {
+                    XCTAssertNotNil(failure)
+                    XCTAssertEqual(completed, 0)
+                    XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+                    XCTAssertEqual(try String(contentsOf: journey.fixture.linked.appendingPathComponent(".git"), encoding: .utf8), "foreign link must survive final validation\n")
+                } else {
+                    XCTAssertNil(failure)
+                    XCTAssertEqual(completed, 1)
+                    try assertRepairedJourney(journey, relative: false)
+                }
+                try await assertFollowingPreviewProgresses(journey)
+            }
+        }
+
+        func testReadOnlyRepairPreviewRejectsRevokedAndConsumedTokensWithoutWriting() async throws {
+            selectGit()
+            for revokesAfterRequest in [false, true] {
+                let fixture = try makeFixture()
+                let origin = try await installService(in: fixture)
+                let service = origin.service
+                try FileManager.default.removeItem(at: fixture.linked.appendingPathComponent(".git"))
+                service.refresh()
+                await waitUntil { service.worktrees.contains { $0.hasBrokenLink } }
+                let requested = expectation(description: "Swift repair releases admission for consent")
+                var captured: PBWorktreeRepairPreview?
+                service.beginRepairForTesting(worktree: nil, movedTo: nil, relativePaths: false, ownerIsCurrent: { true }) { preview, completed, error in
+                    XCTAssertNil(error)
+                    XCTAssertFalse(completed)
+                    captured = preview
+                    requested.fulfill()
+                }
+                await fulfillment(of: [requested], timeout: 15)
+                let original = try XCTUnwrap(captured)
+                let refreshed = expectation(description: "read-only refresh replaces its single-use token without writing")
+                service.refreshRepairPreviewForTesting(original, ownerIsCurrent: { true }) { preview, changed, error in
+                    XCTAssertNil(error)
+                    XCTAssertFalse(changed)
+                    XCTAssertNotNil(preview)
+                    captured = preview
+                    refreshed.fulfill()
+                }
+                await fulfillment(of: [refreshed], timeout: 15)
+                let preview = try XCTUnwrap(captured)
+                let owner = QueueOwnerState()
+                XCTAssertFalse(preview === original)
+                for current in [false, true] {
+                    let holdsRead = !current && revokesAfterRequest
+                    let arguments = ["worktree", "list", "--porcelain", "-z"]
+                    let heldOutput = holdsRead ? try Data(fixture.git(arguments).utf8) : nil
+                    if holdsRead {
+                        origin.gate.holdNextArguments = arguments
+                    }
+                    owner.current = current || revokesAfterRequest
+                    let rejected = expectation(description: current ? "consumed preview is rejected" : "revoked owner is cancelled")
+                    service.refreshRepairPreviewForTesting(preview, ownerIsCurrent: { owner.current }) { renewed, _, error in
+                        XCTAssertNil(renewed)
+                        guard let error else { XCTFail("Revoked and consumed tokens must not refresh"); rejected.fulfill(); return }
+                        if current {
+                            XCTAssertTrue((error as NSError).localizedFailureReason?.contains("consumed") == true)
+                        } else {
+                            XCTAssertTrue(WorktreePresentationPolicy.isExpectedCancellation(error as NSError))
+                        }
+                        rejected.fulfill()
+                    }
+                    if holdsRead {
+                        // Entry accepted this owner; revoke it before the held discovery can deliver.
+                        owner.current = false
+                        await waitUntil { origin.gate.writer.isPending }
+                        try origin.gate.writer.finish(XCTUnwrap(heldOutput))
+                    }
+                    await fulfillment(of: [rejected], timeout: 15)
+                }
+                let following = expectation(description: "a fresh consent request progresses after owner revocation")
+                service.beginRepairForTesting(worktree: nil, movedTo: nil, relativePaths: false, ownerIsCurrent: { true }) { renewed, completed, error in
+                    XCTAssertNil(error)
+                    XCTAssertFalse(completed)
+                    XCTAssertNotNil(renewed)
+                    if let renewed {
+                        service.discardRepairPreview(renewed)
+                    }
+                    following.fulfill()
+                }
+                await fulfillment(of: [following], timeout: 15)
+                XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+                XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.appendingPathComponent(".git").path))
+            }
+        }
+
+    #endif
+
+    func testQueuedGenericGitFailureIsPresentedInItsLiveOriginWindowAndReleasesSharedFIFO() async throws {
+        selectGit()
+        let fixture = try makeFixture()
         let blocker = try await installService(in: fixture, holdsWriter: true)
         let origin = try await installService(in: fixture)
         let following = try await installService(in: fixture)
@@ -33,9 +311,7 @@ final class WorktreePresentationTests: XCTestCase {
         let item = NSMenuItem()
         item.representedObject = tree
         let blockerCompleted = expectation(description: "controlled writer released")
-        blockerCompleted.assertForOverFulfill = true
         let followingCompleted = expectation(description: "following real writer reconciled")
-        followingCompleted.assertForOverFulfill = true
         enqueue(blocker.service, command: .lock(path: fixture.linked.path, reason: "barrier")) { _, error in
             XCTAssertNil(error)
             blockerCompleted.fulfill()
@@ -129,11 +405,9 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testUnchangedOwnersAndDocumentRepositoryPrecedenceKeepALiveGitFailurePresentable() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+        selectGit()
         for usesDocument in [false, true] {
-            let fixture = try Fixture()
-            defer { fixture.cleanup() }
+            let fixture = try makeFixture()
             let origin = try await installService(in: fixture)
             let alternative = try await installService(in: fixture)
             let following = try await installService(in: fixture)
@@ -164,7 +438,6 @@ final class WorktreePresentationTests: XCTestCase {
             }
             controller.repository = origin.repository
             let completed = expectation(description: "writer after current-owner error")
-            completed.assertForOverFulfill = true
             enqueue(following.service, command: .lock(path: fixture.linked.path, reason: "following")) { _, error in
                 XCTAssertNil(error); completed.fulfill()
             }
@@ -178,10 +451,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testHeldGitFailureIsDiscardedWhenTheRepositoryServiceIsReplaced() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         let origin = try await installService(in: fixture)
         let replacement = try await installService(in: fixture)
         let following = try await installService(in: fixture)
@@ -200,7 +471,6 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertTrue(controller.repository === origin.repository)
         XCTAssertTrue(controller.repository?.worktreeService === replacement.service)
         let completed = expectation(description: "writer after replaced-service failure")
-        completed.assertForOverFulfill = true
         enqueue(following.service, command: .lock(path: fixture.linked.path, reason: "following")) { _, error in
             XCTAssertNil(error); completed.fulfill()
         }
@@ -220,11 +490,9 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testHeldRealGitFailureDoesNotPresentAfterOwnerReplacementAndRestoration() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+        selectGit()
         for replacement in OwnerReplacement.allCases {
-            let fixture = try Fixture()
-            defer { fixture.cleanup() }
+            let fixture = try makeFixture()
             let origin = try await installService(in: fixture)
             let alternative = try await installService(in: fixture)
             let following = try await installService(in: fixture)
@@ -242,7 +510,6 @@ final class WorktreePresentationTests: XCTestCase {
             XCTAssertTrue(String(decoding: refused.data, as: UTF8.self).contains("not locked"))
             replaceAndRestore(replacement, controller: controller, origin: origin, alternative: alternative, window: window)
             let completed = expectation(description: "following writer after stale failure")
-            completed.assertForOverFulfill = true
             enqueue(following.service, command: .lock(path: fixture.linked.path, reason: "following")) { _, error in
                 XCTAssertNil(error); completed.fulfill()
             }
@@ -256,10 +523,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testDeferredRemoveAnywayConfirmationLosesAuthorityAfterOwnerReplacementAndRestoration() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
         let dirty = fixture.linked.appendingPathComponent("untracked.txt")
         try "keep dirty data\n".write(to: dirty, atomically: true, encoding: .utf8)
@@ -291,7 +556,6 @@ final class WorktreePresentationTests: XCTestCase {
         // Release a wrongly admitted controlled writer so a red failure cannot strand the FIFO.
         origin.gate.writer.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         let completed = expectation(description: "following writer after discarded forced confirmation")
-        completed.assertForOverFulfill = true
         enqueue(following.service, command: .lock(path: fixture.linked.path, reason: "following")) { _, error in
             XCTAssertNil(error); completed.fulfill()
         }
@@ -303,10 +567,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testDelayedPrunePreviewIsDiscardedAfterOwnerReplacementAndRestoration() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
         let administrative = try fixture.administrativeDirectory()
         let origin = try await installService(in: fixture)
@@ -329,7 +591,6 @@ final class WorktreePresentationTests: XCTestCase {
         await waitUntil { origin.gate.writer.isPending }
         replaceAndRestore(.repository, controller: controller, origin: origin, alternative: alternative, window: window)
         let completed = expectation(description: "following preview after delayed stale preview")
-        completed.assertForOverFulfill = true
         enqueuePreview(following.service) { preview, error in
             XCTAssertNil(error)
             if let preview {
@@ -355,12 +616,10 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertEqual(try fixture.registrationProof(at: administrative), metadata)
     }
 
-    func testHiddenPruneOwnerDiscardsRealPreviewFailuresAndReleasesTheSharedQueue() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+    func testHiddenPruneOwnerRestoresRealPreviewFailuresAndReleasesTheSharedQueue() async throws {
+        selectGit()
         for phase in HiddenPruneFailurePhase.allCases {
-            let fixture = try Fixture()
-            defer { fixture.cleanup() }
+            let fixture = try makeFixture()
             _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
             let administrative = try fixture.administrativeDirectory()
             let origin = try await installService(in: fixture)
@@ -394,7 +653,6 @@ final class WorktreePresentationTests: XCTestCase {
             XCTAssertTrue(origin.service.isSupported)
             XCTAssertFalse(origin.gate.writer.wasCancelled, "Hiding must not close the operation's service")
             let completed = expectation(description: "following real preview after hidden \(phase) failure")
-            completed.assertForOverFulfill = true
             enqueuePreview(following.service) { preview, error in
                 XCTAssertNil(error)
                 XCTAssertNotNil(preview)
@@ -405,8 +663,9 @@ final class WorktreePresentationTests: XCTestCase {
             }
             origin.gate.writer.finish(refused.data, error: refused.error)
             await fulfillment(of: [completed], timeout: 15)
-            XCTAssertEqual(controller.errors.count, 0, "A hidden prune owner displayed its \(phase) failure")
-            XCTAssertNil(window.attachedSheet)
+            await waitUntil { controller.errors.count == 1 && window.isVisible }
+            XCTAssertTrue(controller.errors.first?.localizedFailureReason?.contains("unknown-preview-option") == true)
+            XCTAssertNil(window.attachedSheet, "The recording presenter observes the failure without attaching another sheet")
             XCTAssertFalse(origin.gate.commands.contains(WorktreeCommand.prune.arguments))
             XCTAssertEqual(try fixture.registrationProof(at: administrative), metadata)
             window.makeKeyAndOrderFront(nil)
@@ -419,10 +678,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testDeferredLockConfirmationCannotStartAfterWindowCloseAndReopen() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
         let origin = try await installService(in: fixture)
         let controller = recordingController(for: origin)
@@ -443,12 +700,10 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertEqual(try fixture.ownershipProof(), initial)
     }
 
-    func testHeldRepairPreparationDiscardsConsentAfterOwnerReplacementOrAnOccupiedSheet() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+    func testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet() async throws {
+        selectGit()
         for replacesOwner in [true, false] {
-            let fixture = try Fixture()
-            defer { fixture.cleanup() }
+            let fixture = try makeFixture()
             let blocker = try await installService(in: fixture, holdsWriter: true)
             let origin = try await installService(in: fixture)
             let alternative = try await installService(in: fixture)
@@ -467,8 +722,6 @@ final class WorktreePresentationTests: XCTestCase {
             let content = try Data(contentsOf: fixture.linked.appendingPathComponent("content.txt"))
             let barrierDone = expectation(description: "held writer reconciles before preparation")
             let followingDone = expectation(description: "real writer follows discarded repair preparation")
-            barrierDone.assertForOverFulfill = true
-            followingDone.assertForOverFulfill = true
             enqueue(blocker.service, command: .lock(path: fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); barrierDone.fulfill() }
             XCTAssertTrue(blocker.gate.writer.isPending)
             let gitfile = fixture.linked.appendingPathComponent(".git")
@@ -506,7 +759,16 @@ final class WorktreePresentationTests: XCTestCase {
             XCTAssertEqual(following.gate.commands.filter { $0 == ["worktree", "unlock", fixture.linked.path] }.count, 1)
             if let occupant {
                 XCTAssertTrue(window.attachedSheet === occupant.window, "Repair preparation must not replace another presenter's sheet")
+                window.orderOut(nil)
                 window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+                let deferred = try await waitForSheet(in: window, containing: "Reclaim")
+                await waitUntil { window.isVisible && NSApp.isActive }
+                XCTAssertTrue(window.isVisible, "Consent restores its original hidden owner")
+                XCTAssertTrue(NSApp.isActive)
+                XCTAssertTrue(sheetText(deferred).contains("worktree state changed"), "The deferred preview must describe the intervening unlock")
+                try attachScreenshot(of: deferred, named: "Worktrees-Deferred-Reclaim-Restores-Original-Window")
+                XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+                window.endSheet(deferred, returnCode: .alertSecondButtonReturn)
                 await waitUntil { window.attachedSheet == nil }
             } else {
                 XCTAssertNil(window.attachedSheet)
@@ -522,15 +784,109 @@ final class WorktreePresentationTests: XCTestCase {
         }
     }
 
+    func testOwnerRevocationDuringFinalRepairValidationPreventsWritingAndReleasesAdmission() async throws {
+        selectGit()
+        for closesWindow in [false, true] {
+            let journey = try await movedRepairJourney()
+            let alternative = try await installService(in: journey.fixture)
+            let checkpoint = WorktreeWorkerCheckpoint()
+            journey.origin.service.repairValidationObserver = { checkpoint.wait() }
+            journey.origin.service.repairValidationResultObserver = { checkpoint.finish() }
+            checkpoint.expectResult()
+            addTeardownBlock { @MainActor in
+                checkpoint.resume()
+                await self.fulfillment(of: [checkpoint.finishedExpectation()], timeout: 15)
+                await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
+            }
+            let links = try journey.fixture.registrationProof(at: journey.administrative)
+            let gitfile = try Data(contentsOf: journey.fixture.linked.appendingPathComponent(".git"))
+            journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
+            await fulfillment(of: [checkpoint.entered], timeout: 5)
+            XCTAssertTrue(checkpoint.isWaiting)
+            if closesWindow {
+                journey.controller.close()
+            } else {
+                replaceAndRestore(.repository, controller: journey.controller, origin: journey.origin, alternative: alternative, window: journey.window)
+            }
+            let progressed = expectation(description: "following preview waits for final validation to acknowledge owner revocation")
+            var followingFinished = false
+            enqueuePreview(journey.following.service) { preview, error in
+                XCTAssertNil(error)
+                if let preview {
+                    journey.following.service.discardPrunePreview(preview)
+                }
+                followingFinished = true
+                progressed.fulfill()
+            }
+            await drainCallbacks()
+            if closesWindow {
+                await fulfillment(of: [progressed], timeout: 15)
+                XCTAssertTrue(checkpoint.isWaiting, "Closing cancels preparation and releases its reservation before the late worker returns")
+            } else {
+                XCTAssertFalse(followingFinished, "The final-validation worker still owns this admission")
+            }
+            checkpoint.resume()
+            if !closesWindow {
+                await fulfillment(of: [progressed], timeout: 15)
+            }
+            await fulfillment(of: [checkpoint.finishedExpectation()], timeout: 15)
+            XCTAssertFalse(checkpoint.didTimeout)
+            XCTAssertEqual(checkpoint.deliveryCount, 1)
+            XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+            XCTAssertEqual(journey.controller.errors.count, 0)
+            XCTAssertTrue(journey.window.sheets.isEmpty)
+            XCTAssertEqual(try journey.fixture.registrationProof(at: journey.administrative), links)
+            XCTAssertEqual(try Data(contentsOf: journey.fixture.linked.appendingPathComponent(".git")), gitfile)
+            XCTAssertEqual(try journey.fixture.repairPayloadProof(at: journey.administrative), journey.payload)
+        }
+    }
+
+    func testProvenRepairRetainsAdmissionUntilItsWriteAndReconciliationComplete() async throws {
+        selectGit()
+        let journey = try await movedRepairJourney()
+        addTeardownBlock { @MainActor in
+            await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
+        }
+        let arguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
+        journey.origin.gate.holdNextArguments = arguments
+        let captured = journey.origin.service.repairPreparationCount
+        journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
+        await waitUntil { journey.origin.service.repairPreparationCount > captured }
+        let followingDone = expectation(description: "following action waits for the complete repair admission")
+        enqueue(journey.following.service, command: .unlock(path: journey.fixture.linked.path)) { _, error in
+            XCTAssertNil(error)
+            followingDone.fulfill()
+        }
+        await waitUntil { journey.origin.gate.writer.isPending || journey.following.gate.commands.contains(["worktree", "unlock", journey.fixture.linked.path]) }
+        XCTAssertFalse(journey.following.gate.commands.contains(["worktree", "unlock", journey.fixture.linked.path]), "A proven repair must not release and reacquire admission through a preview callback")
+        guard journey.origin.gate.writer.isPending else {
+            await fulfillment(of: [followingDone], timeout: 15)
+            return
+        }
+        let output = try journey.fixture.git(arguments)
+        journey.origin.gate.writer.finish(Data(output.utf8))
+        await fulfillment(of: [followingDone], timeout: 15)
+        await waitUntil { journey.origin.service.worktree(forBranch: "refs/heads/topic")?.hasBrokenLink == false }
+        XCTAssertEqual(journey.origin.gate.commands.filter { $0 == arguments }.count, 1)
+        XCTAssertEqual(journey.following.gate.commands.filter { $0 == ["worktree", "unlock", journey.fixture.linked.path] }.count, 1)
+        XCTAssertEqual(journey.controller.errors.count, 0)
+        XCTAssertTrue(journey.window.sheets.isEmpty)
+        // Unlock intentionally changes `locked`; all other repair payloads stay intact.
+        var expected = journey.payload
+        expected.removeValue(forKey: "locked")
+        var actual = try journey.fixture.repairPayloadProof(at: journey.administrative, includingLock: false)
+        actual.removeValue(forKey: "locked")
+        XCTAssertEqual(actual, expected)
+        XCTAssertEqual(try WorktreePaths.canonical(journey.fixture.git(["rev-parse", "--absolute-git-dir"], in: journey.fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines)), WorktreePaths.canonical(journey.administrative.path))
+    }
+
     func testChosenProvenRepairStyleExecutesWhileAnUnrelatedSheetRemainsAttached() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+        selectGit()
         let journey = try await movedRepairJourney()
         addTeardownBlock { @MainActor in
             await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
         }
         let barrierDone = expectation(description: "writer preceding the chosen repair style completes")
-        barrierDone.assertForOverFulfill = true
         enqueue(journey.blocker.service, command: .lock(path: journey.fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); barrierDone.fulfill() }
         XCTAssertTrue(journey.blocker.gate.writer.isPending)
         let preparationCount = journey.origin.service.repairPreparationCount
@@ -559,8 +915,7 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testRepairAndFollowingWorktreeFailuresWaitInOrderForTheirOriginalWindowSheet() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+        selectGit()
         let journey = try await movedRepairJourney()
         addTeardownBlock { @MainActor in
             await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
@@ -614,8 +969,7 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testDeferredRepairFailureCannotReturnAfterOwnerReplacementOrWindowCloseAndReopen() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+        selectGit()
         for closesWindow in [false, true] {
             let journey = try await movedRepairJourney()
             addTeardownBlock { @MainActor in
@@ -660,8 +1014,7 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testDeferredActionableRepairFailureRemainsDeliverableWhileGitCapabilityIsBeingRechecked() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+        selectGit()
         let journey = try await movedRepairJourney(selectedGitProxy: true)
         addTeardownBlock { @MainActor in
             await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
@@ -684,7 +1037,6 @@ final class WorktreePresentationTests: XCTestCase {
         try writeGitProxy(at: executable, generation: "after-pending-error")
         journey.origin.gate.holdNextArguments = ["--version"]
         let rejected = expectation(description: "new request reports its replaced Git executable")
-        rejected.assertForOverFulfill = true
         enqueuePreview(journey.origin.service) { preview, error in
             XCTAssertNil(preview)
             XCTAssertNotNil(error)
@@ -712,8 +1064,7 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testExpectedQueuedCancellationDoesNotEnterTheDeferredFailureFIFO() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+        selectGit()
         let journey = try await movedRepairJourney()
         addTeardownBlock { @MainActor in
             await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
@@ -724,7 +1075,6 @@ final class WorktreePresentationTests: XCTestCase {
         journey.window.endSheet(journey.style, returnCode: .alertThirdButtonReturn)
         await waitUntil { journey.window.attachedSheet == nil }
         let barrierDone = expectation(description: "writer preceding expected cancellation completes")
-        barrierDone.assertForOverFulfill = true
         enqueue(journey.blocker.service, command: .lock(path: journey.fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); barrierDone.fulfill() }
         XCTAssertTrue(journey.blocker.gate.writer.isPending)
         let occupant = unrelatedSheet(on: journey.window)
@@ -748,46 +1098,62 @@ final class WorktreePresentationTests: XCTestCase {
         try await assertFollowingPreviewProgresses(journey)
     }
 
-    func testDeferredRepairFailureCannotResurfaceAfterItsOriginalWindowBecomesHidden() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let journey = try await movedRepairJourney()
-        addTeardownBlock { @MainActor in
-            await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
+    func testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce() async throws {
+        selectGit()
+        for presentation in 0 ..< 3 {
+            let journey = try await movedRepairJourney()
+            addTeardownBlock { @MainActor in
+                await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
+            }
+            journey.controller.presentsErrors = true
+            let originalLinks = try journey.fixture.registrationProof(at: journey.administrative)
+            let originalGitfile = try Data(contentsOf: journey.fixture.linked.appendingPathComponent(".git"))
+            let arguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
+            journey.origin.gate.holdNextArguments = arguments
+            journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
+            await waitUntil { journey.origin.gate.writer.isPending }
+            let occupant = unrelatedSheet(on: journey.window)
+            let refused = try journey.fixture.gitFailure(["worktree", "repair", "--unknown-hidden-overlap-option"])
+            journey.origin.gate.writer.finish(refused.data, error: refused.error)
+            try await assertFollowingPreviewProgresses(journey)
+            XCTAssertEqual(journey.controller.errors.count, 0)
+            switch presentation {
+            case 0: journey.window.orderOut(nil)
+            case 1:
+                NSApp.hide(nil)
+                await waitUntil { NSApp.isHidden }
+            default:
+                journey.window.miniaturize(nil)
+                await waitUntil { journey.window.isMiniaturized }
+            }
+            journey.window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+            let failure = try await waitForSheet(in: journey.window, containing: "unknown-hidden-overlap-option")
+            await waitUntil { journey.window.isVisible && !journey.window.isMiniaturized && !NSApp.isHidden && NSApp.isActive }
+            XCTAssertEqual(journey.controller.errors.count, 1)
+            XCTAssertTrue(journey.window.isVisible)
+            XCTAssertFalse(journey.window.isMiniaturized)
+            XCTAssertFalse(NSApp.isHidden)
+            XCTAssertTrue(NSApp.isActive)
+            if presentation == 2 {
+                try attachScreenshot(of: failure, named: "Worktrees-Deferred-Failure-Restores-Minimized-Window")
+            }
+            journey.window.endSheet(failure, returnCode: .OK)
+            await waitUntil { journey.window.attachedSheet == nil }
+            journey.window.makeKeyAndOrderFront(nil)
+            await drainCallbacks()
+            XCTAssertEqual(journey.controller.errors.count, 1, "Restoring the owner again cannot replay its result")
+            XCTAssertTrue(journey.window.sheets.isEmpty)
+            XCTAssertEqual(journey.origin.gate.commands.filter { $0 == arguments }.count, 1)
+            XCTAssertEqual(try journey.fixture.registrationProof(at: journey.administrative), originalLinks)
+            XCTAssertEqual(try Data(contentsOf: journey.fixture.linked.appendingPathComponent(".git")), originalGitfile)
+            XCTAssertEqual(try journey.fixture.repairPayloadProof(at: journey.administrative), journey.payload)
+            try await assertFollowingPreviewProgresses(journey)
         }
-        journey.controller.presentsErrors = true
-        let originalLinks = try journey.fixture.registrationProof(at: journey.administrative)
-        let originalGitfile = try Data(contentsOf: journey.fixture.linked.appendingPathComponent(".git"))
-        let arguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
-        journey.origin.gate.holdNextArguments = arguments
-        journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
-        await waitUntil { journey.origin.gate.writer.isPending }
-        let occupant = unrelatedSheet(on: journey.window)
-        let refused = try journey.fixture.gitFailure(["worktree", "repair", "--unknown-hidden-overlap-option"])
-        journey.origin.gate.writer.finish(refused.data, error: refused.error)
-        try await assertFollowingPreviewProgresses(journey)
-        XCTAssertEqual(journey.controller.errors.count, 0)
-        journey.window.orderOut(nil)
-        journey.window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
-        await drainCallbacks()
-        XCTAssertEqual(journey.controller.errors.count, 0)
-        XCTAssertTrue(journey.window.sheets.isEmpty)
-        journey.window.makeKeyAndOrderFront(nil)
-        await drainCallbacks()
-        XCTAssertEqual(journey.controller.errors.count, 0, "Making the same owner visible again must not resurrect its discarded failure")
-        XCTAssertTrue(journey.window.sheets.isEmpty)
-        XCTAssertEqual(journey.origin.gate.commands.filter { $0 == arguments }.count, 1)
-        XCTAssertEqual(try journey.fixture.registrationProof(at: journey.administrative), originalLinks)
-        XCTAssertEqual(try Data(contentsOf: journey.fixture.linked.appendingPathComponent(".git")), originalGitfile)
-        XCTAssertEqual(try journey.fixture.repairPayloadProof(at: journey.administrative), journey.payload)
-        try await assertFollowingPreviewProgresses(journey)
     }
 
     func testHeldPrunePreparationPreservesAnOccupiedSheetAndCanStartAFreshJourney() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
         let administrative = try fixture.administrativeDirectory()
         let origin = try await installService(in: fixture)
@@ -814,7 +1180,6 @@ final class WorktreePresentationTests: XCTestCase {
         occupant.beginSheetModal(for: window) { _ in }
         XCTAssertTrue(window.attachedSheet === occupant.window)
         let followingDone = expectation(description: "discarded occupied-owner preview releases FIFO")
-        followingDone.assertForOverFulfill = true
         enqueuePreview(following.service) { preview, error in
             XCTAssertNil(error)
             XCTAssertEqual(preview?.report, String(decoding: report, as: UTF8.self))
@@ -841,11 +1206,9 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testLiveRepairPreparationRejectsAChangedForeignGitfileWithoutOfferingConsent() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        let foreign = try Fixture()
-        defer { fixture.cleanup(); foreign.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
+        let foreign = try makeFixture()
         let blocker = try await installService(in: fixture, holdsWriter: true)
         let origin = try await installService(in: fixture)
         let following = try await installService(in: fixture)
@@ -864,8 +1227,6 @@ final class WorktreePresentationTests: XCTestCase {
         let foreignLink = try Data(contentsOf: foreign.linked.appendingPathComponent(".git"))
         let barrierDone = expectation(description: "writer preceding rejected repair completes")
         let followingDone = expectation(description: "writer after rejected repair completes")
-        barrierDone.assertForOverFulfill = true
-        followingDone.assertForOverFulfill = true
         enqueue(blocker.service, command: .lock(path: fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); barrierDone.fulfill() }
         let gitfile = fixture.linked.appendingPathComponent(".git")
         try FileManager.default.removeItem(at: gitfile)
@@ -893,10 +1254,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testLivePrunePreparationPresentsItsRealReportFailureAndReleasesFIFO() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
         let administrative = try fixture.administrativeDirectory()
         let origin = try await installService(in: fixture)
@@ -914,7 +1273,6 @@ final class WorktreePresentationTests: XCTestCase {
         controller.pruneWorktrees(nil)
         await waitUntil { origin.gate.writer.isPending }
         let followingDone = expectation(description: "real preview after visible report error progresses")
-        followingDone.assertForOverFulfill = true
         enqueuePreview(following.service) { preview, error in
             XCTAssertNil(error)
             XCTAssertEqual(preview?.report, String(decoding: report, as: UTF8.self))
@@ -934,11 +1292,9 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testDelayedFirstRemoveFailureIsShownOnlyInItsCurrentOwnerWithoutAForceRetry() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
+        selectGit()
         for replacesOwner in [false, true] {
-            let fixture = try Fixture()
-            defer { fixture.cleanup() }
+            let fixture = try makeFixture()
             _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
             let origin = try await installService(in: fixture)
             let alternative = try await installService(in: fixture)
@@ -967,7 +1323,6 @@ final class WorktreePresentationTests: XCTestCase {
                 replaceAndRestore(.repository, controller: controller, origin: origin, alternative: alternative, window: window)
             }
             let followingDone = expectation(description: "writer after first-remove error progresses")
-            followingDone.assertForOverFulfill = true
             enqueue(following.service, command: .lock(path: fixture.linked.path, reason: "following")) { _, error in XCTAssertNil(error); followingDone.fulfill() }
             origin.gate.writer.finish(refused.data, error: refused.error)
             await fulfillment(of: [followingDone], timeout: 15)
@@ -987,10 +1342,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testDelayedFirstRemoveFailureDoesNotRetainItsReleasedControllerAndReleasesFIFO() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
         let dirty = fixture.linked.appendingPathComponent("untracked.txt")
         let dirtyData = Data("preserve after the controller is released\n".utf8)
@@ -1027,7 +1380,6 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertTrue(origin.gate.writer.isPending, "The first Remove must still await its delayed Git failure")
         XCTAssertFalse(origin.gate.writer.wasCancelled, "An admitted writer drains after its window closes")
         let followingDone = expectation(description: "writer after released Remove owner progresses")
-        followingDone.assertForOverFulfill = true
         enqueue(following.service, command: .lock(path: fixture.linked.path, reason: "following")) { _, error in XCTAssertNil(error); followingDone.fulfill() }
         XCTAssertFalse(following.gate.commands.contains(["worktree", "lock", "--reason", "following", fixture.linked.path]))
         origin.gate.writer.finish(refused.data, error: refused.error)
@@ -1044,10 +1396,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testQueuedRemoveCancellationIsSilentInItsCurrentVisibleOwnerAndReleasesFIFO() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
         let dirty = fixture.linked.appendingPathComponent("untracked.txt")
         let dirtyData = Data("preserve after queued Remove cancellation\n".utf8)
@@ -1069,8 +1419,6 @@ final class WorktreePresentationTests: XCTestCase {
         let item = NSMenuItem(); item.representedObject = tree
         let blockerDone = expectation(description: "writer preceding cancelled Remove completes")
         let followingDone = expectation(description: "writer following cancelled Remove progresses")
-        blockerDone.assertForOverFulfill = true
-        followingDone.assertForOverFulfill = true
         enqueue(blocker.service, command: .lock(path: fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); blockerDone.fulfill() }
         XCTAssertTrue(blocker.gate.writer.isPending)
         controller.removeWorktree(item)
@@ -1099,10 +1447,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testRenewedRepairRequiresItsNewClickThenPresentsARealWriterFailureAndReleasesFIFO() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         let origin = try await installService(in: fixture)
         let following = try await installService(in: fixture)
         let controller = recordingController(for: origin)
@@ -1136,7 +1482,6 @@ final class WorktreePresentationTests: XCTestCase {
         await waitUntil { origin.gate.writer.isPending }
         XCTAssertEqual(origin.gate.commands.filter { $0 == repairArguments }.count, 1)
         let followingDone = expectation(description: "writer follows confirmed repair failure")
-        followingDone.assertForOverFulfill = true
         enqueue(following.service, command: .unlock(path: fixture.linked.path)) { _, error in XCTAssertNil(error); followingDone.fulfill() }
         XCTAssertFalse(following.gate.commands.contains(["worktree", "unlock", fixture.linked.path]))
         let refused = try fixture.gitFailure(["worktree", "repair", "--unknown-repair-option"])
@@ -1162,10 +1507,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     func testReclaimEscapeCancelsOnlyItsOwnSheetAndPreservesGitState() async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         let origin = try await installService(in: fixture)
         let following = try await installService(in: fixture)
         let controller = recordingController(for: origin)
@@ -1209,7 +1552,6 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fixture.main.appendingPathComponent("content.txt")), mainContent)
         XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("content.txt")), linkedContent)
         let progressed = expectation(description: "Escape cancellation leaves the shared FIFO available")
-        progressed.assertForOverFulfill = true
         enqueuePreview(following.service) { preview, error in
             XCTAssertNil(error)
             XCTAssertNotNil(preview)
@@ -1233,10 +1575,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     private func assertGitUpgradeDuringConsentShowsError(repairing: Bool) async throws {
-        let previousGit = UserDefaults.standard.object(forKey: "gitExecutable")
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        preserveGitPreferenceUntilTeardown()
+        let fixture = try makeFixture()
         let executable = fixture.root.appendingPathComponent("selected-git")
         try writeGitProxy(at: executable, generation: "before")
         UserDefaults.standard.set(executable.path, forKey: "gitExecutable")
@@ -1288,7 +1628,6 @@ final class WorktreePresentationTests: XCTestCase {
         await waitUntil { observedCapabilityLoss && origin.service.isSupported }
         let following = try await installService(in: fixture, executable: executable)
         let progressed = expectation(description: "capability rejection releases the shared FIFO")
-        progressed.assertForOverFulfill = true
         enqueuePreview(following.service) { preview, error in
             XCTAssertNil(error)
             XCTAssertNotNil(preview)
@@ -1325,10 +1664,8 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     private func queuedCancellation(closesAndReopensWindow: Bool) async throws {
-        let previousGit = selectGit()
-        defer { restoreGit(previousGit) }
-        let fixture = try Fixture()
-        defer { fixture.cleanup() }
+        selectGit()
+        let fixture = try makeFixture()
         let blocker = try await installService(in: fixture, holdsWriter: true)
         let origin = try await installService(in: fixture)
         let following = try await installService(in: fixture)
@@ -1340,8 +1677,6 @@ final class WorktreePresentationTests: XCTestCase {
         let item = NSMenuItem(); item.representedObject = tree
         let blockerCompleted = expectation(description: "barrier writer completed")
         let followingCompleted = expectation(description: "writer after cancelled UI action completed")
-        blockerCompleted.assertForOverFulfill = true
-        followingCompleted.assertForOverFulfill = true
         enqueue(blocker.service, command: .lock(path: fixture.linked.path, reason: "barrier")) { _, error in
             XCTAssertNil(error); blockerCompleted.fulfill()
         }
@@ -1414,7 +1749,7 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     private func movedRepairJourney(selectedGitProxy: Bool = false) async throws -> MovedRepairJourney {
-        let fixture = try Fixture(nested: true)
+        let fixture = try makeFixture(nested: true)
         do {
             let administrativeName = try fixture.administrativeDirectory().lastPathComponent
             try Data("staged data survives repair overlap\n".utf8).write(to: fixture.linked.appendingPathComponent("overlap-canary.txt"))
@@ -1452,7 +1787,7 @@ final class WorktreePresentationTests: XCTestCase {
                 throw error
             }
         } catch {
-            fixture.cleanup()
+            fixture.cancelServices()
             throw error
         }
     }
@@ -1480,7 +1815,6 @@ final class WorktreePresentationTests: XCTestCase {
 
     private func assertFollowingPreviewProgresses(_ journey: MovedRepairJourney) async throws {
         let progressed = expectation(description: "following preview confirms the shared writer was released")
-        progressed.assertForOverFulfill = true
         enqueuePreview(journey.following.service) { preview, error in
             XCTAssertNil(error)
             XCTAssertNotNil(preview)
@@ -1509,9 +1843,40 @@ final class WorktreePresentationTests: XCTestCase {
             }
         }
         controller.close()
-        fixture.cancelServices()
+        await cleanupFixture(fixture)
+    }
+
+    private func makeFixture(nested: Bool = false) throws -> Fixture {
+        preserveGitPreferenceUntilTeardown()
+        let fixture = try Fixture(nested: nested)
+        addTeardownBlock { @MainActor in
+            await self.cleanupFixture(fixture)
+        }
+        return fixture
+    }
+
+    @discardableResult
+    private func cleanupFixture(_ fixture: Fixture) async -> Bool {
+        guard !fixture.retainedAfterDrainFailure else { return false }
+        let services = fixture.cancelServices()
+        if !services.isEmpty {
+            let drained = XCTestExpectation(description: "cancelled worktree services acknowledged all fixture I/O")
+            drained.expectedFulfillmentCount = services.count
+            services.forEach { $0.drainForTesting { drained.fulfill() } }
+            let result = await XCTWaiter.fulfillment(of: [drained], timeout: 15)
+            guard result == .completed else {
+                fixture.retainedAfterDrainFailure = true
+                XCTFail("Worktree fixture did not drain; preserving files at " + fixture.root.path)
+                return false
+            }
+        }
         await drainCallbacks()
-        fixture.removeFiles()
+        fixture.services.removeAll()
+        fixture.retiredServices.removeAll()
+        if !drainedFixtures.contains(where: { $0 === fixture }) {
+            drainedFixtures.append(fixture)
+        }
+        return true
     }
 
     private func recordingController(for origin: InstalledService) -> RecordingWindowController {
@@ -1522,15 +1887,35 @@ final class WorktreePresentationTests: XCTestCase {
         return controller
     }
 
-    private func selectGit() -> Any? {
+    private final class GitPreferenceRestoration {
         let previous = UserDefaults.standard.object(forKey: "gitExecutable")
-        UserDefaults.standard.set("/usr/bin/git", forKey: "gitExecutable")
-        return previous
+
+        func restore() {
+            UserDefaults.standard.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: UserDefaults.standard)
+        }
     }
 
-    private func restoreGit(_ previous: Any?) {
-        UserDefaults.standard.set(previous, forKey: "gitExecutable")
-        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: UserDefaults.standard)
+    private func preserveGitPreferenceUntilTeardown() {
+        guard gitPreferenceRestoration == nil else { return }
+        let restoration = GitPreferenceRestoration()
+        gitPreferenceRestoration = restoration
+        // Registered once, before fixtures: drain all services, restore, then delete.
+        addTeardownBlock { @MainActor in
+            self.beforeGitPreferenceRestoration?()
+            restoration.restore()
+            let drained = self.drainedFixtures
+            self.drainedFixtures.removeAll()
+            for fixture in drained where !fixture.retainedAfterDrainFailure {
+                fixture.removeFiles()
+            }
+            self.gitPreferenceRestoration = nil
+        }
+    }
+
+    private func selectGit() {
+        preserveGitPreferenceUntilTeardown()
+        UserDefaults.standard.set("/usr/bin/git", forKey: "gitExecutable")
     }
 
     private func waitForSheet(in window: NSWindow, containing title: String) async throws -> NSWindow {
@@ -1572,6 +1957,7 @@ final class WorktreePresentationTests: XCTestCase {
     private func installService(in fixture: Fixture, holdsWriter: Bool = false, executable: URL? = nil) async throws -> InstalledService {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let original = try XCTUnwrap(repository.worktreeService)
+        fixture.retiredServices.append(original)
         original.cancel()
         let gate = TaskGate(fixture: fixture, holdsWriter: holdsWriter, executable: executable?.path ?? "/usr/bin/git")
         let service = PBRepositoryWorktreeService(repository: repository, taskFactory: gate.makeTask)
@@ -1619,6 +2005,7 @@ final class WorktreePresentationTests: XCTestCase {
         }
 
         override func showErrorSheet(_ error: Error) {
+            NSLog("[GitXTest] Recorded worktree presentation error: %@", String(describing: error as NSError))
             errors.append(error as NSError)
             if presentsErrors {
                 super.showErrorSheet(error)
@@ -1703,6 +2090,8 @@ final class WorktreePresentationTests: XCTestCase {
         private(set) var main: URL
         private(set) var linked: URL
         var services: [InstalledService] = []
+        var retiredServices: [PBRepositoryWorktreeService] = []
+        var retainedAfterDrainFailure = false
 
         init(nested: Bool = false) throws {
             root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-worktree-presentation-\(UUID().uuidString)")
@@ -1760,8 +2149,8 @@ final class WorktreePresentationTests: XCTestCase {
             linked = moved.appendingPathComponent(linkedRelativePath)
         }
 
-        func repairPayloadProof(at administrative: URL) throws -> [String: Data] {
-            var proof = try Dictionary(uniqueKeysWithValues: ["HEAD", "index", "locked"].map {
+        func repairPayloadProof(at administrative: URL, includingLock: Bool = true) throws -> [String: Data] {
+            var proof = try Dictionary(uniqueKeysWithValues: (["HEAD", "index"] + (includingLock ? ["locked"] : [])).map {
                 try ($0, Data(contentsOf: administrative.appendingPathComponent($0)))
             })
             for name in ["HEAD", "index"] {
@@ -1794,19 +2183,16 @@ final class WorktreePresentationTests: XCTestCase {
             return proof
         }
 
-        func cancelServices() {
-            services.forEach { $0.service.cancel() }
+        @discardableResult
+        func cancelServices() -> [PBRepositoryWorktreeService] {
+            let draining = retiredServices + services.map(\.service)
+            draining.forEach { $0.cancel() }
             services.forEach { $0.gate.writer.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)) }
-            services.removeAll()
+            return draining
         }
 
         func removeFiles() {
             try? FileManager.default.removeItem(at: root)
-        }
-
-        func cleanup() {
-            cancelServices()
-            removeFiles()
         }
     }
 }

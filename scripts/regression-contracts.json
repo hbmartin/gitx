@@ -258,7 +258,7 @@
     {
       "id": "PATH-002",
       "family": "Literal mutation and atomic rejection",
-      "invariant": "Every selected path is validated before any mutation; raw identities never become shell/display text. Queued worktree locate repair revalidates the captured folder and administrative ownership at writer admission, preserving both repositories' links when either identity changes. Repair scope includes every registration Git may touch. Unproven original-location links require a separate single-use reclaim preview; regular administrative strays participate in consent evidence without becoming checkout registrations. Captured canonical executable fingerprints and the working-directory-or-Git-directory inspection rule bind bare and ordinary repository operations. Locate retains the captured effective link style in Git arguments and verifies that style after the write; rejected known registrations provide recovery guidance without changing ownership requirements.",
+      "invariant": "Every selected path is validated before any mutation; raw identities never become shell/display text. Queued worktree locate repair revalidates the captured folder and administrative ownership at writer admission, preserving both repositories' links when either identity changes. Repair scope includes every registration Git may touch. Unproven original-location links require a separate single-use reclaim preview; regular administrative strays participate in consent evidence without becoming checkout registrations. Captured canonical executable fingerprints and the working-directory-or-Git-directory inspection rule bind bare and ordinary repository operations. Locate retains the captured effective link style in Git arguments and verifies that style after the write; rejected known registrations provide recovery guidance without changing ownership requirements. Repair postconditions ignore history/lock contents and permit an unchanged healthy mixed-style sibling only when its gitfile already matches the requested style. Rewritten targets require both requested link styles and exact endpoints.",
       "rootCause": "Partial validation and pathspec metacharacters can mutate the wrong files or leave a partially applied selection. Validating a locate folder only before queueing allows a replacement folder or reused administrative name to inherit mutation authority. Backlink names cannot prove a recreated folder belongs to the repository; treating regular strays as registrations blocks safe recovery, and validating only one moved destination can leave sibling links broken.",
       "sourcePaths": [
         "Classes/git/IndexMutationService.swift",
@@ -563,13 +563,48 @@
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testCompletedRepairAllowsSameStrayObjectContentChangesAndReconcilesBeforeFollowingWriter",
           "role": "valid",
           "oracle": "Execute the held approved repair command once with real Git, change only the same regular stray object to a different byte length, and require successful post-write reconciliation, exact reciprocal links and HEAD/index/refs/payload preservation before FIFO progresses."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
+          "identifier": "GitXCoreTests/WorktreeScopeTests/testRepairPostconditionsPreserveOnlyHealthyUnchangedMixedSiblingLinks",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Accept both unchanged healthy mixed-style orientations only when the gitfile matches the requested style; reject equivalent-endpoint raw rewrites and incorrect repaired styles, preserving identity and endpoint checks."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
+          "identifier": "GitXCoreTests/WorktreeScopeTests/testRepairPostconditionInventoryDoesNotReadHistoryOrLockPayloads",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Fault injected reads prove postconditions never open HEAD or locked, while preparation and consent still inspect their evidence."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testLocateAndReclaimAcceptHealthyMixedSiblingLinksInBothRequestedStyles",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "Run real absolute/relative Locate and Reclaim, verify unchanged mixed or correctly normalized sibling links and directed endpoints, exact one repair command, rewritten target style and unchanged refs/content."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
+          "identifier": "GitXCoreTests/WorktreeScopeTests/testAdmittedScopeCannotReconstructAnOmittedPreparedTarget",
+          "check": "core",
+          "role": "failure",
+          "oracle": "A target omitted from preparation cannot gain admission authority; explicitly recorded provisional absence retains the existing same-object recovery path."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testSwiftLocateCompletesOrRejectsChangedFinalEvidenceWithoutLosingAdmission",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "The Swift Locate path repairs directed endpoints once, refuses changed final evidence without writing, preserves payloads and releases the shared writer."
         }
       ]
     },
     {
       "id": "STATE-001",
       "family": "Snapshot and refresh authority",
-      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter. Prune authority is bound to the approved preview's administrative registrations and revalidated at writer admission; changed candidates require an updated preview and a new confirmation. Sidebar row restoration refreshes controls and preserves local-branch reference actions without changing mounted content or the browsed revision. Worktree callbacks and deferred confirmations retain their originating window, repository, service and presentation generation; closing or replacing an owner revokes authority even when the same objects are restored. Expected cancellation is silent while genuine current-owner failures remain observable. Repair and prune consent ignore HEAD-only changes but remain sensitive to exact links, lock and availability metadata, administrative identities, executable context and raw Git reports. Explicit History adopts the selected canonical checkout's newest captured revision; passive synchronization preserves its authoritative revision object and mounted content. Lifecycle menu actions use the clicked checkout even when several checkouts share a branch. Owner revocation cancels pending consent and publication while already-admitted checked writes drain through captured-context reconciliation. Operation-owned reconciliation retires earlier ordinary discoveries before they can republish stale records. Pure context checks do not restart capability probes; a new request reports a same-path executable change to its current visible owner even while capability is being rechecked. Reclaim consent keeps both Return and Escape bound to cancellation.",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter. Prune authority is bound to the approved preview's administrative registrations and revalidated at writer admission; changed candidates require an updated preview and a new confirmation. Sidebar row restoration refreshes controls and preserves local-branch reference actions without changing mounted content or the browsed revision. Worktree callbacks and deferred confirmations retain their originating window, repository, service and presentation generation; closing or replacing an owner revokes authority even when the same objects are restored. Expected cancellation is silent while genuine current-owner failures remain observable. Repair and prune consent ignore HEAD-only changes but remain sensitive to exact links, lock and availability metadata, administrative identities, executable context and raw Git reports. Explicit History adopts the selected canonical checkout's newest captured revision; passive synchronization preserves its authoritative revision object and mounted content. Lifecycle menu actions use the clicked checkout even when several checkouts share a branch. Owner revocation cancels pending consent and publication while already-admitted checked writes drain through captured-context reconciliation. Operation-owned reconciliation retires earlier ordinary discoveries before they can republish stale records. Pure context checks do not restart capability probes; rejected queued requests coalesce a capability reprobe after admission release and never replay the write. Ownership evidence failures retain valid records and their original cause; stale ownership requires fresh discovery and a new request. Retired discoveries skip ownership scanning. Reclaim consent keeps both Return and Escape bound to cancellation. Fixture drainage delivers clients sequentially and drains the writer again after pane producers finish; revoked discard eligibility cannot reuse prior approval. Hiding or minimizing does not revoke presentation authority: queued errors and repair consent restore their original window. Close, repository or window replacement revokes authority. Deferred consent receives fresh single-use evidence before display and confirmation.",
       "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content. A prune confirmation detached from current registration identity can forget worktrees the user did not approve. Restoring a row without its selection notification leaves controls stale; treating worktree rows only as lifecycle actions loses retained reference actions. Rebuilding an action from current owners or checking visibility alone lets old callbacks and deferred clicks regain authority after replacement or reopening. Comparing history state as ownership revokes harmless consent; a first-branch lookup redirects duplicate-row actions, and passive checked-out-branch following can override another checkout's selected history.",
       "sourcePaths": [
         "Classes/git/IndexRefreshCoordinator.swift",
@@ -836,13 +871,6 @@
           "oracle": "A real right-click popup exposes retained branch actions and the safe Open Worktree substitute; its current screenshot precedes activation of the correct existing checkout, preserving both HEADs."
         },
         {
-          "source": "GitXTests/WorktreePresentationTests.swift",
-          "identifier": "GitXTests/WorktreePresentationTests/testHiddenPruneOwnerDiscardsRealPreviewFailuresAndReleasesTheSharedQueue",
-          "check": "correctness",
-          "role": "boundary",
-          "oracle": "After hiding an unchanged supported owner, preparation and confirmation failures from real Git never present; following previews finish, registrations survive, and a fresh visible journey remains available."
-        },
-        {
           "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedRepairAcceptsOnlyHeadProjectionChangesWithoutAdoptingNewOwnership",
           "role": "boundary",
@@ -890,12 +918,6 @@
           "identifier": "GitXTests/WorktreeAppKitTests/testChangedRepairOwnershipRenewsConsentAndRequiresAnotherExplicitRepairClick",
           "role": "boundary",
           "oracle": "Restore the actual link while Reclaim is open, require a renewed Repair sheet and another click, then cancel and prove subsequent FIFO progress."
-        },
-        {
-          "source": "GitXTests/WorktreeAppKitTests.swift",
-          "identifier": "GitXTests/WorktreeAppKitTests/testReclaimConsentCannotSurviveHiddenOrReplacedAndRestoredPresentation",
-          "role": "boundary",
-          "oracle": "Dismiss stale consent after hiding or replacing the owner, preserve filesystem evidence, and prove fresh explicit repair succeeds."
         },
         {
           "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
@@ -967,12 +989,6 @@
         },
         {
           "source": "GitXTests/WorktreePresentationTests.swift",
-          "identifier": "GitXTests/WorktreePresentationTests/testHeldRepairPreparationDiscardsConsentAfterOwnerReplacementOrAnOccupiedSheet",
-          "role": "boundary",
-          "oracle": "Hold immutable capture behind the FIFO, replace/restore its owner or occupy its sheet, discard through the original service, preserve ownership evidence, and prove fresh consent/queue progress."
-        },
-        {
-          "source": "GitXTests/WorktreePresentationTests.swift",
           "identifier": "GitXTests/WorktreePresentationTests/testHeldPrunePreparationPreservesAnOccupiedSheetAndCanStartAFreshJourney",
           "role": "boundary",
           "oracle": "A report delivered while another presenter owns the sheet must not replace it or authorize prune; preserve registration evidence and allow a fresh cancelled preview journey."
@@ -1037,13 +1053,115 @@
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testLegacyPruneConfirmationUsesTheLatestReportPreviewAndActuallyPrunesItsCandidate",
           "role": "compatibility",
           "oracle": "Capture an empty legacy preview, physically remove the checkout, independently observe its real Git prunable record, replace the preview, then prune exactly that registration once. A repeated confirmation cannot reuse consumed consent; main HEAD, index, refs and payload stay unchanged."
+        },
+        {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testFixtureDrainWaitsForWriterDeferredByAnotherDrainCompletion",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "A sibling drain completion schedules admission through main.async; the next client waits for its writer, completes exactly once and preserves checkout data."
+        },
+        {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testConfirmedDiscardRejectsRevokedEligibilityAndLeavesTheWriterUsable",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Revoke selection/submission eligibility after capture, reject confirmation before a second snapshot or write, preserve fixture names/content and allow the next writer validation."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testReappearedCheckoutRecoversThroughFreshDiscoveryWithoutReplayingRepair",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "Reconnect the genuine checkout after discovery; reject stale ownership, automatically read fresh evidence, preserve Git state and require a new request before one repair."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testOwnershipCaptureFailurePreservesItsCauseAndRecoversOnTheNextReview",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "An unsupported administrative entry preserves valid rows and the original failure cause; removing it enables read-only recovery and a newly authorized repair."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testRetiredDiscoveryWorkerSkipsOwnershipCaptureAndAcknowledgesBeforeCleanup",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Hold the parse worker, retire its ticket, then await the actual main result acknowledgement; no ownership scan starts and fixture deletion follows drainage."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testQueuedExecutableReplacementReprobesOnceWithoutReplayingRejectedWrites",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Atomically replace the selected executable while requests wait; refuse them, release admission, coalesce one new probe and never replay a write after capability returns."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testHiddenPruneOwnerRestoresRealPreviewFailuresAndReleasesTheSharedQueue",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Real preparation and confirmation failures restore their unchanged hidden owner exactly once; following previews finish, registrations survive and a fresh cancelled preview remains available."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testReclaimConsentSurvivesTemporaryHidingButCannotSurviveOwnerReplacement",
+          "role": "boundary",
+          "oracle": "Temporary hiding preserves the original consent token. Replacing and restoring an owner revokes it; only fresh explicit consent can write, preserving registration identities and history."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet",
+          "role": "boundary",
+          "oracle": "A replaced owner revokes pending consent; an occupied sheet preserves FIFO consent, refreshes its scope after an intervening unlock, restores the hidden owner and permits cancellation without a write."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Queue a real Git failure behind a sheet, hide/order out/minimize its owner, then restore and activate that same window once; preserve links, history, index and checkout contents."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testPresentationQueueDiscardsLatePreparationAfterOwnerRevocation",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Late prepared results are discarded exactly once after invalidation or owner revocation, without presentation."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testPresentationQueueRevokesPreparedAndPendingOwnersBehindANewSheet",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "A newly attached sheet preserves its owner while prepared and pending revoked worktree items lose authority in FIFO order."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testPresentationQueueInvalidationEndsItsOwnPresentedSheetExactlyOnce",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Invalidating an active owner ends only its presented sheet and delivers exactly one cancellation."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testReadOnlyRepairPreviewRejectsRevokedAndConsumedTokensWithoutWriting",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Read-only refresh replaces a single-use consent token; revocation before entry or after an accepted request cancels without a repair write. Consumed tokens cannot replay, and a following fresh consent request progresses after admission releases."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testSelectionReconciliationWorkingStateStatusAndTreeRestoration",
+          "role": "boundary",
+          "oracle": "Select the actual untracked working-state tree node, then await its rendered synthetic addition instead of a fixed delay; compare the independent full synthetic diff formatter output and preserve selection/restoration assertions."
         }
       ]
     },
     {
       "id": "STATE-002",
       "family": "Partial failure and reconciliation",
-      "invariant": "Successful chunks are reconciled before controls recover, including failure paths. Busy commit submissions refuse immediately without enqueuing, while background Git commands retain FIFO order.",
+      "invariant": "Successful chunks are reconciled before controls recover, including failure paths. Busy commit submissions refuse immediately without enqueuing, while background Git commands retain FIFO order. Owned worktree reconciliation preserves pending invalidations; failure leaves the previous snapshot stale and earns one recovery read, with later events/manual refresh retryable and no automatic retry loop.",
       "rootCause": "Early return or premature idle publication leaves the displayed index and operation eligibility untruthful.",
       "sourcePaths": [
         "Classes/git/IndexMutation*",
@@ -1152,6 +1270,13 @@
           "identifier": "GitXTests/WorktreePresentationTests/testQueuedRemoveCancellationIsSilentInItsCurrentVisibleOwnerAndReleasesFIFO",
           "role": "boundary",
           "oracle": "Cancel a queued Remove through its service while the original controller, window and repository remain current and visible; no Remove task, force retry or error is allowed, ownership/index/content survive and the following writer completes exactly once."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testReconciliationPreservesEarlierAndConcurrentInvalidationsAndBoundsFailedRecovery",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Controlled tasks retain invalidations before/during owned reconciliation, preserve last rows through failure, launch one recovery read and allow manual retry without automatic looping or late resurrection."
         }
       ]
     },
@@ -1423,6 +1548,20 @@
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testDirectInitialPruneDiscoveryCancellationWithALiveOwnerIsExpectedCancellationAndReleasesFIFO",
           "role": "boundary",
           "oracle": "Deliver both Swift and Cocoa cancellation errors from the operation-owned initial discovery while its owner stays live; require one Cocoa cancellation completion, no report or prune launch, exact Git metadata preservation, and one following real writer in FIFO order."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testProvenRepairRetainsAdmissionUntilItsWriteAndReconciliationComplete",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "Hold the production repair writer and verify a following unlock cannot start during an unnecessary preview readmission; independent Git and filesystem proofs preserve repaired links and payloads."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testOwnerRevocationDuringFinalRepairValidationPreventsWritingAndReleasesAdmission",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Hold the final validation worker, replace or close its owner, acknowledge the late result once and prove the following request advances without any repair or filesystem changes."
         }
       ]
     },
@@ -1517,8 +1656,8 @@
     {
       "id": "ENV-001",
       "family": "Deterministic Git fixtures",
-      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input.",
-      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state.",
+      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input. Presentation fixtures retain files through cancellation and main-actor worker acknowledgement, restore the original Git preference once, then remove only drained fixtures.",
+      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state. Preference notifications during teardown can restart services, while premature fixture deletion races late workers.",
       "sourcePaths": [
         "GitXTests/GitXTestGitEnvironment.swift",
         "GitXTests/GitXTestGitFixture.swift",
@@ -1526,11 +1665,16 @@
         "scripts/run_app.sh",
         "scripts/workflow_session.py",
         "scripts/workflow_records.py",
-        "scripts/regression_guardrails.py"
+        "scripts/regression_guardrails.py",
+        "GitXTests/WorktreePresentationTests.swift"
       ],
       "requiredChecks": [
         "correctness",
-        "static"
+        "static",
+        "debug-test-build",
+        "release-test-build",
+        "address-undefined",
+        "thread-sanitizer"
       ],
       "tests": [
         {
@@ -1550,6 +1694,18 @@
           "identifier": "GitXTests/GitXTestGitFixtureTests/testFixtureRunnerStoresBinaryStandardInputWithoutChangingItsBytes",
           "role": "boundary",
           "oracle": "Compare exact binary stdin bytes."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testFixtureCleanupDrainsHeldDiscoveryBeforeRestoringGitPreferences",
+          "role": "boundary",
+          "oracle": "Hold an actual discovery worker; cleanup must remain pending with its files present until the late worker result is acknowledged on main."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testFixtureTeardownRestoresGitOnceBeforeRemovingAllDrainedFixtures",
+          "role": "valid",
+          "oracle": "At the actual single preference-restoration boundary, both real fixture roots still exist and all services are drained; afterward the original preference is restored and both roots are absent."
         }
       ]
     },
@@ -1694,6 +1850,64 @@
           "role": "boundary",
           "oracle": "A clone automatically receives metadata exclusion through the shared creation boundary.",
           "check": "correctness"
+        }
+      ]
+    },
+    {
+      "id": "HISTORY-001",
+      "family": "History selection authority",
+      "invariant": "An explicit revision selection survives load-start callbacks for old or empty content and applies to the first populated replacement snapshot, or a completed empty load. Passive refresh preserves browsing, pending intent does not retain previous history, and deep links retain their explicit target.",
+      "rootCause": "A load-start KVO callback consumed forced selection against old rows; later publications then preserved the wrong commit.",
+      "sourcePaths": [
+        "Classes/Controllers/PBGitHistoryController.m",
+        "Classes/Controllers/HistoryStateCoordinator.swift",
+        "GitXTests/HistoryControllerTests.swift",
+        "GitXTests/WorktreeAppKitTests.swift"
+      ],
+      "requiredChecks": [
+        "debug-test-build",
+        "release-test-build",
+        "correctness",
+        "address-undefined",
+        "thread-sanitizer",
+        "ui",
+        "analyze"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testBackgroundHistoryRefreshPreservesSelectionUntilAndAfterItsSnapshotArrives",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "A passive load-start and replacement snapshot preserve the actual browsed commit before and after completion."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testForcedHistorySelectionWaitsForTheNewRevisionSnapshot",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Deliver load-start KVO after a real requested revision while old rows remain; publish a replacement model and verify the requested real commit OID both while loading and after completion."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testForcedHistorySelectionUsesTheFirstNewNonemptySnapshotAndFinishesEmptyLoads",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Old or empty replacement snapshots retain intent; the first populated replacement selects immediately, completed empty loads settle, and ordinary browsing cancels pending authority."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testPendingHistorySelectionDoesNotRetainItsPreviousSnapshot",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "The old snapshot deallocates while selection is pending; a subsequent populated publication still progresses."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testReturnToHistoryAdoptsLatestCapturedCheckoutWhileDeepLinksKeepTheirTarget",
+          "check": "correctness",
+          "role": "compatibility",
+          "oracle": "Dispatch the actual History responder for a refreshed linked checkout, verify latest commit rendering and later deep-link selection, and independently prove physical Git refs and HEADs remain unchanged."
         }
       ]
     }
