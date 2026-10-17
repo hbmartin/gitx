@@ -4,6 +4,187 @@ import XCTest
 
 @MainActor
 final class WorktreePresentationTests: XCTestCase {
+    #if DEBUG
+        @MainActor
+        private final class QueueOwnerState { var current = true }
+
+        func testPresentationQueueDiscardsLatePreparationAfterOwnerRevocation() async throws {
+            for invalidatesQueue in [false, true] {
+                let queue = PBWorktreePresentationQueueTestHarness()
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                defer { queue.invalidate(); window.close() }
+                let owner = QueueOwnerState()
+                var ready: (@MainActor (PBWorktreePreparedPresentationTestValue?) -> Void)?
+                var discarded = 0
+                var presented = 0
+                var retired = 0
+                queue.enqueue(window: window, ownerIsCurrent: { owner.current }, prepare: { ready = $0 }, discard: { retired += 1 })
+                await waitUntil { ready != nil }
+                let delivery = try XCTUnwrap(ready)
+                owner.current = false
+                if invalidatesQueue {
+                    queue.invalidate()
+                }
+                delivery(.init(finishesWhenSheetEnds: false, present: { _ in presented += 1 }, discard: { discarded += 1 }))
+                await waitUntil { !queue.hasPendingPresentations }
+                XCTAssertEqual(presented, 0)
+                XCTAssertEqual(discarded, 1, "A late prepared result relinquishes its single-use authority exactly once")
+                XCTAssertEqual(retired, 1)
+                XCTAssertNil(window.attachedSheet)
+            }
+        }
+
+        func testPresentationQueueRevokesPreparedAndPendingOwnersBehindANewSheet() async throws {
+            let queue = PBWorktreePresentationQueueTestHarness()
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { queue.invalidate(); window.close() }
+            let owner = QueueOwnerState()
+            var ready: (@MainActor (PBWorktreePreparedPresentationTestValue?) -> Void)?
+            var discarded = 0
+            var presented = 0
+            var retired = 0
+            queue.enqueue(window: window, ownerIsCurrent: { owner.current }, prepare: { ready = $0 }, discard: { retired += 1 })
+            queue.enqueue(window: window, ownerIsCurrent: { false }, prepare: { _ in XCTFail("An expired pending owner must not prepare") }, discard: { retired += 1 })
+            await waitUntil { ready != nil }
+            let occupant = unrelatedSheet(on: window)
+            try XCTUnwrap(ready)(.init(finishesWhenSheetEnds: false, present: { _ in presented += 1 }, discard: { discarded += 1 }))
+            await drainCallbacks()
+            XCTAssertTrue(queue.hasPendingPresentations)
+            XCTAssertTrue(window.attachedSheet === occupant.window)
+            owner.current = false
+            window.endSheet(occupant.window, returnCode: .cancel)
+            await waitUntil { !queue.hasPendingPresentations && window.attachedSheet == nil }
+            XCTAssertEqual(presented, 0)
+            XCTAssertEqual(discarded, 1)
+            XCTAssertEqual(retired, 2)
+        }
+
+        func testPresentationQueueInvalidationEndsItsOwnPresentedSheetExactlyOnce() async {
+            let queue = PBWorktreePresentationQueueTestHarness()
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { queue.invalidate(); window.close() }
+            let alert = NSAlert()
+            alert.messageText = "Owner-scoped diagnostic presentation"
+            alert.addButton(withTitle: "Cancel")
+            var responses: [NSApplication.ModalResponse] = []
+            var discarded = 0
+            queue.enqueue(window: window, ownerIsCurrent: { true }, prepare: { ready in
+                ready(.init(finishesWhenSheetEnds: false, present: { done in
+                    alert.beginSheetModal(for: window) { response in responses.append(response); done() }
+                }, discard: { discarded += 1 }))
+            }, discard: {})
+            await waitUntil { window.attachedSheet === alert.window }
+            queue.invalidate()
+            await waitUntil { responses.count == 1 && window.attachedSheet == nil }
+            XCTAssertEqual(responses, [.cancel])
+            XCTAssertEqual(discarded, 1)
+            XCTAssertFalse(queue.hasPendingPresentations)
+        }
+
+        func testSwiftLocateCompletesOrRejectsChangedFinalEvidenceWithoutLosingAdmission() async throws {
+            selectGit()
+            for changesEvidence in [false, true] {
+                let journey = try await movedRepairJourney()
+                let service = journey.origin.service
+                let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+                journey.window.endSheet(journey.style, returnCode: .alertThirdButtonReturn)
+                await waitUntil { journey.window.attachedSheet == nil }
+                let checkpoint = WorktreeWorkerCheckpoint()
+                if changesEvidence {
+                    service.repairValidationObserver = { checkpoint.wait() }
+                    service.repairValidationResultObserver = { checkpoint.finish() }
+                    checkpoint.expectResult()
+                }
+                addTeardownBlock { @MainActor in
+                    checkpoint.resume()
+                    if checkpoint.expectsResult {
+                        await self.fulfillment(of: [checkpoint.finishedExpectation()], timeout: 15)
+                    }
+                    await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
+                }
+                let done = expectation(description: "Swift Locate delivers its terminal result")
+                var completed = 0
+                var failure: NSError?
+                service.beginRepairForTesting(worktree: tree, movedTo: journey.fixture.linked.path, relativePaths: false, ownerIsCurrent: { true }) { preview, succeeded, error in
+                    XCTAssertNil(preview, "A proven moved checkout requires no additional consent")
+                    if succeeded {
+                        completed += 1
+                    }
+                    failure = error as NSError?
+                    done.fulfill()
+                }
+                if changesEvidence {
+                    await fulfillment(of: [checkpoint.entered], timeout: 5)
+                    try Data("foreign link must survive final validation\n".utf8).write(to: journey.fixture.linked.appendingPathComponent(".git"))
+                    checkpoint.resume()
+                }
+                await fulfillment(of: [done], timeout: 15)
+                if changesEvidence {
+                    XCTAssertNotNil(failure)
+                    XCTAssertEqual(completed, 0)
+                    XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+                    XCTAssertEqual(try String(contentsOf: journey.fixture.linked.appendingPathComponent(".git"), encoding: .utf8), "foreign link must survive final validation\n")
+                } else {
+                    XCTAssertNil(failure)
+                    XCTAssertEqual(completed, 1)
+                    try assertRepairedJourney(journey, relative: false)
+                }
+                try await assertFollowingPreviewProgresses(journey)
+            }
+        }
+
+        func testReadOnlyRepairPreviewRejectsRevokedAndConsumedTokensWithoutWriting() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let origin = try await installService(in: fixture)
+            let service = origin.service
+            try FileManager.default.removeItem(at: fixture.linked.appendingPathComponent(".git"))
+            service.refresh()
+            await waitUntil { service.worktrees.contains { $0.hasBrokenLink } }
+            let requested = expectation(description: "Swift repair releases admission for consent")
+            var captured: PBWorktreeRepairPreview?
+            service.beginRepairForTesting(worktree: nil, movedTo: nil, relativePaths: false, ownerIsCurrent: { true }) { preview, completed, error in
+                XCTAssertNil(error)
+                XCTAssertFalse(completed)
+                captured = preview
+                requested.fulfill()
+            }
+            await fulfillment(of: [requested], timeout: 15)
+            let original = try XCTUnwrap(captured)
+            let refreshed = expectation(description: "read-only refresh replaces its single-use token without writing")
+            service.refreshRepairPreviewForTesting(original, ownerIsCurrent: { true }) { preview, changed, error in
+                XCTAssertNil(error)
+                XCTAssertFalse(changed)
+                XCTAssertNotNil(preview)
+                captured = preview
+                refreshed.fulfill()
+            }
+            await fulfillment(of: [refreshed], timeout: 15)
+            let preview = try XCTUnwrap(captured)
+            XCTAssertFalse(preview === original)
+            for current in [false, true] {
+                let rejected = expectation(description: current ? "consumed preview is rejected" : "revoked owner is cancelled")
+                service.refreshRepairPreviewForTesting(preview, ownerIsCurrent: { current }) { renewed, _, error in
+                    XCTAssertNil(renewed)
+                    guard let error else { XCTFail("Revoked and consumed tokens must not refresh"); rejected.fulfill(); return }
+                    if current {
+                        XCTAssertTrue((error as NSError).localizedFailureReason?.contains("consumed") == true)
+                    } else {
+                        XCTAssertTrue(WorktreePresentationPolicy.isExpectedCancellation(error as NSError))
+                    }
+                    rejected.fulfill()
+                }
+                await fulfillment(of: [rejected], timeout: 15)
+            }
+            XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.appendingPathComponent(".git").path))
+        }
+
+    #endif
+
     func testQueuedGenericGitFailureIsPresentedInItsLiveOriginWindowAndReleasesSharedFIFO() async throws {
         selectGit()
         let fixture = try makeFixture()

@@ -34,7 +34,35 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class PBWorktreePreparedPresentationTestValue;
+typedef void (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationDone)(void) NS_SWIFT_SENDABLE;
+typedef void (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationPresent)(PBWorktreePresentationDone done) NS_SWIFT_SENDABLE;
+typedef void (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationReady)(PBWorktreePreparedPresentationTestValue *_Nullable value) NS_SWIFT_SENDABLE;
+typedef void (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationPrepare)(PBWorktreePresentationReady ready) NS_SWIFT_SENDABLE;
+typedef BOOL (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationOwner)(void) NS_SWIFT_SENDABLE;
+
+@interface PBWorktreePreparedPresentationTestValue : NSObject
+- (instancetype)initWithFinishesWhenSheetEnds:(BOOL)finishesWhenSheetEnds
+                                    present:(PBWorktreePresentationPresent)present
+                                    discard:(PBWorktreePresentationDone)discard;
+@end
+
+@interface PBWorktreePresentationQueueTestHarness : NSObject
+@property (nonatomic, readonly) BOOL hasPendingPresentations;
+- (void)enqueueWindow:(NSWindow *)window ownerIsCurrent:(PBWorktreePresentationOwner)ownerIsCurrent
+              prepare:(PBWorktreePresentationPrepare)prepare discard:(PBWorktreePresentationDone)discard
+    NS_SWIFT_NAME(enqueue(window:ownerIsCurrent:prepare:discard:));
+- (void)invalidate;
+@end
+
 @interface PBRepositoryWorktreeService (FixtureDrainTesting)
+- (void)beginRepairForTestingWithWorktree:(nullable PBGitWorktree *)worktree movedTo:(nullable NSString *)path relativePaths:(BOOL)relativePaths
+                         ownerIsCurrent:(PBWorktreePresentationOwner)ownerIsCurrent
+                             completion:(void (NS_SWIFT_UI_ACTOR ^)(PBWorktreeRepairPreview *_Nullable, BOOL, NSError *_Nullable))completion
+    NS_SWIFT_NAME(beginRepairForTesting(worktree:movedTo:relativePaths:ownerIsCurrent:completion:)) __attribute__((swift_async(none)));
+- (void)refreshRepairPreviewForTesting:(PBWorktreeRepairPreview *)preview ownerIsCurrent:(PBWorktreePresentationOwner)ownerIsCurrent
+                            completion:(void (NS_SWIFT_UI_ACTOR ^)(PBWorktreeRepairPreview *_Nullable, BOOL, NSError *_Nullable))completion
+    NS_SWIFT_NAME(refreshRepairPreviewForTesting(_:ownerIsCurrent:completion:)) __attribute__((swift_async(none)));
 @property (nonatomic, copy, nullable) PBWorktreePreparationObserver repairValidationObserver;
 @property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^repairValidationResultObserver)(void);
 @property (nonatomic, copy, nullable) PBWorktreePreparationObserver discoveryEvidenceObserver;

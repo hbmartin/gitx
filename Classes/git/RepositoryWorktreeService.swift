@@ -1007,6 +1007,39 @@ final class PBRepositoryWorktreeService: NSObject {
         requestRepair(selection: nil, style: style, ownerIsCurrent: ownerIsCurrent, startCompletion: completion)
     }
 
+    #if DEBUG
+        @objc(beginRepairForTestingWithWorktree:movedTo:relativePaths:ownerIsCurrent:completion:)
+        func beginRepairForTesting(worktree: PBGitWorktree?, movedTo path: String?, relativePaths: Bool,
+                                   ownerIsCurrent: @escaping @MainActor () -> Bool,
+                                   completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, Bool, NSError?) -> Void)
+        {
+            let deliver: @MainActor @Sendable (Result<WorktreeRepairStartResult, NSError>) -> Void = { result in
+                switch result {
+                case .success(.completed): completion(nil, true, nil)
+                case let .success(.requiresConsent(preview)): completion(preview, false, nil)
+                case let .failure(error): completion(nil, false, error)
+                }
+            }
+            if let worktree, let path {
+                beginRepair(worktree: worktree, movedTo: path, ownerIsCurrent: ownerIsCurrent, completion: deliver)
+            } else {
+                beginRepairLinks(style: relativePaths ? .relative : .absolute, ownerIsCurrent: ownerIsCurrent, completion: deliver)
+            }
+        }
+
+        @objc(refreshRepairPreviewForTesting:ownerIsCurrent:completion:)
+        func refreshRepairPreviewForTesting(_ preview: PBWorktreeRepairPreview, ownerIsCurrent: @escaping @MainActor () -> Bool,
+                                            completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, Bool, NSError?) -> Void)
+        {
+            refreshRepairPreview(preview, ownerIsCurrent: ownerIsCurrent) { result in
+                switch result {
+                case let .success(review): completion(review.preview, review.changed, nil)
+                case let .failure(error): completion(nil, false, error)
+                }
+            }
+        }
+    #endif
+
     @objc(prepareRepairWorktree:movedTo:completion:)
     func prepareRepair(worktree: PBGitWorktree, movedTo path: String, completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void) {
         requestRepair(selection: WorktreeRepairSelection(originalPath: worktree.path, path: path), style: nil, completion: completion)

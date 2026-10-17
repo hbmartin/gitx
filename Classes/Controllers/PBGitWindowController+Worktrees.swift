@@ -209,6 +209,43 @@ final class WorktreePresentationQueue {
     }
 }
 
+#if DEBUG
+    @objc(PBWorktreePreparedPresentationTestValue)
+    @MainActor
+    final class WorktreePreparedPresentationTestValue: NSObject {
+        let value: WorktreePresentationQueue.Prepared
+
+        @objc(initWithFinishesWhenSheetEnds:present:discard:)
+        init(finishesWhenSheetEnds: Bool, present: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void,
+             discard: @escaping @MainActor () -> Void)
+        {
+            value = .init(finishesWhenSheetEnds: finishesWhenSheetEnds, present: present, discard: discard)
+        }
+    }
+
+    @objc(PBWorktreePresentationQueueTestHarness)
+    @MainActor
+    final class WorktreePresentationQueueTestHarness: NSObject {
+        private let queue = WorktreePresentationQueue()
+
+        @objc var hasPendingPresentations: Bool {
+            queue.hasPendingPresentations
+        }
+
+        @objc(enqueueWindow:ownerIsCurrent:prepare:discard:)
+        func enqueue(window: NSWindow, ownerIsCurrent: @escaping @MainActor () -> Bool,
+                     prepare: @escaping @MainActor (@escaping @MainActor (WorktreePreparedPresentationTestValue?) -> Void) -> Void,
+                     discard: @escaping @MainActor () -> Void)
+        {
+            queue.enqueue(window: window, isCurrent: ownerIsCurrent, prepare: { ready in prepare { ready($0?.value) } }, discard: discard)
+        }
+
+        @objc func invalidate() {
+            queue.invalidate()
+        }
+    }
+#endif
+
 extension PBGitWindowController {
     private var worktreeService: PBRepositoryWorktreeService? {
         repository?.worktreeService
