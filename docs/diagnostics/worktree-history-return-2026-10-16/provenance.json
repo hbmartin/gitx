@@ -1,5 +1,5 @@
 {
-  "runId": "repair-review-history-selection-fix-green-v1",
+  "runId": "repair-review-combined-correctness-v5",
   "purpose": "Diagnostic current worktree History return after snapshot selection repair; no screenshot comparison.",
   "file": "explicit-return-selects-latest-history.png",
   "attachments": [
@@ -9,25 +9,25 @@
           "configurationName": "Default",
           "deviceId": "00006020-000C11362ED3C01E",
           "deviceName": "My Mac",
-          "exportedFileName": "6C99629A-FE03-4811-A385-686E556BBC65.png",
+          "exportedFileName": "23D58822-DFEF-4A39-9D65-0D55F0E685C4.png",
           "isAssociatedWithFailure": false,
-          "suggestedHumanReadableName": "Worktrees-Explicit-Return-Latest-History_0_8A782A20-9A07-48F6-8EBA-B57319E1ED3A.png",
-          "timestamp": 1792209698.297
+          "suggestedHumanReadableName": "Worktrees-Explicit-Return-Latest-History_0_E8E54BA8-A092-4F42-9C4E-893C1E66899E.png",
+          "timestamp": 1792211526.676
         }
       ],
       "testIdentifier": "WorktreeAppKitTests/testReturnToHistoryAdoptsLatestCapturedCheckoutWhileDeepLinksKeepTheirTarget()",
       "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testReturnToHistoryAdoptsLatestCapturedCheckoutWhileDeepLinksKeepTheirTarget"
     }
   ],
-  "sourceSnapshot": "artifacts/verification/repair-review-history-selection-fix-green-v1-correctness-344546c4/receipt.json",
-  "sourceCommit": "68d60d02048bcc815c1e64b920bcef6560058dd9",
+  "sourceSnapshot": "artifacts/verification/repair-review-combined-correctness-v5-correctness-6f8c0592/receipt.json",
+  "sourceCommit": "4cc9271c2c64af1e7b121115445a93199073ada7",
   "sourceCodeSha256": {
     "Classes/Controllers/HistoryStateCoordinator.swift": "99214298c056208b4d2bdaa6f4bffe3537c09f15fdc0ac77bb8139417a4aa995",
-    "Classes/Controllers/PBGitHistoryController.m": "604b3b69b463e73e652c5a1db62a15db8cf9d94ae5c2e80f2b66c9b394ac6709",
-    "GitXTests/GitXTests-Bridging-Header.h": "f7d2ba2e61b8d44cc2fb6fbb15d3ccc8b877f865e8c432a1704d933dc06ec5b4",
+    "Classes/Controllers/PBGitHistoryController.m": "30747b176b6092fa43c40dffeacee199672a769e1952179ceb9792eb61d0b854",
+    "GitXTests/GitXTests-Bridging-Header.h": "9894b2ad914147f6de12eb9c29b317ee76f774c665058749250e0b64c826456b",
     "GitXTests/HistoryControllerTests.swift": "ed282528b342a900c85da0355ce9c819cdb8d17e3ff582f6a8f19ea9d40bc718"
   },
-  "sourceNote": "Capture is from the passing pre-commit working tree, with these runtime-related source hashes validated against the exact correctness receipt. Post-commit full verification remains required.",
+  "sourceNote": "Current capture comes from the clean committed integrated source. Complete correctness and Core checks passed; final post-commit canonical full profiles remain required.",
   "preparationCommit": "cc2da61e29a5e859e2074e4196c91740f8a8a26e",
   "extractionCommit": "68d60d02048bcc815c1e64b920bcef6560058dd9",
   "conversionRecord": "artifacts/verification/repair-review/history-selection-conversion-provenance.json",
@@ -36,7 +36,11 @@
     "repair-review-history-selection-extraction-v1",
     "repair-review-history-selection-regression-red-v1",
     "repair-review-history-selection-regression-red-v2",
-    "repair-review-history-selection-fix-green-v1"
+    "repair-review-history-selection-fix-green-v1",
+    "repair-review-batch2-full-v3",
+    "repair-review-batch2-full-v4",
+    "repair-review-combined-correctness-v4",
+    "repair-review-combined-correctness-v5"
   ],
   "reviewedTargets": {
     "PR94": "599a257873e0965df5fe44cdf0a745d8f0e663f6"
@@ -46,5 +50,59 @@
     "The first populated replacement can settle selection before the full history load finishes.",
     "Deep links preserve their explicit commit target and physical Git refs/HEADs stay unchanged."
   ],
-  "coveragePreparation": "The Objective-C controller and existing Swift coordinator each had 100% complete-run line coverage before extraction; their checked-in 100% floors are preserved."
+  "coveragePreparation": "The Objective-C controller and existing Swift coordinator each had 100% complete-run line coverage before extraction; their checked-in 100% floors are preserved.",
+  "previousCaptures": [
+    {
+      "runId": "repair-review-history-selection-fix-green-v1",
+      "sourceCommit": "68d60d02048bcc815c1e64b920bcef6560058dd9",
+      "sourceSnapshot": "artifacts/verification/repair-review-history-selection-fix-green-v1-correctness-344546c4/receipt.json",
+      "sourceCodeSha256": {
+        "Classes/Controllers/HistoryStateCoordinator.swift": "99214298c056208b4d2bdaa6f4bffe3537c09f15fdc0ac77bb8139417a4aa995",
+        "Classes/Controllers/PBGitHistoryController.m": "30747b176b6092fa43c40dffeacee199672a769e1952179ceb9792eb61d0b854",
+        "GitXTests/GitXTests-Bridging-Header.h": "9894b2ad914147f6de12eb9c29b317ee76f774c665058749250e0b64c826456b",
+        "GitXTests/HistoryControllerTests.swift": "ed282528b342a900c85da0355ce9c819cdb8d17e3ff582f6a8f19ea9d40bc718"
+      },
+      "sourceNote": "Capture is from the passing pre-commit working tree, with these runtime-related source hashes validated against the exact correctness receipt. Post-commit full verification remains required.",
+      "attachments": [
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "6C99629A-FE03-4811-A385-686E556BBC65.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Explicit-Return-Latest-History_0_8A782A20-9A07-48F6-8EBA-B57319E1ED3A.png",
+              "timestamp": 1792209698.297
+            }
+          ],
+          "testIdentifier": "WorktreeAppKitTests/testReturnToHistoryAdoptsLatestCapturedCheckoutWhileDeepLinksKeepTheirTarget()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testReturnToHistoryAdoptsLatestCapturedCheckoutWhileDeepLinksKeepTheirTarget"
+        }
+      ]
+    }
+  ],
+  "fixCommit": "d5b4d10a626b4765e7c1f99e948644f8a34612b0",
+  "coverageVerification": {
+    "objcController": 1.0,
+    "swiftCoordinator": 1.0,
+    "nativeCorrectnessTests": 1933,
+    "coreTests": 149,
+    "applicationDisplay": "93.15%",
+    "applicationFloor": 0.9314,
+    "worktreeServiceDisplay": "99.05%",
+    "worktreeServiceFloor": 0.9905
+  },
+  "currentImplementationCommits": {
+    "repairEvidenceRecovery": "98d1e4191d6e960cffe7fb7503896acf9783788b",
+    "staleStatusCharacterization": "0d6518f0c2806e56a96884790fe9bfada0edac6f",
+    "deferredPresentation": "3d3097e38ec78904088e2ef6795fdfa21a826ceb",
+    "boundaryCharacterization": "9a9d90fcb24625d34531263a237e06acc4b91b66",
+    "previewOwnerCharacterization": "ebbbc94bd73dc659cc2f9fb97546af12005fc6ae",
+    "cleanup": "74232731b804a448b555e3972188aee60afd1481",
+    "historyPreparation": "cc2da61e29a5e859e2074e4196c91740f8a8a26e",
+    "historyExtraction": "68d60d02048bcc815c1e64b920bcef6560058dd9",
+    "historyFix": "d5b4d10a626b4765e7c1f99e948644f8a34612b0",
+    "stagingTestFix": "73102f63d6cb5081c3d2276b3af2b624082aea8b"
+  }
 }
