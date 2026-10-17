@@ -5,6 +5,8 @@ import XCTest
 @MainActor
 final class WorktreePresentationTests: XCTestCase {
     private var beforeGitPreferenceRestoration: (@MainActor () -> Void)?
+    private var gitPreferenceRestoration: GitPreferenceRestoration?
+    private var drainedFixtures: [Fixture] = []
 
     func testFixtureCleanupDrainsHeldDiscoveryBeforeRestoringGitPreferences() async throws {
         let defaults = UserDefaults.standard
@@ -47,6 +49,36 @@ final class WorktreePresentationTests: XCTestCase {
         let succeeded = await cleanup.value
         XCTAssertTrue(succeeded)
         XCTAssertFalse(checkpoint.didTimeout)
+    }
+
+    func testFixtureTeardownRestoresGitOnceBeforeRemovingAllDrainedFixtures() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable") as? NSObject
+        var restorationCount = 0
+        var fixtureRoots: [URL] = []
+        addTeardownBlock { @MainActor in
+            XCTAssertEqual(restorationCount, 1, "One test restores its original preference once, even when setup helpers select Git repeatedly")
+            XCTAssertEqual(defaults.object(forKey: "gitExecutable") as? NSObject, previous)
+            XCTAssertEqual(fixtureRoots.count, 2)
+            for root in fixtureRoots {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: root.path), "A drained fixture is deleted after preference restoration")
+            }
+        }
+        selectGit()
+        let first = try makeFixture()
+        fixtureRoots.append(first.root)
+        _ = try await installService(in: first)
+        selectGit()
+        let second = try makeFixture()
+        fixtureRoots.append(second.root)
+        _ = try await installService(in: second)
+        beforeGitPreferenceRestoration = {
+            restorationCount += 1
+            for fixture in [first, second] {
+                XCTAssertTrue(fixture.services.isEmpty && fixture.retiredServices.isEmpty, "All fixture services must drain before any preference restoration")
+                XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root.path), "Fixture files must outlive preference restoration")
+            }
+        }
     }
 
     #if DEBUG
@@ -1717,7 +1749,7 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     private func movedRepairJourney(selectedGitProxy: Bool = false) async throws -> MovedRepairJourney {
-        let fixture = try Fixture(nested: true)
+        let fixture = try makeFixture(nested: true)
         do {
             let administrativeName = try fixture.administrativeDirectory().lastPathComponent
             try Data("staged data survives repair overlap\n".utf8).write(to: fixture.linked.appendingPathComponent("overlap-canary.txt"))
@@ -1814,8 +1846,9 @@ final class WorktreePresentationTests: XCTestCase {
         await cleanupFixture(fixture)
     }
 
-    private func makeFixture() throws -> Fixture {
-        let fixture = try Fixture()
+    private func makeFixture(nested: Bool = false) throws -> Fixture {
+        preserveGitPreferenceUntilTeardown()
+        let fixture = try Fixture(nested: nested)
         addTeardownBlock { @MainActor in
             await self.cleanupFixture(fixture)
         }
@@ -1840,7 +1873,9 @@ final class WorktreePresentationTests: XCTestCase {
         await drainCallbacks()
         fixture.services.removeAll()
         fixture.retiredServices.removeAll()
-        fixture.removeFiles()
+        if !drainedFixtures.contains(where: { $0 === fixture }) {
+            drainedFixtures.append(fixture)
+        }
         return true
     }
 
@@ -1862,11 +1897,19 @@ final class WorktreePresentationTests: XCTestCase {
     }
 
     private func preserveGitPreferenceUntilTeardown() {
+        guard gitPreferenceRestoration == nil else { return }
         let restoration = GitPreferenceRestoration()
-        // Registered first so every later fixture teardown drains before this notification.
+        gitPreferenceRestoration = restoration
+        // Registered once, before fixtures: drain all services, restore, then delete.
         addTeardownBlock { @MainActor in
             self.beforeGitPreferenceRestoration?()
             restoration.restore()
+            let drained = self.drainedFixtures
+            self.drainedFixtures.removeAll()
+            for fixture in drained where !fixture.retainedAfterDrainFailure {
+                fixture.removeFiles()
+            }
+            self.gitPreferenceRestoration = nil
         }
     }
 

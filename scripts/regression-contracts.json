@@ -1656,8 +1656,8 @@
     {
       "id": "ENV-001",
       "family": "Deterministic Git fixtures",
-      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input.",
-      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state.",
+      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input. Presentation fixtures retain files through cancellation and main-actor worker acknowledgement, restore the original Git preference once, then remove only drained fixtures.",
+      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state. Preference notifications during teardown can restart services, while premature fixture deletion races late workers.",
       "sourcePaths": [
         "GitXTests/GitXTestGitEnvironment.swift",
         "GitXTests/GitXTestGitFixture.swift",
@@ -1665,11 +1665,16 @@
         "scripts/run_app.sh",
         "scripts/workflow_session.py",
         "scripts/workflow_records.py",
-        "scripts/regression_guardrails.py"
+        "scripts/regression_guardrails.py",
+        "GitXTests/WorktreePresentationTests.swift"
       ],
       "requiredChecks": [
         "correctness",
-        "static"
+        "static",
+        "debug-test-build",
+        "release-test-build",
+        "address-undefined",
+        "thread-sanitizer"
       ],
       "tests": [
         {
@@ -1689,6 +1694,18 @@
           "identifier": "GitXTests/GitXTestGitFixtureTests/testFixtureRunnerStoresBinaryStandardInputWithoutChangingItsBytes",
           "role": "boundary",
           "oracle": "Compare exact binary stdin bytes."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testFixtureCleanupDrainsHeldDiscoveryBeforeRestoringGitPreferences",
+          "role": "boundary",
+          "oracle": "Hold an actual discovery worker; cleanup must remain pending with its files present until the late worker result is acknowledged on main."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testFixtureTeardownRestoresGitOnceBeforeRemovingAllDrainedFixtures",
+          "role": "valid",
+          "oracle": "At the actual single preference-restoration boundary, both real fixture roots still exist and all services are drained; afterward the original preference is restored and both roots are absent."
         }
       ]
     },
