@@ -89,7 +89,11 @@
     "repair-review-batch2-full-v3",
     "repair-review-batch2-full-v4",
     "repair-review-combined-correctness-v4",
-    "repair-review-combined-correctness-v5"
+    "repair-review-combined-correctness-v5",
+    "repair-review-batch2-full-v5",
+    "repair-review-hidden-preparation-diagnostic-v1",
+    "repair-review-presentation-preparation-diagnostic-v1",
+    "repair-review-full-preparation-diagnostic-v1"
   ],
   "reviewedTargets": {
     "PR93": "59ba6c217d86000961f3840fe6e639b90555d438",
@@ -99,10 +103,11 @@
     "Run IDs retain exact receipts, including expected red regressions and failed attempts; listing a run does not assert it passed.",
     "Ready delivery requires the ordered canonical full profiles and final review reconciliation.",
     "The fallback criticized as unreachable is reachable for a provisionally absent administrative directory; explicit recorded absence preserves that supported recovery while rejecting omitted preparation targets.",
-    "Current diagnostic captures and the final coverage ratchet come from the complete passed native correctness run at integrated cleanup commit 7daa3aeb. Original commit IDs remain recorded for immutable pre-integration evidence; ordered full profiles remain required for ready delivery.",
-    "Current clean integrated run passed both consumers, 1933 native correctness tests and 149 Core tests. The extracted History policy and Objective-C controller each retain 100% line coverage. The validated ratchet candidate is unchanged; final ordered full profiles remain required. Original and interrupted runs retain their original meaning and are not readiness claims."
+    "An earlier diagnostic capture and coverage ratchet came from the complete passed native correctness run at integrated cleanup commit 7daa3aeb. Original commit IDs remain recorded for immutable pre-integration evidence; ordered full profiles remain required for ready delivery.",
+    "Current clean integrated run passed both consumers, 1933 native correctness tests and 149 Core tests. The extracted History policy and Objective-C controller each retain 100% line coverage. The validated ratchet candidate is unchanged; final ordered full profiles remain required. Original and interrupted runs retain their original meaning and are not readiness claims.",
+    "The preparation-error diagnostic adds test-only logging. Production UI bytes and these captured images remain unchanged; sourceCommit and sourceSnapshot continue to identify the actual original capture, while currentImplementationCommits records the integrated commit lineage. The fresh ordered full profiles remain required."
   ],
-  "coverageCharacterizationCommit": "9a9d90fcb24625d34531263a237e06acc4b91b66",
+  "coverageCharacterizationCommit": "520eda2bb927c5f2f0446fa7b9e37fce14fc7ec7",
   "previousCaptures": [
     {
       "runId": "repair-review-prepared-native-green-v2",
@@ -263,25 +268,83 @@
     {
       "original": "0f14c7753bfd7beb361c69689a3ea40089d8ab0b",
       "integrated": "4cc9271c2c64af1e7b121115445a93199073ada7"
+    },
+    {
+      "original": "98d1e4191d6e960cffe7fb7503896acf9783788b",
+      "integrated": "34a345e7835706e3f13451667089207651034bf6"
+    },
+    {
+      "original": "0d6518f0c2806e56a96884790fe9bfada0edac6f",
+      "integrated": "30b4b41c3577f959bbfa0679e2d5ca43ff38e13b"
+    },
+    {
+      "original": "3d3097e38ec78904088e2ef6795fdfa21a826ceb",
+      "integrated": "8e860fc5f8cfbfd8241f561e81b7f36e1c79016d"
+    },
+    {
+      "original": "9a9d90fcb24625d34531263a237e06acc4b91b66",
+      "integrated": "520eda2bb927c5f2f0446fa7b9e37fce14fc7ec7"
+    },
+    {
+      "original": "ebbbc94bd73dc659cc2f9fb97546af12005fc6ae",
+      "integrated": "4d29f1c79c6d05add5495c0e1419b005c86f1466"
+    },
+    {
+      "original": "74232731b804a448b555e3972188aee60afd1481",
+      "integrated": "e0e09c9c56925f5a884b066480266780a3d3d2a1"
+    },
+    {
+      "original": "4cc9271c2c64af1e7b121115445a93199073ada7",
+      "integrated": "82310b00bb00006a5aed769a23b100d328945775"
+    },
+    {
+      "original": "8d7ce63c25cffb89f538c35a9422388a437e1d48",
+      "integrated": "e6c1285344704daf7a9e161a5deb9ba7310bf1d3"
     }
   ],
   "originalCoverageCharacterizationCommit": "9862ff44c94f85cfe220d2b4094ce9fa8251b197",
-  "previewOwnerCharacterizationCommit": "ebbbc94bd73dc659cc2f9fb97546af12005fc6ae",
-  "staleStatusCharacterizationCommit": "0d6518f0c2806e56a96884790fe9bfada0edac6f",
+  "previewOwnerCharacterizationCommit": "4d29f1c79c6d05add5495c0e1419b005c86f1466",
+  "staleStatusCharacterizationCommit": "30b4b41c3577f959bbfa0679e2d5ca43ff38e13b",
   "stagingSelectionTestCommit": "73102f63d6cb5081c3d2276b3af2b624082aea8b",
   "currentImplementationCommits": {
-    "repairEvidenceRecovery": "98d1e4191d6e960cffe7fb7503896acf9783788b",
-    "staleStatusCharacterization": "0d6518f0c2806e56a96884790fe9bfada0edac6f",
-    "deferredPresentation": "3d3097e38ec78904088e2ef6795fdfa21a826ceb",
-    "boundaryCharacterization": "9a9d90fcb24625d34531263a237e06acc4b91b66",
-    "previewOwnerCharacterization": "ebbbc94bd73dc659cc2f9fb97546af12005fc6ae",
-    "cleanup": "74232731b804a448b555e3972188aee60afd1481",
+    "repairEvidenceRecovery": "34a345e7835706e3f13451667089207651034bf6",
+    "staleStatusCharacterization": "30b4b41c3577f959bbfa0679e2d5ca43ff38e13b",
+    "deferredPresentation": "8e860fc5f8cfbfd8241f561e81b7f36e1c79016d",
+    "boundaryCharacterization": "520eda2bb927c5f2f0446fa7b9e37fce14fc7ec7",
+    "previewOwnerCharacterization": "4d29f1c79c6d05add5495c0e1419b005c86f1466",
+    "cleanup": "e0e09c9c56925f5a884b066480266780a3d3d2a1",
     "historyPreparation": "cc2da61e29a5e859e2074e4196c91740f8a8a26e",
     "historyExtraction": "68d60d02048bcc815c1e64b920bcef6560058dd9",
     "historyFix": "d5b4d10a626b4765e7c1f99e948644f8a34612b0",
-    "stagingTestFix": "73102f63d6cb5081c3d2276b3af2b624082aea8b"
+    "stagingTestFix": "73102f63d6cb5081c3d2276b3af2b624082aea8b",
+    "preparationErrorDiagnostics": "81f35b9308f622631dc66c6b78f0712d61a37767"
   },
   "historySelectionFixCommit": "d5b4d10a626b4765e7c1f99e948644f8a34612b0",
   "historySelectionPreparationCommit": "cc2da61e29a5e859e2074e4196c91740f8a8a26e",
-  "historySelectionExtractionCommit": "68d60d02048bcc815c1e64b920bcef6560058dd9"
+  "historySelectionExtractionCommit": "68d60d02048bcc815c1e64b920bcef6560058dd9",
+  "preparationFailureDiagnostic": {
+    "failedRunId": "repair-review-batch2-full-v4",
+    "correctnessReceipt": "artifacts/verification/repair-review-batch2-full-v4-correctness-cc87a90e/receipt.json",
+    "test": "WorktreePresentationTests/testDeferredRepairFailureCannotResurfaceAfterItsOriginalWindowBecomesHidden()",
+    "nativeCorrectnessCounts": {
+      "passed": 1920,
+      "failed": 1,
+      "skipped": 0
+    },
+    "hostPreflightCounts": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    "observedFailure": "Repair preparation failed before the expected held writer began; subsequent sheet assertions also failed.",
+    "underlyingCause": "Unexplained; did not reproduce in the isolated test, complete presentation class or complete native correctness diagnostic. No root-cause fix is claimed.",
+    "diagnosticCommit": "81f35b9308f622631dc66c6b78f0712d61a37767",
+    "passingDiagnosticRunIds": [
+      "repair-review-hidden-preparation-diagnostic-v1",
+      "repair-review-presentation-preparation-diagnostic-v1",
+      "repair-review-full-preparation-diagnostic-v1"
+    ],
+    "passingCompleteNativeCorrectnessTests": 1921,
+    "productionChanges": false
+  }
 }
