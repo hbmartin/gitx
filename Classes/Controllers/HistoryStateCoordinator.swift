@@ -35,10 +35,21 @@ nonisolated enum HistoryDetailMode: Int {
     case flow = 2
 }
 
+@objc(PBHistorySelectionUpdate)
+nonisolated enum HistorySelectionUpdate: Int {
+    case preserve
+    case selectRevision
+}
+
 @objc(PBHistoryStateCoordinator)
 final class HistoryStateCoordinator: NSObject {
     private var savedTreePath: [String] = []
     private var automaticSelection = false
+
+    @objc(selectionUpdateForForceSelection:hasSelection:)
+    func selectionUpdate(forceSelection: Bool, hasSelection: Bool) -> HistorySelectionUpdate {
+        forceSelection || !hasSelection ? .selectRevision : .preserve
+    }
 
     @objc(performAutomaticSelection:)
     func performAutomaticSelection(_ update: () -> Void) {

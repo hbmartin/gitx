@@ -2285,6 +2285,19 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try assertSelectionAcrossHistorySnapshot(changesRevision: false)
     }
 
+    func testHistorySelectionUpdatePreservesBrowsingOrSelectsTheRequestedRevision() {
+        let coordinator = PBHistoryStateCoordinator()
+        let cases: [(Bool, Bool, HistorySelectionUpdate)] = [
+            (false, true, .preserve),
+            (false, false, .selectRevision),
+            (true, true, .selectRevision),
+            (true, false, .selectRevision),
+        ]
+        for (forced, hasSelection, expected) in cases {
+            XCTAssertEqual(coordinator.selectionUpdate(forceSelection: forced, hasSelection: hasSelection), expected)
+        }
+    }
+
     private func assertSelectionAcrossHistorySnapshot(changesRevision: Bool) throws {
         let historyList = try XCTUnwrap(repository.revisionList)
         XCTAssertTrue(waitForCondition(timeout: 20) { !historyList.isUpdating })

@@ -345,7 +345,9 @@
 		[commitController setSelectedObjects:@[ uncommittedChanges ]];
 		return;
 	}
-	if (!forceSelectionUpdate && self.selectedCommits.count) {
+	PBHistorySelectionUpdate selectionUpdate = [stateCoordinator selectionUpdateForForceSelection:forceSelectionUpdate
+																	 hasSelection:self.selectedCommits.count > 0];
+	if (selectionUpdate == PBHistorySelectionUpdatePreserve) {
 		NSArray<PBGitCommit *> *preservedSelection = [stateCoordinator preservedSelection:self.selectedCommits inContent:commitController.content];
 		if (preservedSelection) {
 			[commitController setSelectedObjects:preservedSelection];

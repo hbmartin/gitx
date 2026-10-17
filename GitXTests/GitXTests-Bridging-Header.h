@@ -567,7 +567,15 @@ typedef NS_ENUM(NSInteger, PBHistoryDetailMode) {
 	PBHistoryDetailModeFlow = 2,
 } NS_SWIFT_NAME(HistoryDetailMode);
 
+typedef NS_ENUM(NSInteger, PBHistorySelectionUpdate) {
+	PBHistorySelectionUpdatePreserve = 0,
+	PBHistorySelectionUpdateSelectRevision = 1,
+} NS_SWIFT_NAME(HistorySelectionUpdate);
+
 @interface PBHistoryStateCoordinator : NSObject
+- (PBHistorySelectionUpdate)selectionUpdateForForceSelection:(BOOL)forceSelection
+                                               hasSelection:(BOOL)hasSelection
+    NS_SWIFT_NAME(selectionUpdate(forceSelection:hasSelection:));
 - (NSArray<PBGitCommit *> *)normalizedSelection:(NSArray<PBGitCommit *> *)selection;
 - (PBHistoryDetailMode)detailModeForPersistedIndex:(NSInteger)persistedIndex
 	NS_SWIFT_NAME(detailMode(persistedIndex:));
