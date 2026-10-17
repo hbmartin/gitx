@@ -108,8 +108,6 @@ public enum WorktreeCommand: Equatable, Sendable {
     case unlock(path: String)
     case pruneReport
     case prune
-    case repairMoved(path: String)
-    case repairMovedPaths(paths: [String])
     case repairLinks(style: WorktreeLinkStyle, movedPaths: [String])
 
     public var arguments: [String] {
@@ -121,8 +119,6 @@ public enum WorktreeCommand: Equatable, Sendable {
         case let .unlock(path): ["worktree", "unlock", path]
         case .pruneReport: ["worktree", "prune", "--dry-run", "--verbose"]
         case .prune: ["worktree", "prune"]
-        case let .repairMoved(path): ["worktree", "repair", path]
-        case let .repairMovedPaths(paths): ["worktree", "repair"] + paths
         case let .repairLinks(style, paths): ["worktree", "repair"] + (style == .relative ? ["--relative-paths"] : ["--no-relative-paths"]) + paths
         }
     }

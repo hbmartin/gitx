@@ -86,36 +86,6 @@ public struct WorktreeFileFingerprint: Equatable, Sendable {
     }
 }
 
-/// A bounded request-time check before background inventory capture begins.
-/// Root timestamps never participate in later repair or prune consent.
-public struct WorktreeAdministrativeAnchor: Equatable, Sendable {
-    public let commonIdentity: WorktreeFileIdentity
-    public let rootIdentity: WorktreeFileIdentity?
-    private let rootMetadata: WorktreeEvidenceNode?
-
-    public static func capture(commonDirectory: String) throws -> Self {
-        try capture(commonDirectory: commonDirectory, fileSystem: .live)
-    }
-
-    static func capture(commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem) throws -> Self {
-        let common = WorktreePaths.canonical(commonDirectory)
-        let identity = try fileSystem.directory(common)
-        let rootPath = (common as NSString).appendingPathComponent("worktrees")
-        let metadata = try fileSystem.metadata(rootPath)
-        let root = try metadata.map { try $0.identity(path: rootPath) }
-        guard root == nil || root?.kind == .directory else { throw WorktreeEvidenceError.unsupportedObject(rootPath) }
-        return Self(commonIdentity: identity, rootIdentity: root, rootMetadata: metadata)
-    }
-
-    public func validate(commonDirectory: String) throws {
-        try validate(commonDirectory: commonDirectory, fileSystem: .live)
-    }
-
-    func validate(commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem) throws {
-        guard try self == Self.capture(commonDirectory: commonDirectory, fileSystem: fileSystem) else { throw WorktreeEvidenceError.changed(commonDirectory) }
-    }
-}
-
 public struct WorktreeAdministrativeFingerprint: Equatable, Sendable {
     struct Registration: Equatable, Sendable {
         let name: Data
@@ -377,6 +347,7 @@ public struct WorktreeRepairPreparation: Equatable, Sendable {
     let targets: [Data: WorktreeRepairTarget]
     public let selection: WorktreeRepairSelection?
     let selectedIdentity: WorktreeFileIdentity?
+    let provisionallyAbsent: Set<Data>
 }
 
 private struct WorktreeAdministrativeInventory<Stray: Sendable>: Sendable {
@@ -1121,7 +1092,8 @@ extension WorktreeLinkInspector {
         }
         try validateRepairSeedRoot(seeds, commonDirectory: commonDirectory, fileSystem: fileSystem)
         try validateRepairSelection(selection, identity: selectedIdentity, seeds: seeds, fileSystem: fileSystem)
-        return WorktreeRepairPreparation(seeds: seeds, targets: targets, selection: selection, selectedIdentity: selectedIdentity)
+        return WorktreeRepairPreparation(seeds: seeds, targets: targets, selection: selection, selectedIdentity: selectedIdentity,
+                                         provisionallyAbsent: Set(seeds.registrations.map(\.name)).subtracting(surviving))
     }
 
     public static func captureRepairScope(records: [GitWorktree], commonDirectory: String, mainPath: String? = nil,
@@ -1166,11 +1138,19 @@ extension WorktreeLinkInspector {
                 if let prepared {
                     try validateRepairTarget(prepared, commonDirectory: commonDirectory, fileSystem: fileSystem)
                     target = prepared
-                } else if let path = seed.original.availablePath ?? seed.moved?.availablePath {
-                    target = try captureRepairTarget(seed.record, at: path, mainPath: main, fingerprint: fingerprint, fileSystem: fileSystem)
                 } else {
-                    guard record.movedPath == nil else { throw WorktreeEvidenceError.changed(record.path) }
-                    target = nil
+                    let path = seed.original.availablePath ?? seed.moved?.availablePath
+                    // Only a recorded provisional absence can acquire a fresh
+                    // anchored proof after the identical registration returns.
+                    guard path == nil || preparation.provisionallyAbsent.contains(seed.name) else {
+                        throw WorktreeEvidenceError.changed(record.path)
+                    }
+                    if let path {
+                        target = try captureRepairTarget(seed.record, at: path, mainPath: main, fingerprint: fingerprint, fileSystem: fileSystem)
+                    } else {
+                        guard record.movedPath == nil else { throw WorktreeEvidenceError.changed(record.path) }
+                        target = nil
+                    }
                 }
                 let selected = preparation.selection?.originalIdentity == seed.originalIdentity ? target : nil
                 try validateRepairSeedFolders(seed, selectedTarget: selected, followingMovedSource: prepared == nil, fileSystem: fileSystem)

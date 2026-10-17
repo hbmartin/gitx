@@ -835,7 +835,7 @@ final class PBRepositoryWorktreeService: NSObject {
     func perform(_ command: WorktreeCommand, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
         switch command {
         case .pruneReport: pruneWorktrees(reportOnly: true, completion: completion); return
-        case .prune, .repairLinks, .repairMoved, .repairMovedPaths:
+        case .prune, .repairLinks:
             completion(nil, failure("This operation requires a captured prune preview or repair ownership target.")); return
         default: break
         }

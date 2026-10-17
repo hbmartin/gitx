@@ -41,7 +41,7 @@
     "Classes/Controllers/PBGitSidebarController.swift": 0.9982,
     "Classes/Controllers/PBGitWindowController+Dialogs.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
-    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9431,
+    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9481,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
     "Classes/Controllers/PBHistorySearchController.m": 0.9285,
     "Classes/Controllers/PBHistorySearchMode.m": 0.8333,
@@ -210,7 +210,7 @@
     "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
     "Classes/git/RepositoryWatchPaths.swift": 0.98,
-    "Classes/git/RepositoryWorktreeService.swift": 0.9888,
+    "Classes/git/RepositoryWorktreeService.swift": 0.9892,
     "Classes/main.m": 1.0
   },
   "groups": {
@@ -231,7 +231,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9308,
+  "minimumLineCoverage": 0.9313,
   "target": "Half Dark.app",
   "version": 1
 }

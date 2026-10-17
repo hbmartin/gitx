@@ -2744,7 +2744,7 @@ final class WorktreeAppKitTests: XCTestCase {
                 service.discardPrunePreview(updated)
                 XCTFail("Worktree state changed while the fixture confirmed its preview")
             }
-        case .repairLinks, .repairMoved, .repairMovedPaths: XCTFail("Use the typed repair API")
+        case .repairLinks: XCTFail("Use the typed repair API")
         }
     }
 

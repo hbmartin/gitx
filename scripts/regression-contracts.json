@@ -584,6 +584,20 @@
           "check": "correctness",
           "role": "valid",
           "oracle": "Run real absolute/relative Locate and Reclaim, verify unchanged mixed or correctly normalized sibling links and directed endpoints, exact one repair command, rewritten target style and unchanged refs/content."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
+          "identifier": "GitXCoreTests/WorktreeScopeTests/testAdmittedScopeCannotReconstructAnOmittedPreparedTarget",
+          "check": "core",
+          "role": "failure",
+          "oracle": "A target omitted from preparation cannot gain admission authority; explicitly recorded provisional absence retains the existing same-object recovery path."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testSwiftLocateCompletesOrRejectsChangedFinalEvidenceWithoutLosingAdmission",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "The Swift Locate path repairs directed endpoints once, refuses changed final evidence without writing, preserves payloads and releases the shared writer."
         }
       ]
     },
@@ -1107,6 +1121,34 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Queue a real Git failure behind a sheet, hide/order out/minimize its owner, then restore and activate that same window once; preserve links, history, index and checkout contents."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testPresentationQueueDiscardsLatePreparationAfterOwnerRevocation",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Late prepared results are discarded exactly once after invalidation or owner revocation, without presentation."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testPresentationQueueRevokesPreparedAndPendingOwnersBehindANewSheet",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "A newly attached sheet preserves its owner while prepared and pending revoked worktree items lose authority in FIFO order."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testPresentationQueueInvalidationEndsItsOwnPresentedSheetExactlyOnce",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Invalidating an active owner ends only its presented sheet and delivers exactly one cancellation."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testReadOnlyRepairPreviewRejectsRevokedAndConsumedTokensWithoutWriting",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Read-only refresh replaces a single-use consent token; revoked and consumed tokens cannot refresh or write."
         },
         {
           "source": "GitXTests/HistoryControllerTests.swift",

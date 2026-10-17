@@ -42,5 +42,48 @@
     "Original minimized error owner is restored and activated.",
     "Deferred Reclaim refreshes its single-use scope; Cancel remains the default."
   ],
-  "deliveryEvidence": "Canonical commit-specific full verification receipts are recorded in the PR description."
+  "deliveryEvidence": "Canonical commit-specific full verification receipts are recorded in the PR description.",
+  "runIds": [
+    "repair-review-internal-host-red-v1",
+    "repair-review-cleanup-green-v1",
+    "repair-review-cleanup-characterization-v2",
+    "repair-review-cleanup-full-v2",
+    "repair-review-batch2-core-red-v1",
+    "repair-review-batch2-native-red-v1",
+    "repair-review-batch2-core-green-v1",
+    "repair-review-batch2-postcommit-consumers-core-v1",
+    "repair-review-batch2-full-v1",
+    "repair-review-native-semantic-red-v4",
+    "repair-review-prepared-native-green-v1",
+    "repair-review-prepared-native-green-v2",
+    "repair-review-batch3-postcommit-consumers-core-v1",
+    "repair-review-batch3-full-v1",
+    "repair-review-batch4-postcommit-consumers-core-v1",
+    "repair-review-batch4-full-v1",
+    "repair-review-batch5-core-red-v1",
+    "repair-review-batch5-consumers-core-green-v1",
+    "repair-review-combined-correctness-v1",
+    "repair-review-batch5-full-v1",
+    "repair-review-combined-analysis-v1",
+    "repair-review-retired-scan-native-red-v1",
+    "repair-review-retired-scan-native-green-v1",
+    "repair-review-preview-boundaries-green-v1",
+    "repair-review-preview-boundaries-green-v2",
+    "repair-review-preview-boundaries-green-v3",
+    "repair-review-preview-boundaries-green-v4",
+    "repair-review-preview-boundaries-green-v5",
+    "repair-review-preview-boundaries-green-v6",
+    "repair-review-preview-boundaries-static-v1",
+    "repair-review-combined-correctness-v2"
+  ],
+  "reviewedTargets": {
+    "PR93": "59ba6c217d86000961f3840fe6e639b90555d438",
+    "PR94": "599a257873e0965df5fe44cdf0a745d8f0e663f6"
+  },
+  "verificationNotes": [
+    "Run IDs retain exact receipts, including expected red regressions and failed attempts; listing a run does not assert it passed.",
+    "Ready delivery requires the ordered canonical full profiles and final review reconciliation.",
+    "The fallback criticized as unreachable is reachable for a provisionally absent administrative directory; explicit recorded absence preserves that supported recovery while rejecting omitted preparation targets."
+  ],
+  "coverageCharacterizationCommit": "9862ff44c94f85cfe220d2b4094ce9fa8251b197"
 }

@@ -124,6 +124,13 @@ final class WorktreeScopeTests: XCTestCase {
         XCTAssertEqual(try WorktreeLinkInspector.captureRepairOwnershipSeeds(records: value.records, commonDirectory: value.common.path).registrations.count, 8)
     }
 
+    func testAdmittedScopeCannotReconstructAnOmittedPreparedTarget() throws {
+        let value = try fixture(count: 1)
+        let seeds = try WorktreeLinkInspector.captureRepairOwnershipSeeds(records: value.records, commonDirectory: value.common.path)
+        let incomplete = WorktreeRepairPreparation(seeds: seeds, targets: [:], selection: nil, selectedIdentity: nil, provisionallyAbsent: [])
+        XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairScope(records: value.records, commonDirectory: value.common.path, preparation: incomplete))
+    }
+
     func testOwnershipSeedsAndPreparationAvoidHistoryPayloadsAndPreparationEnumeration() throws {
         for count in [0, 1, 8] {
             let value = try fixture(count: count)
@@ -656,6 +663,7 @@ final class WorktreeScopeTests: XCTestCase {
         try FileManager.default.moveItem(at: value.administrative[1], to: held)
         let prepared = try WorktreeLinkInspector.captureRepairPreparation(seeds: seeds, commonDirectory: value.common.path)
         XCTAssertEqual(prepared.targets.count, 1)
+        XCTAssertEqual(prepared.provisionallyAbsent, [seeds.registrations[1].name])
         try FileManager.default.moveItem(at: held, to: value.administrative[1])
         let scope = try WorktreeLinkInspector.captureRepairScope(records: value.records, commonDirectory: value.common.path, preparation: prepared)
         XCTAssertEqual(scope.targets.count, 2)
@@ -1205,45 +1213,6 @@ final class WorktreeScopeTests: XCTestCase {
         XCTAssertEqual(changed.modifiedNanoseconds, Int64(info.st_mtimespec.tv_nsec))
         XCTAssertEqual(changed.changedSeconds, Int64(info.st_ctimespec.tv_sec))
         XCTAssertEqual(changed.changedNanoseconds, Int64(info.st_ctimespec.tv_nsec))
-    }
-
-    func testAdministrativeSchedulingAnchorIsBoundedAndSeparateFromConsent() throws {
-        let value = try fixture(count: 1)
-        let base = WorktreeEvidenceFileSystem.live
-        var metadataCalls = 0
-        let bounded = WorktreeEvidenceFileSystem(metadata: { path in
-            metadataCalls += 1
-            return try base.metadata(path)
-        }, read: { path in XCTFail("Scheduling must not read \(path)"); return Data() }, names: { path in XCTFail("Scheduling must not enumerate \(path)"); return [] }, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
-        let anchor = try WorktreeAdministrativeAnchor.capture(commonDirectory: value.common.path, fileSystem: bounded)
-        XCTAssertEqual(metadataCalls, 2)
-        XCTAssertEqual(anchor.commonIdentity, try WorktreeFileIdentity.capture(path: value.common.path))
-        XCTAssertEqual(anchor.rootIdentity, try WorktreeFileIdentity.capture(path: value.common.appendingPathComponent("worktrees").path))
-        try anchor.validate(commonDirectory: value.common.path)
-        try Data("new HEAD\n".utf8).write(to: value.administrative[0].appendingPathComponent("HEAD"))
-        try anchor.validate(commonDirectory: value.common.path)
-        let root = value.common.appendingPathComponent("worktrees")
-        var info = stat()
-        XCTAssertEqual(lstat(root.path, &info), 0)
-        info.st_mtimespec.tv_nsec += 1
-        let changed = WorktreeEvidenceFileSystem(metadata: { path in
-            path == root.path ? WorktreeEvidenceNode(info) : try base.metadata(path)
-        }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
-        XCTAssertThrowsError(try anchor.validate(commonDirectory: value.common.path, fileSystem: changed))
-        let holding = value.root.appendingPathComponent("held-worktrees")
-        try FileManager.default.moveItem(at: root, to: holding)
-        let absent = try WorktreeAdministrativeAnchor.capture(commonDirectory: value.common.path)
-        XCTAssertNil(absent.rootIdentity)
-        try absent.validate(commonDirectory: value.common.path)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-        XCTAssertThrowsError(try absent.validate(commonDirectory: value.common.path))
-        XCTAssertThrowsError(try anchor.validate(commonDirectory: value.common.path))
-        try FileManager.default.removeItem(at: root)
-        try Data("not a directory".utf8).write(to: root)
-        XCTAssertThrowsError(try WorktreeAdministrativeAnchor.capture(commonDirectory: value.common.path))
-        try FileManager.default.removeItem(at: root)
-        try FileManager.default.createSymbolicLink(at: root, withDestinationURL: holding)
-        XCTAssertThrowsError(try WorktreeAdministrativeAnchor.capture(commonDirectory: value.common.path))
     }
 
     func testConsentRecordIgnoresAllHistoryFieldsAndPreservesOtherDecisions() {

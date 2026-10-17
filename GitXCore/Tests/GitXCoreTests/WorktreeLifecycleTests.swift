@@ -162,8 +162,6 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertEqual(WorktreeCommand.unlock(path: "/a").arguments, ["worktree", "unlock", "/a"])
         XCTAssertEqual(WorktreeCommand.prune.arguments, ["worktree", "prune"])
         XCTAssertEqual(WorktreeCommand.pruneReport.arguments, ["worktree", "prune", "--dry-run", "--verbose"])
-        XCTAssertEqual(WorktreeCommand.repairMoved(path: "/new").arguments, ["worktree", "repair", "/new"])
-        XCTAssertEqual(WorktreeCommand.repairMovedPaths(paths: ["/first", "/second"]).arguments, ["worktree", "repair", "/first", "/second"])
         XCTAssertEqual(WorktreeCommand.repairLinks(style: .relative, movedPaths: ["/a"]).arguments, ["worktree", "repair", "--relative-paths", "/a"])
         XCTAssertEqual(WorktreeCommand.repairLinks(style: .absolute, movedPaths: []).arguments, ["worktree", "repair", "--no-relative-paths"])
         let state = GitWorktree(path: "/old", head: "123456789", branchRefName: "refs/heads/feature/topic", isMain: true,
