@@ -1,9 +1,9 @@
 {
-  "runId": "repair-review-prepared-native-green-v2",
+  "runId": "repair-review-combined-correctness-v3",
   "purpose": "Diagnostic native AppKit screenshots; no screenshot comparisons.",
   "files": {
-    "A4E7FE95-AB20-47B7-A70C-B01EB6F48747.png": "deferred-error-restores-minimized-window.png",
-    "8FCAB202-419B-41CC-9CDB-2D22F97B8D3D.png": "deferred-reclaim-restores-original-window.png"
+    "B9DC994F-060F-4DE9-80E0-3A1C25FD20DD.png": "deferred-error-restores-minimized-window.png",
+    "7CDBB537-A43E-404F-A8EB-1823600AB5BC.png": "deferred-reclaim-restores-original-window.png"
   },
   "attachments": [
     {
@@ -12,10 +12,10 @@
           "configurationName": "Default",
           "deviceId": "00006020-000C11362ED3C01E",
           "deviceName": "My Mac",
-          "exportedFileName": "A4E7FE95-AB20-47B7-A70C-B01EB6F48747.png",
+          "exportedFileName": "B9DC994F-060F-4DE9-80E0-3A1C25FD20DD.png",
           "isAssociatedWithFailure": false,
-          "suggestedHumanReadableName": "Worktrees-Deferred-Failure-Restores-Minimized-Window_0_EB8F8C5B-A93C-49D4-8676-91D5BEE57533.png",
-          "timestamp": 1792184073.546
+          "suggestedHumanReadableName": "Worktrees-Deferred-Failure-Restores-Minimized-Window_0_3E45972C-9618-4C4C-82B3-455EB80A3AD4.png",
+          "timestamp": 1792206951.511
         }
       ],
       "testIdentifier": "WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce()",
@@ -27,17 +27,17 @@
           "configurationName": "Default",
           "deviceId": "00006020-000C11362ED3C01E",
           "deviceName": "My Mac",
-          "exportedFileName": "8FCAB202-419B-41CC-9CDB-2D22F97B8D3D.png",
+          "exportedFileName": "7CDBB537-A43E-404F-A8EB-1823600AB5BC.png",
           "isAssociatedWithFailure": false,
-          "suggestedHumanReadableName": "Worktrees-Deferred-Reclaim-Restores-Original-Window_0_96C721B6-4515-4276-9030-09AAFF1396EA.png",
-          "timestamp": 1792184076.987
+          "suggestedHumanReadableName": "Worktrees-Deferred-Reclaim-Restores-Original-Window_0_DA56962D-840F-435B-A8A2-9D0DAA6C5208.png",
+          "timestamp": 1792206968.856
         }
       ],
       "testIdentifier": "WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet()",
       "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet"
     }
   ],
-  "sourceSnapshot": "artifacts/verification/repair-review-final-prototype/manifest.json",
+  "sourceSnapshot": "artifacts/verification/repair-review-combined-correctness-v3-correctness-1b469bb5/receipt.json",
   "verifiedFlows": [
     "Original minimized error owner is restored and activated.",
     "Deferred Reclaim refreshes its single-use scope; Cancel remains the default."
@@ -74,7 +74,13 @@
     "repair-review-preview-boundaries-green-v5",
     "repair-review-preview-boundaries-green-v6",
     "repair-review-preview-boundaries-static-v1",
-    "repair-review-combined-correctness-v2"
+    "repair-review-combined-correctness-v2",
+    "repair-review-staging-visible-selection-green-v1",
+    "repair-review-batch2-full-v2",
+    "repair-review-batch3-early-correctness-v1",
+    "repair-review-batch3-stale-status-characterization-v1",
+    "repair-review-preview-owner-revocation-characterization-v1",
+    "repair-review-combined-correctness-v3"
   ],
   "reviewedTargets": {
     "PR93": "59ba6c217d86000961f3840fe6e639b90555d438",
@@ -83,7 +89,77 @@
   "verificationNotes": [
     "Run IDs retain exact receipts, including expected red regressions and failed attempts; listing a run does not assert it passed.",
     "Ready delivery requires the ordered canonical full profiles and final review reconciliation.",
-    "The fallback criticized as unreachable is reachable for a provisionally absent administrative directory; explicit recorded absence preserves that supported recovery while rejecting omitted preparation targets."
+    "The fallback criticized as unreachable is reachable for a provisionally absent administrative directory; explicit recorded absence preserves that supported recovery while rejecting omitted preparation targets.",
+    "Current diagnostic captures and the final coverage ratchet come from the complete passed native correctness run at integrated cleanup commit 7daa3aeb. Original commit IDs remain recorded for immutable pre-integration evidence; ordered full profiles remain required for ready delivery."
   ],
-  "coverageCharacterizationCommit": "9862ff44c94f85cfe220d2b4094ce9fa8251b197"
+  "coverageCharacterizationCommit": "9fbdabe4a29e7655d045380007a82a5755bb8d01",
+  "previousCaptures": [
+    {
+      "runId": "repair-review-prepared-native-green-v2",
+      "sourceSnapshot": "artifacts/verification/repair-review-final-prototype/manifest.json",
+      "files": {
+        "A4E7FE95-AB20-47B7-A70C-B01EB6F48747.png": "deferred-error-restores-minimized-window.png",
+        "8FCAB202-419B-41CC-9CDB-2D22F97B8D3D.png": "deferred-reclaim-restores-original-window.png"
+      },
+      "attachments": [
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "A4E7FE95-AB20-47B7-A70C-B01EB6F48747.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Deferred-Failure-Restores-Minimized-Window_0_EB8F8C5B-A93C-49D4-8676-91D5BEE57533.png",
+              "timestamp": 1792184073.546
+            }
+          ],
+          "testIdentifier": "WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce"
+        },
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "8FCAB202-419B-41CC-9CDB-2D22F97B8D3D.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Deferred-Reclaim-Restores-Original-Window_0_96C721B6-4515-4276-9030-09AAFF1396EA.png",
+              "timestamp": 1792184076.987
+            }
+          ],
+          "testIdentifier": "WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet"
+        }
+      ]
+    }
+  ],
+  "sourceCommit": "7daa3aeb1989b6b118b19b83966aa062d082ea85",
+  "implementationIntegration": [
+    {
+      "original": "c4a5637051eda73b2526162c2418e1b8b0106ec2",
+      "integrated": "99f4e03f0a0e3cd26779c17f30b39bdcf773f430"
+    },
+    {
+      "original": "646d6548e805c5724380a0adc953bbd909517094",
+      "integrated": "3b8bf876fd5d768df7eda9e3d47618815e495735"
+    },
+    {
+      "original": "9d6a7bc62fd06efb66a6198e9477b4548900738a",
+      "integrated": "3edb4208a25860a3d52cbe72ae3942aed22bba9d"
+    },
+    {
+      "original": "9862ff44c94f85cfe220d2b4094ce9fa8251b197",
+      "integrated": "9fbdabe4a29e7655d045380007a82a5755bb8d01"
+    },
+    {
+      "original": "a3f43ca7dad533d5d822d39821f59899fd1f3ec5",
+      "integrated": "7daa3aeb1989b6b118b19b83966aa062d082ea85"
+    }
+  ],
+  "originalCoverageCharacterizationCommit": "9862ff44c94f85cfe220d2b4094ce9fa8251b197",
+  "previewOwnerCharacterizationCommit": "55af2ef2d398c0f83100fa55bf40f3d27328d839",
+  "staleStatusCharacterizationCommit": "3b8bf876fd5d768df7eda9e3d47618815e495735",
+  "stagingSelectionTestCommit": "73102f63d6cb5081c3d2276b3af2b624082aea8b"
 }

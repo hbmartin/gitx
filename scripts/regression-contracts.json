@@ -1148,7 +1148,7 @@
           "identifier": "GitXTests/WorktreePresentationTests/testReadOnlyRepairPreviewRejectsRevokedAndConsumedTokensWithoutWriting",
           "check": "correctness",
           "role": "failure",
-          "oracle": "Read-only refresh replaces a single-use consent token; revoked and consumed tokens cannot refresh or write."
+          "oracle": "Read-only refresh replaces a single-use consent token; revocation before entry or after an accepted request cancels without a repair write. Consumed tokens cannot replay, and a following fresh consent request progresses after admission releases."
         },
         {
           "source": "GitXTests/HistoryControllerTests.swift",
