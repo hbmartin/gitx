@@ -579,6 +579,7 @@ final class WorktreeServiceTests: XCTestCase {
             defer { fixture.cleanup() }
             let installed = fixture.makeService()
             try await start(installed)
+            XCTAssertFalse(installed.service.isSnapshotStale)
             let ordinaryStarted = installed.tasks.expect(discoveryArguments)
             installed.service.refresh()
             await fulfillment(of: [ordinaryStarted], timeout: 5)
@@ -608,6 +609,7 @@ final class WorktreeServiceTests: XCTestCase {
             await drainMainQueue()
             XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 4, "A failed recovery must not start an automatic retry loop")
             XCTAssertEqual(installed.service.worktrees.count, 2)
+            XCTAssertTrue(installed.service.isSnapshotStale, "A failed recovery retains rows as stale rather than claiming a successful snapshot")
             let manual = installed.tasks.expect(discoveryArguments)
             installed.service.refresh()
             await fulfillment(of: [manual], timeout: 5)
@@ -617,6 +619,7 @@ final class WorktreeServiceTests: XCTestCase {
             await fulfillment(of: [published], timeout: 5)
             observation.invalidate()
             XCTAssertEqual(installed.service.worktrees.map(\.path), ["/main"])
+            XCTAssertFalse(installed.service.isSnapshotStale, "A successful fresh discovery clears stale status")
             ordinary.finish(snapshot)
             await drainMainQueue()
             XCTAssertEqual(installed.service.worktrees.map(\.path), ["/main"], "A late retired discovery cannot restore removed rows")
