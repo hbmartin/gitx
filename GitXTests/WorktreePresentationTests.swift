@@ -138,49 +138,76 @@ final class WorktreePresentationTests: XCTestCase {
 
         func testReadOnlyRepairPreviewRejectsRevokedAndConsumedTokensWithoutWriting() async throws {
             selectGit()
-            let fixture = try makeFixture()
-            let origin = try await installService(in: fixture)
-            let service = origin.service
-            try FileManager.default.removeItem(at: fixture.linked.appendingPathComponent(".git"))
-            service.refresh()
-            await waitUntil { service.worktrees.contains { $0.hasBrokenLink } }
-            let requested = expectation(description: "Swift repair releases admission for consent")
-            var captured: PBWorktreeRepairPreview?
-            service.beginRepairForTesting(worktree: nil, movedTo: nil, relativePaths: false, ownerIsCurrent: { true }) { preview, completed, error in
-                XCTAssertNil(error)
-                XCTAssertFalse(completed)
-                captured = preview
-                requested.fulfill()
-            }
-            await fulfillment(of: [requested], timeout: 15)
-            let original = try XCTUnwrap(captured)
-            let refreshed = expectation(description: "read-only refresh replaces its single-use token without writing")
-            service.refreshRepairPreviewForTesting(original, ownerIsCurrent: { true }) { preview, changed, error in
-                XCTAssertNil(error)
-                XCTAssertFalse(changed)
-                XCTAssertNotNil(preview)
-                captured = preview
-                refreshed.fulfill()
-            }
-            await fulfillment(of: [refreshed], timeout: 15)
-            let preview = try XCTUnwrap(captured)
-            XCTAssertFalse(preview === original)
-            for current in [false, true] {
-                let rejected = expectation(description: current ? "consumed preview is rejected" : "revoked owner is cancelled")
-                service.refreshRepairPreviewForTesting(preview, ownerIsCurrent: { current }) { renewed, _, error in
-                    XCTAssertNil(renewed)
-                    guard let error else { XCTFail("Revoked and consumed tokens must not refresh"); rejected.fulfill(); return }
-                    if current {
-                        XCTAssertTrue((error as NSError).localizedFailureReason?.contains("consumed") == true)
-                    } else {
-                        XCTAssertTrue(WorktreePresentationPolicy.isExpectedCancellation(error as NSError))
-                    }
-                    rejected.fulfill()
+            for revokesAfterRequest in [false, true] {
+                let fixture = try makeFixture()
+                let origin = try await installService(in: fixture)
+                let service = origin.service
+                try FileManager.default.removeItem(at: fixture.linked.appendingPathComponent(".git"))
+                service.refresh()
+                await waitUntil { service.worktrees.contains { $0.hasBrokenLink } }
+                let requested = expectation(description: "Swift repair releases admission for consent")
+                var captured: PBWorktreeRepairPreview?
+                service.beginRepairForTesting(worktree: nil, movedTo: nil, relativePaths: false, ownerIsCurrent: { true }) { preview, completed, error in
+                    XCTAssertNil(error)
+                    XCTAssertFalse(completed)
+                    captured = preview
+                    requested.fulfill()
                 }
-                await fulfillment(of: [rejected], timeout: 15)
+                await fulfillment(of: [requested], timeout: 15)
+                let original = try XCTUnwrap(captured)
+                let refreshed = expectation(description: "read-only refresh replaces its single-use token without writing")
+                service.refreshRepairPreviewForTesting(original, ownerIsCurrent: { true }) { preview, changed, error in
+                    XCTAssertNil(error)
+                    XCTAssertFalse(changed)
+                    XCTAssertNotNil(preview)
+                    captured = preview
+                    refreshed.fulfill()
+                }
+                await fulfillment(of: [refreshed], timeout: 15)
+                let preview = try XCTUnwrap(captured)
+                let owner = QueueOwnerState()
+                XCTAssertFalse(preview === original)
+                for current in [false, true] {
+                    let holdsRead = !current && revokesAfterRequest
+                    let arguments = ["worktree", "list", "--porcelain", "-z"]
+                    let heldOutput = holdsRead ? try Data(fixture.git(arguments).utf8) : nil
+                    if holdsRead {
+                        origin.gate.holdNextArguments = arguments
+                    }
+                    owner.current = current || revokesAfterRequest
+                    let rejected = expectation(description: current ? "consumed preview is rejected" : "revoked owner is cancelled")
+                    service.refreshRepairPreviewForTesting(preview, ownerIsCurrent: { owner.current }) { renewed, _, error in
+                        XCTAssertNil(renewed)
+                        guard let error else { XCTFail("Revoked and consumed tokens must not refresh"); rejected.fulfill(); return }
+                        if current {
+                            XCTAssertTrue((error as NSError).localizedFailureReason?.contains("consumed") == true)
+                        } else {
+                            XCTAssertTrue(WorktreePresentationPolicy.isExpectedCancellation(error as NSError))
+                        }
+                        rejected.fulfill()
+                    }
+                    if holdsRead {
+                        // Entry accepted this owner; revoke it before the held discovery can deliver.
+                        owner.current = false
+                        await waitUntil { origin.gate.writer.isPending }
+                        try origin.gate.writer.finish(XCTUnwrap(heldOutput))
+                    }
+                    await fulfillment(of: [rejected], timeout: 15)
+                }
+                let following = expectation(description: "a fresh consent request progresses after owner revocation")
+                service.beginRepairForTesting(worktree: nil, movedTo: nil, relativePaths: false, ownerIsCurrent: { true }) { renewed, completed, error in
+                    XCTAssertNil(error)
+                    XCTAssertFalse(completed)
+                    XCTAssertNotNil(renewed)
+                    if let renewed {
+                        service.discardRepairPreview(renewed)
+                    }
+                    following.fulfill()
+                }
+                await fulfillment(of: [following], timeout: 15)
+                XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+                XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.appendingPathComponent(".git").path))
             }
-            XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
-            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.appendingPathComponent(".git").path))
         }
 
     #endif
