@@ -39,16 +39,34 @@ nonisolated enum HistoryDetailMode: Int {
 nonisolated enum HistorySelectionUpdate: Int {
     case preserve
     case selectRevision
+    case waitForSnapshot
 }
 
 @objc(PBHistoryStateCoordinator)
 final class HistoryStateCoordinator: NSObject {
     private var savedTreePath: [String] = []
     private var automaticSelection = false
+    private weak var revisionSelectionSnapshot: NSObject?
+    private var revisionSelectionPending = false
 
-    @objc(selectionUpdateForForceSelection:hasSelection:)
-    func selectionUpdate(forceSelection: Bool, hasSelection: Bool) -> HistorySelectionUpdate {
-        forceSelection || !hasSelection ? .selectRevision : .preserve
+    @objc(beginRevisionSelectionForSnapshot:isUpdating:)
+    func beginRevisionSelection(snapshot: NSObject?, isUpdating: Bool) {
+        revisionSelectionPending = isUpdating
+        revisionSelectionSnapshot = isUpdating ? snapshot : nil
+    }
+
+    @objc(selectionUpdateForForceSelection:hasSelection:isUpdating:snapshot:hasCommits:)
+    func selectionUpdate(forceSelection: Bool, hasSelection: Bool, isUpdating: Bool,
+                         snapshot: NSObject?, hasCommits: Bool) -> HistorySelectionUpdate
+    {
+        if forceSelection, revisionSelectionPending, isUpdating,
+           revisionSelectionSnapshot === snapshot || !hasCommits
+        {
+            return .waitForSnapshot
+        }
+        revisionSelectionPending = false
+        revisionSelectionSnapshot = nil
+        return forceSelection || !hasSelection ? .selectRevision : .preserve
     }
 
     @objc(performAutomaticSelection:)

@@ -2285,8 +2285,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try assertSelectionAcrossHistorySnapshot(changesRevision: false)
     }
 
+    func testForcedHistorySelectionWaitsForTheNewRevisionSnapshot() throws {
+        try assertSelectionAcrossHistorySnapshot(changesRevision: true)
+    }
+
     func testHistorySelectionUpdatePreservesBrowsingOrSelectsTheRequestedRevision() {
         let coordinator = PBHistoryStateCoordinator()
+        let snapshot = NSObject()
         let cases: [(Bool, Bool, HistorySelectionUpdate)] = [
             (false, true, .preserve),
             (false, false, .selectRevision),
@@ -2294,8 +2299,54 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             (true, false, .selectRevision),
         ]
         for (forced, hasSelection, expected) in cases {
-            XCTAssertEqual(coordinator.selectionUpdate(forceSelection: forced, hasSelection: hasSelection), expected)
+            for isUpdating in [false, true] {
+                XCTAssertEqual(coordinator.selectionUpdate(forceSelection: forced, hasSelection: hasSelection,
+                                                           isUpdating: isUpdating, snapshot: snapshot, hasCommits: true), expected)
+            }
         }
+    }
+
+    func testForcedHistorySelectionUsesTheFirstNewNonemptySnapshotAndFinishesEmptyLoads() {
+        let coordinator = PBHistoryStateCoordinator()
+        let old = NSObject()
+        let replacement = NSObject()
+        coordinator.beginRevisionSelection(snapshot: old, isUpdating: true)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: old, hasCommits: true), .waitForSnapshot)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: replacement, hasCommits: false), .waitForSnapshot)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: replacement, hasCommits: true), .selectRevision)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: false, hasSelection: true,
+                                                   isUpdating: true, snapshot: replacement, hasCommits: true), .preserve)
+
+        coordinator.beginRevisionSelection(snapshot: nil, isUpdating: true)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: false,
+                                                   isUpdating: true, snapshot: nil, hasCommits: false), .waitForSnapshot)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: false,
+                                                   isUpdating: false, snapshot: nil, hasCommits: false), .selectRevision)
+
+        coordinator.beginRevisionSelection(snapshot: old, isUpdating: false)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: old, hasCommits: true), .selectRevision)
+        coordinator.beginRevisionSelection(snapshot: old, isUpdating: true)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: false, hasSelection: true,
+                                                   isUpdating: true, snapshot: old, hasCommits: true), .preserve)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: true,
+                                                   isUpdating: true, snapshot: old, hasCommits: true), .selectRevision)
+    }
+
+    func testPendingHistorySelectionDoesNotRetainItsPreviousSnapshot() {
+        let coordinator = PBHistoryStateCoordinator()
+        weak var previous: NSObject?
+        autoreleasepool {
+            let snapshot = NSObject()
+            previous = snapshot
+            coordinator.beginRevisionSelection(snapshot: snapshot, isUpdating: true)
+        }
+        XCTAssertNil(previous)
+        XCTAssertEqual(coordinator.selectionUpdate(forceSelection: true, hasSelection: false,
+                                                   isUpdating: true, snapshot: NSObject(), hasCommits: true), .selectRevision)
     }
 
     private func assertSelectionAcrossHistorySnapshot(changesRevision: Bool) throws {
@@ -2304,9 +2355,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let commits = loadedCommits()
         let latest = try XCTUnwrap(commits.first)
         let previous = try XCTUnwrap(commits.dropFirst().first)
-        historyController.commitController.content = [previous]
+        historyList.commits = [previous]
+        historyController.commitController.rearrangeObjects()
         historyController.selectCommit(previous.oid)
         XCTAssertEqual(historyController.selectedCommits.first?.sha, previous.sha)
+        XCTAssertEqual((historyController.commitController.arrangedObjects as? [PBGitCommit])?.map(\.sha), [previous.sha])
         defer {
             // Let any real load requested by currentBranch finish before teardown.
             XCTAssertTrue(waitForCondition(timeout: 20) {
@@ -2325,7 +2378,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             historyList.willChangeValue(forKey: "isUpdating")
             historyList.didChangeValue(forKey: "isUpdating")
         }
-        historyController.commitController.content = [latest, previous]
+        historyList.commits = [latest, previous]
+        historyController.commitController.rearrangeObjects()
+        XCTAssertEqual(
+            historyController.selectedCommits.first?.sha,
+            changesRevision ? latest.sha : previous.sha,
+            "The first replacement snapshot may select the requested tip before the full history load finishes"
+        )
         historyList.isUpdating = false
         XCTAssertEqual(
             historyController.selectedCommits.first?.sha,

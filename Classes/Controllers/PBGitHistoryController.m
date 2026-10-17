@@ -145,6 +145,8 @@
 					  block:^(MAKVONotification *notification) {
 						  PBGitHistoryController *observer = notification.observer;
 						  observer->forceSelectionUpdate = YES;
+						  [observer->stateCoordinator beginRevisionSelectionForSnapshot:observer.repository.revisionList.commits
+																			 isUpdating:observer.repository.revisionList.isUpdating];
 						  // Reset the sorting
 						  if ([[observer.commitController sortDescriptors] count]) {
 							  [observer.commitController setSortDescriptors:[NSArray array]];
@@ -345,8 +347,16 @@
 		[commitController setSelectedObjects:@[ uncommittedChanges ]];
 		return;
 	}
+	PBGitHistoryList *historyList = self.repository.revisionList;
 	PBHistorySelectionUpdate selectionUpdate = [stateCoordinator selectionUpdateForForceSelection:forceSelectionUpdate
-																	 hasSelection:self.selectedCommits.count > 0];
+																					 hasSelection:self.selectedCommits.count > 0
+																					   isUpdating:historyList.isUpdating
+																						 snapshot:historyList.commits
+																					   hasCommits:historyList.commits.count > 0];
+	if (selectionUpdate == PBHistorySelectionUpdateWaitForSnapshot) {
+		NSLog(@"[GitX] Retaining explicit History selection until a replacement snapshot is available");
+		return;
+	}
 	if (selectionUpdate == PBHistorySelectionUpdatePreserve) {
 		NSArray<PBGitCommit *> *preservedSelection = [stateCoordinator preservedSelection:self.selectedCommits inContent:commitController.content];
 		if (preservedSelection) {

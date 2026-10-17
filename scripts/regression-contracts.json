@@ -1731,6 +1731,64 @@
           "check": "correctness"
         }
       ]
+    },
+    {
+      "id": "HISTORY-001",
+      "family": "History selection authority",
+      "invariant": "An explicit revision selection survives load-start callbacks for old or empty content and applies to the first populated replacement snapshot, or a completed empty load. Passive refresh preserves browsing, pending intent does not retain previous history, and deep links retain their explicit target.",
+      "rootCause": "A load-start KVO callback consumed forced selection against old rows; later publications then preserved the wrong commit.",
+      "sourcePaths": [
+        "Classes/Controllers/PBGitHistoryController.m",
+        "Classes/Controllers/HistoryStateCoordinator.swift",
+        "GitXTests/HistoryControllerTests.swift",
+        "GitXTests/WorktreeAppKitTests.swift"
+      ],
+      "requiredChecks": [
+        "debug-test-build",
+        "release-test-build",
+        "correctness",
+        "address-undefined",
+        "thread-sanitizer",
+        "ui",
+        "analyze"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testBackgroundHistoryRefreshPreservesSelectionUntilAndAfterItsSnapshotArrives",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "A passive load-start and replacement snapshot preserve the actual browsed commit before and after completion."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testForcedHistorySelectionWaitsForTheNewRevisionSnapshot",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Deliver load-start KVO after a real requested revision while old rows remain; publish a replacement model and verify the requested real commit OID both while loading and after completion."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testForcedHistorySelectionUsesTheFirstNewNonemptySnapshotAndFinishesEmptyLoads",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Old or empty replacement snapshots retain intent; the first populated replacement selects immediately, completed empty loads settle, and ordinary browsing cancels pending authority."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testPendingHistorySelectionDoesNotRetainItsPreviousSnapshot",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "The old snapshot deallocates while selection is pending; a subsequent populated publication still progresses."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testReturnToHistoryAdoptsLatestCapturedCheckoutWhileDeepLinksKeepTheirTarget",
+          "check": "correctness",
+          "role": "compatibility",
+          "oracle": "Dispatch the actual History responder for a refreshed linked checkout, verify latest commit rendering and later deep-link selection, and independently prove physical Git refs and HEADs remain unchanged."
+        }
+      ]
     }
   ]
 }
