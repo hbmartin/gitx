@@ -1581,6 +1581,7 @@ final class WorktreePresentationTests: XCTestCase {
         }
 
         override func showErrorSheet(_ error: Error) {
+            NSLog("[GitXTest] Recorded worktree presentation error: %@", String(describing: error as NSError))
             errors.append(error as NSError)
             if presentsErrors {
                 super.showErrorSheet(error)
