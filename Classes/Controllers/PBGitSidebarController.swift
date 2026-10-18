@@ -903,8 +903,6 @@ public extension PBGitSidebarController {
             cell.setAccessibilityHelp(WorktreePresentation.details(worktree.value))
             cell.setAccessibilityValue(WorktreePresentation.details(worktree.value))
         } else {
-            cell.setAccessibilityIdentifier(nil)
-            cell.setAccessibilityLabel(nil)
             cell.textField?.setAccessibilityIdentifier(nil)
             cell.textField?.setAccessibilityLabel(nil)
             cell.textField?.setAccessibilityHelp(nil)
