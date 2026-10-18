@@ -56,20 +56,33 @@ final class WorktreePresentationQueue {
         let identifier = UUID()
         weak var window: NSWindow?
         let isCurrent: @MainActor () -> Bool
-        let prepare: @MainActor (@escaping @MainActor (Prepared?) -> Void) -> Void
+        let prepare: @MainActor (Bool, @escaping @MainActor (Prepared?) -> Void) -> Void
         let discard: @MainActor () -> Void
         var prepared: Prepared?
+        var isPreparing = false
         var isPresenting = false
+        var needsRefresh: Bool
+        var waiting = false
+        var waitGeneration: UInt = 0
         weak var presentedSheet: NSWindow?
 
         init(window: NSWindow, isCurrent: @escaping @MainActor () -> Bool,
-             prepare: @escaping @MainActor (@escaping @MainActor (Prepared?) -> Void) -> Void,
+             deferred: Bool, prepare: @escaping @MainActor (Bool, @escaping @MainActor (Prepared?) -> Void) -> Void,
              discard: @escaping @MainActor () -> Void)
         {
             self.window = window
             self.isCurrent = isCurrent
+            needsRefresh = deferred
             self.prepare = prepare
             self.discard = discard
+        }
+
+        func wait() {
+            if !waiting {
+                waitGeneration &+= 1
+            }
+            waiting = true
+            needsRefresh = true
         }
 
         func revoke() {
@@ -83,7 +96,7 @@ final class WorktreePresentationQueue {
 
     private var pending: [Item] = []
     private var active: Item?
-    private var observer: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
     private var flushScheduled = false
 
     var hasPendingPresentations: Bool {
@@ -93,29 +106,50 @@ final class WorktreePresentationQueue {
     isolated deinit { invalidate() }
 
     func enqueue(window: NSWindow, isCurrent: @escaping @MainActor () -> Bool,
-                 prepare: @escaping @MainActor (@escaping @MainActor (Prepared?) -> Void) -> Void,
+                 prepare: @escaping @MainActor (Bool, @escaping @MainActor (Prepared?) -> Void) -> Void,
                  discard: @escaping @MainActor () -> Void = {})
     {
-        pending.append(Item(window: window, isCurrent: isCurrent, prepare: prepare, discard: discard))
-        if observer == nil {
-            observer = NotificationCenter.default.addObserver(forName: NSWindow.didEndSheetNotification, object: window, queue: .main) { [weak self] _ in
-                // swift6-safety-justification: NotificationCenter uses the explicit main queue for this owner-scoped presentation state.
-                MainActor.assumeIsolated { self?.sheetEnded() }
-            }
-        }
+        let deferred = hasPendingPresentations
+        pending.append(Item(window: window, isCurrent: isCurrent, deferred: deferred, prepare: prepare, discard: discard))
+        observe(window)
         NSLog("[GitX] Queued %ld worktree presentation(s) for their original owner", pending.count)
         scheduleFlush()
     }
 
     func invalidate() {
-        let discarded = pending.count + (active == nil ? 0 : 1)
         let revoked = pending + (active.map { [$0] } ?? [])
         pending.removeAll()
         active = nil
-        flushScheduled = false
-        removeObserver()
+        removeObservers()
         revoked.forEach { $0.revoke() }
-        NSLog("[GitX] Revoked %ld worktree presentation(s) after an owner change", discarded)
+        NSLog("[GitX] Revoked %ld worktree presentation(s) after an owner change", revoked.count)
+    }
+
+    private func observe(_ window: NSWindow) {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                     NSWindow.didDeminiaturizeNotification, NSWindow.didMiniaturizeNotification]
+        {
+            observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                // swift6-safety-justification: The observer explicitly delivers on the main queue.
+                MainActor.assumeIsolated { self?.scheduleFlush() }
+            })
+        }
+        for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification, NSApplication.didUnhideNotification] {
+            observers.append(center.addObserver(forName: name, object: NSApp, queue: .main) { [weak self] _ in
+                // swift6-safety-justification: The observer explicitly delivers on the main queue.
+                MainActor.assumeIsolated { self?.scheduleFlush() }
+            })
+        }
+        observers.append(center.addObserver(forName: NSWindow.didEndSheetNotification, object: window, queue: .main) { [weak self] _ in
+            // swift6-safety-justification: The observer explicitly delivers on the main queue.
+            MainActor.assumeIsolated { self?.sheetEnded() }
+        })
+        observers.append(center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+            // swift6-safety-justification: The observer explicitly delivers on the main queue.
+            MainActor.assumeIsolated { self?.invalidate() }
+        })
     }
 
     private func scheduleFlush() {
@@ -128,15 +162,23 @@ final class WorktreePresentationQueue {
         }
     }
 
+    private func available(_ window: NSWindow) -> Bool {
+        WorktreePresentationPolicy.canPresent(isApplicationActive: NSApp.isActive,
+                                              isWindowVisible: window.isVisible, isWindowKey: window.isKeyWindow,
+                                              isMiniaturized: window.isMiniaturized, hasAttachedSheet: window.attachedSheet != nil)
+    }
+
     private func flush() {
         if let active {
-            guard active.isCurrent(), let window = active.window else {
-                complete(active.identifier)
+            guard active.isCurrent(), let window = active.window else { complete(active.identifier); return }
+            guard !active.isPresenting else { return }
+            guard available(window) else { active.wait(); return }
+            guard !active.isPreparing else { return }
+            if active.prepared == nil || active.needsRefresh {
+                prepare(active)
                 return
             }
-            guard !active.isPresenting, let prepared = active.prepared else { return }
-            reveal(window)
-            guard window.attachedSheet == nil else { return }
+            guard let prepared = active.prepared else { return }
             active.isPresenting = true
             prepared.present { [weak self] in self?.complete(active.identifier) }
             if self.active === active {
@@ -152,42 +194,37 @@ final class WorktreePresentationQueue {
                 pending.removeFirst().revoke()
                 continue
             }
-            reveal(window)
-            guard window.attachedSheet == nil else { return }
+            guard available(window) else { next.wait(); return }
             pending.removeFirst()
             active = next
-            next.prepare { [weak self] prepared in
-                guard let self, self.active === next else {
-                    prepared?.discard()
-                    return
-                }
-                guard next.isCurrent(), let prepared else {
-                    prepared?.discard()
-                    complete(next.identifier)
-                    return
-                }
-                next.prepared = prepared
-                scheduleFlush()
-            }
+            prepare(next)
             return
         }
-        removeObserver()
+        removeObservers()
     }
 
-    private func reveal(_ window: NSWindow) {
-        NSApp.unhide(nil)
-        if window.isMiniaturized {
-            window.deminiaturize(nil)
+    private func prepare(_ item: Item) {
+        let deferred = item.needsRefresh
+        item.needsRefresh = false
+        item.waiting = false
+        item.isPreparing = true
+        let generation = item.waitGeneration
+        let retired = item.prepared
+        item.prepared = nil
+        item.prepare(deferred) { [weak self] prepared in
+            retired?.discard()
+            guard let self, self.active === item else { prepared?.discard(); return }
+            item.isPreparing = false
+            guard item.isCurrent(), let prepared else { prepared?.discard(); complete(item.identifier); return }
+            item.prepared = prepared
+            item.needsRefresh = item.needsRefresh || generation != item.waitGeneration
+            scheduleFlush()
         }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
     }
 
     private func sheetEnded() {
         if let active, active.isPresenting, active.prepared?.finishesWhenSheetEnds == true {
             let identifier = active.identifier
-            // Error dismissal has no business continuation. Consent instead
-            // completes explicitly after its response handler has consumed it.
             DispatchQueue.main.async { [weak self] in self?.complete(identifier) }
         } else {
             scheduleFlush()
@@ -201,11 +238,9 @@ final class WorktreePresentationQueue {
         scheduleFlush()
     }
 
-    private func removeObserver() {
-        if let observer {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        observer = nil
+    private func removeObservers() {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.removeAll()
     }
 }
 
@@ -237,7 +272,7 @@ final class WorktreePresentationQueue {
                      prepare: @escaping @MainActor (@escaping @MainActor (WorktreePreparedPresentationTestValue?) -> Void) -> Void,
                      discard: @escaping @MainActor () -> Void)
         {
-            queue.enqueue(window: window, isCurrent: ownerIsCurrent, prepare: { ready in prepare { ready($0?.value) } }, discard: discard)
+            queue.enqueue(window: window, isCurrent: ownerIsCurrent, prepare: { _, ready in prepare { ready($0?.value) } }, discard: discard)
         }
 
         @objc func invalidate() {
@@ -292,18 +327,18 @@ extension PBGitWindowController {
         guard !WorktreePresentationPolicy.isExpectedCancellation(error as NSError) else { return }
         presentationQueue().enqueue(window: window, isCurrent: { [weak self] in
             self?.isCurrentWorktreePresentation(context) == true
-        }, prepare: { [weak self] ready in
+        }, prepare: { [weak self] _, ready in
             ready(self?.errorPresentation(error, context: context))
         })
     }
 
-    private func enqueueRepairAlert(_ alert: NSAlert, context: WorktreePresentationContext,
-                                    completion: @escaping @MainActor (NSApplication.ModalResponse) -> Void)
+    private func enqueueWorktreeAlert(_ alert: NSAlert, context: WorktreePresentationContext,
+                                      completion: @escaping @MainActor (NSApplication.ModalResponse) -> Void)
     {
         guard isCurrentWorktreePresentation(context), let window = context.window else { return }
         presentationQueue().enqueue(window: window, isCurrent: { [weak self] in
             self?.isCurrentWorktreePresentation(context) == true
-        }, prepare: { [weak self] ready in
+        }, prepare: { [weak self] _, ready in
             guard let self, isCurrentWorktreePresentation(context) else { ready(nil); return }
             ready(WorktreePresentationQueue.Prepared(finishesWhenSheetEnds: false, present: { [weak self] done in
                 guard let self, isCurrentWorktreePresentation(context) else { done(); return }
@@ -324,6 +359,12 @@ extension PBGitWindowController {
             return worktreeService?.worktree(forBranch: ref.ref)
         }
         return nil
+    }
+
+    @IBAction @objc(refreshWorktrees:)
+    dynamic func refreshWorktrees(_: Any?) {
+        worktreeService?.refresh()
+        NSLog("[GitX] Explicitly refreshing worktree inventory")
     }
 
     @IBAction @objc(openWorktree:)
@@ -451,7 +492,7 @@ extension PBGitWindowController {
                 force.informativeText = "\(reason)\n\nRemove Anyway deletes the folder and any uncommitted work in it."
                 force.addButton(withTitle: "Remove Anyway").hasDestructiveAction = true
                 force.addButton(withTitle: "Cancel")
-                self.presentWorktreeSheet(force, context: context) { [weak self] response in
+                self.enqueueWorktreeAlert(force, context: context) { [weak self] response in
                     guard response == .alertFirstButtonReturn else { return }
                     self?.performWorktree(.remove(path: worktree.path, force: true), context: context)
                 }
@@ -461,12 +502,11 @@ extension PBGitWindowController {
 
     @IBAction @objc(pruneWorktrees:)
     dynamic func pruneWorktrees(_: Any?) {
-        guard let context = captureWorktreePresentation(), let window = context.window, window.attachedSheet == nil,
-              context.service.isSupported else { return }
+        guard let context = captureWorktreePresentation(), context.service.isSupported else { return }
         context.service.preparePrunePreview { [weak self] preview, error in
             guard let self, self.canReceiveWorktreeResult(context) else {
                 context.discardPrunePreview(preview)
-                NSLog("[GitX] Discarded prune preparation after its visible presentation ended")
+                NSLog("[GitX] Discarded prune preparation after its presentation owner changed")
                 return
             }
             if let error {
@@ -488,15 +528,51 @@ extension PBGitWindowController {
     }
 
     private func presentPrunePreview(_ preview: PBWorktreePrunePreview, context: WorktreePresentationContext, changed: Bool) {
-        guard canUseWorktreePreview(context), let window = context.window, window.attachedSheet == nil else {
-            context.service.discardPrunePreview(preview)
-            NSLog("[GitX] Discarded prune consent without an available presentation")
+        guard isCurrentWorktreePresentation(context), let window = context.window else {
+            context.discardPrunePreview(preview)
             return
         }
+        var current = preview
+        var updatedBeforeDisplay = false
+        presentationQueue().enqueue(window: window, isCurrent: { [weak self] in
+            self?.isCurrentWorktreePresentation(context) == true
+        }, prepare: { [weak self] deferred, ready in
+            guard let self, isCurrentWorktreePresentation(context) else { ready(nil); return }
+            let prepared: @MainActor (PBWorktreePrunePreview) -> Void = { [weak self] updated in
+                guard let self, isCurrentWorktreePresentation(context) else {
+                    context.discardPrunePreview(updated); ready(nil); return
+                }
+                current = updated
+                ready(.init(finishesWhenSheetEnds: false, present: { [weak self] done in
+                    guard let self, isCurrentWorktreePresentation(context) else { done(); return }
+                    showPruneConsent(updated, context: context, changed: changed, updatedBeforeDisplay: updatedBeforeDisplay, finished: done)
+                }, discard: { context.discardPrunePreview(updated) }))
+            }
+            guard deferred else { prepared(current); return }
+            context.service.refreshPrunePreview(current, ownerIsCurrent: { [weak self] in
+                self?.isCurrentWorktreePresentation(context) == true
+            }) { [weak self] updated, listChanged, error in
+                updatedBeforeDisplay = updatedBeforeDisplay || listChanged
+                if let error {
+                    ready(self?.errorPresentation(error, context: context))
+                } else if let updated {
+                    prepared(updated)
+                } else {
+                    ready(nil)
+                }
+            }
+        }, discard: { context.discardPrunePreview(current) })
+    }
+
+    private func showPruneConsent(_ preview: PBWorktreePrunePreview, context: WorktreePresentationContext,
+                                  changed: Bool, updatedBeforeDisplay: Bool, finished: @escaping @MainActor () -> Void)
+    {
+        guard isCurrentWorktreePresentation(context) else { finished(); return }
         let alert = NSAlert()
         switch WorktreePresentationPolicy.prune(report: preview.report, hasMovedWorktrees: preview.hasMovedWorktrees) {
         case .repair:
             context.service.discardPrunePreview(preview)
+            finished()
             presentWorktreeRepair(context: context)
             return
         case .empty:
@@ -504,27 +580,29 @@ extension PBGitWindowController {
             alert.messageText = "Nothing to prune"
             alert.informativeText = "Git has no stale worktree registrations to prune."
             alert.addButton(withTitle: "OK")
-            presentWorktreeSheet(alert, context: context) { _ in }
+            presentWorktreeSheet(alert, context: context) { _ in finished() }
             return
         case let .confirmation(report):
             alert.messageText = "Prune these worktrees?"
-            alert.informativeText = (changed ? "The worktree state changed. Review this updated list and choose Prune again.\n\n" : "")
+            alert.informativeText = WorktreePresentationPolicy.consentUpdateMessage(action: "Prune", previouslyConfirmed: changed, updated: updatedBeforeDisplay)
                 + "Git will forget these worktrees:\n\n\(report)"
         }
         alert.addButton(withTitle: "Prune").hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")
         presentWorktreeSheet(alert, context: context) { [weak self] response in
-            guard response == .alertFirstButtonReturn, let self, self.canUseWorktreePreview(context),
-                  context.window?.attachedSheet == nil
+            defer { finished() }
+            guard response == .alertFirstButtonReturn, let self, self.isCurrentWorktreePresentation(context)
             else {
                 context.service.discardPrunePreview(preview)
                 NSLog("[GitX] Discarded unconfirmed prune consent")
                 return
             }
-            context.service.prune(confirmedPreview: preview) { [weak self] updated, error in
+            context.service.confirmPrune(preview, ownerIsCurrent: { [weak self] in
+                self?.isCurrentWorktreePresentation(context) == true
+            }) { [weak self] updated, error in
                 guard let self, self.canReceiveWorktreeResult(context) else {
                     context.discardPrunePreview(updated)
-                    NSLog("[GitX] Discarded renewed prune consent after its visible presentation ended")
+                    NSLog("[GitX] Discarded renewed prune consent after its presentation owner changed")
                     return
                 }
                 if let error {
@@ -626,7 +704,7 @@ extension PBGitWindowController {
             absolute.keyEquivalent = ""
             relative.keyEquivalent = "\r"
         }
-        enqueueRepairAlert(alert, context: context) { [weak self] response in
+        enqueueWorktreeAlert(alert, context: context) { [weak self] response in
             guard let self, self.isCurrentWorktreePresentation(context) else { return }
             let style: WorktreeLinkStyle
             if response == .alertFirstButtonReturn {
@@ -636,7 +714,6 @@ extension PBGitWindowController {
             } else {
                 return
             }
-            guard self.isCurrentWorktreePresentation(context) else { return }
             service.beginRepairLinks(style: style, ownerIsCurrent: { [weak self] in
                 self?.isCurrentWorktreePresentation(context) == true
             }) { [weak self] result in
@@ -670,45 +747,49 @@ extension PBGitWindowController {
             context.discardRepairPreview(preview)
             return
         }
-        if !preview.requiresReclaim, !changed {
+        if WorktreePresentationPolicy.repair(requiresReclaim: preview.requiresReclaim, changed: changed) == .perform {
             performRepair(preview, context: context)
             return
         }
+        var current = preview
+        var updatedBeforeDisplay = false
         presentationQueue().enqueue(window: window, isCurrent: { [weak self] in
             self?.isCurrentWorktreePresentation(context) == true
-        }, prepare: { [weak self] ready in
+        }, prepare: { [weak self] deferred, ready in
             guard let self, isCurrentWorktreePresentation(context) else { ready(nil); return }
-            context.service.refreshRepairPreview(preview, ownerIsCurrent: { [weak self] in
+            let prepared: @MainActor (PBWorktreeRepairPreview) -> Void = { [weak self] updated in
+                guard let self, isCurrentWorktreePresentation(context) else {
+                    context.discardRepairPreview(updated); ready(nil); return
+                }
+                current = updated
+                ready(WorktreePresentationQueue.Prepared(finishesWhenSheetEnds: false, present: { [weak self] done in
+                    guard let self, isCurrentWorktreePresentation(context) else { done(); return }
+                    showRepairConsent(updated, context: context, changed: changed, updatedBeforeDisplay: updatedBeforeDisplay, finished: done)
+                }, discard: { context.discardRepairPreview(updated) }))
+            }
+            guard deferred else { prepared(current); return }
+            context.service.refreshRepairPreview(current, ownerIsCurrent: { [weak self] in
                 self?.isCurrentWorktreePresentation(context) == true
             }) { [weak self] result in
-                guard let self, isCurrentWorktreePresentation(context) else {
-                    if case let .success(review) = result {
-                        context.discardRepairPreview(review.preview)
-                    }
-                    ready(nil)
-                    return
-                }
                 switch result {
-                case let .failure(error): ready(errorPresentation(error, context: context))
+                case let .failure(error): ready(self?.errorPresentation(error, context: context))
                 case let .success(review):
-                    ready(WorktreePresentationQueue.Prepared(finishesWhenSheetEnds: false, present: { [weak self] done in
-                        guard let self, isCurrentWorktreePresentation(context) else { done(); return }
-                        showRepairConsent(review.preview, context: context, changed: changed || review.changed, finished: done)
-                    }, discard: { context.discardRepairPreview(review.preview) }))
+                    updatedBeforeDisplay = updatedBeforeDisplay || review.changed
+                    prepared(review.preview)
                 }
             }
-        }, discard: { context.discardRepairPreview(preview) })
+        }, discard: { context.discardRepairPreview(current) })
     }
 
     private func showRepairConsent(_ preview: PBWorktreeRepairPreview, context: WorktreePresentationContext,
-                                   changed: Bool, finished: @escaping @MainActor () -> Void)
+                                   changed: Bool, updatedBeforeDisplay: Bool, finished: @escaping @MainActor () -> Void)
     {
         guard isCurrentWorktreePresentation(context) else { finished(); return }
         let reclaim = preview.requiresReclaim
         let actionTitle = reclaim ? "Reclaim" : "Repair"
         let alert = NSAlert()
         alert.messageText = reclaim ? "Reclaim these worktree folders?" : "Repair these worktree links?"
-        let changedMessage = changed ? "The worktree state changed. Review this updated list and choose \(actionTitle) again.\n\n" : ""
+        let changedMessage = WorktreePresentationPolicy.consentUpdateMessage(action: actionTitle, previouslyConfirmed: changed, updated: updatedBeforeDisplay)
         if reclaim {
             alert.informativeText = changedMessage
                 + "The .git links in these folders no longer prove their registration ownership:\n\n"
@@ -751,7 +832,7 @@ extension PBGitWindowController {
         }) { [weak self] updated, error in
             guard let self, self.canReceiveWorktreeResult(context) else {
                 context.discardRepairPreview(updated)
-                NSLog("[GitX] Discarded renewed repair consent after its visible presentation ended")
+                NSLog("[GitX] Discarded renewed repair consent after its presentation owner changed")
                 return
             }
             if let error {

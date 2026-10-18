@@ -762,9 +762,8 @@ final class WorktreeAppKitTests: XCTestCase {
             if hidesWindow {
                 window.endSheet(consent, returnCode: .alertFirstButtonReturn)
             } else {
-                if window.attachedSheet === consent {
-                    window.endSheet(consent, returnCode: .alertFirstButtonReturn)
-                }
+                await waitUntil { window.attachedSheet !== consent }
+                XCTAssertNil(consent.sheetParent, "Owner replacement explicitly revokes the original consent")
                 await drainPruneCallbacks()
                 await waitUntil { window.attachedSheet == nil }
                 XCTAssertFalse(gate.repairWasRequested)
@@ -1371,6 +1370,55 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), viewedBranch)
         XCTAssertEqual(repository.currentBranch?.simpleRef(), viewedBranch)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+    }
+
+    func testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let retired = try XCTUnwrap(repository.worktreeService)
+        retired.cancel()
+        var failsDiscovery = false
+        let service = PBRepositoryWorktreeService(repository: repository) { arguments in
+            if failsDiscovery, arguments.first == "worktree" {
+                return PBTask(launchPath: "/usr/bin/false", arguments: [], inDirectory: fixture.main.path)
+            }
+            let task = PBTask(launchPath: "/usr/bin/git", arguments: ["-C", fixture.main.path] + arguments, inDirectory: fixture.main.path)
+            GitXTestGitFixture.prepare(task)
+            return task
+        }
+        repository.setValue(service, forKey: "worktreeService")
+        service.start()
+        await ready(service)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        controller.showWindow(nil)
+        defer { controller.close(); service.cancel() }
+        await waitUntil { controller.historyViewController?.view.window === controller.window }
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let initialRows = service.worktrees.map(\.path)
+        let selection = sidebar.selectedItem()?.revSpecifier?.simpleRef()
+        failsDiscovery = true
+        service.refresh()
+        await waitUntil { service.isSnapshotStale }
+        await waitUntil {
+            guard let row = (0 ..< outline.numberOfRows).first(where: { (outline.item(atRow: $0) as? PBSourceViewItem)?.title == "Worktrees" }),
+                  let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView else { return false }
+            return cell.toolTip?.contains("Refresh Worktrees") == true && cell.imageView?.image != nil
+        }
+        let builder = PBHistoryMenuBuilder(repository: repository)
+        XCTAssertTrue(builder.menuItemsForWorktreeGroup().contains { $0.title == "Refresh Worktrees" && $0.isEnabled })
+        XCTAssertEqual(service.worktrees.map(\.path), initialRows)
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), selection)
+        try attachScreenshot(of: XCTUnwrap(controller.window), named: "Worktrees-Retained-Stale-Snapshot-Warning")
+        failsDiscovery = false
+        _ = controller.perform(NSSelectorFromString("refreshWorktrees:"), with: nil)
+        await waitUntil { !service.isSnapshotStale }
+        XCTAssertEqual(service.worktrees.map(\.path), initialRows)
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), selection)
+        try attachScreenshot(of: XCTUnwrap(controller.window), named: "Worktrees-Equal-Snapshot-Recovery")
     }
 
     func testLifecycleUsesGitProtectsLockedWorktreeAndKeepsBranch() async throws {
@@ -2553,7 +2601,7 @@ final class WorktreeAppKitTests: XCTestCase {
         }
     }
 
-    func testHiddenWindowDiscardsCompletedPrunePreviewAndCanRequestAFreshPreview() async throws {
+    func testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns() async throws {
         let defaults = UserDefaults.standard
         let previous = defaults.object(forKey: "gitExecutable")
         defaults.set("/usr/bin/git", forKey: "gitExecutable")
@@ -2594,8 +2642,6 @@ final class WorktreeAppKitTests: XCTestCase {
 
         controller.showWindow(nil)
         await waitUntil { window.isVisible }
-        XCTAssertNil(window.attachedSheet)
-        controller.pruneWorktrees(nil)
         let freshSheet = try await waitForSheet(in: window, containing: "Prune")
         XCTAssertTrue(sheetText(freshSheet).contains(administrative.lastPathComponent))
         window.endSheet(freshSheet, returnCode: .alertSecondButtonReturn)
