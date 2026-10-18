@@ -377,6 +377,10 @@ private final class WorktreeEvidenceDelivery<Value: Sendable> {
     init(_ completion: @escaping @MainActor @Sendable (Result<Value, Error>) -> Void) {
         self.completion = completion
     }
+
+    /// Swift 6.3.3 crashes while inlining the synthesized isolated generic destructor.
+    /// Releasing this Sendable closure requires no actor work.
+    nonisolated deinit {}
 }
 
 // swift6-safety-justification: NSLock protects the only mutable field across main and utility queues.
