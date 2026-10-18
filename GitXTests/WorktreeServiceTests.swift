@@ -2048,10 +2048,14 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let checkpoint = WorktreeWorkerCheckpoint()
         let starts = WorktreeObservationCounter()
         var repairCommands = 0
+        var discoveryRequests = 0
         let cleanup = RepairOperationCleanupState()
         let repairResults = WorktreeObservationCounter()
         let followingResults = WorktreeObservationCounter()
         let service = PBRepositoryWorktreeService(repository: repository, taskFactory: { arguments in
+            if arguments == ["worktree", "list", "--porcelain", "-z"] {
+                discoveryRequests += 1
+            }
             if arguments.starts(with: ["worktree", "repair"]) {
                 repairCommands += 1
             }
@@ -2122,6 +2126,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         await fulfillment(of: [accepted], timeout: 10)
         service.acceptedDiscoveryObserver = nil
         XCTAssertEqual(service.worktrees, initial)
+        let acceptedDiscoveryCount = discoveryRequests
         XCTAssertTrue(checkpoint.isWaiting)
         let progressed = expectation(description: "following real writer advances after old request rejection")
         cleanup.followingRequested = true
@@ -2140,6 +2145,10 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertNotNil(completed.error)
         XCTAssertEqual(completed.names, ["old"])
         XCTAssertEqual(repairCommands, 0)
+        let oldRequestDrained = expectation(description: "obsolete recovery origin and all queued callbacks drain")
+        service.drainForTesting { oldRequestDrained.fulfill() }
+        await fulfillment(of: [oldRequestDrained], timeout: 10)
+        XCTAssertEqual(discoveryRequests, acceptedDiscoveryCount, "An obsolete failure cannot invalidate newer accepted ownership evidence or schedule another recovery read")
         service.repairPreparationResultObserver = nil
         let freshDone = expectation(description: "fresh request uses accepted replacement seeds and really repairs")
         let fresh = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
