@@ -46,6 +46,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 @property (nonatomic, strong) XCUIApplication *app;
 @property (nonatomic, strong) NSMutableArray<NSString *> *temporaryRepositoryPaths;
 - (NSString *)makeDirtyRepositoryFixture;
+- (void)prepareDefaultLaunchEnvironment;
 - (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
 - (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
 - (void)openPreferencesWaitingForElement:(XCUIElement *)element;
@@ -70,32 +71,18 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 		@"-PBGitXPreferenceViewIdentifier", @"General"
 	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
+}
 
-	// An explicit environment override is useful for local one-off diagnostics.
-	// Otherwise every run uses its isolated fixture rather than a shared checkout.
-	NSDictionary *env = [[NSProcessInfo processInfo] environment];
-	NSString *repoPath = env[@"GITX_SCREENSHOT_REPO"];
-	if (!repoPath.length) {
-		// Fallback: a fixture repo bundled with the test target
-		NSBundle *bundle = [NSBundle bundleForClass:[self class]];
-		NSURL *bundledRepo = [bundle URLForResource:@"testrepo" withExtension:nil];
-		if (bundledRepo && [[NSFileManager defaultManager] fileExistsAtPath:bundledRepo.path]) {
-			repoPath = bundledRepo.path;
-		}
-	}
-	if (!repoPath.length) {
+- (void)prepareDefaultLaunchEnvironment
+{
+	if (self.app.launchEnvironment[@"GITX_UITEST_REPO"].length)
+		return;
+	// Explicit overrides are for local diagnostics; mutation tests install their own fixture.
+	NSString *repoPath = NSProcessInfo.processInfo.environment[@"GITX_SCREENSHOT_REPO"];
+	if (!repoPath.length)
 		repoPath = [self makeDirtyRepositoryFixture];
-	}
-
-	NSLog(@"[GitXScreenshotTests] repoPath = %@", repoPath ?: @"(none)");
-
-	if (repoPath) {
-		// Passed to the app via applicationDidFinishLaunching: which opens
-		// the repo directly, giving the test a reliable document window.
-		self.app.launchEnvironment = [self launchEnvironmentForRepository:repoPath];
-	}
-
-	[self.app launch];
+	NSLog(@"[GitXScreenshotTests] isolated launch repository: %@", repoPath);
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:repoPath];
 }
 
 - (void)tearDown
@@ -284,6 +271,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	}
 	[arguments addObjectsFromArray:@[ @"-PBStagingFileListLayout", [NSString stringWithFormat:@"%ld", layout] ]];
 	self.app.launchArguments = arguments;
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 }
 
@@ -320,6 +308,8 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 
 - (void)testMainWindowExists
 {
+	[self prepareDefaultLaunchEnvironment];
+	[self.app launch];
 	XCTAssertTrue([self waitForWindow],
 				  @"Main window should appear within 30 seconds");
 	XCTAssertFalse(self.app.staticTexts[@"WelcomeTitle"].exists,
@@ -329,6 +319,8 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 
 - (void)testHistoryTabScreenshot
 {
+	[self prepareDefaultLaunchEnvironment];
+	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"History requires a repository window");
 	[self selectHistoryForCurrentBranch];
 	[self saveWindowScreenshotNamed:@"history-view"];
@@ -601,6 +593,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	[self.app terminate];
 	NSString *fixture = [self makeDirtyRepositoryFixture];
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 	[self selectHistoryForCurrentBranch];
@@ -617,6 +610,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 	XCUIElement *table = [self selectHistoryForCurrentBranch];
@@ -636,6 +630,8 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 
 - (void)testMultipleCommitSelectionShowsDiffPresentationControl
 {
+	[self prepareDefaultLaunchEnvironment];
+	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"Commit selection requires a repository window");
 	XCUIElement *table = [self selectHistoryForCurrentBranch];
 	XCUIElement *firstCommit = [table.tableRows elementBoundByIndex:1];
@@ -659,6 +655,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
 	arguments[arguments.count - 1] = @"History & Fetch";
 	self.app.launchArguments = arguments;
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCUIElement *historySorting = self.app.checkBoxes[@"Allow commit columns to sort history"];
 	[self openPreferencesWaitingForElement:historySorting];
@@ -675,6 +672,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 		@"-PBRefreshOnApplicationFocus", @"YES"
 	]];
 	self.app.launchArguments = arguments;
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 
 	XCUIElement *continuousWatch = self.app.checkBoxes[@"Watch for changes in repositories"];
@@ -709,6 +707,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 		}
 		[arguments addObjectsFromArray:@[ preferenceFlag, choice[@"value"] ]];
 		self.app.launchArguments = arguments;
+		[self prepareDefaultLaunchEnvironment];
 		[self.app launch];
 
 		XCUIElement *appearance = self.app.popUpButtons[@"AppearancePreference"];
@@ -724,6 +723,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
 	arguments[arguments.count - 1] = @"Dock Icon";
 	self.app.launchArguments = arguments;
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 
 	XCUIElement *firstButton = self.app.checkBoxes[@"DockIcon.0"];
@@ -743,6 +743,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"The context menu requires a repository window");
 	XCUIElement *table = [self selectHistoryForCurrentBranch];
@@ -774,6 +775,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"origin", @"https://github.com/hbmartin/gitx.git" ]
 					inDirectory:fixture]));
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
 	XCUIElement *history = [self selectHistoryForCurrentBranch];
@@ -847,6 +849,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"origin", @"https://github.com/hbmartin/gitx.git" ]
 					inDirectory:fixture]));
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
 	[self selectHistoryForCurrentBranch];
@@ -896,6 +899,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 	XCUIElement *currentBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'main'"]].firstMatch;
@@ -920,6 +924,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	[self.temporaryRepositoryPaths addObject:remotePath];
 	XCTAssertTrue(([self runGit:@[ @"init", @"--bare", @"--quiet", remotePath ] inDirectory:fixture]));
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 
@@ -937,6 +942,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 	[self selectHistoryForCurrentBranch];

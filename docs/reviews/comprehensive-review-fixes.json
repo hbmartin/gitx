@@ -1,0 +1,365 @@
+{
+  "base": "11b1f31a8871506247c6dd114f038290806402d8",
+  "observations": [
+    {
+      "id": 1,
+      "original": "A1",
+      "summary": "Mixed-style repair postconditions",
+      "disposition": "already-addressed",
+      "reason": "PR #96 preserves healthy mixed links while checking exact endpoints.",
+      "verification": "WorktreeScopeTests"
+    },
+    {
+      "id": 2,
+      "original": "A2",
+      "summary": "Hidden queued errors",
+      "disposition": "fixed-here",
+      "reason": "Pending results wait for the original active key window without activation.",
+      "verification": "WorktreePresentationTests"
+    },
+    {
+      "id": 3,
+      "original": "A3",
+      "summary": "Repair consent blocked by another sheet",
+      "disposition": "already-addressed",
+      "reason": "PR #96 queues repair consent; this PR retains that contract and extends it to prune.",
+      "verification": "WorktreePresentationTests"
+    },
+    {
+      "id": 4,
+      "original": "A4",
+      "summary": "Returned checkout recovery",
+      "disposition": "already-addressed",
+      "reason": "PR #96 refreshes rejected ownership evidence without replaying the repair.",
+      "verification": "WorktreeServiceTests"
+    },
+    {
+      "id": 5,
+      "original": "A5",
+      "summary": "Unrelated post-repair history reads",
+      "disposition": "already-addressed",
+      "reason": "PR #96 excludes history from postcondition inventory; ordinary symbolic-branch commits were not universally affected.",
+      "verification": "WorktreeScopeTests"
+    },
+    {
+      "id": 6,
+      "original": "A6",
+      "summary": "Lost ownership-capture cause",
+      "disposition": "already-addressed",
+      "reason": "PR #96 retains capture errors and emits scoped diagnostics.",
+      "verification": "WorktreeServiceTests"
+    },
+    {
+      "id": 7,
+      "original": "A7",
+      "summary": "Failed reconciliation loses refresh",
+      "disposition": "already-addressed",
+      "reason": "PR #96 bounds failed reconciliation recovery; this PR also removes redundant earlier invalidations.",
+      "verification": "WorktreePolicyTests; WorktreeServiceTests/testSuccessfulReconciliationSatisfiesEarlierRefreshWithoutAnotherInventory"
+    },
+    {
+      "id": 8,
+      "original": "A8",
+      "summary": "Executable-upgrade recovery",
+      "disposition": "already-addressed",
+      "reason": "PR #96 added capability recovery; this PR binds every request failure to one recovery origin.",
+      "verification": "WorktreeServiceTests"
+    },
+    {
+      "id": 9,
+      "original": "A9",
+      "summary": "Disposable ownership inventories",
+      "disposition": "already-addressed",
+      "reason": "PR #96 skips retired and unpublishable parses and supports cancellation; preserve discovery ownership anchors.",
+      "verification": "WorktreeServiceTests"
+    },
+    {
+      "id": 10,
+      "original": "A10",
+      "summary": "Proven repair reacquires admission",
+      "disposition": "already-addressed",
+      "reason": "PR #96 executes proven repair within its original preparation admission.",
+      "verification": "WorktreePresentationTests"
+    },
+    {
+      "id": 11,
+      "original": "A11a",
+      "summary": "Allegedly unreachable registration fallback",
+      "disposition": "retained-intentionally",
+      "reason": "A temporarily absent registration can return as the same administrative object; retain its anchored fallback.",
+      "verification": "WorktreeScopeTests/testSameAdministrativeObjectRestoredAfterProvisionalAbsenceNeedsFreshAnchoredProof"
+    },
+    {
+      "id": 12,
+      "original": "A11b",
+      "summary": "Unused repair command cases",
+      "disposition": "already-addressed",
+      "reason": "PR #96 removed repairMoved and repairMovedPaths.",
+      "verification": "WorktreeLifecycleTests"
+    },
+    {
+      "id": 13,
+      "original": "A12",
+      "summary": "Preference restoration before worker drainage",
+      "disposition": "already-addressed",
+      "reason": "PR #96 drains all fixture workers, restores preferences once, then removes files.",
+      "verification": "WorktreePresentationTests"
+    },
+    {
+      "id": 14,
+      "original": "A13",
+      "summary": "Implicit live filesystem dependencies",
+      "disposition": "already-addressed",
+      "reason": "PR #96 requires explicit filesystem seams and separate live factories.",
+      "verification": "WorktreeEvidenceTests"
+    },
+    {
+      "id": 15,
+      "original": "B1",
+      "summary": "Notarization rejection diagnostics",
+      "disposition": "fixed-here",
+      "reason": "Fetch and print logs before deciding acceptance, preserving submission failure status.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 16,
+      "original": "B2",
+      "summary": "Unpublished checksums",
+      "disposition": "fixed-here",
+      "reason": "Upload and release ZIP, DMG, and SHA-256 files as one distribution artifact.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 17,
+      "original": "B3",
+      "summary": "Screenshot extraction without results",
+      "disposition": "fixed-here",
+      "reason": "Require a noncancelled attempted UI step and an existing result bundle; upload only existing screenshots.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 18,
+      "original": "B4",
+      "summary": "Acceptance guarded by Python assert",
+      "disposition": "fixed-here",
+      "reason": "Explicit acceptance validation remains active under Python optimization.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 19,
+      "original": "B5",
+      "summary": "Unconfirmed DMG mount cleanup",
+      "disposition": "fixed-here",
+      "reason": "Determine actual mount state and detach only confirmed devices, retaining staging when unsafe.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 20,
+      "original": "B6",
+      "summary": "Fixture developer directory breaks Python",
+      "disposition": "fixed-here",
+      "reason": "Use the running Python interpreter for fixture child invocations, independent of Apple shims.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 21,
+      "original": "B7",
+      "summary": "No direct packaging entrypoint coverage",
+      "disposition": "fixed-here",
+      "reason": "Exercise direct packaging and failures at each validation stage.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 22,
+      "original": "B8",
+      "summary": "Loose validation assertions",
+      "disposition": "fixed-here",
+      "reason": "Assert exactly the input, extracted ZIP, and mounted DMG payload roles in order.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 23,
+      "original": "B9",
+      "summary": "Payload validation log context",
+      "disposition": "fixed-here",
+      "reason": "Include stage, path, architecture, and check outcome in verification logs.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 24,
+      "original": "B10",
+      "summary": "Duplicate exported-app verification",
+      "disposition": "fixed-here",
+      "reason": "Validate packaging input and both distributed payloads; remove earlier redundant export validation.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 25,
+      "original": "B11",
+      "summary": "Duplicated artifact filenames",
+      "disposition": "fixed-here",
+      "reason": "Share filename derivation and have CI consume packager outputs.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 26,
+      "original": "B12a",
+      "summary": "Stale screenshot override comment",
+      "disposition": "fixed-here",
+      "reason": "Remove obsolete xcconfig instructions; retain explicit process environment override for diagnostics.",
+      "verification": "GitXScreenshotTests"
+    },
+    {
+      "id": 27,
+      "original": "B12b",
+      "summary": "Unused screenshot build setting",
+      "disposition": "fixed-here",
+      "reason": "Remove the ineffective xcconfig setting.",
+      "verification": "GitXScreenshotTests"
+    },
+    {
+      "id": 28,
+      "original": "B13",
+      "summary": "Bundled shared repository fallback",
+      "disposition": "fixed-here",
+      "reason": "Remove the unused bundled fixture path.",
+      "verification": "GitXScreenshotTests"
+    },
+    {
+      "id": 29,
+      "original": "B14a",
+      "summary": "Redundant default repository creation",
+      "disposition": "fixed-here",
+      "reason": "Build default fixtures only when the test needs a default launch environment.",
+      "verification": "GitXScreenshotTests"
+    },
+    {
+      "id": 30,
+      "original": "B14b",
+      "summary": "Redundant setup application launch",
+      "disposition": "fixed-here",
+      "reason": "Setup configures the application; test-specific launch helpers launch once.",
+      "verification": "GitXScreenshotTests"
+    },
+    {
+      "id": 31,
+      "original": "B15a",
+      "summary": "Duplicate screenshot workflow tests",
+      "disposition": "fixed-here",
+      "reason": "Own screenshot workflow assertions in distribution tests only.",
+      "verification": "DistributionTests"
+    },
+    {
+      "id": 32,
+      "original": "B15b",
+      "summary": "Historical missing UI verification claim",
+      "disposition": "unsupported-by-evidence",
+      "reason": "The paste cannot establish historical test execution; current build and runtime verification are recorded separately.",
+      "verification": "GitXUI"
+    },
+    {
+      "id": 33,
+      "original": "C1",
+      "summary": "Prune consent bypasses presentation FIFO",
+      "disposition": "fixed-here",
+      "reason": "Queue prune and renewal, refresh delayed previews read-only, and recheck owner before writing.",
+      "verification": "WorktreePresentationTests"
+    },
+    {
+      "id": 34,
+      "original": "C2",
+      "summary": "Background focus stealing",
+      "disposition": "fixed-here",
+      "reason": "Queue eligibility never activates, unhides, orders, or restores the owner.",
+      "verification": "SidebarPolicyTests"
+    },
+    {
+      "id": 35,
+      "original": "C3",
+      "summary": "Conditional owner-replacement assertion",
+      "disposition": "fixed-here",
+      "reason": "Assert actual sheet revocation; retain deterministic delayed-continuation rejection coverage.",
+      "verification": "WorktreeAppKitTests"
+    },
+    {
+      "id": 36,
+      "original": "C4",
+      "summary": "First consent says again",
+      "disposition": "fixed-here",
+      "reason": "Consent wording distinguishes a changed first list from previously accepted renewed consent.",
+      "verification": "SidebarPolicyTests"
+    },
+    {
+      "id": 37,
+      "original": "C5",
+      "summary": "Refresh before every consent",
+      "disposition": "fixed-here",
+      "reason": "Refresh only after genuine presentation deferral; refresh again only if preparation is subsequently blocked.",
+      "verification": "WorktreePresentationTests"
+    },
+    {
+      "id": 38,
+      "original": "C6",
+      "summary": "Earlier invalidations trigger extra discovery",
+      "disposition": "fixed-here",
+      "reason": "Owned reconciliation satisfies earlier invalidations while retaining concurrent events.",
+      "verification": "WorktreePolicyTests; WorktreeServiceTests/testSuccessfulReconciliationSatisfiesEarlierRefreshWithoutAnotherInventory"
+    },
+    {
+      "id": 39,
+      "original": "C7",
+      "summary": "Duplicate recovery scheduling",
+      "disposition": "fixed-here",
+      "reason": "Request boundaries own origin-bound recovery; generic admission only reports errors. Existing coalescing already prevented universal doubled reads.",
+      "verification": "WorktreeServiceTests"
+    },
+    {
+      "id": 40,
+      "original": "C8",
+      "summary": "Stale flag invisible to users",
+      "disposition": "fixed-here",
+      "reason": "Observe freshness separately from row equality and expose accessible warning and Refresh actions.",
+      "verification": "WorktreeAppKitTests"
+    },
+    {
+      "id": 41,
+      "original": "C9a",
+      "summary": "Controller decision duplication",
+      "disposition": "fixed-here",
+      "reason": "Use existing pure presentation policy for eligibility, consent choice, wording, and freshness text.",
+      "verification": "SidebarPolicyTests"
+    },
+    {
+      "id": 42,
+      "original": "C9b",
+      "summary": "Production fixture bookkeeping",
+      "disposition": "fixed-here",
+      "reason": "Compile fixture counters, observers, and drain bookkeeping only in Debug; preserve production ownership state.",
+      "verification": "GitXInteropContractTests"
+    },
+    {
+      "id": 43,
+      "original": "C10a",
+      "summary": "Misleading visibility logs",
+      "disposition": "fixed-here",
+      "reason": "Describe owner replacement rather than temporary visibility loss.",
+      "verification": "WorktreePresentationTests"
+    },
+    {
+      "id": 44,
+      "original": "C10b",
+      "summary": "Repeated ownership guard",
+      "disposition": "fixed-here",
+      "reason": "Remove the duplicate synchronous guard while retaining final pre-write checks.",
+      "verification": "WorktreePresentationTests"
+    },
+    {
+      "id": 45,
+      "original": "C11",
+      "summary": "Allegedly insufficient fixture drain",
+      "disposition": "retained-intentionally",
+      "reason": "PR #96 strengthened writer drainage across main-queue completions; preserve it and its immediate/deferred sibling-writer tests.",
+      "verification": "StagingDiffPaneControllerTests"
+    }
+  ]
+}
