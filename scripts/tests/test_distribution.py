@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from distribution_fixture import DistributionFixture
-from support import ROOT
+from support import ROOT, load_script
 
 
 class DistributionTests(unittest.TestCase):
@@ -134,6 +134,25 @@ class DistributionTests(unittest.TestCase):
                 if "notary-log" in failure:
                     self.assertIn("Could not fetch", result.stderr)
 
+    def test_screenshot_fallback_ignores_bundle_metadata_and_exports_only_png_data(self):
+        extractor = load_script("extract_screenshots.py")
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = pathlib.Path(directory) / "Result.xcresult"
+            attachments = bundle / "Attachments"
+            attachments.mkdir(parents=True)
+            output = pathlib.Path(directory) / "screenshots"
+            output.mkdir()
+            (bundle / "Info.plist").write_text("result bundle metadata")
+            (attachments / "opaque").write_bytes(b"binary result data")
+            (attachments / "misleading.png").write_text("not an image")
+            self.assertEqual(extractor.export_via_filesystem(str(bundle), str(output)), 0)
+            self.assertFalse(list(output.iterdir()), "A failed test without screenshots must not produce a screenshot artifact")
+            png = b"\x89PNG\r\n\x1a\nfixture attachment"
+            (attachments / "screen.data").write_bytes(png)
+            self.assertEqual(extractor.export_via_filesystem(str(bundle), str(output)), 1)
+            self.assertEqual([path.name for path in output.iterdir()], ["screen.png"])
+            self.assertEqual((output / "screen.png").read_bytes(), png)
+
     def test_ci_guards_screenshots_and_publishes_all_packager_outputs(self):
         workflow = (ROOT / ".github/workflows/BuildPR.yml").read_text()
         extract = workflow.split("- name: Extract screenshots", 1)[1].split("- name: Upload screenshots", 1)[0]
@@ -143,6 +162,8 @@ class DistributionTests(unittest.TestCase):
         self.assertNotIn("success()", extract)
         upload = workflow.split("- name: Upload screenshots", 1)[1].split("- name: Build project", 1)[0]
         self.assertIn("hashFiles", upload)
+        self.assertIn("**/*.png", upload)
+        self.assertIn("screenshots-${{ matrix.abi }}/*.png", upload)
         self.assertIn("!cancelled()", upload)
         for output in ("zip_path", "dmg_path", "checksum_path"):
             self.assertIn("steps.package.outputs." + output, workflow)

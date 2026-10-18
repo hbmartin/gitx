@@ -141,11 +141,11 @@ jobs:
             "artifacts/verification/$UI_RUN_ID/Results/GitXUI.xcresult" \
             ./scripts/screenshots-${{ matrix.abi }}
       - name: Upload screenshots
-        if: ${{ !cancelled() && hashFiles(format('scripts/screenshots-{0}/**/*', matrix.abi)) != '' }}
+        if: ${{ !cancelled() && hashFiles(format('scripts/screenshots-{0}/**/*.png', matrix.abi)) != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: Screenshots-${{ matrix.abi }}
-          path: ./scripts/screenshots-${{ matrix.abi }}
+          path: ./scripts/screenshots-${{ matrix.abi }}/*.png
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
       - name: Build project
         # Do not pass PRODUCT_BUNDLE_IDENTIFIER on the command line: it would

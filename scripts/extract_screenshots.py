@@ -124,10 +124,12 @@ def export_via_filesystem(bundle, out_dir):
     for root, _, files in os.walk(search_root):
         for fname in files:
             src = os.path.join(root, fname)
-            if os.path.getsize(src) == 0:
-                continue
-            _, ext = os.path.splitext(fname)
-            dest_name = fname if ext else fname + '.png'
+            # A result bundle also contains metadata and opaque data records.
+            # Only PNG attachments are diagnostic screenshots.
+            with open(src, 'rb') as source:
+                if source.read(8) != b'\x89PNG\r\n\x1a\n':
+                    continue
+            dest_name = os.path.splitext(fname)[0] + '.png'
             dest = os.path.join(out_dir, dest_name)
             base, dext = os.path.splitext(dest)
             n = 1
@@ -158,7 +160,7 @@ def main():
             export_via_filesystem(bundle, out_dir)
 
     count = sum(1 for f in os.listdir(out_dir)
-                if os.path.isfile(os.path.join(out_dir, f)))
+                if f.endswith('.png') and os.path.isfile(os.path.join(out_dir, f)))
     if count == 0:
         print("No screenshots found in result bundle.")
     else:

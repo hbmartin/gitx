@@ -134,7 +134,7 @@
       "original": "B3",
       "summary": "Screenshot extraction without results",
       "disposition": "fixed-here",
-      "reason": "Require a noncancelled attempted UI step and an existing result bundle; upload only existing screenshots.",
+      "reason": "Require a noncancelled attempted UI step and an existing result bundle. The fallback exports only PNG data and CI uploads only PNG files.",
       "verification": "DistributionTests"
     },
     {
