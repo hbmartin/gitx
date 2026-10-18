@@ -2146,7 +2146,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertEqual(completed.names, ["old"])
         XCTAssertEqual(repairCommands, 0)
         let oldRequestDrained = expectation(description: "obsolete recovery origin and all queued callbacks drain")
-        service.drainForTesting { oldRequestDrained.fulfill() }
+        enqueue { service.drainForTesting { oldRequestDrained.fulfill() } }
         await fulfillment(of: [oldRequestDrained], timeout: 10)
         XCTAssertEqual(discoveryRequests, acceptedDiscoveryCount, "An obsolete failure cannot invalidate newer accepted ownership evidence or schedule another recovery read")
         service.repairPreparationResultObserver = nil
