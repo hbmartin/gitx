@@ -86,36 +86,6 @@ public struct WorktreeFileFingerprint: Equatable, Sendable {
     }
 }
 
-/// A bounded request-time check before background inventory capture begins.
-/// Root timestamps never participate in later repair or prune consent.
-public struct WorktreeAdministrativeAnchor: Equatable, Sendable {
-    public let commonIdentity: WorktreeFileIdentity
-    public let rootIdentity: WorktreeFileIdentity?
-    private let rootMetadata: WorktreeEvidenceNode?
-
-    public static func capture(commonDirectory: String) throws -> Self {
-        try capture(commonDirectory: commonDirectory, fileSystem: .live)
-    }
-
-    static func capture(commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem) throws -> Self {
-        let common = WorktreePaths.canonical(commonDirectory)
-        let identity = try fileSystem.directory(common)
-        let rootPath = (common as NSString).appendingPathComponent("worktrees")
-        let metadata = try fileSystem.metadata(rootPath)
-        let root = try metadata.map { try $0.identity(path: rootPath) }
-        guard root == nil || root?.kind == .directory else { throw WorktreeEvidenceError.unsupportedObject(rootPath) }
-        return Self(commonIdentity: identity, rootIdentity: root, rootMetadata: metadata)
-    }
-
-    public func validate(commonDirectory: String) throws {
-        try validate(commonDirectory: commonDirectory, fileSystem: .live)
-    }
-
-    func validate(commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem) throws {
-        guard try self == Self.capture(commonDirectory: commonDirectory, fileSystem: fileSystem) else { throw WorktreeEvidenceError.changed(commonDirectory) }
-    }
-}
-
 public struct WorktreeAdministrativeFingerprint: Equatable, Sendable {
     struct Registration: Equatable, Sendable {
         let name: Data
@@ -377,6 +347,7 @@ public struct WorktreeRepairPreparation: Equatable, Sendable {
     let targets: [Data: WorktreeRepairTarget]
     public let selection: WorktreeRepairSelection?
     let selectedIdentity: WorktreeFileIdentity?
+    let provisionallyAbsent: Set<Data>
 }
 
 private struct WorktreeAdministrativeInventory<Stray: Sendable>: Sendable {
@@ -502,7 +473,8 @@ struct WorktreeEvidenceNode: Equatable, Sendable {
     }
 }
 
-/// Per-call seams keep failures deterministic without shared test overrides.
+/// Per-call I/O seams keep failures deterministic without shared overrides.
+/// Inject every operation explicitly; path canonicalization still uses the live filesystem.
 struct WorktreeEvidenceFileSystem {
     let metadata: (String) throws -> WorktreeEvidenceNode?
     let read: (String) throws -> Data
@@ -510,19 +482,10 @@ struct WorktreeEvidenceFileSystem {
     let readLink: (String) throws -> Data
     let readableNode: (String) throws -> WorktreeEvidenceNode
 
-    init(metadata: @escaping (String) throws -> WorktreeEvidenceNode?, read: @escaping (String) throws -> Data,
-         names: @escaping (String) throws -> [String], readLink: @escaping (String) throws -> Data = { try WorktreeEvidenceFileSystem.readSymbolicLink($0) },
-         readableNode: @escaping (String) throws -> WorktreeEvidenceNode = { try WorktreeEvidenceFileSystem.readableRegularNode($0) })
-    {
-        self.metadata = metadata
-        self.read = read
-        self.names = names
-        self.readLink = readLink
-        self.readableNode = readableNode
-    }
-
     static var live: Self {
-        Self(metadata: metadataAtPath, read: { try readRegularFile($0) }, names: { try FileManager.default.contentsOfDirectory(atPath: $0) })
+        Self(metadata: metadataAtPath, read: { try readRegularFile($0) },
+             names: { try FileManager.default.contentsOfDirectory(atPath: $0) },
+             readLink: { try readSymbolicLink($0) }, readableNode: { try readableRegularNode($0) })
     }
 
     static func metadataAtPath(_ path: String) throws -> WorktreeEvidenceNode? {
@@ -707,7 +670,7 @@ extension WorktreeLinkInspector {
     }
 
     static func repairPostconditionInventory(commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem) throws -> WorktreeRepairPostconditionInventory {
-        let inventory = try administrativeInventory(commonDirectory: commonDirectory, fileSystem: fileSystem, includingHistory: true) { name, path, node in
+        let inventory = try administrativeInventory(commonDirectory: commonDirectory, fileSystem: fileSystem, includingHistory: false) { name, path, node in
             let fingerprint = try WorktreeFileFingerprint(path: path, node: node)
             let opened = try WorktreeFileFingerprint(path: path, node: fileSystem.readableNode(path))
             guard fingerprint.hasSameObject(as: opened) else { throw WorktreeEvidenceError.changed(path) }
@@ -717,8 +680,10 @@ extension WorktreeLinkInspector {
     }
 
     private static func administrativeInventory<Stray: Sendable>(commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem, includingHistory: Bool,
+                                                                 checkCancellation: () throws -> Void = {},
                                                                  stray: (Data, String, WorktreeEvidenceNode) throws -> Stray) throws -> WorktreeAdministrativeInventory<Stray>
     {
+        try checkCancellation()
         let commonPath = WorktreePaths.canonical(commonDirectory)
         let common = try fileSystem.directory(commonPath)
         let rootPath = (commonPath as NSString).appendingPathComponent("worktrees")
@@ -732,6 +697,7 @@ extension WorktreeLinkInspector {
         var strays: [Stray] = []
         var seen = Set<Data>()
         for name in names {
+            try checkCancellation()
             guard !name.isEmpty, !name.contains("/"), name != ".", name != "..", seen.insert(Data(name.utf8)).inserted else { throw WorktreeEvidenceError.unsupportedObject(rootPath) }
             let directoryPath = (rootPath as NSString).appendingPathComponent(name)
             guard let node = try fileSystem.metadata(directoryPath) else { throw WorktreeEvidenceError.changed(directoryPath) }
@@ -918,7 +884,8 @@ extension WorktreeLinkInspector {
     }
 
     private static func verifyRepairTarget(_ target: WorktreeRepairTarget, indexedRecords: [Data: [GitWorktree]], commonDirectory: String,
-                                           style: WorktreeLinkStyle?, fileSystem: WorktreeEvidenceFileSystem) throws
+                                           style: WorktreeLinkStyle?, fileSystem: WorktreeEvidenceFileSystem,
+                                           allowingPreservedMixedLinks: Bool = false) throws
     {
         let matching = indexedRecords[target.selectedDirectory.pathIdentity] ?? []
         guard matching.count == 1, let record = matching.first, !record.isMain, !record.isBare, !record.hasForeignLink, !record.hasBrokenLink,
@@ -937,7 +904,15 @@ extension WorktreeLinkInspector {
         else { throw WorktreeEvidenceError.invalidPostcondition(target.path) }
         if let style {
             let backlinkStyle: WorktreeLinkStyle = (backlink as NSString).isAbsolutePath ? .absolute : .relative
-            guard selectedLink.style == style, backlinkStyle == style else { throw WorktreeEvidenceError.invalidPostcondition(target.path) }
+            // Git can leave a healthy sibling's mixed links untouched.
+            // Only its captured, unchanged pair qualifies for this exception.
+            let preserved = allowingPreservedMixedLinks
+                && target.originalIdentity == target.selectedDirectory.pathIdentity
+                && target.selectedLinkTarget == .administrative
+                && target.selectedGitfile == gitfile && target.originalBacklink == backlinkData
+            guard selectedLink.style == style, backlinkStyle == style || preserved else {
+                throw WorktreeEvidenceError.invalidPostcondition(target.path)
+            }
         }
     }
 
@@ -955,24 +930,30 @@ extension WorktreeLinkInspector {
         try validateAbsentLocations(scope.absentLocations, fileSystem: fileSystem)
         let indexed = Dictionary(grouping: records, by: { WorktreePaths.identity($0.path) })
         for target in scope.targets {
-            try verifyRepairTarget(target, indexedRecords: indexed, commonDirectory: commonDirectory, style: style, fileSystem: fileSystem)
+            try verifyRepairTarget(target, indexedRecords: indexed, commonDirectory: commonDirectory, style: style,
+                                   fileSystem: fileSystem, allowingPreservedMixedLinks: true)
         }
     }
 }
 
 extension WorktreeLinkInspector {
-    public static func captureRepairOwnershipSeeds(records: [GitWorktree], commonDirectory: String) throws -> WorktreeRepairOwnershipSeeds {
-        try captureRepairOwnershipSeeds(records: records, commonDirectory: commonDirectory, fileSystem: .live)
+    public static func captureRepairOwnershipSeeds(records: [GitWorktree], commonDirectory: String,
+                                                   checkCancellation: () throws -> Void = {}) throws -> WorktreeRepairOwnershipSeeds
+    {
+        try captureRepairOwnershipSeeds(records: records, commonDirectory: commonDirectory, fileSystem: .live, checkCancellation: checkCancellation)
     }
 
-    static func captureRepairOwnershipSeeds(records: [GitWorktree], commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem) throws -> WorktreeRepairOwnershipSeeds {
-        let inventory = try administrativeInventory(commonDirectory: commonDirectory, fileSystem: fileSystem, includingHistory: false) { name, path, node in
+    static func captureRepairOwnershipSeeds(records: [GitWorktree], commonDirectory: String, fileSystem: WorktreeEvidenceFileSystem,
+                                            checkCancellation: () throws -> Void = {}) throws -> WorktreeRepairOwnershipSeeds
+    {
+        let inventory = try administrativeInventory(commonDirectory: commonDirectory, fileSystem: fileSystem, includingHistory: false, checkCancellation: checkCancellation) { name, path, node in
             try WorktreeRepairPostconditionInventory.Stray(name: name, fingerprint: WorktreeFileFingerprint(path: path, node: node))
         }
         let fingerprint = WorktreeAdministrativeFingerprint(common: inventory.common, root: inventory.root, registrations: inventory.registrations)
         guard fingerprint.matchesRegistrationPaths(records: records) else { throw WorktreeEvidenceError.unidentifiedRegistrations(commonDirectory) }
         let recordsByPath = Dictionary(grouping: records.filter { !$0.isMain && !$0.isBare }, by: { WorktreePaths.identity($0.path) })
         let registrations = try inventory.registrations.map { registration in
+            try checkCancellation()
             guard let originalIdentity = registration.originalPathIdentity, let gitfileIdentity = registration.backlinkIdentity,
                   let backlink = registration.gitdir, let commonLink = registration.commondir,
                   let record = recordsByPath[originalIdentity]?.first else { throw WorktreeEvidenceError.unidentifiedRegistrations(commonDirectory) }
@@ -983,6 +964,7 @@ extension WorktreeLinkInspector {
                                                                  moved: record.movedPath.map { try captureRepairFolder($0, fileSystem: fileSystem) },
                                                                  hasForeignLink: record.hasForeignLink)
         }
+        try checkCancellation()
         return WorktreeRepairOwnershipSeeds(common: inventory.common, root: inventory.root, registrations: registrations,
                                             mainPath: records.first(where: \.isMain).map { WorktreePaths.canonical($0.path) })
     }
@@ -1110,7 +1092,8 @@ extension WorktreeLinkInspector {
         }
         try validateRepairSeedRoot(seeds, commonDirectory: commonDirectory, fileSystem: fileSystem)
         try validateRepairSelection(selection, identity: selectedIdentity, seeds: seeds, fileSystem: fileSystem)
-        return WorktreeRepairPreparation(seeds: seeds, targets: targets, selection: selection, selectedIdentity: selectedIdentity)
+        return WorktreeRepairPreparation(seeds: seeds, targets: targets, selection: selection, selectedIdentity: selectedIdentity,
+                                         provisionallyAbsent: Set(seeds.registrations.map(\.name)).subtracting(surviving))
     }
 
     public static func captureRepairScope(records: [GitWorktree], commonDirectory: String, mainPath: String? = nil,
@@ -1155,11 +1138,19 @@ extension WorktreeLinkInspector {
                 if let prepared {
                     try validateRepairTarget(prepared, commonDirectory: commonDirectory, fileSystem: fileSystem)
                     target = prepared
-                } else if let path = seed.original.availablePath ?? seed.moved?.availablePath {
-                    target = try captureRepairTarget(seed.record, at: path, mainPath: main, fingerprint: fingerprint, fileSystem: fileSystem)
                 } else {
-                    guard record.movedPath == nil else { throw WorktreeEvidenceError.changed(record.path) }
-                    target = nil
+                    let path = seed.original.availablePath ?? seed.moved?.availablePath
+                    // Only a recorded provisional absence can acquire a fresh
+                    // anchored proof after the identical registration returns.
+                    guard path == nil || preparation.provisionallyAbsent.contains(seed.name) else {
+                        throw WorktreeEvidenceError.changed(record.path)
+                    }
+                    if let path {
+                        target = try captureRepairTarget(seed.record, at: path, mainPath: main, fingerprint: fingerprint, fileSystem: fileSystem)
+                    } else {
+                        guard record.movedPath == nil else { throw WorktreeEvidenceError.changed(record.path) }
+                        target = nil
+                    }
                 }
                 let selected = preparation.selection?.originalIdentity == seed.originalIdentity ? target : nil
                 try validateRepairSeedFolders(seed, selectedTarget: selected, followingMovedSource: prepared == nil, fileSystem: fileSystem)

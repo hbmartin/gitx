@@ -1,0 +1,491 @@
+{
+  "runId": "repair-review-combined-correctness-v7",
+  "purpose": "Diagnostic native AppKit screenshots; no screenshot comparisons.",
+  "files": {
+    "438E805A-2812-48AB-BBFC-3594AE8FD344.png": "deferred-error-restores-minimized-window.png",
+    "E3DE693D-E142-4A1D-B831-8331F029F7E6.png": "deferred-reclaim-restores-original-window.png"
+  },
+  "attachments": [
+    {
+      "attachments": [
+        {
+          "configurationName": "Default",
+          "deviceId": "00006020-000C11362ED3C01E",
+          "deviceName": "My Mac",
+          "exportedFileName": "438E805A-2812-48AB-BBFC-3594AE8FD344.png",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "Worktrees-Deferred-Failure-Restores-Minimized-Window_0_C8AB92E0-FDA8-494F-A4CA-04558A77A9AF.png",
+          "timestamp": 1792223402.108
+        }
+      ],
+      "testIdentifier": "WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce()",
+      "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce"
+    },
+    {
+      "attachments": [
+        {
+          "configurationName": "Default",
+          "deviceId": "00006020-000C11362ED3C01E",
+          "deviceName": "My Mac",
+          "exportedFileName": "E3DE693D-E142-4A1D-B831-8331F029F7E6.png",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "Worktrees-Deferred-Reclaim-Restores-Original-Window_0_B2CB7FCA-2E4A-499A-A669-DF60E7E5EBEE.png",
+          "timestamp": 1792223421.795
+        }
+      ],
+      "testIdentifier": "WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet()",
+      "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet"
+    }
+  ],
+  "sourceSnapshot": "artifacts/verification/repair-review-combined-correctness-v7-correctness-9a9b9ee7/receipt.json",
+  "verifiedFlows": [
+    "Original minimized error owner is restored and activated.",
+    "Deferred Reclaim refreshes its single-use scope; Cancel remains the default."
+  ],
+  "deliveryEvidence": "Canonical commit-specific full verification receipts are recorded in the PR description.",
+  "runIds": [
+    "repair-review-internal-host-red-v1",
+    "repair-review-cleanup-green-v1",
+    "repair-review-cleanup-characterization-v2",
+    "repair-review-cleanup-full-v2",
+    "repair-review-batch2-core-red-v1",
+    "repair-review-batch2-native-red-v1",
+    "repair-review-batch2-core-green-v1",
+    "repair-review-batch2-postcommit-consumers-core-v1",
+    "repair-review-batch2-full-v1",
+    "repair-review-native-semantic-red-v4",
+    "repair-review-prepared-native-green-v1",
+    "repair-review-prepared-native-green-v2",
+    "repair-review-batch3-postcommit-consumers-core-v1",
+    "repair-review-batch3-full-v1",
+    "repair-review-batch4-postcommit-consumers-core-v1",
+    "repair-review-batch4-full-v1",
+    "repair-review-batch5-core-red-v1",
+    "repair-review-batch5-consumers-core-green-v1",
+    "repair-review-combined-correctness-v1",
+    "repair-review-batch5-full-v1",
+    "repair-review-combined-analysis-v1",
+    "repair-review-retired-scan-native-red-v1",
+    "repair-review-retired-scan-native-green-v1",
+    "repair-review-preview-boundaries-green-v1",
+    "repair-review-preview-boundaries-green-v2",
+    "repair-review-preview-boundaries-green-v3",
+    "repair-review-preview-boundaries-green-v4",
+    "repair-review-preview-boundaries-green-v5",
+    "repair-review-preview-boundaries-green-v6",
+    "repair-review-preview-boundaries-static-v1",
+    "repair-review-combined-correctness-v2",
+    "repair-review-staging-visible-selection-green-v1",
+    "repair-review-batch2-full-v2",
+    "repair-review-batch3-early-correctness-v1",
+    "repair-review-batch3-stale-status-characterization-v1",
+    "repair-review-preview-owner-revocation-characterization-v1",
+    "repair-review-combined-correctness-v3",
+    "repair-review-history-selection-characterization-v1",
+    "repair-review-history-selection-extraction-v1",
+    "repair-review-history-selection-regression-red-v1",
+    "repair-review-history-selection-regression-red-v2",
+    "repair-review-history-selection-fix-green-v1",
+    "repair-review-batch2-full-v3",
+    "repair-review-batch2-full-v4",
+    "repair-review-combined-correctness-v4",
+    "repair-review-combined-correctness-v5",
+    "repair-review-batch2-full-v5",
+    "repair-review-hidden-preparation-diagnostic-v1",
+    "repair-review-presentation-preparation-diagnostic-v1",
+    "repair-review-full-preparation-diagnostic-v1",
+    "repair-review-combined-correctness-v6",
+    "repair-review-combined-correctness-v7",
+    "repair-review-fixture-cleanup-characterization-v1",
+    "repair-review-fixture-order-regression-red-v1",
+    "repair-review-fixture-order-green-v1",
+    "repair-review-working-state-render-green-v1"
+  ],
+  "reviewedTargets": {
+    "PR93": "59ba6c217d86000961f3840fe6e639b90555d438",
+    "PR94": "599a257873e0965df5fe44cdf0a745d8f0e663f6"
+  },
+  "verificationNotes": [
+    "Run IDs retain exact receipts, including expected red regressions and failed attempts; listing a run does not assert it passed.",
+    "Ready delivery requires the ordered canonical full profiles and final review reconciliation.",
+    "The fallback criticized as unreachable is reachable for a provisionally absent administrative directory; explicit recorded absence preserves that supported recovery while rejecting omitted preparation targets.",
+    "An earlier diagnostic capture and coverage ratchet came from the complete passed native correctness run at integrated cleanup commit 7daa3aeb. Original commit IDs remain recorded for immutable pre-integration evidence; ordered full profiles remain required for ready delivery.",
+    "The earlier v5 run passed both consumers, 1933 native correctness tests and 149 Core tests. The extracted History policy and Objective-C controller each retain 100% line coverage. The validated ratchet candidate is unchanged; final ordered full profiles remain required. Original and interrupted runs retain their original meaning and are not readiness claims.",
+    "During the earlier test-only logging follow-up, production UI bytes and the v5 captures were unchanged. That original capture remains in previousCaptures; current images and source identity are from the complete v7 run.",
+    "The current captures come from the passed complete v7 run at the recorded sourceCommit: both consumers, 1935 native correctness tests and 149 Core tests passed with coverage gates. The proposed coverage policy is unchanged. Integrated production, test and policy bytes were verified equal to that source before these diagnostic-only updates. Final canonical full profiles and review reconciliation remain required."
+  ],
+  "coverageCharacterizationCommit": "1a96e0072d66c25e6e9504ceed71b8679e0b8d49",
+  "previousCaptures": [
+    {
+      "runId": "repair-review-prepared-native-green-v2",
+      "sourceSnapshot": "artifacts/verification/repair-review-final-prototype/manifest.json",
+      "files": {
+        "A4E7FE95-AB20-47B7-A70C-B01EB6F48747.png": "deferred-error-restores-minimized-window.png",
+        "8FCAB202-419B-41CC-9CDB-2D22F97B8D3D.png": "deferred-reclaim-restores-original-window.png"
+      },
+      "attachments": [
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "A4E7FE95-AB20-47B7-A70C-B01EB6F48747.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Deferred-Failure-Restores-Minimized-Window_0_EB8F8C5B-A93C-49D4-8676-91D5BEE57533.png",
+              "timestamp": 1792184073.546
+            }
+          ],
+          "testIdentifier": "WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce"
+        },
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "8FCAB202-419B-41CC-9CDB-2D22F97B8D3D.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Deferred-Reclaim-Restores-Original-Window_0_96C721B6-4515-4276-9030-09AAFF1396EA.png",
+              "timestamp": 1792184076.987
+            }
+          ],
+          "testIdentifier": "WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet"
+        }
+      ]
+    },
+    {
+      "runId": "repair-review-combined-correctness-v3",
+      "sourceCommit": "7daa3aeb1989b6b118b19b83966aa062d082ea85",
+      "sourceSnapshot": "artifacts/verification/repair-review-combined-correctness-v3-correctness-1b469bb5/receipt.json",
+      "files": {
+        "B9DC994F-060F-4DE9-80E0-3A1C25FD20DD.png": "deferred-error-restores-minimized-window.png",
+        "7CDBB537-A43E-404F-A8EB-1823600AB5BC.png": "deferred-reclaim-restores-original-window.png"
+      },
+      "attachments": [
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "B9DC994F-060F-4DE9-80E0-3A1C25FD20DD.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Deferred-Failure-Restores-Minimized-Window_0_3E45972C-9618-4C4C-82B3-455EB80A3AD4.png",
+              "timestamp": 1792206951.511
+            }
+          ],
+          "testIdentifier": "WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce"
+        },
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "7CDBB537-A43E-404F-A8EB-1823600AB5BC.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Deferred-Reclaim-Restores-Original-Window_0_DA56962D-840F-435B-A8A2-9D0DAA6C5208.png",
+              "timestamp": 1792206968.856
+            }
+          ],
+          "testIdentifier": "WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet"
+        }
+      ]
+    },
+    {
+      "runId": "repair-review-combined-correctness-v5",
+      "sourceCommit": "4cc9271c2c64af1e7b121115445a93199073ada7",
+      "sourceSnapshot": "artifacts/verification/repair-review-combined-correctness-v5-correctness-6f8c0592/receipt.json",
+      "files": {
+        "C20819AF-3909-4FBE-AA00-5A1E5C1E51DD.png": "deferred-error-restores-minimized-window.png",
+        "34A1F417-A4F7-4036-8888-39C1823C17F8.png": "deferred-reclaim-restores-original-window.png"
+      },
+      "attachments": [
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "C20819AF-3909-4FBE-AA00-5A1E5C1E51DD.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Deferred-Failure-Restores-Minimized-Window_0_FF173C61-9240-4D8D-973E-101579CD6849.png",
+              "timestamp": 1792211557.928
+            }
+          ],
+          "testIdentifier": "WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce"
+        },
+        {
+          "attachments": [
+            {
+              "configurationName": "Default",
+              "deviceId": "00006020-000C11362ED3C01E",
+              "deviceName": "My Mac",
+              "exportedFileName": "34A1F417-A4F7-4036-8888-39C1823C17F8.png",
+              "isAssociatedWithFailure": false,
+              "suggestedHumanReadableName": "Worktrees-Deferred-Reclaim-Restores-Original-Window_0_AB45B316-B2F1-4BA3-B746-C95CD96B9155.png",
+              "timestamp": 1792211575.158
+            }
+          ],
+          "testIdentifier": "WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreePresentationTests/testHeldRepairPreparationRevokesReplacedOwnersAndDefersConsentBehindAnOccupiedSheet"
+        }
+      ]
+    }
+  ],
+  "sourceCommit": "820e6f1208564c22753f61468ef6f3b27ed081f7",
+  "implementationIntegration": [
+    {
+      "original": "c4a5637051eda73b2526162c2418e1b8b0106ec2",
+      "integrated": "99f4e03f0a0e3cd26779c17f30b39bdcf773f430"
+    },
+    {
+      "original": "646d6548e805c5724380a0adc953bbd909517094",
+      "integrated": "3b8bf876fd5d768df7eda9e3d47618815e495735"
+    },
+    {
+      "original": "9d6a7bc62fd06efb66a6198e9477b4548900738a",
+      "integrated": "3edb4208a25860a3d52cbe72ae3942aed22bba9d"
+    },
+    {
+      "original": "9862ff44c94f85cfe220d2b4094ce9fa8251b197",
+      "integrated": "9fbdabe4a29e7655d045380007a82a5755bb8d01"
+    },
+    {
+      "original": "a3f43ca7dad533d5d822d39821f59899fd1f3ec5",
+      "integrated": "7daa3aeb1989b6b118b19b83966aa062d082ea85"
+    },
+    {
+      "original": "99f4e03f0a0e3cd26779c17f30b39bdcf773f430",
+      "integrated": "4dbe39a0edf03b1215a401dba6f6700ff2247c91"
+    },
+    {
+      "original": "3b8bf876fd5d768df7eda9e3d47618815e495735",
+      "integrated": "c684b36640a36eee9009b0a81f0698175aea6d63"
+    },
+    {
+      "original": "3edb4208a25860a3d52cbe72ae3942aed22bba9d",
+      "integrated": "2be417a4219180dce42badf234005e393c985697"
+    },
+    {
+      "original": "9fbdabe4a29e7655d045380007a82a5755bb8d01",
+      "integrated": "a22f444c734b5d5b4ba58595e860797176202205"
+    },
+    {
+      "original": "55af2ef2d398c0f83100fa55bf40f3d27328d839",
+      "integrated": "a2779bac2b00243e51797856e8c15bd1e093c00f"
+    },
+    {
+      "original": "7daa3aeb1989b6b118b19b83966aa062d082ea85",
+      "integrated": "c8fd4fa476b10f339d2fc1a36c8b0410765fe818"
+    },
+    {
+      "original": "0d8d06dc9fb54d4d39da0850ab750928678910f9",
+      "integrated": "0f14c7753bfd7beb361c69689a3ea40089d8ab0b"
+    },
+    {
+      "original": "4dbe39a0edf03b1215a401dba6f6700ff2247c91",
+      "integrated": "98d1e4191d6e960cffe7fb7503896acf9783788b"
+    },
+    {
+      "original": "c684b36640a36eee9009b0a81f0698175aea6d63",
+      "integrated": "0d6518f0c2806e56a96884790fe9bfada0edac6f"
+    },
+    {
+      "original": "2be417a4219180dce42badf234005e393c985697",
+      "integrated": "3d3097e38ec78904088e2ef6795fdfa21a826ceb"
+    },
+    {
+      "original": "a22f444c734b5d5b4ba58595e860797176202205",
+      "integrated": "9a9d90fcb24625d34531263a237e06acc4b91b66"
+    },
+    {
+      "original": "a2779bac2b00243e51797856e8c15bd1e093c00f",
+      "integrated": "ebbbc94bd73dc659cc2f9fb97546af12005fc6ae"
+    },
+    {
+      "original": "c8fd4fa476b10f339d2fc1a36c8b0410765fe818",
+      "integrated": "74232731b804a448b555e3972188aee60afd1481"
+    },
+    {
+      "original": "0f14c7753bfd7beb361c69689a3ea40089d8ab0b",
+      "integrated": "4cc9271c2c64af1e7b121115445a93199073ada7"
+    },
+    {
+      "original": "98d1e4191d6e960cffe7fb7503896acf9783788b",
+      "integrated": "34a345e7835706e3f13451667089207651034bf6"
+    },
+    {
+      "original": "0d6518f0c2806e56a96884790fe9bfada0edac6f",
+      "integrated": "30b4b41c3577f959bbfa0679e2d5ca43ff38e13b"
+    },
+    {
+      "original": "3d3097e38ec78904088e2ef6795fdfa21a826ceb",
+      "integrated": "8e860fc5f8cfbfd8241f561e81b7f36e1c79016d"
+    },
+    {
+      "original": "9a9d90fcb24625d34531263a237e06acc4b91b66",
+      "integrated": "520eda2bb927c5f2f0446fa7b9e37fce14fc7ec7"
+    },
+    {
+      "original": "ebbbc94bd73dc659cc2f9fb97546af12005fc6ae",
+      "integrated": "4d29f1c79c6d05add5495c0e1419b005c86f1466"
+    },
+    {
+      "original": "74232731b804a448b555e3972188aee60afd1481",
+      "integrated": "e0e09c9c56925f5a884b066480266780a3d3d2a1"
+    },
+    {
+      "original": "4cc9271c2c64af1e7b121115445a93199073ada7",
+      "integrated": "82310b00bb00006a5aed769a23b100d328945775"
+    },
+    {
+      "original": "8d7ce63c25cffb89f538c35a9422388a437e1d48",
+      "integrated": "e6c1285344704daf7a9e161a5deb9ba7310bf1d3"
+    },
+    {
+      "original": "34a345e7835706e3f13451667089207651034bf6",
+      "integrated": "fadeed2c0418df5c69339657db8a7e561a348859"
+    },
+    {
+      "original": "30b4b41c3577f959bbfa0679e2d5ca43ff38e13b",
+      "integrated": "acabea6726c50d61d9ff27efa7ea1eb6b75ec013"
+    },
+    {
+      "original": "8e860fc5f8cfbfd8241f561e81b7f36e1c79016d",
+      "integrated": "19102ced4357d6a94c974bec2d6bace98d1fa4c0"
+    },
+    {
+      "original": "520eda2bb927c5f2f0446fa7b9e37fce14fc7ec7",
+      "integrated": "1a96e0072d66c25e6e9504ceed71b8679e0b8d49"
+    },
+    {
+      "original": "4d29f1c79c6d05add5495c0e1419b005c86f1466",
+      "integrated": "6132de77a3c4f958cbd4eb524df11a83c0d620d2"
+    },
+    {
+      "original": "e0e09c9c56925f5a884b066480266780a3d3d2a1",
+      "integrated": "b182f3d52162bb40e67f2aaec80b8e728fde5961"
+    },
+    {
+      "original": "82310b00bb00006a5aed769a23b100d328945775",
+      "integrated": "f065fc1a5359bc0d8153eff88e7466d636b4c531"
+    },
+    {
+      "original": "e6c1285344704daf7a9e161a5deb9ba7310bf1d3",
+      "integrated": "69387fe8665640fc620e69372317e039961ecef0"
+    },
+    {
+      "original": "67656c7d9a3a572d5203985ff0d9be8673217254",
+      "integrated": "c9f7a6d053959e87b0289d200954266ed386d3d8"
+    },
+    {
+      "original": "c710c3fca39e6471890b611d38550fc460bf87ba",
+      "integrated": "465506d6dcd4617445d5a9d49d8fa77091d920aa"
+    },
+    {
+      "original": "e549f07cf9c80933255411d79f697b8070fc1cf4",
+      "integrated": "5fe88b8b4fc21a0210c95d59f9c260da0e887332"
+    },
+    {
+      "original": "820e6f1208564c22753f61468ef6f3b27ed081f7",
+      "integrated": "cb37681aea9fb6595ad6e0cf47c89f9bf04741c1"
+    }
+  ],
+  "originalCoverageCharacterizationCommit": "9862ff44c94f85cfe220d2b4094ce9fa8251b197",
+  "previewOwnerCharacterizationCommit": "6132de77a3c4f958cbd4eb524df11a83c0d620d2",
+  "staleStatusCharacterizationCommit": "acabea6726c50d61d9ff27efa7ea1eb6b75ec013",
+  "stagingSelectionTestCommit": "73102f63d6cb5081c3d2276b3af2b624082aea8b",
+  "currentImplementationCommits": {
+    "repairEvidenceRecovery": "fadeed2c0418df5c69339657db8a7e561a348859",
+    "staleStatusCharacterization": "acabea6726c50d61d9ff27efa7ea1eb6b75ec013",
+    "deferredPresentation": "19102ced4357d6a94c974bec2d6bace98d1fa4c0",
+    "boundaryCharacterization": "1a96e0072d66c25e6e9504ceed71b8679e0b8d49",
+    "previewOwnerCharacterization": "6132de77a3c4f958cbd4eb524df11a83c0d620d2",
+    "cleanup": "b182f3d52162bb40e67f2aaec80b8e728fde5961",
+    "historyPreparation": "cc2da61e29a5e859e2074e4196c91740f8a8a26e",
+    "historyExtraction": "68d60d02048bcc815c1e64b920bcef6560058dd9",
+    "historyFix": "d5b4d10a626b4765e7c1f99e948644f8a34612b0",
+    "stagingTestFix": "73102f63d6cb5081c3d2276b3af2b624082aea8b",
+    "preparationErrorDiagnostics": "81f35b9308f622631dc66c6b78f0712d61a37767",
+    "fixtureDrainCharacterization": "465506d6dcd4617445d5a9d49d8fa77091d920aa",
+    "fixtureTeardownOrdering": "5fe88b8b4fc21a0210c95d59f9c260da0e887332",
+    "workingStateRenderReadiness": "cb37681aea9fb6595ad6e0cf47c89f9bf04741c1"
+  },
+  "historySelectionFixCommit": "d5b4d10a626b4765e7c1f99e948644f8a34612b0",
+  "historySelectionPreparationCommit": "cc2da61e29a5e859e2074e4196c91740f8a8a26e",
+  "historySelectionExtractionCommit": "68d60d02048bcc815c1e64b920bcef6560058dd9",
+  "preparationFailureDiagnostic": {
+    "failedRunId": "repair-review-batch2-full-v4",
+    "correctnessReceipt": "artifacts/verification/repair-review-batch2-full-v4-correctness-cc87a90e/receipt.json",
+    "test": "WorktreePresentationTests/testDeferredRepairFailureCannotResurfaceAfterItsOriginalWindowBecomesHidden()",
+    "nativeCorrectnessCounts": {
+      "passed": 1920,
+      "failed": 1,
+      "skipped": 0
+    },
+    "hostPreflightCounts": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    "observedFailure": "Repair preparation failed before the expected held writer began; subsequent sheet assertions also failed.",
+    "underlyingCause": "Unexplained; did not reproduce in the isolated test, complete presentation class or complete native correctness diagnostic. No root-cause fix is claimed.",
+    "diagnosticCommit": "81f35b9308f622631dc66c6b78f0712d61a37767",
+    "passingDiagnosticRunIds": [
+      "repair-review-hidden-preparation-diagnostic-v1",
+      "repair-review-presentation-preparation-diagnostic-v1",
+      "repair-review-full-preparation-diagnostic-v1"
+    ],
+    "passingCompleteNativeCorrectnessTests": 1921,
+    "productionChanges": false
+  },
+  "captureDate": "2026-10-17",
+  "equivalentIntegratedCodeCommit": "5fe88b8b4fc21a0210c95d59f9c260da0e887332",
+  "sourceCodeSha256": {
+    "Classes/Controllers/PBGitWindowController+Worktrees.swift": "fbc95776203487fe14b42138231b0c33d9a024a0452cfffebe4367b0072e062b",
+    "Classes/git/RepositoryWorktreeService.swift": "2fd0203183d8fb75c2fbcb2b62046c251a5eed6eea59872eb56ae975ec7f3a22",
+    "GitXCore/Sources/GitXCore/WorktreeEvidence.swift": "5188c88b1b6d1b2fcd58819c880b68ed13ac52242cd947932f3321c3b0bacabe",
+    "GitXTests/WorktreePresentationTests.swift": "21b2867c2850775a7133c7dd8f5da450992938e604f360734bf981a16490a8ad"
+  },
+  "coverageVerification": {
+    "objcController": 1.0,
+    "swiftCoordinator": 1.0,
+    "nativeCorrectnessTests": 1935,
+    "coreTests": 149,
+    "applicationExact": 0.9314508990667915,
+    "applicationDisplay": "93.15%",
+    "applicationFloor": 0.9314,
+    "worktreeServiceDisplay": "99.05%",
+    "worktreeServiceFloor": 0.9905,
+    "proposedFloorImprovements": false
+  },
+  "fixtureCleanupVerification": {
+    "originalCharacterizationCommit": "c710c3fca39e6471890b611d38550fc460bf87ba",
+    "originalOrderingFixCommit": "e549f07cf9c80933255411d79f697b8070fc1cf4",
+    "semanticRedRunId": "repair-review-fixture-order-regression-red-v1",
+    "focusedGreenRunId": "repair-review-fixture-order-green-v1",
+    "focusedNativeTests": 37,
+    "contract": "ENV-001",
+    "behavior": "Drain current/retired services and main acknowledgements, restore the original Git preference once, then delete only drained fixtures."
+  },
+  "renderReadinessVerification": {
+    "failedRunId": "repair-review-combined-correctness-v6",
+    "failedNativeCounts": {
+      "passed": 1934,
+      "failed": 1,
+      "skipped": 0
+    },
+    "originalFixCommit": "820e6f1208564c22753f61468ef6f3b27ed081f7",
+    "promotedFixCommit": "cb37681aea9fb6595ad6e0cf47c89f9bf04741c1",
+    "focusedGreenRunId": "repair-review-working-state-render-green-v1",
+    "behavior": "Assert the selected raw file and await its real synthetic addition instead of a fixed one-second run-loop pause; retain exact formatter/content assertions.",
+    "contract": "STATE-001"
+  }
+}

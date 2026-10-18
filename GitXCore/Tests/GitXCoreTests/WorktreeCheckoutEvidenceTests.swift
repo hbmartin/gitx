@@ -101,7 +101,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
                 var info = stat(); info.st_mode = mode_t(S_IFIFO); return WorktreeEvidenceNode(info)
             }
             return try base.metadata(path)
-        }, read: { path in XCTFail("Unsupported objects must not be read: \(path)"); return Data() }, names: base.names)
+        }, read: { path in XCTFail("Unsupported objects must not be read: \(path)"); return Data() }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         try variants.append(WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: unsupported))
         for index in variants.indices {
             XCTAssertTrue(variants[index].permitsPrune)
@@ -134,7 +134,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
         let base = WorktreeEvidenceFileSystem.live
         let changedDestinationBytes = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: base.names, readLink: { path in
             path == value.gitfile.path ? Data(equivalent.path.utf8) : try base.readLink(path)
-        })
+        }, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertNotEqual(try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: changedDestinationBytes), initial)
         try FileManager.default.removeItem(at: value.gitfile)
         try FileManager.default.createSymbolicLink(at: value.gitfile, withDestinationURL: equivalent)
@@ -157,7 +157,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
                 var info = stat(); info.st_mode = mode_t(S_IFIFO); return WorktreeEvidenceNode(info)
             }
             return try base.metadata(path)
-        }, read: base.read, names: base.names)
+        }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         let other = try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: unsupported)
         XCTAssertNotEqual(other, directory)
         XCTAssertTrue(other.permitsPrune)
@@ -166,7 +166,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
     func testUnreadableOrdinaryLinksFailAndMovedLinksRemainProtectedForGuidance() throws {
         let value = try fixture()
         let base = WorktreeEvidenceFileSystem.live
-        let unreadable = WorktreeEvidenceFileSystem(metadata: base.metadata, read: { path in throw WorktreeEvidenceError.unavailable(path) }, names: base.names)
+        let unreadable = WorktreeEvidenceFileSystem(metadata: base.metadata, read: { path in throw WorktreeEvidenceError.unavailable(path) }, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: unreadable))
         let moved = value.root.appendingPathComponent("moved")
         try FileManager.default.moveItem(at: value.checkout, to: moved)
@@ -179,10 +179,10 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
         let protectedSymlink = try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: records)
         XCTAssertFalse(protectedSymlink.permitsPrune)
         XCTAssertNotEqual(protectedSymlink, protected)
-        let failedReadlink = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: base.names, readLink: { path in throw WorktreeEvidenceError.unavailable(path) })
+        let failedReadlink = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: base.names, readLink: { path in throw WorktreeEvidenceError.unavailable(path) }, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertFalse(try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: records, fileSystem: failedReadlink).permitsPrune)
         for destination in [Data(), Data([255])] {
-            let invalid = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: base.names, readLink: { _ in destination })
+            let invalid = WorktreeEvidenceFileSystem(metadata: base.metadata, read: base.read, names: base.names, readLink: { _ in destination }, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             XCTAssertThrowsError(try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: [GitWorktree(path: moved.path)], fileSystem: invalid))
         }
     }
@@ -200,7 +200,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
                     }
                 }
                 return try base.metadata(path)
-            }, read: base.read, names: base.names)
+            }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
             XCTAssertThrowsError(try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: changed))
         }
         var folderCalls = 0
@@ -212,7 +212,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
                 }
             }
             return try base.metadata(path)
-        }, read: base.read, names: base.names)
+        }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: replacement))
         let managed = value.root.appendingPathComponent("managed")
         try FileManager.default.moveItem(at: value.gitfile, to: managed)
@@ -226,7 +226,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
                 }
             }
             return try base.metadata(path)
-        }, read: base.read, names: base.names)
+        }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: vanishedTarget))
         var replacingTargetCalls = 0
         let replacedTarget = WorktreeEvidenceFileSystem(metadata: { path in
@@ -238,7 +238,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
                 }
             }
             return try base.metadata(path)
-        }, read: base.read, names: base.names)
+        }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         XCTAssertThrowsError(try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: replacedTarget))
     }
 
@@ -250,7 +250,7 @@ final class WorktreeCheckoutEvidenceTests: XCTestCase {
             reads += 1
             XCTAssertEqual(path, value.gitfile.path)
             return try base.read(path)
-        }, names: { path in XCTFail("Checkout evidence must not enumerate \(path)"); return [] })
+        }, names: { path in XCTFail("Checkout evidence must not enumerate \(path)"); return [] }, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
         let evidence = try WorktreeLinkInspector.captureCheckoutLinkEvidence(records: value.records, fileSystem: bounded)
         XCTAssertTrue(evidence.permitsPrune)
         XCTAssertEqual(reads, 1)

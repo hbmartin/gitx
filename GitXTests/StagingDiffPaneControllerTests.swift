@@ -411,6 +411,14 @@ final class StagingDiffPaneControllerTests: XCTestCase, @unchecked Sendable {
         }
 
         func testFixtureDrainWaitsForWriterAdmittedByAnotherDrainCompletion() async throws {
+            try await assertFixtureDrainWaitsForSiblingWriter(deferred: false)
+        }
+
+        func testFixtureDrainWaitsForWriterDeferredByAnotherDrainCompletion() async throws {
+            try await assertFixtureDrainWaitsForSiblingWriter(deferred: true)
+        }
+
+        private func assertFixtureDrainWaitsForSiblingWriter(deferred: Bool) async throws {
             try await snapshotFixture { directory, repository, file in
                 let contents = try Data(contentsOf: directory.appendingPathComponent(file.path))
                 let index = repository.index
@@ -426,10 +434,17 @@ final class StagingDiffPaneControllerTests: XCTestCase, @unchecked Sendable {
                 // Both requests join the same writer-drain batch. Its empty
                 // pane-group notifications are queued in registration order.
                 PBStagingDiffRevalidationTestHarness.closeAndDrain(repository: repository, panes: []) {
-                    PBStagingDiffRevalidationTestHarness.startValidation(repository: repository, runner: runner, files: [file]) { error in
-                        XCTAssertNil(error)
-                        validationCompletions += 1
-                        validated.fulfill()
+                    let start: @MainActor @Sendable () -> Void = {
+                        PBStagingDiffRevalidationTestHarness.startValidation(repository: repository, runner: runner, files: [file]) { error in
+                            XCTAssertNil(error)
+                            validationCompletions += 1
+                            validated.fulfill()
+                        }
+                    }
+                    if deferred {
+                        DispatchQueue.main.async(execute: start)
+                    } else {
+                        start()
                     }
                     // The second drain's notification was already queued. It
                     // must observe the newly admitted writer before this runs.
@@ -708,6 +723,37 @@ final class StagingDiffPaneControllerTests: XCTestCase, @unchecked Sendable {
                     }
                     XCTAssertEqual(try Data(contentsOf: blocker), Data("keep this ancestor".utf8))
                 }
+            }
+        }
+
+        func testConfirmedDiscardRejectsRevokedEligibilityAndLeavesTheWriterUsable() async throws {
+            try await snapshotFixture { directory, repository, file in
+                let contents = try Data(contentsOf: directory.appendingPathComponent(file.path))
+                let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+                let runner = makeRunner(paths: [file.path])
+                var eligible = true
+                var checks = 0
+                do {
+                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: [file], beforeValidation: {
+                        eligible = false
+                    }, eligibility: {
+                        XCTAssertTrue(Thread.isMainThread)
+                        checks += 1
+                        return eligible
+                    })
+                    XCTFail("Approval cannot authorize discard after selection/submission eligibility changes")
+                } catch {
+                    XCTAssertEqual((error as NSError).code, 8)
+                    XCTAssertTrue(error.localizedDescription.contains("selected diff or repository state changed"))
+                }
+                XCTAssertEqual(checks, 1)
+                XCTAssertEqual(runner.counts, [3, 0, 1], "Revocation prevents a second snapshot and all writes")
+                XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(file.path)), contents)
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted(), names)
+                try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: makeRunner(paths: [file.path]), files: [file])
+                XCTAssertTrue(PBIndexWriterCommandTestHarness.allowsMutation(index: repository.index))
+                XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(file.path)), contents)
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted(), names)
             }
         }
 

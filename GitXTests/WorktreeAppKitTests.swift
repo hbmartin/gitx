@@ -709,10 +709,9 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: gitfile), originalGitfile)
     }
 
-    func testReclaimConsentCannotSurviveHiddenOrReplacedAndRestoredPresentation() async throws {
+    func testReclaimConsentSurvivesTemporaryHidingButCannotSurviveOwnerReplacement() async throws {
         for hidesWindow in [false, true] {
             let fixture = try Fixture()
-            defer { fixture.cleanup() }
             _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
             let gitfile = fixture.linked.appendingPathComponent(".git")
             let administrative = try URL(fileURLWithPath: fixture.git(["rev-parse", "--absolute-git-dir"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines))
@@ -720,13 +719,27 @@ final class WorktreeAppKitTests: XCTestCase {
             let head = try fixture.git(["rev-parse", "HEAD"])
             let repository = try RepositoryTestGitRepository(url: fixture.main)
             let alternative = try RepositoryTestGitRepository(url: fixture.main)
+            let retired = try XCTUnwrap(repository.worktreeService)
+            let alternativeService = try XCTUnwrap(alternative.worktreeService)
             let gate = PruneTaskGate(fixture: fixture)
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
             controller.showWindow(nil)
             let window = try XCTUnwrap(controller.window)
-            defer { controller.close(); service.cancel(); alternative.worktreeService.cancel() }
+            addTeardownBlock { @MainActor in
+                controller.close()
+                let services = [retired, service, alternativeService]
+                services.forEach { $0.cancel() }
+                let drained = XCTestExpectation(description: "presentation owner and retired services finish before fixture deletion")
+                drained.expectedFulfillmentCount = services.count
+                services.forEach { $0.drainForTesting { drained.fulfill() } }
+                guard await XCTWaiter.fulfillment(of: [drained], timeout: 15) == .completed else {
+                    XCTFail("Retaining presentation fixture because its services did not drain: " + fixture.root.path)
+                    return
+                }
+                fixture.cleanup()
+            }
             await waitUntil { controller.historyViewController?.view.window === window }
             try FileManager.default.removeItem(at: gitfile)
             service.refresh()
@@ -737,27 +750,33 @@ final class WorktreeAppKitTests: XCTestCase {
             if hidesWindow {
                 window.orderOut(nil)
                 XCTAssertFalse(window.isVisible)
+                XCTAssertFalse(gate.repairWasRequested)
+                controller.showWindow(nil)
+                await waitUntil { window.isVisible }
+                XCTAssertTrue(window.attachedSheet === consent, "Temporary hiding preserves the original consent authority")
             } else {
                 controller.repository = alternative
                 controller.repository = repository
                 XCTAssertTrue(controller.repository === repository)
             }
-            window.endSheet(consent, returnCode: .alertFirstButtonReturn)
-            await drainPruneCallbacks()
-            await waitUntil { window.attachedSheet == nil }
-            XCTAssertFalse(gate.repairWasRequested)
-            XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path))
-            XCTAssertEqual(try registrationMetadata(administrative), metadata)
-            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
             if hidesWindow {
-                controller.showWindow(nil)
-                await waitUntil { window.isVisible }
+                window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+            } else {
+                if window.attachedSheet === consent {
+                    window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+                }
+                await drainPruneCallbacks()
+                await waitUntil { window.attachedSheet == nil }
+                XCTAssertFalse(gate.repairWasRequested)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path))
+                XCTAssertEqual(try registrationMetadata(administrative), metadata)
+                XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+                controller.repairWorktreeLinks(nil)
+                let freshStyle = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+                window.endSheet(freshStyle, returnCode: .alertFirstButtonReturn)
+                let freshConsent = try await waitForSheet(in: window, containing: "Reclaim")
+                window.endSheet(freshConsent, returnCode: .alertFirstButtonReturn)
             }
-            controller.repairWorktreeLinks(nil)
-            let freshStyle = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
-            window.endSheet(freshStyle, returnCode: .alertFirstButtonReturn)
-            let freshConsent = try await waitForSheet(in: window, containing: "Reclaim")
-            window.endSheet(freshConsent, returnCode: .alertFirstButtonReturn)
             await waitUntil { FileManager.default.fileExists(atPath: gitfile.path) && window.attachedSheet == nil }
             XCTAssertTrue(gate.repairWasRequested, "A fresh explicit request must still progress through the shared FIFO")
             XCTAssertEqual(try registrationMetadata(administrative), metadata)
@@ -2725,7 +2744,7 @@ final class WorktreeAppKitTests: XCTestCase {
                 service.discardPrunePreview(updated)
                 XCTFail("Worktree state changed while the fixture confirmed its preview")
             }
-        case .repairLinks, .repairMoved, .repairMovedPaths: XCTFail("Use the typed repair API")
+        case .repairLinks: XCTFail("Use the typed repair API")
         }
     }
 
