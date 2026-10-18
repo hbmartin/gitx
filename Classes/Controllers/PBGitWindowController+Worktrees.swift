@@ -272,8 +272,10 @@ final class WorktreePresentationQueue {
         }
     }
 
+    /// The test target references this class through its Objective-C bridging header.
     @objc(PBWorktreePresentationQueueTestHarness)
     @MainActor
+    // swiftlint:disable:next unused_declaration
     final class WorktreePresentationQueueTestHarness: NSObject {
         private let queue = WorktreePresentationQueue()
 
