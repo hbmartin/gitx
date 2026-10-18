@@ -19,6 +19,23 @@ public enum WorktreeRepairOfferPresentation: Equatable, Sendable {
 }
 
 public enum WorktreePresentationPolicy {
+    public static func consentUpdateMessage(action: String, previouslyConfirmed: Bool, updated: Bool) -> String {
+        if previouslyConfirmed {
+            return "The worktree state changed. Review this updated list and choose \(action) again.\n\n"
+        }
+        return updated ? "The worktree state changed. Review this updated list before continuing.\n\n" : ""
+    }
+
+    public static func freshnessWarning(hasSnapshot: Bool, isStale: Bool) -> String? {
+        hasSnapshot && isStale ? "Worktree list may be out of date. Choose Refresh Worktrees to try again." : nil
+    }
+
+    public static func canPresent(isApplicationActive: Bool, isWindowVisible: Bool, isWindowKey: Bool,
+                                  isMiniaturized: Bool, hasAttachedSheet: Bool) -> Bool
+    {
+        isApplicationActive && isWindowVisible && isWindowKey && !isMiniaturized && !hasAttachedSheet
+    }
+
     public static func isExpectedCancellation(_ error: NSError) -> Bool {
         error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError
     }

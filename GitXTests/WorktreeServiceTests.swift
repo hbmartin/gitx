@@ -573,6 +573,34 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertTrue(target.tasks.mutations.isEmpty, "Checking a replacement never replays a rejected write")
     }
 
+    func testSuccessfulReconciliationSatisfiesEarlierRefreshWithoutAnotherInventory() async throws {
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        try await start(installed)
+        let started = installed.tasks.expect(discoveryArguments)
+        installed.service.refresh()
+        await fulfillment(of: [started], timeout: 5)
+        let retired = try installed.tasks.task(discoveryArguments, occurrence: 1)
+        installed.service.refresh()
+        let completed = expectation(description: "owned pass satisfies the earlier pending refresh")
+        enqueueLock(installed.service, reason: "covers-earlier-read") { _, error in
+            XCTAssertNil(error); completed.fulfill()
+        }
+        let reconciliation = installed.tasks.expect(discoveryArguments)
+        try installed.tasks.task(["worktree", "lock", "--reason", "covers-earlier-read", "/linked"]).finish(Data())
+        await fulfillment(of: [reconciliation], timeout: 5)
+        try installed.tasks.task(discoveryArguments, occurrence: 2).finish(snapshot)
+        await fulfillment(of: [completed], timeout: 5)
+        await drainMainQueue()
+        XCTAssertTrue(retired.wasCancelled)
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 3)
+        XCTAssertFalse(installed.service.isSnapshotStale)
+        retired.finish(Data("malformed".utf8))
+        await drainMainQueue()
+        XCTAssertEqual(installed.service.worktrees.count, 2)
+    }
+
     func testReconciliationPreservesEarlierAndConcurrentInvalidationsAndBoundsFailedRecovery() async throws {
         for failsReconciliation in [false, true] {
             let fixture = try WorktreeMutationFixture()
@@ -967,6 +995,24 @@ final class WorktreeServiceTests: XCTestCase {
         await drainMainQueue()
         XCTAssertEqual(service.worktrees.count, 2)
         XCTAssertEqual(publications, 1)
+        XCTAssertTrue(service.isSnapshotStale)
+        let fresh = expectation(description: "identical rows publish independent freshness")
+        let freshness = service.observe(\.isSnapshotStale) { value, _ in
+            // swift6-safety-justification: Service freshness notifications are delivered on the main queue.
+            MainActor.assumeIsolated {
+                if !value.isSnapshotStale {
+                    fresh.fulfill()
+                }
+            }
+        }
+        requested = expectation(description: "equal snapshot recovery")
+        service.refresh()
+        await fulfillment(of: [requested], timeout: 5)
+        tasks[4].finish(snapshot)
+        await fulfillment(of: [fresh], timeout: 5)
+        freshness.invalidate()
+        XCTAssertEqual(publications, 1, "Freshness updates do not manufacture row changes")
+        XCTAssertFalse(service.isSnapshotStale)
     }
 
     func testCancelTerminatesPendingDiscoveryAndRejectsLateCompletion() async {
@@ -1585,6 +1631,9 @@ final class WorktreeServiceTests: XCTestCase {
 
 @MainActor
 final class WorktreeRepairSafetyTests: XCTestCase {
+    @MainActor
+    private final class PruneOwnerState { var isCurrent = true }
+
     func testReappearedCheckoutRecoversThroughFreshDiscoveryWithoutReplayingRepair() async throws {
         try await assertOwnershipRecovery(.reappearedCheckout)
     }
@@ -2981,6 +3030,70 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let script = "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' 'git version " + version + "'\nelse\n  exec /usr/bin/git \"$@\"\nfi\n"
         try script.write(to: path, atomically: atomic, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+    }
+
+    func testReadOnlyPruneRefreshConsumesOldAuthorityAndRevokedConfirmationNeverWrites() async throws {
+        for queued in [false, true] {
+            let fixture = try RepairFixture(label: "read-only-prune-review")
+            defer { fixture.cleanup() }
+            let repository = try RepositoryTestGitRepository(url: fixture.main)
+            let blocked = ControlledWorktreeTask()
+            let launched = queued ? expectation(description: "held writer admitted") : XCTestExpectation(description: "unused writer admission")
+            var writes = 0
+            let service = makeService(repository: repository, fixture: fixture, blocked: blocked, launched: launched, taskOverride: { arguments in
+                if arguments == WorktreeCommand.prune.arguments {
+                    writes += 1
+                }
+                return nil
+            })
+            defer { service.cancel(); blocked.finish(nil, error: CancellationError()) }
+            try await ready(service)
+            try FileManager.default.removeItem(at: fixture.linked)
+            let captured = try await service.preparePrunePreview()
+            let old = try XCTUnwrap(captured)
+            let review = PruneCompletion()
+            let refreshed = expectation(description: "read-only refresh returns one fresh token")
+            service.refreshPrunePreview(old, ownerIsCurrent: { true }) { updated, changed, error in
+                // swift6-safety-justification: The service delivers preview completion on the main queue.
+                MainActor.assumeIsolated {
+                    XCTAssertFalse(changed)
+                    review.preview = updated; review.error = error as NSError?; refreshed.fulfill()
+                }
+            }
+            await fulfillment(of: [refreshed], timeout: 10)
+            XCTAssertNil(review.error)
+            let current = try XCTUnwrap(review.preview)
+            XCTAssertEqual(writes, 0)
+            let owner = PruneOwnerState()
+            let previousWriter = queued ? expectation(description: "earlier writer completes") : XCTestExpectation(description: "unused writer completion")
+            if queued {
+                enqueue { service.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in
+                    XCTAssertNil(error); previousWriter.fulfill()
+                } }
+                await fulfillment(of: [launched], timeout: 5)
+            } else {
+                owner.isCurrent = false
+            }
+            let refused = expectation(description: "revoked prune confirmation is cancelled")
+            service.confirmPrune(current, ownerIsCurrent: { owner.isCurrent }) { updated, error in
+                XCTAssertNil(updated)
+                XCTAssertEqual((error as NSError?)?.code, NSUserCancelledError)
+                refused.fulfill()
+            }
+            owner.isCurrent = false
+            if queued {
+                blocked.finish(Data())
+                await fulfillment(of: [previousWriter], timeout: 10)
+            }
+            await fulfillment(of: [refused], timeout: 10)
+            let consumed = expectation(description: "old preview cannot regain authority")
+            enqueue { service.prune(confirmedPreview: old) { updated, error in
+                XCTAssertNil(updated); XCTAssertNotNil(error); consumed.fulfill()
+            } }
+            await fulfillment(of: [consumed], timeout: 5)
+            XCTAssertEqual(writes, 0)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.main.appendingPathComponent(".git/worktrees/linked").path))
+        }
     }
 
     func testPruneRenewsConsentWhenHealthySiblingGitfileBytesChangeWithoutChangingTheirEndpoint() async throws {
