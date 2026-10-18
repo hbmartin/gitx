@@ -600,6 +600,37 @@ final class WorktreePresentationTests: XCTestCase {
         }
     }
 
+    func testRemoveConsentCannotAdoptARefreshedBranchBeforeItsConfirmationClick() async throws {
+        selectGit()
+        let fixture = try makeFixture()
+        _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+        let origin = try await installService(in: fixture)
+        let controller = recordingController(for: origin)
+        let window = try XCTUnwrap(controller.window)
+        defer {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet, returnCode: .cancel)
+            }
+            controller.close()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        await waitUntil { NSApp.isActive && window.isKeyWindow }
+        let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
+        let item = NSMenuItem(); item.representedObject = tree
+        controller.removeWorktree(item)
+        let consent = try await waitForSheet(in: window, containing: "Remove")
+        _ = try fixture.git(["checkout", "-b", "replacement"], in: fixture.linked)
+        origin.service.refresh()
+        await waitUntil { origin.service.worktree(forBranch: "refs/heads/replacement") != nil }
+        window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+        await waitUntil { controller.errors.count == 1 }
+        XCTAssertTrue(controller.errors.first?.localizedFailureReason?.contains("Review") == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.linked.path))
+        XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "remove"]) })
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines), "refs/heads/replacement")
+    }
+
     func testRemoveAnywayWaitsBehindAnotherSheetAndHiddenOwnerWithoutHoldingAdmission() async throws {
         selectGit()
         let fixture = try makeFixture()

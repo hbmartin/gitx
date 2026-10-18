@@ -318,7 +318,7 @@
       "original": "C8",
       "summary": "Stale flag invisible to users",
       "disposition": "fixed-here",
-      "reason": "Observe freshness separately from row equality and expose accessible warning and Refresh actions.",
+      "reason": "Observe freshness separately from row equality and expose accessible warning and Refresh actions. Removal retains the displayed row through admission and rejects changed consent evidence.",
       "verification": "WorktreeAppKitTests"
     },
     {

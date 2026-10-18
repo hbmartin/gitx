@@ -573,6 +573,39 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertTrue(target.tasks.mutations.isEmpty, "Checking a replacement never replays a rejected write")
     }
 
+    func testQueuedRemovalRejectsANewerBranchWithoutAdoptingFreshConsent() async throws {
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let blocker = fixture.makeService()
+        let target = fixture.makeService()
+        let unlocked = Data(String(decoding: snapshot, as: UTF8.self).replacingOccurrences(of: "locked offline disk\0", with: "").utf8)
+        try await start(blocker); try await startFacade(target, snapshot: unlocked)
+        XCTAssertFalse(try XCTUnwrap(target.service.worktrees.last).isLocked)
+        let blockerDone = expectation(description: "earlier writer drains")
+        enqueueLock(blocker.service, reason: "held") { _, error in XCTAssertNil(error); blockerDone.fulfill() }
+        let rejected = expectation(description: "queued removal rejects changed branch consent")
+        enqueueRemoval(target.service, path: "/linked") { _, error in
+            XCTAssertTrue(error?.localizedFailureReason?.contains("Review") == true); rejected.fulfill()
+        }
+        let discoveryStarted = target.tasks.expect(discoveryArguments)
+        target.service.refresh()
+        await fulfillment(of: [discoveryStarted], timeout: 5)
+        let accepted = expectation(description: "new branch snapshot is accepted before admission")
+        let observation = target.service.observe(\.worktrees) { _, _ in accepted.fulfill() }
+        defer { observation.invalidate() }
+        let changed = Data(String(decoding: unlocked, as: UTF8.self).replacingOccurrences(of: "refs/heads/topic", with: "refs/heads/replacement").utf8)
+        try target.tasks.task(discoveryArguments, occurrence: 1).finish(changed)
+        await fulfillment(of: [accepted], timeout: 5)
+        observation.invalidate()
+        XCTAssertFalse(target.service.isSnapshotStale)
+        let reconciled = blocker.tasks.expect(discoveryArguments)
+        try blocker.tasks.task(["worktree", "lock", "--reason", "held", "/linked"]).finish(Data())
+        await fulfillment(of: [reconciled], timeout: 5)
+        try blocker.tasks.task(discoveryArguments, occurrence: 1).finish(snapshot)
+        await fulfillment(of: [blockerDone, rejected], timeout: 5)
+        XCTAssertTrue(target.tasks.mutations.isEmpty, "A fresh cache cannot replace the evidence carried by an older request")
+    }
+
     func testSuccessfulReconciliationSatisfiesEarlierRefreshWithoutAnotherInventory() async throws {
         let fixture = try WorktreeMutationFixture()
         defer { fixture.cleanup() }

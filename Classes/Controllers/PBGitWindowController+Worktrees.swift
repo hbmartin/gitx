@@ -485,7 +485,7 @@ extension PBGitWindowController {
         alert.addButton(withTitle: "Cancel")
         presentWorktreeSheet(alert, context: context) { [weak self] response in
             guard let self, self.isCurrentWorktreePresentation(context), response == .alertFirstButtonReturn else { return }
-            context.service.perform(.remove(path: worktree.path, force: false)) { [weak self] _, error in
+            context.service.perform(.remove(path: worktree.path, force: false), expectedWorktree: worktree.value) { [weak self] _, error in
                 guard let error else { return }
                 guard let self else {
                     NSLog("[GitX] Discarded a Remove error after its controller was released")
@@ -508,7 +508,7 @@ extension PBGitWindowController {
                 force.addButton(withTitle: "Cancel")
                 self.enqueueWorktreeAlert(force, context: context) { [weak self] response in
                     guard response == .alertFirstButtonReturn else { return }
-                    self?.performWorktree(.remove(path: worktree.path, force: true), context: context)
+                    self?.performWorktree(.remove(path: worktree.path, force: true), expectedWorktree: worktree.value, context: context)
                 }
             }
         }
@@ -858,12 +858,12 @@ extension PBGitWindowController {
         }
     }
 
-    private func performWorktree(_ command: WorktreeCommand, context: WorktreePresentationContext) {
+    private func performWorktree(_ command: WorktreeCommand, expectedWorktree: GitWorktree? = nil, context: WorktreePresentationContext) {
         guard isCurrentWorktreePresentation(context) else {
             NSLog("[GitX] Discarded a deferred worktree action after its presentation owner changed")
             return
         }
-        context.service.perform(command) { [weak self] _, error in
+        context.service.perform(command, expectedWorktree: expectedWorktree) { [weak self] _, error in
             if let error {
                 self?.showWorktreeError(error, context: context)
             }

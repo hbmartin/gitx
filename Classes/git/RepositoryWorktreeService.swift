@@ -929,7 +929,7 @@ final class PBRepositoryWorktreeService: NSObject {
         perform(.unlock(path: path), completion: completion)
     }
 
-    func perform(_ command: WorktreeCommand, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+    func perform(_ command: WorktreeCommand, expectedWorktree: GitWorktree? = nil, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
         switch command {
         case .pruneReport: pruneWorktrees(reportOnly: true, completion: completion); return
         case .prune, .repairLinks:
@@ -937,19 +937,19 @@ final class PBRepositoryWorktreeService: NSObject {
         default: break
         }
         let fail = requestFailure(command.arguments) { completion(nil, $0) }
+        let previousRecords = expectedWorktree.map { [$0] } ?? snapshot
+        let validatesRemoval: Bool
+        if case .remove = command {
+            validatesRemoval = true
+        } else {
+            validatesRemoval = false
+        }
         enqueueOperation(onFailure: fail) { operation in
             let requiresFreshInventory = self.state.isStale && self.hasPublishedSnapshot
-            let previousRecords = self.snapshot
             let execute: @MainActor ([GitWorktree]) -> Void = { records in
-                guard !requiresFreshInventory || WorktreeEligibility.allows(command, records: records, supported: self.isSupported, previousRecords: previousRecords) else {
+                guard !(requiresFreshInventory || validatesRemoval) || WorktreeEligibility.allows(command, records: records, supported: self.isSupported, previousRecords: previousRecords) else {
                     self.finish(operation) { fail(self.failure("The worktree registration or eligibility changed. Review the refreshed worktree list before trying again.")) }
                     return
-                }
-                if case let .remove(path, _) = command,
-                   let tree = records.first(where: { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }),
-                   !WorktreeEligibility(tree, supported: self.isSupported).canRemove
-                {
-                    self.finish(operation) { completion(nil, self.failure("The main, current, or locked worktree cannot be removed. Unlock a linked worktree first.")) }; return
                 }
                 self.executeTask(command, operation: operation) { result in
                     switch result {
