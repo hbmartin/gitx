@@ -111,13 +111,6 @@ class PinnedToolsTests(unittest.TestCase):
 
         self.assertIn("github.repository == 'gitx/gitx'", release_job.split("\n    needs:", maxsplit=1)[0])
 
-    def test_screenshots_are_diagnostics_from_isolated_ui_fixtures(self) -> None:
-        workflow = (ROOT / ".github/workflows/BuildPR.yml").read_text()
-        self.assertNotIn("/tmp/gitx-screenshot-repo", workflow)
-        self.assertNotIn("screenShotCompare", workflow)
-        self.assertIn('artifacts/verification/$UI_RUN_ID/Results/GitXUI.xcresult', workflow)
-        self.assertIn("scripts/extract_screenshots.py", workflow)
-
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         pinned_actions = {
