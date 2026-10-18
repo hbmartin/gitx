@@ -125,6 +125,38 @@ final class WorktreePresentationTests: XCTestCase {
             XCTAssertEqual(presentations, 1)
         }
 
+        func testPresentationQueueRevalidatesFocusLossAndReturnDuringPreparation() async {
+            let queue = PBWorktreePresentationQueueTestHarness()
+            let owner = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+            let other = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+            owner.isReleasedWhenClosed = false
+            other.isReleasedWhenClosed = false
+            defer { queue.invalidate(); other.close(); owner.close() }
+            NSApp.activate(ignoringOtherApps: true)
+            owner.makeKeyAndOrderFront(nil)
+            await waitUntil { NSApp.isActive && owner.isKeyWindow }
+            var preparations = 0
+            var presented: [Int] = []
+            var discarded = 0
+            queue.enqueue(window: owner, ownerIsCurrent: { true }, prepare: { ready in
+                preparations += 1
+                let revision = preparations
+                if revision == 1 {
+                    other.makeKeyAndOrderFront(nil)
+                    XCTAssertTrue(other.isKeyWindow)
+                    owner.makeKeyAndOrderFront(nil)
+                    XCTAssertTrue(owner.isKeyWindow)
+                }
+                ready(.init(finishesWhenSheetEnds: false, present: { done in
+                    presented.append(revision); done()
+                }, discard: { discarded += 1 }))
+            }, discard: {})
+            await waitUntil { !queue.hasPendingPresentations }
+            XCTAssertEqual(preparations, 2, "A brief focus loss during preparation requires fresh evidence even when the owner returns before the queued flush")
+            XCTAssertEqual(presented, [2])
+            XCTAssertEqual(discarded, 2)
+        }
+
         func testPresentationQueueDiscardsLatePreparationAfterOwnerRevocation() async throws {
             for invalidatesQueue in [false, true] {
                 let queue = PBWorktreePresentationQueueTestHarness()

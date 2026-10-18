@@ -129,17 +129,19 @@ final class WorktreePresentationQueue {
         guard observers.isEmpty else { return }
         let center = NotificationCenter.default
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
-                     NSWindow.didDeminiaturizeNotification, NSWindow.didMiniaturizeNotification]
+                     NSWindow.didDeminiaturizeNotification, NSWindow.didMiniaturizeNotification, NSWindow.willBeginSheetNotification]
         {
+            let blocked = [NSWindow.didResignKeyNotification, NSWindow.didMiniaturizeNotification, NSWindow.willBeginSheetNotification].contains(name)
             observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
                 // swift6-safety-justification: The observer explicitly delivers on the main queue.
-                MainActor.assumeIsolated { self?.scheduleFlush() }
+                MainActor.assumeIsolated { self?.presentationChanged(wasBlocked: blocked) }
             })
         }
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification, NSApplication.didUnhideNotification] {
+            let blocked = name == NSApplication.didResignActiveNotification
             observers.append(center.addObserver(forName: name, object: NSApp, queue: .main) { [weak self] _ in
                 // swift6-safety-justification: The observer explicitly delivers on the main queue.
-                MainActor.assumeIsolated { self?.scheduleFlush() }
+                MainActor.assumeIsolated { self?.presentationChanged(wasBlocked: blocked) }
             })
         }
         observers.append(center.addObserver(forName: NSWindow.didEndSheetNotification, object: window, queue: .main) { [weak self] _ in
@@ -150,6 +152,18 @@ final class WorktreePresentationQueue {
             // swift6-safety-justification: The observer explicitly delivers on the main queue.
             MainActor.assumeIsolated { self?.invalidate() }
         })
+    }
+
+    private func presentationChanged(wasBlocked: Bool) {
+        // Preserve even a brief block that ends before the coalesced flush runs.
+        if wasBlocked {
+            if let active, !active.isPresenting {
+                active.wait()
+            } else if active == nil {
+                pending.first?.wait()
+            }
+        }
+        scheduleFlush()
     }
 
     private func scheduleFlush() {
