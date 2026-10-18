@@ -281,7 +281,9 @@ final class WorktreePresentationQueue {
             queue.hasPendingPresentations
         }
 
+        /// This selector is used through the test target's Objective-C bridging header.
         @objc(enqueueWindow:ownerIsCurrent:prepare:discard:)
+        // swiftlint:disable:next unused_declaration
         func enqueue(window: NSWindow, ownerIsCurrent: @escaping @MainActor () -> Bool,
                      prepare: @escaping @MainActor (@escaping @MainActor (WorktreePreparedPresentationTestValue?) -> Void) -> Void,
                      discard: @escaping @MainActor () -> Void)
