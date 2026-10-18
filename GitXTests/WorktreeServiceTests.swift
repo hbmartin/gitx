@@ -1,6 +1,5 @@
 import Foundation
 import GitXCore
-import OSLog
 import XCTest
 
 // swift6-safety-justification: The lock protects every callback, output, and cancellation access, including delivery from the discovery queue.
@@ -746,6 +745,8 @@ final class WorktreeServiceTests: XCTestCase {
         let reconciled = installed.tasks.expect(discoveryArguments)
         try installed.tasks.task(removeArguments).finish(Data())
         await fulfillment(of: [reconciled], timeout: 5)
+        // Reconciliation satisfies the earlier refresh. A later invalidation must survive it.
+        installed.service.refresh()
         let recoveryStarted = installed.tasks.expect(discoveryArguments)
         try installed.tasks.task(discoveryArguments, occurrence: 2).finish(fixture.listing())
         await fulfillment(of: [removed, recoveryStarted], timeout: 5)
@@ -852,24 +853,25 @@ final class WorktreeServiceTests: XCTestCase {
     }
 
     func testFailedMutationPropagatesErrorAndReleasesNextWriterWithoutDiscovery() async throws {
-        let fixture = try WorktreeMutationFixture()
+        let fixture = try WorktreeFacadeFixture()
         defer { fixture.cleanup() }
         let first = fixture.makeService()
         let second = fixture.makeService()
-        try await start(first)
-        try await start(second)
+        let initial = try fixture.listing()
+        try await startFacade(first, snapshot: initial)
+        try await startFacade(second, snapshot: initial)
         let completions = WorktreeCompletionRecorder()
         let failed = expectation(description: "failed mutation completed")
         let completed = expectation(description: "next mutation completed")
-        let firstArguments = ["worktree", "lock", "--reason", "first", "/linked"]
-        let secondArguments = ["worktree", "unlock", "/linked"]
-        enqueueLock(first.service, reason: "first") { output, error in
+        let firstArguments = ["worktree", "lock", "--reason", "first", fixture.linked.path]
+        let secondArguments = ["worktree", "unlock", fixture.linked.path]
+        enqueueLock(first.service, path: fixture.linked.path, reason: "first") { output, error in
             XCTAssertNil(output)
             XCTAssertEqual(error?.localizedFailureReason, "Git refused lock")
             XCTAssertEqual((error?.userInfo[NSUnderlyingErrorKey] as? NSError)?.domain, "fixture")
             completions.names.append("failed"); failed.fulfill()
         }
-        enqueueUnlock(second.service) { _, error in
+        enqueueUnlock(second.service, path: fixture.linked.path) { _, error in
             XCTAssertNil(error)
             completions.names.append("next"); completed.fulfill()
         }
@@ -884,7 +886,7 @@ final class WorktreeServiceTests: XCTestCase {
         let refreshed = second.tasks.expect(discoveryArguments)
         try second.tasks.task(secondArguments).finish(Data())
         await fulfillment(of: [refreshed], timeout: 5)
-        try second.tasks.task(discoveryArguments, occurrence: 1).finish(snapshot)
+        try second.tasks.task(discoveryArguments, occurrence: 1).finish(initial)
         await fulfillment(of: [completed], timeout: 5)
         XCTAssertEqual(completions.names, ["failed", "next"])
     }
@@ -1640,15 +1642,15 @@ final class WorktreeServiceTests: XCTestCase {
 
     /// Calling the completion selectors synchronously preserves immediate FIFO admission;
     /// their imported async alternatives would suspend before the assertions can observe it.
-    private func enqueueLock(_ service: PBRepositoryWorktreeService, reason: String, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
-        service.lockWorktree(path: "/linked", reason: reason) { output, error in
+    private func enqueueLock(_ service: PBRepositoryWorktreeService, path: String = "/linked", reason: String, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+        service.lockWorktree(path: path, reason: reason) { output, error in
             // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
             MainActor.assumeIsolated { completion(output, error as NSError?) }
         }
     }
 
-    private func enqueueUnlock(_ service: PBRepositoryWorktreeService, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
-        service.unlockWorktree(path: "/linked") { output, error in
+    private func enqueueUnlock(_ service: PBRepositoryWorktreeService, path: String = "/linked", completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+        service.unlockWorktree(path: path) { output, error in
             // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
             MainActor.assumeIsolated { completion(output, error as NSError?) }
         }
@@ -2932,92 +2934,59 @@ final class WorktreeRepairSafetyTests: XCTestCase {
     }
 
     func testLifecyclePublicEventsExcludePrivateArgumentsAndOutputsFromRealRoutes() async throws {
-        let fixture = try RepairFixture(label: "public-log-canaries")
-        defer { fixture.cleanup() }
-        let repository = try RepositoryTestGitRepository(url: fixture.main)
-        let secretReason = "lock-reason-secret-" + UUID().uuidString
-        let secretPath = fixture.root.appendingPathComponent("path-secret-" + UUID().uuidString).path
-        let secretBranch = "branch-secret-" + UUID().uuidString
-        let secretOutput = "https://alice:credential-secret@gitx.invalid/" + UUID().uuidString
-        let failedTask = ControlledWorktreeTask()
-        let failureLaunched = expectation(description: "failed route admitted")
-        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
-            if arguments == ["worktree", "add", "-b", secretBranch, secretPath] {
-                failureLaunched.fulfill(); return failedTask
+        #if DEBUG
+            let fixture = try RepairFixture(label: "public-log-canaries")
+            defer { fixture.cleanup() }
+            let repository = try RepositoryTestGitRepository(url: fixture.main)
+            let secretReason = "lock-reason-secret-" + UUID().uuidString
+            let secretPath = fixture.root.appendingPathComponent("path-secret-" + UUID().uuidString).path
+            let secretBranch = "branch-secret-" + UUID().uuidString
+            let secretOutput = "https://alice:credential-secret@gitx.invalid/" + UUID().uuidString
+            let failedTask = ControlledWorktreeTask()
+            let failureLaunched = expectation(description: "failed route admitted")
+            let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+                if arguments == ["worktree", "add", "-b", secretBranch, secretPath] {
+                    failureLaunched.fulfill(); return failedTask
+                }
+                return nil
+            })
+            defer { service.cancel(); failedTask.finish(nil, error: CancellationError()) }
+            try await ready(service)
+            let recorded = WorktreePublicEventRecorder()
+            service.lifecycleEventObserver = { recorded.events.append($0) }
+            defer { service.lifecycleEventObserver = nil }
+            let locked = expectation(description: "real lock retains exact private execution reason")
+            enqueue { service.lockWorktree(path: fixture.linked.path, reason: secretReason) { _, error in XCTAssertNil(error); locked.fulfill() } }
+            await fulfillment(of: [locked], timeout: 10)
+            XCTAssertEqual(try String(contentsOf: fixture.main.appendingPathComponent(".git/worktrees/linked/locked"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), secretReason)
+            let failed = expectation(description: "failed route produces redacted presentation diagnostics")
+            enqueue { service.addWorktree(path: secretPath, branch: secretBranch, createBranch: true) { _, error in
+                XCTAssertNotNil(error)
+                XCTAssertFalse((error as NSError?)?.localizedFailureReason?.contains("credential-secret") ?? true)
+                failed.fulfill()
+            } }
+            await fulfillment(of: [failureLaunched], timeout: 10)
+            failedTask.finish(Data(secretOutput.utf8), error: NSError(domain: "fixture", code: 1))
+            await fulfillment(of: [failed], timeout: 10)
+            let required = ["worktree.lock.started phase=writing count=1 category=none", "worktree.add.failed phase=writing count=1 category=task"]
+            let events = recorded.events
+            for event in required {
+                XCTAssertTrue(events.contains(event), "Missing emitted lifecycle event: \(event)")
             }
-            return nil
-        })
-        defer { service.cancel(); failedTask.finish(nil, error: CancellationError()) }
-        try await ready(service)
-        let logStart = Date()
-        let locked = expectation(description: "real lock retains exact private execution reason")
-        enqueue { service.lockWorktree(path: fixture.linked.path, reason: secretReason) { _, error in XCTAssertNil(error); locked.fulfill() } }
-        await fulfillment(of: [locked], timeout: 10)
-        XCTAssertEqual(try String(contentsOf: fixture.main.appendingPathComponent(".git/worktrees/linked/locked"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), secretReason)
-        let failed = expectation(description: "failed route produces redacted presentation diagnostics")
-        enqueue { service.addWorktree(path: secretPath, branch: secretBranch, createBranch: true) { _, error in
-            XCTAssertNotNil(error)
-            XCTAssertFalse((error as NSError?)?.localizedFailureReason?.contains("credential-secret") ?? true)
-            failed.fulfill()
-        } }
-        await fulfillment(of: [failureLaunched], timeout: 10)
-        failedTask.finish(Data(secretOutput.utf8), error: NSError(domain: "fixture", code: 1))
-        await fulfillment(of: [failed], timeout: 10)
-        let required = ["worktree.lock.started phase=writing count=1 category=none", "worktree.add.failed phase=writing count=1 category=task"]
-        let snapshot = try await Self.lifecycleLogObservation(since: logStart, required: required)
-        let entries = snapshot.entries
-        let observation = "Log visibility after \(snapshot.queryDurations.count) queries over \(snapshot.elapsed); query durations: \(snapshot.queryDurations)"
-        let events = entries.filter { $0.hasPrefix("worktree.") }
-        for event in required {
-            XCTAssertTrue(events.contains(event), "Missing \(event). \(observation)")
-        }
-        for event in events {
-            for secret in [secretReason, secretPath, secretBranch, secretOutput, "credential-secret"] {
-                XCTAssertFalse(event.contains(secret))
+            for event in events {
+                for secret in [secretReason, secretPath, secretBranch, secretOutput, "credential-secret"] {
+                    XCTAssertFalse(event.contains(secret))
+                }
             }
-        }
-        XCTAssertEqual(PBWorktreeLifecycleDiagnostics.publicEvent(arguments: ["worktree", "lock", "--reason", secretReason, secretPath], stage: secretOutput, phase: secretBranch, count: -1, category: secretReason), "worktree.lock.unknown phase=unknown count=0 category=unknown")
+            XCTAssertEqual(PBWorktreeLifecycleDiagnostics.publicEvent(arguments: ["worktree", "lock", "--reason", secretReason, secretPath], stage: secretOutput, phase: secretBranch, count: -1, category: secretReason), "worktree.lock.unknown phase=unknown count=0 category=unknown")
+        #else
+            throw XCTSkip("Lifecycle event observation is Debug test support.")
+        #endif
     }
 
-    private nonisolated struct LifecycleLogObservation: Sendable {
-        let entries: [String]
-        let queryDurations: [Duration]
-        let elapsed: Duration
-    }
-
-    private static func lifecycleLogObservation(since date: Date, required: [String]) async throws -> LifecycleLogObservation {
-        try await Task.detached(priority: .utility) {
-            let filter = NSPredicate(format: "subsystem == %@ AND category == %@", "com.gitx.gitx", "PBGitWorktrees")
-            let clock = ContinuousClock()
-            let started = clock.now
-            let deadline = started.advanced(by: .seconds(30))
-            let pauses: [Duration] = [.zero, .milliseconds(250), .milliseconds(500), .seconds(1)]
-            var entries: [String] = []
-            var queryDurations: [Duration] = []
-            var attempt = 0
-            while true {
-                if attempt > 0 {
-                    guard clock.now < deadline else { break }
-                    let next = min(deadline, clock.now.advanced(by: pauses[min(attempt, pauses.count - 1)]))
-                    try await clock.sleep(until: next)
-                    guard clock.now < deadline else { break }
-                }
-                let queryStarted = clock.now
-                // OSLogStore represents a fixed range as of creation. Each retry
-                // needs a fresh snapshot; the predicate and utility task are reused.
-                let store = try OSLogStore(scope: .currentProcessIdentifier)
-                entries = try store.getEntries(at: store.position(date: date), matching: filter)
-                    .compactMap { $0 as? OSLogEntryLog }
-                    .filter { $0.date >= date }
-                    .map(\.composedMessage)
-                queryDurations.append(queryStarted.duration(to: clock.now))
-                if required.allSatisfy({ entries.contains($0) }) || clock.now >= deadline {
-                    break
-                }
-                attempt += 1
-            }
-            return LifecycleLogObservation(entries: entries, queryDurations: queryDurations, elapsed: started.duration(to: clock.now))
-        }.value
+    @MainActor
+    private final class WorktreePublicEventRecorder {
+        var events: [String] = []
     }
 
     @MainActor

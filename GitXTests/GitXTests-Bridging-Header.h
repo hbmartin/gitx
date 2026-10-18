@@ -73,6 +73,7 @@ typedef BOOL (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationOwner)(void) NS_SWIFT_SEN
 @property (nonatomic, copy, nullable) PBWorktreePreparationObserver repairValidationObserver;
 @property (nonatomic, copy, nullable) void(NS_SWIFT_UI_ACTOR ^ repairValidationResultObserver)(void);
 @property (nonatomic, copy, nullable) PBWorktreePreparationObserver discoveryEvidenceObserver;
+@property (nonatomic, copy, nullable) void(NS_SWIFT_UI_ACTOR ^ lifecycleEventObserver)(NSString *event);
 @property (nonatomic, readonly) NSUInteger ownershipCaptureCount;
 @property (nonatomic, readonly) BOOL isSnapshotStale;
 - (void)drainForTestingWithCompletion:(void(NS_SWIFT_UI_ACTOR ^)(void))completion NS_SWIFT_NAME(drainForTesting(completion:));

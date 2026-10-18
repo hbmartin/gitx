@@ -505,6 +505,7 @@ final class PBRepositoryWorktreeService: NSObject {
         @objc var preferenceFingerprintObserver: (@Sendable () -> Void)?
         @objc var preferenceFingerprintResultObserver: (@MainActor @Sendable () -> Void)?
         @objc var acceptedDiscoveryObserver: (@MainActor @Sendable () -> Void)?
+        @objc var lifecycleEventObserver: (@MainActor @Sendable (String) -> Void)?
         @objc private(set) dynamic var repairPreparationCount: UInt64 = 0
     #endif
     @objc private(set) dynamic var worktrees: [PBGitWorktree] = []
@@ -1840,6 +1841,9 @@ final class PBRepositoryWorktreeService: NSObject {
             logger.info("\(event, privacy: .public)")
         }
         logger.debug("Worktree private arguments: \(PBTaskDiagnostics.displayArguments(arguments), privacy: .private)")
+        #if DEBUG
+            lifecycleEventObserver?(event)
+        #endif
     }
 
     private nonisolated static func cancelledError() -> NSError {

@@ -91,10 +91,13 @@ final class WorktreePresentationTests: XCTestCase {
             let foreground = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 360, height: 200), styleMask: [.titled, .closable], backing: .buffered, defer: false)
             owner.title = "Pending worktree result"
             foreground.title = "Foreground window stays active"
+            let message = NSTextField(wrappingLabelWithString: "Foreground window stays active\n\nThe worktree result waits for its original window. No sheet has taken focus.")
+            message.frame = NSRect(x: 24, y: 40, width: 312, height: 120)
+            foreground.contentView?.addSubview(message)
             owner.isReleasedWhenClosed = false
             foreground.isReleasedWhenClosed = false
             defer { queue.invalidate(); foreground.close(); owner.close() }
-            NSApp.activate(ignoringOtherApps: true)
+            await activateWorktreeTestApplication()
             owner.makeKeyAndOrderFront(nil)
             foreground.makeKeyAndOrderFront(nil)
             await waitUntil { NSApp.isActive && foreground.isKeyWindow }
@@ -115,7 +118,7 @@ final class WorktreePresentationTests: XCTestCase {
             XCTAssertEqual(preparations, 0)
             XCTAssertEqual(presentations, 0)
             XCTAssertTrue(queue.hasPendingPresentations)
-            try attachScreenshot(of: foreground, named: "Worktrees-Pending-Result-Preserves-Foreground")
+            try attachScreenshot(of: XCTUnwrap(foreground.contentView?.superview), named: "Worktrees-Pending-Result-Preserves-Foreground")
             owner.makeKeyAndOrderFront(nil)
             await waitUntil { owner.attachedSheet === alert.window }
             XCTAssertEqual(preparations, 1)
@@ -132,7 +135,7 @@ final class WorktreePresentationTests: XCTestCase {
             owner.isReleasedWhenClosed = false
             other.isReleasedWhenClosed = false
             defer { queue.invalidate(); other.close(); owner.close() }
-            NSApp.activate(ignoringOtherApps: true)
+            await activateWorktreeTestApplication()
             owner.makeKeyAndOrderFront(nil)
             await waitUntil { NSApp.isActive && owner.isKeyWindow }
             var preparations = 0
@@ -162,7 +165,7 @@ final class WorktreePresentationTests: XCTestCase {
                 let queue = PBWorktreePresentationQueueTestHarness()
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
-                NSApp.activate(ignoringOtherApps: true)
+                await activateWorktreeTestApplication()
                 window.makeKeyAndOrderFront(nil)
                 defer { queue.invalidate(); window.close() }
                 let owner = QueueOwnerState()
@@ -190,7 +193,7 @@ final class WorktreePresentationTests: XCTestCase {
             let queue = PBWorktreePresentationQueueTestHarness()
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
-            NSApp.activate(ignoringOtherApps: true)
+            await activateWorktreeTestApplication()
             window.makeKeyAndOrderFront(nil)
             defer { queue.invalidate(); window.close() }
             let owner = QueueOwnerState()
@@ -218,7 +221,7 @@ final class WorktreePresentationTests: XCTestCase {
             let queue = PBWorktreePresentationQueueTestHarness()
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
-            NSApp.activate(ignoringOtherApps: true)
+            await activateWorktreeTestApplication()
             window.makeKeyAndOrderFront(nil)
             defer { queue.invalidate(); window.close() }
             let alert = NSAlert()
@@ -613,7 +616,7 @@ final class WorktreePresentationTests: XCTestCase {
             }
             controller.close()
         }
-        NSApp.activate(ignoringOtherApps: true)
+        await activateWorktreeTestApplication()
         window.makeKeyAndOrderFront(nil)
         await waitUntil { NSApp.isActive && window.isKeyWindow }
         let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
@@ -1281,7 +1284,12 @@ final class WorktreePresentationTests: XCTestCase {
             journey.origin.gate.holdNextArguments = arguments
             journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
             await waitUntil { journey.origin.gate.writer.isPending }
-            let occupant = unrelatedSheet(on: journey.window)
+            let occupant = presentation == 2 ? nil : unrelatedSheet(on: journey.window)
+            if presentation == 2 {
+                // Start minimized without a sheet whose dismissal would restore the parent in AppKit.
+                journey.window.miniaturize(nil)
+                await waitUntil { journey.window.isMiniaturized }
+            }
             let refused = try journey.fixture.gitFailure(["worktree", "repair", "--unknown-hidden-overlap-option"])
             journey.origin.gate.writer.finish(refused.data, error: refused.error)
             try await assertFollowingPreviewProgresses(journey)
@@ -1291,11 +1299,11 @@ final class WorktreePresentationTests: XCTestCase {
             case 1:
                 NSApp.hide(nil)
                 await waitUntil { NSApp.isHidden }
-            default:
-                journey.window.miniaturize(nil)
-                await waitUntil { journey.window.isMiniaturized }
+            default: break
             }
-            journey.window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+            if let occupant {
+                journey.window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+            }
             await drainCallbacks()
             XCTAssertEqual(journey.controller.errors.count, 0)
             XCTAssertNil(journey.window.attachedSheet)
@@ -1307,7 +1315,7 @@ final class WorktreePresentationTests: XCTestCase {
             // Only this explicit user return permits presentation.
             NSApp.unhide(nil)
             journey.window.deminiaturize(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            await activateWorktreeTestApplication()
             journey.window.makeKeyAndOrderFront(nil)
             let failure = try await waitForSheet(in: journey.window, containing: "unknown-hidden-overlap-option")
             XCTAssertEqual(journey.controller.errors.count, 1)

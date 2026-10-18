@@ -3,6 +3,19 @@ import GitXCore
 import XCTest
 
 @MainActor
+func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt = #line) async {
+    // Launch Services models an explicit user return even when macOS declines self-activation.
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = true
+    do {
+        let application = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+        XCTAssertEqual(application.processIdentifier, ProcessInfo.processInfo.processIdentifier, "Activate the existing test host", file: file, line: line)
+    } catch {
+        XCTFail("Could not activate the test host: \(error)", file: file, line: line)
+    }
+}
+
+@MainActor
 final class WorktreeAppKitTests: XCTestCase {
     func testRepairOfferThroughObjectiveCImportedSubclassKeepsWindowState() {
         let controller = RepairWindowControllerFixture(window: nil)
@@ -69,7 +82,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let window = PBGitWindowController()
         window.repository = repository
-        window.showWindow(nil)
+        await showForegroundWindow(window)
         defer { window.close(); service.cancel() }
         await waitUntil { window.historyViewController?.view.window === window.window }
         let history = try XCTUnwrap(window.historyViewController)
@@ -121,7 +134,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -255,7 +268,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await waitUntil { service.worktree(forBranch: "refs/heads/topic")?.isLocked == true }
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -396,7 +409,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -465,7 +478,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -515,7 +528,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -573,7 +586,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -619,7 +632,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -669,7 +682,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let service = try await installPruneService(in: repository, gate: gate)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -725,7 +738,7 @@ final class WorktreeAppKitTests: XCTestCase {
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
-            controller.showWindow(nil)
+            await showForegroundWindow(controller)
             let window = try XCTUnwrap(controller.window)
             addTeardownBlock { @MainActor in
                 controller.close()
@@ -751,7 +764,7 @@ final class WorktreeAppKitTests: XCTestCase {
                 window.orderOut(nil)
                 XCTAssertFalse(window.isVisible)
                 XCTAssertFalse(gate.repairWasRequested)
-                controller.showWindow(nil)
+                await showForegroundWindow(controller)
                 await waitUntil { window.isVisible }
                 XCTAssertTrue(window.attachedSheet === consent, "Temporary hiding preserves the original consent authority")
             } else {
@@ -801,7 +814,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === controller.window }
         let sidebar = try XCTUnwrap(controller.sidebarViewController)
@@ -885,7 +898,7 @@ final class WorktreeAppKitTests: XCTestCase {
             await ready(service)
             let controller = PBGitWindowController()
             controller.repository = repository
-            controller.showWindow(nil)
+            await showForegroundWindow(controller)
             defer { controller.close(); service.cancel() }
             let window = try XCTUnwrap(controller.window)
             await waitUntil { controller.historyViewController?.view.window === window }
@@ -1018,7 +1031,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -1051,10 +1064,14 @@ final class WorktreeAppKitTests: XCTestCase {
         sidebar.menuNeedsUpdate(actionMenu)
         for menu in [sidebar.menu(forRow: selectedRow), actionMenu] {
             let applicationItems = applicationMenuItems(menu)
-            XCTAssertEqual(applicationItems.count, 4)
-            XCTAssertEqual(applicationItems.compactMap(\.action), ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "removeWorktree:"].map(NSSelectorFromString))
+            XCTAssertEqual(applicationItems.count, 5)
+            XCTAssertEqual(applicationItems.compactMap(\.action), ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "refreshWorktrees:", "removeWorktree:"].map(NSSelectorFromString))
             for action in applicationItems {
-                XCTAssertEqual((action.representedObject as? PBGitWorktree)?.path, item.worktree.path)
+                if action.action == NSSelectorFromString("refreshWorktrees:") {
+                    XCTAssertNil(action.representedObject)
+                } else {
+                    XCTAssertEqual((action.representedObject as? PBGitWorktree)?.path, item.worktree.path)
+                }
                 XCTAssertNil(action.target)
                 XCTAssertTrue(action.isEnabled)
             }
@@ -1141,7 +1158,7 @@ final class WorktreeAppKitTests: XCTestCase {
             await ready(service)
             let controller = PBGitWindowController()
             controller.repository = repository
-            controller.showWindow(nil)
+            await showForegroundWindow(controller)
             defer { controller.close(); service.cancel() }
             let window = try XCTUnwrap(controller.window)
             await waitUntil { controller.historyViewController?.view.window === window }
@@ -1178,10 +1195,14 @@ final class WorktreeAppKitTests: XCTestCase {
             sidebar.menuNeedsUpdate(actionMenu)
             for menu in [sidebar.menu(forRow: selectedRow), actionMenu] {
                 let applicationItems = applicationMenuItems(menu)
-                XCTAssertEqual(applicationItems.count, 4)
-                XCTAssertEqual(applicationItems.compactMap(\.action), ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "removeWorktree:"].map(NSSelectorFromString))
+                XCTAssertEqual(applicationItems.count, 5)
+                XCTAssertEqual(applicationItems.compactMap(\.action), ["openWorktree:", "revealWorktreeInFinder:", "lockWorktree:", "refreshWorktrees:", "removeWorktree:"].map(NSSelectorFromString))
                 for action in applicationItems {
-                    XCTAssertEqual((action.representedObject as? PBGitWorktree)?.path, selectedItem.worktree.path)
+                    if action.action == NSSelectorFromString("refreshWorktrees:") {
+                        XCTAssertNil(action.representedObject)
+                    } else {
+                        XCTAssertEqual((action.representedObject as? PBGitWorktree)?.path, selectedItem.worktree.path)
+                    }
                     XCTAssertNil(action.target)
                     XCTAssertTrue(action.isEnabled)
                 }
@@ -1225,7 +1246,7 @@ final class WorktreeAppKitTests: XCTestCase {
                 await ready(service)
                 let controller = PBGitWindowController()
                 controller.repository = repository
-                controller.showWindow(nil)
+                await showForegroundWindow(controller)
                 defer { controller.close(); service.cancel() }
                 let window = try XCTUnwrap(controller.window)
                 await waitUntil { controller.historyViewController?.view.window === window }
@@ -1285,7 +1306,7 @@ final class WorktreeAppKitTests: XCTestCase {
             await ready(service)
             let controller = PBGitWindowController()
             controller.repository = repository
-            controller.showWindow(nil)
+            await showForegroundWindow(controller)
             defer { controller.close(); service.cancel() }
             let window = try XCTUnwrap(controller.window)
             await waitUntil { controller.historyViewController?.view.window === window }
@@ -1344,7 +1365,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let window = PBGitWindowController()
         window.repository = repository
-        window.showWindow(nil)
+        await showForegroundWindow(window)
         defer { window.close(); service.cancel() }
         await waitUntil { window.historyViewController?.view.window === window.window }
         let history = try XCTUnwrap(window.historyViewController)
@@ -1393,7 +1414,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === controller.window }
         let sidebar = try XCTUnwrap(controller.sidebarViewController)
@@ -1404,7 +1425,7 @@ final class WorktreeAppKitTests: XCTestCase {
         service.refresh()
         await waitUntil { service.isSnapshotStale }
         await waitUntil {
-            guard let row = (0 ..< outline.numberOfRows).first(where: { (outline.item(atRow: $0) as? PBSourceViewItem)?.title == "Worktrees" }),
+            guard let row = (0 ..< outline.numberOfRows).first(where: { (outline.item(atRow: $0) as? PBSourceViewItem)?.title == "WORKTREES" }),
                   let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView else { return false }
             return cell.toolTip?.contains("Refresh Worktrees") == true && cell.imageView?.image != nil
         }
@@ -1463,7 +1484,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let window = PBGitWindowController()
         window.repository = repository
-        window.showWindow(nil)
+        await showForegroundWindow(window)
         defer { window.close(); service.cancel() }
         await waitUntil { window.historyViewController?.view.window === window.window }
         let sidebar = try XCTUnwrap(window.sidebarViewController)
@@ -1480,7 +1501,7 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertNil(repository.path(ofWorktreeHolding: nil))
         XCTAssertNil(repository.path(ofWorktreeHolding: PBGitRef(string: "refs/heads/main")))
         let groupMenu = sidebar.menu(forRow: outline.row(forItem: group))
-        XCTAssertEqual(groupMenu.items.map(\.title), ["Add Worktree…", "Prune Worktrees…"])
+        XCTAssertEqual(groupMenu.items.map(\.title), ["Add Worktree…", "Prune Worktrees…", "Refresh Worktrees"])
         XCTAssertTrue(groupMenu.items[0].isEnabled)
         XCTAssertTrue(groupMenu.items[1].isEnabled)
         XCTAssertEqual(groupMenu.items[1].action, NSSelectorFromString("pruneWorktrees:"))
@@ -1607,7 +1628,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         await ready(service)
-        let controller = PBGitWindowController(); controller.repository = repository; controller.showWindow(nil)
+        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         let head = try fixture.git(["rev-parse", "HEAD"])
@@ -1697,7 +1718,7 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertNotNil(service.worktree(forBranch: "refs/heads/nested")?.movedPath)
         let repairMenu = try PBHistoryMenuBuilder(repository: repository).menuItems(forWorktree: XCTUnwrap(service.worktree(forBranch: "refs/heads/nested")))
         XCTAssertTrue(repairMenu.contains { $0.title == "Repair Worktree Links…" && $0.isEnabled })
-        let controller = PBGitWindowController(); controller.repository = repository; controller.showWindow(nil)
+        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         var sheet = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
@@ -1758,7 +1779,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         await ready(service)
-        let controller = PBGitWindowController(); controller.repository = repository; controller.showWindow(nil)
+        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let oldGit = fixture.root.appendingPathComponent("old-git")
         try "#!/bin/sh\nfor arg in \"$@\"; do\nif [ \"$arg\" = --version ]; then echo 'git version 2.47.9'; exit 0; fi\ndone\nexec /usr/bin/git \"$@\"\n".write(to: oldGit, atomically: true, encoding: .utf8)
@@ -1787,7 +1808,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         await ready(service)
-        let controller = PBGitWindowController(); controller.repository = repository; controller.showWindow(nil)
+        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         controller.addWorktree(nil)
@@ -1854,7 +1875,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         await ready(service)
-        let controller = PBGitWindowController(); controller.repository = repository; controller.showWindow(nil)
+        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
         var opened: PBGitRepositoryDocument?
         defer { opened?.close(); controller.close(); service.cancel() }
         let item = NSMenuItem(); item.representedObject = PBGitRef(string: "refs/heads/topic")
@@ -1904,7 +1925,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         await ready(service)
-        let controller = PBGitWindowController(); controller.repository = repository; controller.showWindow(nil)
+        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         let item = NSMenuItem(); item.representedObject = PBGitRef(string: "refs/heads/existing/topic")
@@ -1952,7 +1973,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2006,7 +2027,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2056,7 +2077,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2110,7 +2131,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         try FileManager.default.removeItem(at: fixture.linked)
@@ -2142,6 +2163,7 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"], in: moved), unapprovedHead)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), mainHead)
 
+        await showForegroundWindow(controller)
         controller.pruneWorktrees(nil)
         let current = try await waitForSheet(in: window, containing: "Prune")
         XCTAssertTrue(sheetText(current).contains(unapprovedAdmin.lastPathComponent))
@@ -2185,7 +2207,7 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: originalAdministrative.path))
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2294,7 +2316,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(service)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         let window = try XCTUnwrap(controller.window)
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2354,7 +2376,7 @@ final class WorktreeAppKitTests: XCTestCase {
         await ready(origin)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); origin.cancel() }
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2370,15 +2392,14 @@ final class WorktreeAppKitTests: XCTestCase {
         let gate = PruneTaskGate(fixture: fixture)
         let replacement = PBRepositoryWorktreeService(repository: repository, taskFactory: gate.makeTask)
         defer { replacement.cancel(); repository.setValue(origin, forKey: "worktreeService") }
-        // Prepare a replacement I/O collaborator before installing it. Its
-        // publications still read the original cached facade in this sidebar.
+        // Installing the ready replacement also updates the independently observed freshness state.
         replacement.start()
         await ready(replacement)
         await waitUntil { replacement.worktrees.count == 1 }
         XCTAssertFalse(replacement.worktrees.contains { WorktreePaths.identity($0.path) == clicked.identity })
         repository.setValue(replacement, forKey: "worktreeService")
         XCTAssertTrue(repository.worktreeService === replacement)
-        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity, "The retained outlined row is the stale presentation boundary under test")
+        XCTAssertNil(sidebar.selectedItem() as? PBSourceViewGitWorktreeItem, "The accepted replacement inventory removes the obsolete worktree row")
         let alternate = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
         alternate.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         _ = controller.perform(NSSelectorFromString("changeContentController:"), with: alternate)
@@ -2388,11 +2409,11 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertTrue(history.view.window === window)
         XCTAssertNil(alternate.view.window)
         XCTAssertTrue(repository.currentBranch === revision)
-        XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, clicked.identity)
+        XCTAssertNil(sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)
         XCTAssertEqual(history.selectedCommits.first?.sha, capturedOID)
         XCTAssertEqual(history.webCommits.map(\.sha), renderingInputs)
         let others = try XCTUnwrap(sidebar.value(forKey: "others") as? PBSourceViewItem)
-        XCTAssertFalse(sourceItems(others).contains { $0.revSpecifier?.isEqual(revision) == true })
+        XCTAssertTrue(sourceItems(others).contains { $0.revSpecifier?.isEqual(revision) == true })
         XCTAssertFalse(gate.repairWasRequested)
         XCTAssertFalse(gate.pruneWasRequested)
         XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
@@ -2414,7 +2435,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let service = try await installPruneService(in: repository, gate: gate)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2461,7 +2482,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let service = try await installPruneService(in: repository, gate: gate)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2511,7 +2532,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let service = try await installPruneService(in: repository, gate: gate)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === window }
@@ -2559,7 +2580,7 @@ final class WorktreeAppKitTests: XCTestCase {
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
-            controller.showWindow(nil)
+            await showForegroundWindow(controller)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close(); service.cancel(); gate.report.finish(nil, error: CancellationError()) }
             try FileManager.default.removeItem(at: fixture.linked)
@@ -2620,7 +2641,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let service = try await installPruneService(in: repository, gate: gate)
         let controller = PBGitWindowController()
         controller.repository = repository
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel(); gate.report.finish(nil, error: CancellationError()) }
         try FileManager.default.removeItem(at: fixture.linked)
@@ -2640,7 +2661,7 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try registrationMetadata(administrative), metadata)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
 
-        controller.showWindow(nil)
+        await showForegroundWindow(controller)
         await waitUntil { window.isVisible }
         let freshSheet = try await waitForSheet(in: window, containing: "Prune")
         XCTAssertTrue(sheetText(freshSheet).contains(administrative.lastPathComponent))
@@ -2671,7 +2692,7 @@ final class WorktreeAppKitTests: XCTestCase {
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
-            controller.showWindow(nil)
+            await showForegroundWindow(controller)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close(); service.cancel() }
             try FileManager.default.removeItem(at: fixture.linked)
@@ -2688,16 +2709,13 @@ final class WorktreeAppKitTests: XCTestCase {
             }
             window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
             await drainPruneCallbacks()
-            if restoreBeforeConfirmation {
-                // Capability recovery does not revive the consent captured
-                // before the executable change. The service rejects its token.
-                let errorSheet = try await waitForSheet(in: window)
-                XCTAssertFalse(errorSheet === sheet)
-                XCTAssertFalse(descendants(errorSheet.contentView).contains { ($0 as? NSButton)?.title == "Prune" })
-                window.endSheet(errorSheet, returnCode: .alertFirstButtonReturn)
-                await waitUntil { window.attachedSheet == nil }
-            } else {
-                XCTAssertNil(window.attachedSheet)
+            // Capability recovery cannot revive the earlier token. Both states report the rejection.
+            let errorSheet = try await waitForSheet(in: window)
+            XCTAssertFalse(errorSheet === sheet)
+            XCTAssertFalse(descendants(errorSheet.contentView).contains { ($0 as? NSButton)?.title == "Prune" })
+            window.endSheet(errorSheet, returnCode: .alertFirstButtonReturn)
+            await waitUntil { window.attachedSheet == nil }
+            if !restoreBeforeConfirmation {
                 defaults.set("/usr/bin/git", forKey: "gitExecutable")
                 NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
                 await waitUntil { service.isSupported }
@@ -2740,6 +2758,14 @@ final class WorktreeAppKitTests: XCTestCase {
         // NSPopUpButton installs its own action on icon and separator items.
         // Their public presentation distinguishes them from application actions.
         menu.items.filter { !$0.isSeparatorItem && !$0.title.isEmpty }
+    }
+
+    private func showForegroundWindow(_ controller: PBGitWindowController, file: StaticString = #filePath, line: UInt = #line) async {
+        controller.showWindow(nil)
+        guard let window = controller.window else { XCTFail("The test window did not load", file: file, line: line); return }
+        window.makeKeyAndOrderFront(nil)
+        await activateWorktreeTestApplication(file: file, line: line)
+        await waitUntil({ NSApp.isActive && (window.isKeyWindow || window.attachedSheet?.isKeyWindow == true) }, file: file, line: line)
     }
 
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {

@@ -68,7 +68,7 @@ final class GitXInteropContractTests: XCTestCase {
     func testWorktreeFixtureProbesAreAvailableOnlyInDebug() {
         let selectors = ["repairPreparationCount", "ownershipCaptureCount", "discoveryEvidenceObserver",
                          "repairValidationObserver", "repairValidationResultObserver", "repairPreparationResultObserver",
-                         "preferenceFingerprintObserver", "preferenceFingerprintResultObserver", "acceptedDiscoveryObserver",
+                         "preferenceFingerprintObserver", "preferenceFingerprintResultObserver", "acceptedDiscoveryObserver", "lifecycleEventObserver",
                          "drainForTestingWithCompletion:", "initWithRepository:taskFactory:repairPreparationObserver:"]
         for name in selectors {
             #if DEBUG
