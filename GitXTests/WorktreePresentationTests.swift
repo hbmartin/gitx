@@ -85,11 +85,88 @@ final class WorktreePresentationTests: XCTestCase {
         @MainActor
         private final class QueueOwnerState { var current = true }
 
+        func testQueuedPresentationPreservesAnotherKeyWindowUntilTheUserReturns() async throws {
+            let queue = PBWorktreePresentationQueueTestHarness()
+            let owner = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 360, height: 200), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let foreground = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 360, height: 200), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            owner.title = "Pending worktree result"
+            foreground.title = "Foreground window stays active"
+            let message = NSTextField(wrappingLabelWithString: "Foreground window stays active\n\nThe worktree result waits for its original window. No sheet has taken focus.")
+            message.frame = NSRect(x: 24, y: 40, width: 312, height: 120)
+            foreground.contentView?.addSubview(message)
+            owner.isReleasedWhenClosed = false
+            foreground.isReleasedWhenClosed = false
+            defer { queue.invalidate(); foreground.close(); owner.close() }
+            await activateWorktreeTestApplication()
+            owner.makeKeyAndOrderFront(nil)
+            foreground.makeKeyAndOrderFront(nil)
+            await waitUntil { NSApp.isActive && foreground.isKeyWindow }
+            let alert = NSAlert()
+            alert.messageText = "Deferred worktree result"
+            alert.addButton(withTitle: "OK")
+            var preparations = 0
+            var presentations = 0
+            queue.enqueue(window: owner, ownerIsCurrent: { true }, prepare: { ready in
+                preparations += 1
+                ready(.init(finishesWhenSheetEnds: true, present: { _ in
+                    presentations += 1
+                    alert.beginSheetModal(for: owner) { _ in }
+                }, discard: {}))
+            }, discard: {})
+            await drainCallbacks()
+            XCTAssertTrue(foreground.isKeyWindow)
+            XCTAssertEqual(preparations, 0)
+            XCTAssertEqual(presentations, 0)
+            XCTAssertTrue(queue.hasPendingPresentations)
+            try attachScreenshot(of: XCTUnwrap(foreground.contentView?.superview), named: "Worktrees-Pending-Result-Preserves-Foreground")
+            owner.makeKeyAndOrderFront(nil)
+            await waitUntil { owner.attachedSheet === alert.window }
+            XCTAssertEqual(preparations, 1)
+            XCTAssertEqual(presentations, 1)
+            owner.endSheet(alert.window, returnCode: .OK)
+            await waitUntil { !queue.hasPendingPresentations }
+            XCTAssertEqual(presentations, 1)
+        }
+
+        func testPresentationQueueRevalidatesFocusLossAndReturnDuringPreparation() async {
+            let queue = PBWorktreePresentationQueueTestHarness()
+            let owner = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+            let other = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+            owner.isReleasedWhenClosed = false
+            other.isReleasedWhenClosed = false
+            defer { queue.invalidate(); other.close(); owner.close() }
+            await activateWorktreeTestApplication()
+            owner.makeKeyAndOrderFront(nil)
+            await waitUntil { NSApp.isActive && owner.isKeyWindow }
+            var preparations = 0
+            var presented: [Int] = []
+            var discarded = 0
+            queue.enqueue(window: owner, ownerIsCurrent: { true }, prepare: { ready in
+                preparations += 1
+                let revision = preparations
+                if revision == 1 {
+                    other.makeKeyAndOrderFront(nil)
+                    XCTAssertTrue(other.isKeyWindow)
+                    owner.makeKeyAndOrderFront(nil)
+                    XCTAssertTrue(owner.isKeyWindow)
+                }
+                ready(.init(finishesWhenSheetEnds: false, present: { done in
+                    presented.append(revision); done()
+                }, discard: { discarded += 1 }))
+            }, discard: {})
+            await waitUntil { !queue.hasPendingPresentations }
+            XCTAssertEqual(preparations, 2, "A brief focus loss during preparation requires fresh evidence even when the owner returns before the queued flush")
+            XCTAssertEqual(presented, [2])
+            XCTAssertEqual(discarded, 2)
+        }
+
         func testPresentationQueueDiscardsLatePreparationAfterOwnerRevocation() async throws {
             for invalidatesQueue in [false, true] {
                 let queue = PBWorktreePresentationQueueTestHarness()
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
+                await activateWorktreeTestApplication()
+                window.makeKeyAndOrderFront(nil)
                 defer { queue.invalidate(); window.close() }
                 let owner = QueueOwnerState()
                 var ready: (@MainActor (PBWorktreePreparedPresentationTestValue?) -> Void)?
@@ -116,6 +193,8 @@ final class WorktreePresentationTests: XCTestCase {
             let queue = PBWorktreePresentationQueueTestHarness()
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
+            await activateWorktreeTestApplication()
+            window.makeKeyAndOrderFront(nil)
             defer { queue.invalidate(); window.close() }
             let owner = QueueOwnerState()
             var ready: (@MainActor (PBWorktreePreparedPresentationTestValue?) -> Void)?
@@ -142,6 +221,8 @@ final class WorktreePresentationTests: XCTestCase {
             let queue = PBWorktreePresentationQueueTestHarness()
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
+            await activateWorktreeTestApplication()
+            window.makeKeyAndOrderFront(nil)
             defer { queue.invalidate(); window.close() }
             let alert = NSAlert()
             alert.messageText = "Owner-scoped diagnostic presentation"
@@ -522,6 +603,90 @@ final class WorktreePresentationTests: XCTestCase {
         }
     }
 
+    func testRemoveConsentCannotAdoptARefreshedBranchBeforeItsConfirmationClick() async throws {
+        selectGit()
+        let fixture = try makeFixture()
+        _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+        let origin = try await installService(in: fixture)
+        let controller = recordingController(for: origin)
+        let window = try XCTUnwrap(controller.window)
+        defer {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet, returnCode: .cancel)
+            }
+            controller.close()
+        }
+        await activateWorktreeTestApplication()
+        window.makeKeyAndOrderFront(nil)
+        await waitUntil { NSApp.isActive && window.isKeyWindow }
+        let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
+        let item = NSMenuItem(); item.representedObject = tree
+        controller.removeWorktree(item)
+        let consent = try await waitForSheet(in: window, containing: "Remove")
+        _ = try fixture.git(["checkout", "-b", "replacement"], in: fixture.linked)
+        origin.service.refresh()
+        await waitUntil { origin.service.worktree(forBranch: "refs/heads/replacement") != nil }
+        window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+        await waitUntil { controller.errors.count == 1 }
+        XCTAssertTrue(controller.errors.first?.localizedFailureReason?.contains("Review") == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.linked.path))
+        XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "remove"]) })
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines), "refs/heads/replacement")
+    }
+
+    func testRemoveAnywayWaitsBehindAnotherSheetAndHiddenOwnerWithoutHoldingAdmission() async throws {
+        selectGit()
+        let fixture = try makeFixture()
+        _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+        let dirty = fixture.linked.appendingPathComponent("untracked.txt")
+        let content = Data("preserve while consent waits\n".utf8)
+        try content.write(to: dirty)
+        let origin = try await installService(in: fixture)
+        let following = try await installService(in: fixture)
+        let controller = recordingController(for: origin)
+        let window = try XCTUnwrap(controller.window)
+        defer {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet, returnCode: .cancel)
+            }
+            controller.close()
+        }
+        let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
+        let item = NSMenuItem(); item.representedObject = tree
+        let arguments = ["worktree", "remove", tree.path]
+        origin.gate.holdNextArguments = arguments
+        controller.removeWorktree(item)
+        let first = try await waitForSheet(in: window, containing: "Remove")
+        window.endSheet(first, returnCode: .alertFirstButtonReturn)
+        await waitUntil { origin.gate.writer.isPending }
+        let occupant = NSAlert()
+        occupant.messageText = "Inspector owns this sheet"
+        occupant.addButton(withTitle: "Done")
+        occupant.beginSheetModal(for: window) { _ in }
+        let refused = try fixture.gitFailure(arguments)
+        XCTAssertTrue(WorktreePolicy.offersForcedRemoval(gitMessage: String(decoding: refused.data, as: UTF8.self)))
+        let followingDone = expectation(description: "another writer completes while Remove Anyway waits")
+        enqueue(following.service, command: .lock(path: tree.path, reason: "following")) { _, error in
+            XCTAssertNil(error); followingDone.fulfill()
+        }
+        origin.gate.writer.finish(refused.data, error: refused.error)
+        await fulfillment(of: [followingDone], timeout: 15)
+        await drainCallbacks()
+        XCTAssertTrue(window.attachedSheet === occupant.window)
+        window.orderOut(nil)
+        window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+        await drainCallbacks()
+        XCTAssertFalse(window.isVisible)
+        XCTAssertNil(window.attachedSheet)
+        XCTAssertFalse(origin.gate.commands.contains(["worktree", "remove", "--force", tree.path]))
+        window.makeKeyAndOrderFront(nil)
+        let force = try await waitForSheet(in: window, containing: "Remove Anyway")
+        window.endSheet(force, returnCode: .alertSecondButtonReturn)
+        await waitUntil { window.attachedSheet == nil }
+        XCTAssertEqual(try Data(contentsOf: dirty), content)
+        XCTAssertEqual(controller.errors.count, 0)
+    }
+
     func testDeferredRemoveAnywayConfirmationLosesAuthorityAfterOwnerReplacementAndRestoration() async throws {
         selectGit()
         let fixture = try makeFixture()
@@ -616,7 +781,7 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertEqual(try fixture.registrationProof(at: administrative), metadata)
     }
 
-    func testHiddenPruneOwnerRestoresRealPreviewFailuresAndReleasesTheSharedQueue() async throws {
+    func testHiddenPruneOwnerRetainsRealPreviewFailuresUntilTheUserReturns() async throws {
         selectGit()
         for phase in HiddenPruneFailurePhase.allCases {
             let fixture = try makeFixture()
@@ -663,6 +828,10 @@ final class WorktreePresentationTests: XCTestCase {
             }
             origin.gate.writer.finish(refused.data, error: refused.error)
             await fulfillment(of: [completed], timeout: 15)
+            await drainCallbacks()
+            XCTAssertEqual(controller.errors.count, 0)
+            XCTAssertFalse(window.isVisible, "Completing a request must not restore or activate its hidden owner")
+            window.makeKeyAndOrderFront(nil)
             await waitUntil { controller.errors.count == 1 && window.isVisible }
             XCTAssertTrue(controller.errors.first?.localizedFailureReason?.contains("unknown-preview-option") == true)
             XCTAssertNil(window.attachedSheet, "The recording presenter observes the failure without attaching another sheet")
@@ -761,12 +930,15 @@ final class WorktreePresentationTests: XCTestCase {
                 XCTAssertTrue(window.attachedSheet === occupant.window, "Repair preparation must not replace another presenter's sheet")
                 window.orderOut(nil)
                 window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+                await drainCallbacks()
+                XCTAssertFalse(window.isVisible, "Consent must wait for the user to restore its owner")
+                XCTAssertNil(window.attachedSheet)
+                window.makeKeyAndOrderFront(nil)
                 let deferred = try await waitForSheet(in: window, containing: "Reclaim")
-                await waitUntil { window.isVisible && NSApp.isActive }
-                XCTAssertTrue(window.isVisible, "Consent restores its original hidden owner")
+                XCTAssertTrue(window.isVisible)
                 XCTAssertTrue(NSApp.isActive)
                 XCTAssertTrue(sheetText(deferred).contains("worktree state changed"), "The deferred preview must describe the intervening unlock")
-                try attachScreenshot(of: deferred, named: "Worktrees-Deferred-Reclaim-Restores-Original-Window")
+                try attachScreenshot(of: deferred, named: "Worktrees-Deferred-Reclaim-Waits-For-Original-Window")
                 XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
                 window.endSheet(deferred, returnCode: .alertSecondButtonReturn)
                 await waitUntil { window.attachedSheet == nil }
@@ -1098,7 +1270,7 @@ final class WorktreePresentationTests: XCTestCase {
         try await assertFollowingPreviewProgresses(journey)
     }
 
-    func testDeferredRepairFailureRestoresItsOriginalHiddenOrMinimizedWindowExactlyOnce() async throws {
+    func testDeferredRepairFailureWaitsForItsHiddenOrMinimizedOwnerExactlyOnce() async throws {
         selectGit()
         for presentation in 0 ..< 3 {
             let journey = try await movedRepairJourney()
@@ -1112,7 +1284,12 @@ final class WorktreePresentationTests: XCTestCase {
             journey.origin.gate.holdNextArguments = arguments
             journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
             await waitUntil { journey.origin.gate.writer.isPending }
-            let occupant = unrelatedSheet(on: journey.window)
+            let occupant = presentation == 2 ? nil : unrelatedSheet(on: journey.window)
+            if presentation == 2 {
+                // Start minimized without a sheet whose dismissal would restore the parent in AppKit.
+                journey.window.miniaturize(nil)
+                await waitUntil { journey.window.isMiniaturized }
+            }
             let refused = try journey.fixture.gitFailure(["worktree", "repair", "--unknown-hidden-overlap-option"])
             journey.origin.gate.writer.finish(refused.data, error: refused.error)
             try await assertFollowingPreviewProgresses(journey)
@@ -1122,20 +1299,32 @@ final class WorktreePresentationTests: XCTestCase {
             case 1:
                 NSApp.hide(nil)
                 await waitUntil { NSApp.isHidden }
-            default:
-                journey.window.miniaturize(nil)
-                await waitUntil { journey.window.isMiniaturized }
+            default: break
             }
-            journey.window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+            if let occupant {
+                journey.window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+            }
+            await drainCallbacks()
+            XCTAssertEqual(journey.controller.errors.count, 0)
+            XCTAssertNil(journey.window.attachedSheet)
+            switch presentation {
+            case 0: XCTAssertFalse(journey.window.isVisible)
+            case 1: XCTAssertTrue(NSApp.isHidden)
+            default: XCTAssertTrue(journey.window.isMiniaturized)
+            }
+            // Only this explicit user return permits presentation.
+            NSApp.unhide(nil)
+            journey.window.deminiaturize(nil)
+            await activateWorktreeTestApplication()
+            journey.window.makeKeyAndOrderFront(nil)
             let failure = try await waitForSheet(in: journey.window, containing: "unknown-hidden-overlap-option")
-            await waitUntil { journey.window.isVisible && !journey.window.isMiniaturized && !NSApp.isHidden && NSApp.isActive }
             XCTAssertEqual(journey.controller.errors.count, 1)
             XCTAssertTrue(journey.window.isVisible)
             XCTAssertFalse(journey.window.isMiniaturized)
             XCTAssertFalse(NSApp.isHidden)
             XCTAssertTrue(NSApp.isActive)
             if presentation == 2 {
-                try attachScreenshot(of: failure, named: "Worktrees-Deferred-Failure-Restores-Minimized-Window")
+                try attachScreenshot(of: failure, named: "Worktrees-Deferred-Failure-Waits-For-Minimized-Window")
             }
             journey.window.endSheet(failure, returnCode: .OK)
             await waitUntil { journey.window.attachedSheet == nil }
@@ -1197,8 +1386,6 @@ final class WorktreePresentationTests: XCTestCase {
         XCTAssertEqual(try fixture.registrationProof(at: administrative), protected)
         XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
         window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
-        await waitUntil { window.attachedSheet == nil }
-        controller.pruneWorktrees(nil)
         let fresh = try await waitForSheet(in: window, containing: "Prune")
         window.endSheet(fresh, returnCode: .alertSecondButtonReturn)
         await waitUntil { window.attachedSheet == nil }

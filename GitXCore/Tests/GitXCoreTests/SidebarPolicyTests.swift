@@ -2,6 +2,29 @@
 import XCTest
 
 final class SidebarPolicyTests: XCTestCase {
+    func testDeferredPresentationRequiresTheActiveVisibleKeyOwnerWithoutAnotherSheet() {
+        for mask in 0 ..< 32 {
+            let active = mask & 1 != 0
+            let visible = mask & 2 != 0
+            let key = mask & 4 != 0
+            let mini = mask & 8 != 0
+            let sheet = mask & 16 != 0
+            XCTAssertEqual(WorktreePresentationPolicy.canPresent(isApplicationActive: active, isWindowVisible: visible,
+                                                                 isWindowKey: key, isMiniaturized: mini, hasAttachedSheet: sheet), mask == 7)
+        }
+    }
+
+    func testFreshnessWarningsRequireAPublishedStaleSnapshotAndConsentWordingTracksPreviousClicks() {
+        XCTAssertNil(WorktreePresentationPolicy.freshnessWarning(hasSnapshot: false, isStale: true))
+        XCTAssertNil(WorktreePresentationPolicy.freshnessWarning(hasSnapshot: true, isStale: false))
+        XCTAssertNil(WorktreePresentationPolicy.freshnessWarning(hasSnapshot: false, isStale: false))
+        XCTAssertTrue(WorktreePresentationPolicy.freshnessWarning(hasSnapshot: true, isStale: true)?.contains("Refresh Worktrees") == true)
+        XCTAssertEqual(WorktreePresentationPolicy.consentUpdateMessage(action: "Reclaim", previouslyConfirmed: false, updated: false), "")
+        XCTAssertFalse(WorktreePresentationPolicy.consentUpdateMessage(action: "Reclaim", previouslyConfirmed: false, updated: true).contains("again"))
+        XCTAssertTrue(WorktreePresentationPolicy.consentUpdateMessage(action: "Reclaim", previouslyConfirmed: true, updated: true).contains("Reclaim again"))
+        XCTAssertTrue(WorktreePresentationPolicy.consentUpdateMessage(action: "Prune", previouslyConfirmed: true, updated: false).contains("Prune again"))
+    }
+
     func testPrunePresentationPrioritizesMovedLinksAndUsesTheAuthoritativeReport() {
         let cases: [(String, Bool, WorktreePrunePresentation)] = [
             ("", false, .empty),

@@ -234,7 +234,7 @@ extension HistoryMenuBuilder {
         let lock = worktree.isLocked && !worktree.isMain
             ? worktreeItem("Unlock Worktree", action: #selector(PBGitWindowController.unlockWorktree(_:)), worktree: worktree, enabled: eligibility.canUnlock)
             : worktreeItem("Lock Worktree…", action: #selector(PBGitWindowController.lockWorktree(_:)), worktree: worktree, enabled: eligibility.canLock, reason: "Git cannot lock the main worktree.")
-        return [folder, lock]
+        return [folder, lock, worktreeItem("Refresh Worktrees", action: #selector(PBGitWindowController.refreshWorktrees(_:)), enabled: true)]
     }
 
     private func removeWorktreeItem(_ worktree: PBGitWorktree) -> NSMenuItem {
@@ -255,7 +255,8 @@ extension HistoryMenuBuilder {
         let items = [worktreeItem("Add Worktree…", action: #selector(PBGitWindowController.addWorktree(_:)), enabled: worktreeService.isSupported),
                      worktreeItem("Prune Worktrees…", action: #selector(PBGitWindowController.pruneWorktrees(_:)),
                                   enabled: WorktreeEligibility.canPrune(worktreeService.worktrees.map(\.value), supported: worktreeService.isSupported),
-                                  reason: "Repair the worktree links first; these worktrees moved with the repository.")]
+                                  reason: "Repair the worktree links first; these worktrees moved with the repository."),
+                     worktreeItem("Refresh Worktrees", action: #selector(PBGitWindowController.refreshWorktrees(_:)), enabled: true)]
         guard !WorktreePolicy.manualRepairPaths(worktreeService.worktrees.map(\.value)).isEmpty else { return items }
         return items + [.separator(), worktreeItem("Show Link Repair Guidance…", action: #selector(PBGitWindowController.repairWorktreeLinks(_:)), enabled: worktreeService.isSupported)]
     }

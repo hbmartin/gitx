@@ -65,6 +65,20 @@ final class GitXInteropContractTests: XCTestCase {
         return [dataTask, terminationTask]
     }
 
+    func testWorktreeFixtureProbesAreAvailableOnlyInDebug() {
+        let selectors = ["repairPreparationCount", "ownershipCaptureCount", "discoveryEvidenceObserver",
+                         "repairValidationObserver", "repairValidationResultObserver", "repairPreparationResultObserver",
+                         "preferenceFingerprintObserver", "preferenceFingerprintResultObserver", "acceptedDiscoveryObserver", "lifecycleEventObserver",
+                         "drainForTestingWithCompletion:", "initWithRepository:taskFactory:repairPreparationObserver:"]
+        for name in selectors {
+            #if DEBUG
+                XCTAssertNotNil(class_getInstanceMethod(PBRepositoryWorktreeService.self, NSSelectorFromString(name)), name)
+            #else
+                XCTAssertNil(class_getInstanceMethod(PBRepositoryWorktreeService.self, NSSelectorFromString(name)), name)
+            #endif
+        }
+    }
+
     func testWorktreeCompatibilityAndExplicitHistorySelectorsRemainAvailable() {
         let serviceSelectors = [
             "addWorktreeAtPath:branch:createBranch:completion:",
@@ -74,6 +88,10 @@ final class GitXInteropContractTests: XCTestCase {
             "pruneWorktreesReportOnly:completion:",
             "preparePrunePreviewWithCompletion:",
             "pruneWithConfirmedPreview:completion:",
+            "refreshPrunePreview:ownerIsCurrent:completion:",
+            "confirmPrune:ownerIsCurrent:completion:",
+            "isSnapshotStale",
+            "hasPublishedSnapshot",
             "discardPrunePreview:",
             "repairLinksWithRelativePaths:completion:",
             "repairWorktree:movedTo:completion:",

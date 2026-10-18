@@ -1356,12 +1356,12 @@ extension GitXPerformanceTests {
             let fixture = try worktreeCaptureInventory(count: count)
             let proof = try worktreeCaptureProof(fixture)
             let expectedPaths = fixture.records.map { WorktreePaths.canonical($0.path) }
-            let repeatedCapture = {
+            let repeatedCapture: @MainActor () throws -> [WorktreeRepairTarget] = {
                 try fixture.records.map {
                     try WorktreeLinkInspector.captureRepairTarget($0, at: $0.path, commonDirectory: fixture.common.path)
                 }
             }
-            let indexedCapture = {
+            let indexedCapture: @MainActor () throws -> WorktreeRepairScope = {
                 try WorktreeLinkInspector.captureRepairScope(records: fixture.records, commonDirectory: fixture.common.path)
             }
             XCTAssertEqual(try repeatedCapture().map(\.path), expectedPaths)
@@ -1371,13 +1371,13 @@ extension GitXPerformanceTests {
             for sample in 0 ..< 5 {
                 var targets: [WorktreeRepairTarget] = []
                 var scope: WorktreeRepairScope?
-                let measureRepeated = {
+                let measureRepeated: @MainActor () throws -> TimeInterval = {
                     let duration = try self.elapsedThrowing { targets = try repeatedCapture() }
                     XCTAssertEqual(targets.map(\.path), expectedPaths)
                     XCTAssertEqual(Set(targets.map(\.administrativePath)).count, count)
                     return duration
                 }
-                let measureIndexed = {
+                let measureIndexed: @MainActor () throws -> TimeInterval = {
                     let duration = try self.elapsedThrowing { scope = try indexedCapture() }
                     let captured = try XCTUnwrap(scope)
                     XCTAssertEqual(captured.targets.map(\.path), expectedPaths)

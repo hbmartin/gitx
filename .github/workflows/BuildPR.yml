@@ -128,23 +128,24 @@ jobs:
           
       # Test (only on arm64 to avoid tripling CI time)
       - name: Run tests
+        id: ui-tests
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
           scripts/xcodebuild.sh --run-id "$UI_RUN_ID" test ui \
             --destination "platform=macOS,arch=${{ matrix.abi }}" \
             ARCHS="${{ matrix.abi }}"
       - name: Extract screenshots from test results
-        if: ${{ always() && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ !cancelled() && steps.ui-tests.outcome != 'skipped' && steps.ui-tests.outcome != '' && hashFiles(format('artifacts/verification/{0}/Results/GitXUI.xcresult/Info.plist', env.UI_RUN_ID)) != '' }}
         run: |
           python3 scripts/extract_screenshots.py \
             "artifacts/verification/$UI_RUN_ID/Results/GitXUI.xcresult" \
             ./scripts/screenshots-${{ matrix.abi }}
       - name: Upload screenshots
-        if: ${{ always() && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ !cancelled() && hashFiles(format('scripts/screenshots-{0}/**/*.png', matrix.abi)) != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: Screenshots-${{ matrix.abi }}
-          path: ./scripts/screenshots-${{ matrix.abi }}
+          path: ./scripts/screenshots-${{ matrix.abi }}/*.png
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
       - name: Build project
         # Do not pass PRODUCT_BUNDLE_IDENTIFIER on the command line: it would
@@ -189,23 +190,22 @@ jobs:
         run: |
           APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app"
           ZIP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/notarization.zip"
-          NOTARY_LOG="artifacts/verification/$ARCHIVE_RUN_ID/Logs/notary.log"
+          NOTARY_LOG_DIRECTORY="artifacts/verification/$ARCHIVE_RUN_ID/Logs"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
-          xcrun notarytool submit "$ZIP_PATH" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_PASSWORD" --output-format json --wait > "$NOTARY_LOG"
-          ID=$(python3 -c 'import json, sys; result = json.load(open(sys.argv[1])); assert result["status"] == "Accepted", result["status"]; print(result["id"])' "$NOTARY_LOG")
-          xcrun notarytool log "$ID" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_PASSWORD"
+          scripts/notarize_distribution.sh "$ZIP_PATH" "$NOTARY_LOG_DIRECTORY"
       - name: Staple Notarization
         if: ${{ env.variableSet != '' }}
         run: |
           APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app"
           xcrun stapler staple "$APP_PATH"
       - name: Package and verify distributed app payloads
+        id: package
         if: ${{ env.variableSet != '' }}
         run: |
           scripts/package_distribution.sh \
             "artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app" \
-            "$GITHUB_WORKSPACE" "${{ matrix.abi }}"
+            "$GITHUB_WORKSPACE" "${{ matrix.abi }}" --outputs "$GITHUB_OUTPUT"
       - name: Upload verification receipts and logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -216,20 +216,16 @@ jobs:
             artifacts/verification/*/Logs
             artifacts/verification/*/Results
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
-      - name: Upload dmg
+      - name: Upload distribution
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ success() && env.variableSet != '' }}
         with:
-          name: HalfDark-${{ matrix.abi }}.dmg
-          path: HalfDark-${{ matrix.abi }}.dmg
-          overwrite: true
-          retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
-      - name: Upload zip
-        if: ${{ success() && env.variableSet != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: HalfDark-${{ matrix.abi }}.zip
-          path: HalfDark-${{ matrix.abi }}.zip
+          name: HalfDark-${{ matrix.abi }}-distribution
+          path: |
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.checksum_path }}
+          if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
       - name: Clean up keychain and provisioning profile
         if: ${{ env.variableSet != '' }}
@@ -259,10 +255,8 @@ jobs:
           commit-ish: HEAD
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: HalfDark-arm64.dmg
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: HalfDark-arm64.zip
+          name: HalfDark-arm64-distribution
+          path: distribution
       - name: Check pre-release
         env:
           RELEASE_TAG: ${{ steps.tagger.outputs.tag }}
@@ -284,8 +278,7 @@ jobs:
           prerelease: ${{ env.PRE_RELEASE }}
           name: ${{steps.tagger.outputs.tag}}
           files: |
-            HalfDark-arm64.dmg
-            HalfDark-arm64.zip
+            distribution/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

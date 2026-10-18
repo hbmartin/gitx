@@ -2,6 +2,53 @@
 import XCTest
 
 final class WorktreePolicyTests: XCTestCase {
+    func testFreshLifecycleEligibilityRejectsRemovedAndLockedTargetsAndUnsupportedGit() {
+        let main = GitWorktree(path: "/main", isMain: true, isCurrent: true)
+        let linked = GitWorktree(path: "/linked")
+        let locked = GitWorktree(path: "/linked", isLocked: true)
+        XCTAssertTrue(WorktreeEligibility.allows(.remove(path: "/linked", force: false), records: [main, linked], supported: true))
+        XCTAssertFalse(WorktreeEligibility.allows(.remove(path: "/linked", force: true), records: [main, locked], supported: true))
+        for command in [WorktreeCommand.remove(path: "/linked", force: false), .lock(path: "/linked", reason: ""), .unlock(path: "/linked")] {
+            XCTAssertFalse(WorktreeEligibility.allows(command, records: [main], supported: true))
+            XCTAssertFalse(WorktreeEligibility.allows(command, records: [main, linked], supported: false))
+        }
+        XCTAssertFalse(WorktreeEligibility.allows(.remove(path: "/main", force: true), records: [main], supported: true))
+        XCTAssertTrue(WorktreeEligibility.allows(.lock(path: "/linked", reason: ""), records: [main, linked], supported: true))
+        XCTAssertTrue(WorktreeEligibility.allows(.unlock(path: "/linked"), records: [main, locked], supported: true))
+        XCTAssertTrue(WorktreeEligibility.allows(.addNew(path: "/new", branch: "topic"), records: [], supported: true))
+        XCTAssertTrue(WorktreeEligibility.allows(.addExisting(path: "/new", branch: "topic"), records: [], supported: true))
+        for command in [WorktreeCommand.prune, .pruneReport, .repairLinks(style: .absolute, movedPaths: [])] {
+            XCTAssertFalse(WorktreeEligibility.allows(command, records: [], supported: true))
+        }
+    }
+
+    func testStaleRemovalRequiresAnotherConfirmationWhenConsentMetadataOrBranchChanges() {
+        let original = GitWorktree(path: "/linked", head: "old", branchRefName: "refs/heads/topic")
+        let command = WorktreeCommand.remove(path: "/linked", force: false)
+        let committed = GitWorktree(path: "/linked", head: "new", branchRefName: "refs/heads/topic")
+        XCTAssertTrue(WorktreeEligibility.allows(command, records: [committed], supported: true, previousRecords: [original]))
+        for replacement in [GitWorktree(path: "/linked", branchRefName: "refs/heads/other"),
+                            GitWorktree(path: "/linked", branchRefName: "refs/heads/topic", hasBrokenLink: true)]
+        {
+            XCTAssertFalse(WorktreeEligibility.allows(command, records: [replacement], supported: true, previousRecords: [original]))
+        }
+        XCTAssertFalse(WorktreeEligibility.allows(command, records: [original], supported: true, previousRecords: []))
+    }
+
+    func testReconciliationSatisfiesEarlierInvalidationsWithoutAnotherDiscovery() throws {
+        var state = WorktreeRefreshState()
+        let earlier = try XCTUnwrap(state.request())
+        XCTAssertNil(state.request())
+        let owned = try XCTUnwrap(state.beginReconciliation())
+        XCTAssertFalse(state.accepts(earlier))
+        XCTAssertNil(state.completeReconciliation(owned, succeeded: true))
+        XCTAssertFalse(state.isStale)
+        state.invalidate()
+        XCTAssertTrue(state.isStale)
+        state.didPublishSnapshot()
+        XCTAssertFalse(state.isStale)
+    }
+
     func testReconciliationRetiresOrdinaryReadAndPreservesInvalidations() throws {
         var state = WorktreeRefreshState()
         let ordinary = try XCTUnwrap(state.request())

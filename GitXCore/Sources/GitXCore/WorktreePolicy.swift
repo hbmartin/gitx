@@ -33,11 +33,11 @@ public struct WorktreeRefreshState: Sendable {
         return refresh ? request() : nil
     }
 
-    /// Retire an ordinary reader while carrying its invalidations across the owned pass.
+    /// The owned reread supersedes all invalidations that preceded its start.
     public mutating func beginReconciliation() -> UInt64? {
         guard !isClosed else { return nil }
         guard !reconciling else { needsRefresh = true; return nil }
-        needsRefresh = needsRefresh || inFlight
+        needsRefresh = false
         generation &+= 1
         inFlight = true
         reconciling = true
@@ -55,6 +55,10 @@ public struct WorktreeRefreshState: Sendable {
         let refresh = needsRefresh || !succeeded
         needsRefresh = false
         return refresh ? request() : nil
+    }
+
+    public mutating func didPublishSnapshot() {
+        isStale = false
     }
 
     public mutating func invalidate() {
@@ -85,6 +89,24 @@ public struct WorktreeEligibility: Equatable, Sendable {
         canUnlock = supported && !worktree.isMain && worktree.isLocked
         canReveal = supported && worktree.folderExists
         canLocate = supported && !worktree.isMain && !worktree.folderExists && worktree.movedPath == nil
+    }
+
+    public static func allows(_ command: WorktreeCommand, records: [GitWorktree], supported: Bool, previousRecords: [GitWorktree]? = nil) -> Bool {
+        guard supported else { return false }
+        switch command {
+        case let .remove(path, _):
+            guard let current = records.first(where: { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }),
+                  Self(current, supported: supported).canRemove else { return false }
+            guard let previousRecords else { return true }
+            guard let previous = previousRecords.first(where: { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }) else { return false }
+            return previous.branchIdentity == current.branchIdentity && WorktreeConsentRecord(previous) == WorktreeConsentRecord(current)
+        case let .lock(path, _):
+            return records.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }.map { Self($0, supported: supported).canLock } ?? false
+        case let .unlock(path):
+            return records.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }.map { Self($0, supported: supported).canUnlock } ?? false
+        case .addExisting, .addNew: return true
+        case .pruneReport, .prune, .repairLinks: return false
+        }
     }
 
     public static func canPrune(_ worktrees: [GitWorktree], supported: Bool) -> Bool {

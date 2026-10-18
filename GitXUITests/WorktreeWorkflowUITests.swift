@@ -239,7 +239,8 @@ final class WorktreeWorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(choose.waitForExistence(timeout: 5))
         XCTAssertTrue(choose.isEnabled)
         screenshot("Worktrees-Locate-Actual-Moved-Folder", window: window)
-        choose.click()
+        // Use the enabled default action without depending on the folder panel's screen geometry.
+        app.sheets.firstMatch.typeKey(.return, modifierFlags: [])
         let located = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: app.sheets)
         XCTAssertEqual(XCTWaiter.wait(for: [located], timeout: 10), .completed)
         XCTAssertFalse(FileManager.default.fileExists(atPath: proxy.repairArguments.path), "The earlier real writer must still own admission")

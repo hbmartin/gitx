@@ -241,6 +241,12 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
             repository.observe(\.worktreeFeatureAvailable, options: []) { [weak self] _, _ in
                 Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreePresentation() }
             },
+            repository.observe(\.worktreeService.isSnapshotStale, options: []) { [weak self] _, _ in
+                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreePresentation() }
+            },
+            repository.observe(\.worktreeService.hasPublishedSnapshot, options: []) { [weak self] _, _ in
+                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreePresentation() }
+            },
         ]
         stashesObservation = repository.observe(\.stashes, options: []) { [weak self] _, _ in
             Self.performRepositoryObservationOnMain { [weak self] in
@@ -902,6 +908,16 @@ public extension PBGitSidebarController {
             cell.textField?.setAccessibilityHelp(nil)
             cell.setAccessibilityHelp(nil)
             cell.setAccessibilityValue(nil)
+        }
+        if item === worktreesGroup, let service = repository?.worktreeService {
+            let warning = WorktreePresentationPolicy.freshnessWarning(hasSnapshot: service.hasPublishedSnapshot, isStale: service.isSnapshotStale)
+            cell.imageView?.image = warning == nil ? nil : NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: warning)
+            cell.toolTip = warning
+            cell.setAccessibilityIdentifier("RepositoryWorktreesGroup")
+            cell.setAccessibilityLabel("Worktrees")
+            cell.setAccessibilityValue(warning ?? "Up to date")
+            cell.textField?.setAccessibilityIdentifier("RepositoryWorktreesGroup")
+            cell.textField?.setAccessibilityHelp(warning)
         }
         return cell
     }

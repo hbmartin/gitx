@@ -6,6 +6,7 @@ set -euo pipefail
 task_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$task_dir/.." && pwd)
 cd "$root"
+source "$root/scripts/distribution_artifact_names.sh"
 
 developer_dir=$(python3 scripts/verification_support.py developer-dir) || exit $?
 export DEVELOPER_DIR="$developer_dir"
@@ -185,11 +186,12 @@ verification_receipt="$root/artifacts/verification/$verification_run_id/receipt.
 upload_export_path="$work_root/Upload"
 notarized_export_path="$work_root/Notarized"
 logs_path="$work_root/logs"
-final_app_dir="$output_root/HalfDark-$artifact_arch"
+distribution_artifact_names "$artifact_arch"
+final_app_dir="$output_root/$distribution_prefix"
 final_app_path="$final_app_dir/Half Dark.app"
-zip_path="$output_root/HalfDark-$artifact_arch.zip"
-dmg_path="$output_root/HalfDark-$artifact_arch.dmg"
-checksum_path="$output_root/HalfDark-$artifact_arch.sha256"
+zip_path="$output_root/$distribution_zip_name"
+dmg_path="$output_root/$distribution_dmg_name"
+checksum_path="$output_root/$distribution_checksum_name"
 
 rm -rf \
 	"$work_root" \
@@ -247,14 +249,6 @@ done
 
 exported_app="$notarized_export_path/Half Dark.app"
 [[ -d "$exported_app" ]] || fail "The notarized export did not contain Half Dark.app"
-
-verify_app()
-{
-	"$root/scripts/verify_distribution_app.sh" "$1" "$artifact_arch"
-}
-
-log "Verifying the exported app"
-verify_app "$exported_app"
 
 mkdir -p "$final_app_dir"
 ditto "$exported_app" "$final_app_path"
