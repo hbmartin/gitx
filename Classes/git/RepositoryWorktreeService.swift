@@ -440,6 +440,9 @@ private final class WorktreePreparedReservation<Value: Sendable> {
     var isAdmitted = false
     var started = false
 
+    /// See WorktreeEvidenceDelivery: this Sendable result also needs no isolated destruction.
+    nonisolated deinit {}
+
     func takeReadyResult() -> Result<Value, Error>? {
         guard isAdmitted, !started, let result else { return nil }
         started = true
