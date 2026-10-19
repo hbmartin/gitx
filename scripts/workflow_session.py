@@ -761,7 +761,12 @@ class CapturedConsole:
     """Keep the full log on disk; a slow console must never stall the producer."""
 
     def __init__(self, path):
-        self.path = pathlib.Path(path)
+        candidate = pathlib.Path(path)
+        if candidate.is_symlink():
+            raise ValueError("Refusing symlink command output")
+        self.path = candidate.resolve()
+        if not self.path.is_relative_to(verification_artifact_root(ROOT).resolve()):
+            raise ValueError("Command output must stay inside the configured verification artifact directory")
         descriptor = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
@@ -809,17 +814,24 @@ class CapturedConsole:
         self.ready.set()
 
     def close(self):
+        flush_error, close_error = None, None
         try:
             os.fsync(self.stream.fileno())
+        except OSError as error:
+            flush_error = type(error).__name__
         finally:
-            self.stream.close()
+            try:
+                self.stream.close()
+            except OSError as error:
+                close_error = type(error).__name__
             self.finished.set()
             self.ready.set()
             # The mirror may be blocked inside the caller's console pipe. Its
             # daemon cannot delay the watchdog, child completion, or CLI exit.
             self.worker.join(timeout=1)
-        return {"path": str(self.path.resolve()), "capturedBytes": self.captured_bytes,
+        return {"path": str(self.path), "capturedBytes": self.captured_bytes,
                 "mirroredBytes": self.mirrored_bytes, "consoleError": self.console_error,
+                "flushError": flush_error, "closeError": close_error,
                 "consoleComplete": not self.worker.is_alive() and self.mirrored_bytes == self.captured_bytes}
 
 
@@ -878,6 +890,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
     selector.register(child.stdout, selectors.EVENT_READ)
     buffered = b""
     category = None
+    status = None
     try:
         while child.poll() is None or selector.get_map():
             elapsed = time.monotonic() - started
@@ -941,13 +954,31 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                 # Identity is checked again before escalation; PID reuse never
                 # grants ownership of a replacement process.
                 stop_detached(descendants + detached, signal.SIGKILL)
-            return 130 if interrupted else 74 if category == "output-capture-failed" else 124
-        return child.wait()
+            status = 130 if interrupted else 74 if category == "output-capture-failed" else 124
+        else:
+            status = child.wait()
     finally:
         try:
             if capture:
-                ownership['outputCapture'] = capture.close()
+                metrics = capture.close()
+                if (metrics['flushError'] or metrics['closeError']) and not category:
+                    category, status = 'output-capture-failed', 74
+                metrics['captureComplete'] = category is None
+                # This sidecar is uploaded with Logs. Never synchronously write
+                # a truncation notice to stderr: run_step merges it with the
+                # same potentially blocked console pipe.
+                try:
+                    atomic_json(capture.path.with_name(capture.path.name + '.capture.json'), metrics)
+                except OSError as error:
+                    metrics['metadataError'] = type(error).__name__
+                    metrics['captureComplete'] = False
+                    if not category:
+                        category, status = 'output-capture-failed', 74
+                ownership['outputCapture'] = metrics
         finally:
+            ownership['childExitCode'] = child.returncode
+            if category:
+                ownership['category'] = category
             with contextlib.suppress(OSError, ValueError):
                 atomic_json(manifest, ownership | {"status": "failed" if category or child.returncode else "passed",
                             "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
@@ -958,6 +989,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             if keeper:
                 keeper.terminate()
                 keeper.wait()
+    return status
 
 
 def uses_atomic_coverage(arguments):
