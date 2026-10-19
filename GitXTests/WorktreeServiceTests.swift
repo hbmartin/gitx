@@ -332,6 +332,66 @@ final class WorktreeServiceTests: XCTestCase {
     private let snapshot = Data("worktree /main\0HEAD abc\0branch refs/heads/main\0\0worktree /linked\0HEAD def\0branch refs/heads/topic\0locked offline disk\0\0".utf8)
     private let discoveryArguments = ["worktree", "list", "--porcelain", "-z"]
 
+    func testCachedRemovalRefusalPreservesConsentAndReleasesFollowingWriter() async throws {
+        let fixture = try WorktreeFacadeFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        try await startFacade(installed, snapshot: fixture.listing())
+        let initial = try fixture.ownershipProof()
+        let refused = expectation(description: "cached removal reports Git refusal")
+        let following = expectation(description: "following writer reports its result")
+        let remove = ["worktree", "remove", fixture.linked.path]
+        let lock = ["worktree", "lock", "--reason", "following", fixture.linked.path]
+        enqueueRemoval(installed.service, path: fixture.linked.path) { _, error in
+            XCTAssertEqual(error?.localizedFailureReason, "fixture refusal")
+            refused.fulfill()
+        }
+        enqueueLock(installed.service, path: fixture.linked.path, reason: "following") { _, error in
+            XCTAssertNotNil(error)
+            following.fulfill()
+        }
+        XCTAssertEqual(installed.tasks.mutations, [remove])
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 1)
+        let next = installed.tasks.expect(lock)
+        try installed.tasks.task(remove).finish(nil, error: NSError(domain: "fixture", code: 1, userInfo: [NSLocalizedDescriptionKey: "fixture refusal"]))
+        await fulfillment(of: [refused, next], timeout: 5)
+        try installed.tasks.task(lock).finish(nil, error: NSError(domain: "fixture", code: 2))
+        await fulfillment(of: [following], timeout: 5)
+        XCTAssertEqual(try fixture.ownershipProof(), initial)
+        XCTAssertEqual(installed.tasks.mutations, [remove, lock])
+    }
+
+    func testInitialMutationRefusalReleasesFollowingWriterBeforeInventoryPublication() async throws {
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        let initialRead = installed.tasks.expect(discoveryArguments)
+        installed.service.start()
+        try installed.tasks.task(["--version"]).finish(Data("git version 2.48.0".utf8))
+        await fulfillment(of: [initialRead], timeout: 5)
+        XCTAssertTrue(installed.service.worktrees.isEmpty)
+        XCTAssertTrue(installed.service.isSnapshotStale)
+        let first = expectation(description: "initial writer refusal delivered")
+        let second = expectation(description: "following initial writer refusal delivered")
+        enqueueLock(installed.service, reason: "initial") { _, error in
+            XCTAssertNotNil(error); first.fulfill()
+        }
+        enqueueUnlock(installed.service) { _, error in
+            XCTAssertNotNil(error); second.fulfill()
+        }
+        let lock = ["worktree", "lock", "--reason", "initial", "/linked"]
+        let unlock = ["worktree", "unlock", "/linked"]
+        XCTAssertEqual(installed.tasks.mutations, [lock])
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 1)
+        let next = installed.tasks.expect(unlock)
+        try installed.tasks.task(lock).finish(nil, error: NSError(domain: "fixture", code: 1))
+        await fulfillment(of: [first, next], timeout: 5)
+        try installed.tasks.task(unlock).finish(nil, error: NSError(domain: "fixture", code: 2))
+        await fulfillment(of: [second], timeout: 5)
+        XCTAssertTrue(installed.service.worktrees.isEmpty)
+        XCTAssertEqual(installed.tasks.mutations, [lock, unlock])
+    }
+
     func testObjectiveCFacadeEqualityBindsRawSymbolicHeadAcrossUnchangedRefresh() async throws {
         let fixture = try WorktreeFacadeFixture()
         defer { fixture.cleanup() }
