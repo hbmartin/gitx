@@ -779,67 +779,32 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
 	XCUIElement *history = [self selectHistoryForCurrentBranch];
-	XCUIElement *window = self.app.windows.firstMatch;
-	CGRect originalFrame = window.frame;
-	CGFloat requestedGrowth = MAX(0, 1800 - originalFrame.size.width);
-	if (requestedGrowth > 0) {
-		XCUICoordinate *rightEdge = [[window coordinateWithNormalizedOffset:CGVectorMake(1, 0.5)]
-			coordinateWithOffset:CGVectorMake(-2, 0)];
-		XCUICoordinate *widerRightEdge = [rightEdge coordinateWithOffset:CGVectorMake(requestedGrowth, 0)];
-		[rightEdge clickForDuration:0.2 thenDragToCoordinate:widerRightEdge];
-		NSPredicate *windowWidened = [NSPredicate predicateWithBlock:^BOOL(__unused id object,
-																		   __unused NSDictionary *bindings) {
-			return window.frame.size.width > originalFrame.size.width + 100;
-		}];
-		XCTNSPredicateExpectation *resizeExpectation =
-			[[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened
-														  object:window];
-		XCTAssertEqual([XCTWaiter waitForExpectations:@[ resizeExpectation ] timeout:5], XCTWaiterResultCompleted);
-	}
-
-	@try {
-		XCUIElementQuery *toolbarMenuButtons =
-			[self.app.toolbars.firstMatch descendantsMatchingType:XCUIElementTypeMenuButton];
-		XCUIElement *viewRemoteMenuButton =
-			[toolbarMenuButtons matchingPredicate:[NSPredicate predicateWithFormat:@"label == %@", @"View Remote menu"]]
-				.firstMatch;
-		XCTAssertTrue([viewRemoteMenuButton waitForExistenceWithTimeout:10],
-					  @"The native View Remote toolbar item should expose its labelled pull-down button");
-		XCTAssertEqualObjects(viewRemoteMenuButton.label, @"View Remote menu");
-		[viewRemoteMenuButton click];
-		XCUIElement *toolbarMenu = viewRemoteMenuButton.menus.firstMatch;
-		XCTAssertTrue([toolbarMenu waitForExistenceWithTimeout:5]);
-		XCUIElement *toolbarPrimary = toolbarMenu.menuItems[@"GitX.Toolbar.ViewRemote.Primary"];
-		XCUIElement *toolbarRepository = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.Repository"];
-		XCUIElement *toolbarNumber = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.PullRequestOrIssue"];
-		XCTAssertTrue([toolbarPrimary waitForExistenceWithTimeout:5]);
-		XCTAssertTrue([toolbarRepository waitForExistenceWithTimeout:5]);
-		XCTAssertTrue([toolbarNumber waitForExistenceWithTimeout:5]);
-		XCTAssertEqualObjects(toolbarPrimary.label, @"View Remote");
-		XCTAssertEqualObjects(toolbarRepository.label, @"View repository on GitHub");
-		XCTAssertEqualObjects(toolbarNumber.label, @"Open pull request or issue on GitHub");
-		[self saveScreenshotNamed:@"m0-forge-navigation-toolbar-menu"];
-		[history click];
-		NSPredicate *menuDismissed = [NSPredicate predicateWithFormat:@"exists == NO"];
-		[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:menuDismissed object:toolbarMenu] ]
-						  timeout:5];
-	} @finally {
-		CGFloat actualGrowth = window.frame.size.width - originalFrame.size.width;
-		if (actualGrowth > 1) {
-			XCUICoordinate *rightEdge = [[window coordinateWithNormalizedOffset:CGVectorMake(1, 0.5)]
-				coordinateWithOffset:CGVectorMake(-2, 0)];
-			XCUICoordinate *originalRightEdge = [rightEdge coordinateWithOffset:CGVectorMake(-actualGrowth, 0)];
-			[rightEdge clickForDuration:0.2 thenDragToCoordinate:originalRightEdge];
-			NSPredicate *windowRestored =
-				[NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
-					return fabs(window.frame.size.width - originalFrame.size.width) < 2;
-				}];
-			XCTNSPredicateExpectation *restoreExpectation =
-				[[XCTNSPredicateExpectation alloc] initWithPredicate:windowRestored
-															  object:window];
-			XCTAssertEqual([XCTWaiter waitForExpectations:@[ restoreExpectation ] timeout:5], XCTWaiterResultCompleted);
-		}
-	}
+	[self saveWindowScreenshotNamed:@"forge-navigation-available-window"];
+	XCUIElementQuery *toolbarMenuButtons =
+		[self.app.toolbars.firstMatch descendantsMatchingType:XCUIElementTypeMenuButton];
+	XCUIElement *viewRemoteMenuButton =
+		[toolbarMenuButtons matchingPredicate:[NSPredicate predicateWithFormat:@"label == %@", @"View Remote menu"]]
+			.firstMatch;
+	XCTAssertTrue([viewRemoteMenuButton waitForExistenceWithTimeout:10],
+				  @"The native View Remote toolbar item should expose its labelled pull-down button");
+	XCTAssertEqualObjects(viewRemoteMenuButton.label, @"View Remote menu");
+	[viewRemoteMenuButton click];
+	XCUIElement *toolbarMenu = viewRemoteMenuButton.menus.firstMatch;
+	XCTAssertTrue([toolbarMenu waitForExistenceWithTimeout:5]);
+	XCUIElement *toolbarPrimary = toolbarMenu.menuItems[@"GitX.Toolbar.ViewRemote.Primary"];
+	XCUIElement *toolbarRepository = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.Repository"];
+	XCUIElement *toolbarNumber = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.PullRequestOrIssue"];
+	XCTAssertTrue([toolbarPrimary waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([toolbarRepository waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([toolbarNumber waitForExistenceWithTimeout:5]);
+	XCTAssertEqualObjects(toolbarPrimary.label, @"View Remote");
+	XCTAssertEqualObjects(toolbarRepository.label, @"View repository on GitHub");
+	XCTAssertEqualObjects(toolbarNumber.label, @"Open pull request or issue on GitHub");
+	[self saveScreenshotNamed:@"m0-forge-navigation-toolbar-menu"];
+	[history click];
+	NSPredicate *menuDismissed = [NSPredicate predicateWithFormat:@"exists == NO"];
+	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:menuDismissed object:toolbarMenu] ]
+					  timeout:5];
 }
 
 - (void)testForgeNavigationRepositoryMenuAndAmbiguousNumberChooserScreenshots
@@ -949,20 +914,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 
 	XCUIElement *window = self.app.windows.firstMatch;
 	[self.app activate];
-	CGRect originalFrame = window.frame;
-	if (originalFrame.size.width < 1200) {
-		XCUIElement *resizeButton = window.buttons[XCUIIdentifierFullScreenWindow];
-		XCTAssertTrue([resizeButton waitForExistenceWithTimeout:5]);
-		[resizeButton click];
-		NSPredicate *windowWidened = [NSPredicate predicateWithBlock:^BOOL(__unused id object,
-																		   __unused NSDictionary *bindings) {
-			return window.frame.size.width > originalFrame.size.width + 100;
-		}];
-		XCTNSPredicateExpectation *resizeExpectation =
-			[[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened
-														  object:window];
-		XCTAssertEqual([XCTWaiter waitForExpectations:@[ resizeExpectation ] timeout:5], XCTWaiterResultCompleted);
-	}
+	[self saveWindowScreenshotNamed:@"checked-out-branch-available-window"];
 	XCUIElement *button = self.app.buttons[@"Current Branch"];
 	XCTAssertTrue([button waitForExistenceWithTimeout:30], @"The repository toolbar should expose the checked-out branch action");
 	XCTAssertTrue([self.app.menuItems[@"Jump to Checked-Out Branch"] waitForExistenceWithTimeout:5], @"The View menu should expose the checked-out branch hotkey");
