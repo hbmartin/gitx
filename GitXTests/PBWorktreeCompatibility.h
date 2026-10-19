@@ -51,6 +51,8 @@ NS_SWIFT_UI_ACTOR
 @property (readonly, copy) NSArray<PBGitWorktree *> *worktrees;
 @property (readonly, copy, nullable) NSString *gitVersion;
 @property (readonly) BOOL isSupported;
+@property (readonly) BOOL hasPublishedSnapshot;
+@property (readonly) NSInteger inventoryStatus;
 @property (readonly, copy) NSString *explanation;
 - (instancetype)initWithRepository:(PBGitRepository *)repository taskFactory:(PBTask *(^)(NSArray<NSString *> *))factory;
 #if DEBUG

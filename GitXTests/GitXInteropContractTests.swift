@@ -94,6 +94,7 @@ final class GitXInteropContractTests: XCTestCase {
             "confirmPrune:ownerIsCurrent:completion:",
             "isSnapshotStale",
             "hasPublishedSnapshot",
+            "inventoryStatus",
             "discardPrunePreview:",
             "repairLinksWithRelativePaths:completion:",
             "repairWorktree:movedTo:completion:",
@@ -105,6 +106,7 @@ final class GitXInteropContractTests: XCTestCase {
         for name in serviceSelectors {
             XCTAssertNotNil(class_getInstanceMethod(PBRepositoryWorktreeService.self, NSSelectorFromString(name)), name)
         }
+        XCTAssertNil(class_getInstanceMethod(PBRepositoryWorktreeService.self, NSSelectorFromString("setInventoryStatus:")), "Inventory status is read-only in every configuration")
         for name in ["showHistoryView:", "returnToHistory:"] {
             XCTAssertNotNil(class_getInstanceMethod(PBGitWindowController.self, NSSelectorFromString(name)), name)
         }

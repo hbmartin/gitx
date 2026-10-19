@@ -478,7 +478,19 @@ final class PBRepositoryWorktreeService: NSObject {
     private var lastProbeExecutable: WorktreeFileFingerprint?
     private var checkedExecutable: WorktreeFileFingerprint?
     private var versionGeneration = 0
-    private var snapshot: [GitWorktree] = []
+    private struct PublishedInventory {
+        var records: [GitWorktree] = []
+        var rows: [PBGitWorktree] = []
+        var isStale = true
+        var hasSnapshot = false
+        var status = WorktreeInventoryStatus.checkingCapability
+    }
+
+    private var publishedInventory = PublishedInventory()
+    private var snapshot: [GitWorktree] {
+        publishedInventory.records
+    }
+
     private var repairOwnershipEvidence: WorktreeDiscoveryEvidence?
     private var lastRecoveredEvidence: UUID?
     private var recoveredMissingEvidence = false
@@ -493,8 +505,19 @@ final class PBRepositoryWorktreeService: NSObject {
     private var started = false
     private var preferenceCheckInFlight = false
     private var preferenceCheckPending = false
-    @objc private(set) dynamic var isSnapshotStale = true
-    @objc private(set) dynamic var hasPublishedSnapshot = false
+    @objc dynamic var isSnapshotStale: Bool {
+        publishedInventory.isStale
+    }
+
+    @objc dynamic var hasPublishedSnapshot: Bool {
+        publishedInventory.hasSnapshot
+    }
+
+    /// Raw values are WorktreeInventoryStatus; this production selector exists in both configurations.
+    @objc dynamic var inventoryStatus: Int {
+        publishedInventory.status.rawValue
+    }
+
     #if DEBUG
         @objc var discoveryEvidenceObserver: (@Sendable () -> Void)?
         @objc private(set) var ownershipCaptureCount: UInt = 0
@@ -508,11 +531,21 @@ final class PBRepositoryWorktreeService: NSObject {
         @objc var lifecycleEventObserver: (@MainActor @Sendable (String) -> Void)?
         @objc private(set) dynamic var repairPreparationCount: UInt64 = 0
     #endif
-    @objc private(set) dynamic var worktrees: [PBGitWorktree] = []
+    @objc dynamic var worktrees: [PBGitWorktree] {
+        publishedInventory.rows
+    }
+
     @objc private(set) dynamic var gitVersion: String?
     @objc private(set) dynamic var isSupported = false
     @objc var explanation: String {
         "Worktrees require Git 2.48 or later. Selected Git: \(gitVersion ?? "unavailable or being checked"). Choose a newer executable in Git Preferences…"
+    }
+
+    override nonisolated class func automaticallyNotifiesObservers(forKey key: String) -> Bool {
+        if ["worktrees", "hasPublishedSnapshot", "isSnapshotStale", "inventoryStatus"].contains(key) {
+            return false
+        }
+        return super.automaticallyNotifiesObservers(forKey: key)
     }
 
     @objc(initWithRepository:)
@@ -725,6 +758,7 @@ final class PBRepositoryWorktreeService: NSObject {
         logEvent(["--version"], stage: "started", phase: "capability")
         performTask(task) { [weak self] data, error in
             guard let self, generation == self.versionGeneration, !self.state.isClosed else { return }
+            defer { self.synchronizeFreshness() }
             let complete = self.versionTask?.standardOutputTruncated == false && self.versionTask?.standardErrorTruncated == false
             self.versionTask = nil
             let version = error == nil && complete ? data.flatMap { String(data: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
@@ -833,35 +867,79 @@ final class PBRepositoryWorktreeService: NSObject {
         }
     }
 
+    private var currentInventoryStatus: WorktreeInventoryStatus {
+        if state.isClosed {
+            return .closed
+        }
+        if versionTask != nil || !started {
+            return .checkingCapability
+        }
+        if !isSupported {
+            return .unsupported
+        }
+        if state.isReading {
+            return .updating
+        }
+        return state.isStale ? .stale : .fresh
+    }
+
     private func synchronizeFreshness() {
-        if isSnapshotStale != state.isStale {
-            isSnapshotStale = state.isStale
+        commitInventory()
+    }
+
+    /// All getters use one backing value. Every post-change callback sees the complete new tuple.
+    private func commitInventory(_ evidence: WorktreeDiscoveryEvidence? = nil) {
+        var updated = publishedInventory
+        if let evidence {
+            updated.hasSnapshot = true
+            if updated.records != evidence.records {
+                updated.records = evidence.records
+                updated.rows = evidence.records.map(PBGitWorktree.init)
+            }
+        }
+        updated.isStale = state.isStale
+        updated.status = currentInventoryStatus
+        let changedRows = updated.records != publishedInventory.records
+        var keys: [String] = []
+        if changedRows {
+            keys.append("worktrees")
+        }
+        if updated.hasSnapshot != publishedInventory.hasSnapshot {
+            keys.append("hasPublishedSnapshot")
+        }
+        if updated.isStale != publishedInventory.isStale {
+            keys.append("isSnapshotStale")
+        }
+        if updated.status != publishedInventory.status {
+            keys.append("inventoryStatus")
+        }
+        if changedRows {
+            repository?.willChangeValue(forKey: "worktrees")
+        }
+        keys.forEach { willChangeValue(forKey: $0) }
+        publishedInventory = updated
+        if let evidence {
+            repairOwnershipEvidence = evidence
+            lastRecoveredEvidence = nil
+            recoveredMissingEvidence = false
+        }
+        keys.reversed().forEach { didChangeValue(forKey: $0) }
+        if changedRows {
+            repository?.didChangeValue(forKey: "worktrees")
+            logEvent(["worktree", "list"], stage: "published", phase: "discovery", count: updated.records.count)
         }
     }
 
     private func publish(_ evidence: WorktreeDiscoveryEvidence) {
-        if !hasPublishedSnapshot {
-            hasPublishedSnapshot = true
-        }
         state.didPublishSnapshot()
-        synchronizeFreshness()
-        let records = evidence.records
-        repairOwnershipEvidence = evidence
-        lastRecoveredEvidence = nil
-        recoveredMissingEvidence = false
+        commitInventory(evidence)
         if case let .failure(error) = evidence.ownership {
-            logEvent(["worktree", "list"], stage: "failed", phase: "discovery", count: records.count, category: "ownership")
+            logEvent(["worktree", "list"], stage: "failed", phase: "discovery", count: evidence.records.count, category: "ownership")
             logger.debug("Worktree ownership capture failed: \(PBTaskDiagnostics.redacted(error.localizedDescription), privacy: .private)")
         }
         #if DEBUG
-            defer { acceptedDiscoveryObserver?() }
+            acceptedDiscoveryObserver?()
         #endif
-        guard snapshot != records else { return }
-        repository?.willChangeValue(forKey: "worktrees")
-        snapshot = records
-        worktrees = records.map(PBGitWorktree.init)
-        repository?.didChangeValue(forKey: "worktrees")
-        logEvent(["worktree", "list"], stage: "published", phase: "discovery", count: records.count)
     }
 
     @objc(cancel)
@@ -940,16 +1018,26 @@ final class PBRepositoryWorktreeService: NSObject {
         let fail = requestFailure(command.arguments) { completion(nil, $0) }
         let previousRecords = expectedWorktree.map { [$0] } ?? snapshot
         let validatesRemoval: Bool
-        if case .remove = command {
+        let removalConsent: WorktreeRemovalConsent?
+        if case let .remove(path, _) = command {
             validatesRemoval = true
+            let identity = WorktreePaths.identity(path)
+            removalConsent = previousRecords.first { WorktreePaths.identity($0.path) == identity }.map(WorktreeRemovalConsent.init)
         } else {
             validatesRemoval = false
+            removalConsent = nil
         }
         enqueueOperation(onFailure: fail) { operation in
             let requiresFreshInventory = validatesRemoval || !self.hasPublishedSnapshot || self.state.isStale
             let execute: @MainActor ([GitWorktree]) -> Void = { records in
-                guard !requiresFreshInventory || WorktreeEligibility.allows(command, records: records, supported: self.isSupported, previousRecords: previousRecords) else {
-                    self.finish(operation) { fail(self.failure("The worktree registration or eligibility changed. Review the refreshed worktree list before trying again.")) }
+                if case let .remove(path, _) = command,
+                   let rejection = WorktreeEligibility.removalRejection(path: path, records: records, consent: removalConsent)
+                {
+                    self.finish(operation) { fail(self.failure(rejection.localizedDescription, underlying: rejection)) }
+                    return
+                }
+                guard validatesRemoval || !requiresFreshInventory || WorktreeEligibility.allows(command, records: records, supported: self.isSupported) else {
+                    self.finish(operation) { fail(self.failure(WorktreeRemovalRejection.changedConsent.localizedDescription, underlying: WorktreeRemovalRejection.changedConsent)) }
                     return
                 }
                 self.executeTask(command, operation: operation) { result in
@@ -1396,11 +1484,9 @@ final class PBRepositoryWorktreeService: NSObject {
         }, acknowledged: acknowledged) { validation in
             switch validation {
             case let .failure(error):
-                self.logRejection(["worktree", "repair"], error: self.operationError(error), count: plan.scope.targets.count)
                 completion(self.operationError(error))
             case .success:
                 guard ownerIsCurrent?() != false else {
-                    self.logEvent(["worktree", "repair"], stage: "cancelled", phase: "preparing", count: plan.scope.targets.count)
                     completion(Self.cancelledError())
                     return
                 }
@@ -1511,18 +1597,17 @@ final class PBRepositoryWorktreeService: NSObject {
             operation.task = nil
             if let error {
                 if readOnly, error is CancellationError || WorktreePresentationPolicy.isExpectedCancellation(error as NSError) {
-                    self.logEvent(command.arguments, stage: "cancelled", phase: "preparing", count: 1)
                     deliver(.failure(Self.cancelledError())); return
                 }
                 let output = String(decoding: data ?? ownedTask?.standardOutputData ?? Data(), as: UTF8.self)
-                self.logEvent(command.arguments, stage: "failed", phase: readOnly ? "preparing" : "writing", count: 1, category: "task")
                 self.logger.debug("Worktree private diagnostic: \(PBTaskDiagnostics.redacted(output), privacy: .private)")
-                deliver(.failure(self.failure(output.isEmpty ? error.localizedDescription : output, underlying: error)))
+                let failure = self.failure(output.isEmpty ? error.localizedDescription : output, underlying: error)
+                deliver(.failure(self.lifecycleFailure(failure, phase: readOnly ? "preparing" : "writing", category: "task")))
             } else if let data, ownedTask?.standardOutputTruncated == false, ownedTask?.standardErrorTruncated == false {
                 self.logEvent(command.arguments, stage: "completed", phase: readOnly ? "preparing" : "writing", count: 1)
                 deliver(.success(data))
             } else {
-                deliver(.failure(self.failure("Git's worktree response could not be read completely.")))
+                deliver(.failure(self.lifecycleFailure(self.failure("Git's worktree response could not be read completely."), phase: readOnly ? "preparing" : "writing", category: "incomplete")))
             }
         }
     }
@@ -1532,17 +1617,18 @@ final class PBRepositoryWorktreeService: NSObject {
         guard operation.isActive, operation.repository != nil else { return }
         defer { synchronizeFreshness() }
         let context = operation.context
-        let reconciliationGeneration = reconciling ? state.beginReconciliation() : nil
+        let reconciliationGeneration = reconciling ? state.beginReconciliation() : state.beginOwnedDiscovery()
+        let retired = discovery
+        discovery = nil
+        discoveryTicket?.cancel()
+        discoveryTicket = nil
+        deferredDiscoveryGeneration = nil
+        retired?.terminate()
+        if retired != nil {
+            logEvent(["worktree", "list"], stage: "cancelled", phase: "discovery")
+        }
         if reconciling {
             operation.beginReconciliation()
-            let retired = discovery
-            discovery = nil
-            discoveryTicket?.cancel()
-            discoveryTicket = nil
-            retired?.terminate()
-            if retired != nil {
-                logEvent(["worktree", "list"], stage: "cancelled", phase: "discovery")
-            }
             // A supported replacement must reread the completed write even if
             // the original executable can no longer perform reconciliation.
             if context.generation != versionGeneration {
@@ -1571,8 +1657,9 @@ final class PBRepositoryWorktreeService: NSObject {
             operation.discoveryCompletion = nil
             let complete = operation.task?.standardOutputTruncated == false && operation.task?.standardErrorTruncated == false
             operation.task = nil
+            let taskError = error.map { self.lifecycleFailure(self.operationError($0), phase: reconciling ? "reconciling" : "preparing", category: "task") }
             self.evidence(operation: operation, {
-                if let error {
+                if let error = taskError {
                     throw error
                 }
                 guard let data, complete else { throw WorktreeParseError.malformedRecord }
@@ -1580,7 +1667,9 @@ final class PBRepositoryWorktreeService: NSObject {
             }) { parsed in
                 switch parsed {
                 case let .failure(error):
-                    self.deliverDiscovery(.failure(error), context: context, operation: operation, reconciliationGeneration: reconciliationGeneration, completion: deliver)
+                    let reported: Error = error is WorktreeParseError
+                        ? self.lifecycleFailure(self.operationError(error), phase: reconciling ? "reconciling" : "preparing", category: "incomplete") : error
+                    self.deliverDiscovery(.failure(reported), context: context, operation: operation, reconciliationGeneration: reconciliationGeneration, completion: deliver)
                 case let .success(records):
                     guard self.canPublish(context) else {
                         self.finishReconciliation(operation: operation, generation: reconciliationGeneration, published: false)
@@ -1606,6 +1695,10 @@ final class PBRepositoryWorktreeService: NSObject {
                                   completion: @escaping @MainActor @Sendable (Result<[GitWorktree], Error>) -> Void)
     {
         let published: Bool
+        if case let .failure(error) = result, operation.phase == .reconciling {
+            let event = (error as NSError).userInfo["PBWorktreeLifecycleFailureEvent"] as? [String: String]
+            logEvent(operation.eventArguments, stage: "failed", phase: "reconciling", count: 1, category: event?["category"] ?? "context")
+        }
         if case let .success(evidence) = result, canPublish(context) {
             publish(evidence)
             published = true
@@ -1619,7 +1712,7 @@ final class PBRepositoryWorktreeService: NSObject {
     private func finishReconciliation(operation: WorktreeOperation, generation: UInt64?, published: Bool) {
         defer { synchronizeFreshness() }
         if let generation,
-           let next = state.completeReconciliation(generation, succeeded: published)
+           let next = state.completeOwnedDiscovery(generation, succeeded: published, recoverOnFailure: operation.phase == .reconciling)
         {
             // The operation still owns admission. Enqueue its follow-up only
             // after release, before the operation's drainage acknowledgement.
@@ -1630,7 +1723,7 @@ final class PBRepositoryWorktreeService: NSObject {
                     defer { acknowledged() }
                     guard let self, state.accepts(next) else { return }
                     deferredDiscoveryGeneration = next
-                    logger.info("Rereading worktrees after owned reconciliation (published: \(published))")
+                    logger.info("Rereading worktrees after owned discovery (published: \(published))")
                     refreshOnMain()
                 }
             }
@@ -1821,15 +1914,27 @@ final class PBRepositoryWorktreeService: NSObject {
         RepositoryServiceError.make(description: "Worktree operation failed", failureReason: PBTaskDiagnostics.redacted(message), underlyingError: underlying)
     }
 
+    /// Keep the public NSError reason and underlying task error exactly as delivered before diagnostics.
+    private func lifecycleFailure(_ error: NSError, phase: String, category: String) -> NSError {
+        var info = error.userInfo
+        info["PBWorktreeLifecycleFailureEvent"] = ["phase": phase, "category": category]
+        return NSError(domain: error.domain, code: error.code, userInfo: info)
+    }
+
     private func logRejection(_ arguments: [String], error: NSError, count: Int = 0) {
         if WorktreePresentationPolicy.isExpectedCancellation(error) {
             logEvent(arguments, stage: "cancelled", count: count); return
         }
         var cause: Error = error
-        while let underlying = (cause as NSError).userInfo[NSUnderlyingErrorKey] as? Error {
+        while true {
+            if let event = (cause as NSError).userInfo["PBWorktreeLifecycleFailureEvent"] as? [String: String] {
+                logEvent(arguments, stage: "failed", phase: event["phase"] ?? "unknown", count: 1, category: event["category"] ?? "unknown")
+                return
+            }
+            guard let underlying = (cause as NSError).userInfo[NSUnderlyingErrorKey] as? Error else { break }
             cause = underlying
         }
-        let category = cause is WorktreeCapabilityError ? "capability" : cause is WorktreeEvidenceError ? "ownership" : "context"
+        let category = cause is WorktreeRemovalRejection ? "consent" : cause is WorktreeCapabilityError ? "capability" : cause is WorktreeEvidenceError ? "ownership" : "context"
         logEvent(arguments, stage: "rejected", count: count, category: category)
     }
 
