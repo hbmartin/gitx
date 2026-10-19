@@ -50,7 +50,7 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertNotIn("26.2", build_workflow + verify_workflow)
         self.assertEqual(build_workflow.count("xcode: 26.6"), 1)
         self.assertEqual(build_workflow.count('xcode-version: "26.6"'), 1)
-        self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 8)
+        self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 9)
         self.assertIn("Xcode 26.6 or newer is required", readme)
         self.assertEqual(configuration['minimumXcodeVersion'], '26.6')
 
@@ -114,15 +114,15 @@ class PinnedToolsTests(unittest.TestCase):
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         pinned_actions = {
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 8,
-            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 8,
-            "actions/cache@caa296126883cff596d87d8935842f9db880ef25": 2,
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 7,
+            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 9,
+            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 9,
+            "actions/cache@caa296126883cff596d87d8935842f9db880ef25": 3,
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 8,
         }
 
         for action, expected_count in pinned_actions.items():
             self.assertEqual(verify_workflow.count(action), expected_count)
-        self.assertEqual(verify_workflow.count("persist-credentials: false"), 8)
+        self.assertEqual(verify_workflow.count("persist-credentials: false"), 9)
         for mutable_tag in [
             "actions/checkout@v7",
             "maxim-lobanov/setup-xcode@v1",
