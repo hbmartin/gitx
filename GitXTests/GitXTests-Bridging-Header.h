@@ -20,6 +20,7 @@
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
 #import "PBGitRevisionCell.h"
+#import "PBGitGradientBarView.h"
 #import "PBSidebarTableViewCell.h"
 #import "PBWorktreeCompatibility.h"
 #import "PBGitSidebarControllerCompatibility.h"
