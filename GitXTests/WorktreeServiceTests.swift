@@ -401,6 +401,28 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertEqual(installed.tasks.mutations, [lock, unlock])
     }
 
+    func testWorktreeNotificationPublishesCompleteRowsAndSuccessfulFreshness() async throws {
+        let fixture = try WorktreeFacadeFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        try await startFacade(installed, snapshot: fixture.listing())
+        _ = try fixture.git(["worktree", "lock", "--reason", "publication fixture", fixture.linked.path])
+        let published = expectation(description: "row notification exposes the accepted inventory")
+        let observation = installed.service.observe(\.worktrees) { service, _ in
+            // swift6-safety-justification: Worktree publication and its KVO callbacks run on the main actor.
+            MainActor.assumeIsolated {
+                XCTAssertEqual(service.value(forKey: "hasPublishedSnapshot") as? Bool, true)
+                XCTAssertEqual(service.value(forKey: "isSnapshotStale") as? Bool, false)
+                XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.lockReason, "publication fixture")
+                published.fulfill()
+            }
+        }
+        defer { observation.invalidate() }
+        installed.service.refresh()
+        try installed.tasks.task(discoveryArguments, occurrence: 1).finish(fixture.listing())
+        await fulfillment(of: [published], timeout: 5)
+    }
+
     func testUnchangedNormalAndForcedRemovalReconcilesBeforeCompleting() async throws {
         for force in [false, true] {
             let fixture = try WorktreeFacadeFixture()
