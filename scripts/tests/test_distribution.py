@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import pathlib
+import os
+import subprocess
+import textwrap
 import hashlib
 import tempfile
 import unittest
@@ -10,6 +13,36 @@ from support import ROOT, load_script
 
 
 class DistributionTests(unittest.TestCase):
+    def homebrew_step(self, directory):
+        workflow = (ROOT / ".github/workflows/BuildPR.yml").read_text()
+        step = workflow.split("- name: Update Homebrew cask", 1)[1].split("- name:", 1)[0]
+        script = textwrap.dedent(step.split("run: |", 1)[1])
+        return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-e", "-c", script],
+                              cwd=directory, env=os.environ | {"RELEASE_TAG": "1.2.3"}, capture_output=True, text=True)
+
+    def test_homebrew_hashes_downloaded_dmg_and_writes_its_actual_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "distribution").mkdir()
+            (root / "brew/Casks/g").mkdir(parents=True)
+            dmg = root / "distribution/HalfDark-arm64.dmg"
+            dmg.write_bytes(b"downloaded distribution fixture")
+            result = self.homebrew_step(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            cask = (root / "brew/Casks/g/gitx.rb").read_text()
+            self.assertIn('sha256 "' + hashlib.sha256(dmg.read_bytes()).hexdigest() + '"', cask)
+            self.assertIn('version "1.2.3"', cask)
+
+    def test_homebrew_missing_download_fails_before_cask_creation_even_with_root_decoy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "distribution").mkdir()
+            (root / "brew/Casks/g").mkdir(parents=True)
+            (root / "HalfDark-arm64.dmg").write_bytes(b"stale root artifact")
+            result = self.homebrew_step(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((root / "brew/Casks/g/gitx.rb").exists())
+
     def test_ci_packages_only_after_stapling_and_keeps_diagnostics_without_comparison(self):
         workflow = (ROOT / ".github/workflows/BuildPR.yml").read_text()
         self.assertIn("scripts/package_distribution.sh", workflow)

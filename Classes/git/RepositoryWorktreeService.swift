@@ -946,9 +946,9 @@ final class PBRepositoryWorktreeService: NSObject {
             validatesRemoval = false
         }
         enqueueOperation(onFailure: fail) { operation in
-            let requiresFreshInventory = self.state.isStale && self.hasPublishedSnapshot
+            let requiresFreshInventory = validatesRemoval || !self.hasPublishedSnapshot || self.state.isStale
             let execute: @MainActor ([GitWorktree]) -> Void = { records in
-                guard !(requiresFreshInventory || validatesRemoval) || WorktreeEligibility.allows(command, records: records, supported: self.isSupported, previousRecords: previousRecords) else {
+                guard !requiresFreshInventory || WorktreeEligibility.allows(command, records: records, supported: self.isSupported, previousRecords: previousRecords) else {
                     self.finish(operation) { fail(self.failure("The worktree registration or eligibility changed. Review the refreshed worktree list before trying again.")) }
                     return
                 }

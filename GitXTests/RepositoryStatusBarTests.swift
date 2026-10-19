@@ -6,6 +6,18 @@ import XCTest
 final class RepositoryStatusBarTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
+    private final class RedrawObservingGradientBar: PBGitGradientBarView {
+        var didRequestDisplay = false
+
+        override var needsDisplay: Bool {
+            get { super.needsDisplay }
+            set {
+                didRequestDisplay = didRequestDisplay || newValue
+                super.needsDisplay = newValue
+            }
+        }
+    }
+
     func testContextualForgeAccountPresentationSeparatesIdentityFromPersistentFailureMirroring() {
         let authenticated = RepositoryForgeAccountControlPresentation(
             providerName: "GitHub",
@@ -427,6 +439,30 @@ final class RepositoryStatusBarTests: XCTestCase {
         image.lockFocus()
         view.draw(view.bounds)
         image.unlockFocus()
+    }
+
+    func testLegacyGradientBarInvalidatesAndDrawsInBothApplicationAppearances() throws {
+        let originalAppearance = NSApp.appearance
+        defer { NSApp.appearance = originalAppearance }
+        let view = RedrawObservingGradientBar(frame: NSRect(x: 0, y: 0, width: 80, height: 20))
+        view.didRequestDisplay = false
+        view.setTopShade(0.9, bottomShade: 0.7)
+        XCTAssertTrue(view.didRequestDisplay)
+
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            NSApp.appearance = appearance
+            view.appearance = appearance
+            XCTAssertEqual(NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), name)
+            view.didRequestDisplay = false
+            view.viewDidChangeEffectiveAppearance()
+            XCTAssertTrue(view.didRequestDisplay)
+            let image = NSImage(size: view.bounds.size)
+            image.lockFocus()
+            view.draw(view.bounds)
+            image.unlockFocus()
+            XCTAssertTrue(image.isValid)
+        }
     }
 
     func testStatusBarViewAppliesProgressAccessibilityRateLimitAndNarrowLayout() {

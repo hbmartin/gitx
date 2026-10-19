@@ -69,7 +69,9 @@ final class GitXInteropContractTests: XCTestCase {
         let selectors = ["repairPreparationCount", "ownershipCaptureCount", "discoveryEvidenceObserver",
                          "repairValidationObserver", "repairValidationResultObserver", "repairPreparationResultObserver",
                          "preferenceFingerprintObserver", "preferenceFingerprintResultObserver", "acceptedDiscoveryObserver", "lifecycleEventObserver",
-                         "drainForTestingWithCompletion:", "initWithRepository:taskFactory:repairPreparationObserver:"]
+                         "drainForTestingWithCompletion:", "initWithRepository:taskFactory:repairPreparationObserver:",
+                         "beginRepairForTestingWithWorktree:movedTo:relativePaths:ownerIsCurrent:completion:",
+                         "refreshRepairPreviewForTesting:ownerIsCurrent:completion:"]
         for name in selectors {
             #if DEBUG
                 XCTAssertNotNil(class_getInstanceMethod(PBRepositoryWorktreeService.self, NSSelectorFromString(name)), name)

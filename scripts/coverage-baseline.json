@@ -26,7 +26,7 @@
     "Classes/Controllers/GitXCoreAdapters.swift": 1.0,
     "Classes/Controllers/HistoryFlowRevisionProvider.swift": 0.9841,
     "Classes/Controllers/HistoryForgeOverlayPresentation.swift": 0.9448,
-    "Classes/Controllers/HistoryMenuBuilder.swift": 0.9686,
+    "Classes/Controllers/HistoryMenuBuilder.swift": 0.9687,
     "Classes/Controllers/HistoryStateCoordinator.swift": 1.0,
     "Classes/Controllers/HistoryTableInteractionCoordinator.swift": 0.9509,
     "Classes/Controllers/HistoryTreePresentation.swift": 0.9262,
@@ -38,10 +38,10 @@
     "Classes/Controllers/PBGitHistoryController+UI.m": 0.9234,
     "Classes/Controllers/PBGitHistoryController.m": 1.0,
     "Classes/Controllers/PBGitRepositoryDocument.m": 0.258,
-    "Classes/Controllers/PBGitSidebarController.swift": 0.9982,
+    "Classes/Controllers/PBGitSidebarController.swift": 0.9983,
     "Classes/Controllers/PBGitWindowController+Dialogs.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
-    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9481,
+    "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9494,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
     "Classes/Controllers/PBHistorySearchController.m": 0.9285,
     "Classes/Controllers/PBHistorySearchMode.m": 0.8333,
@@ -143,7 +143,7 @@
     "Classes/Views/PBCreateBranchSheet.m": 0.0,
     "Classes/Views/PBCreateTagSheet.m": 0.0,
     "Classes/Views/PBFileChangesTableView.swift": 0.9318,
-    "Classes/Views/PBGitGradientBarView.m": 0.8571,
+    "Classes/Views/PBGitGradientBarView.m": 0.9285,
     "Classes/Views/PBGitRefLabelColors.swift": 1.0,
     "Classes/Views/PBGitRevisionCell.m": 0.9736,
     "Classes/Views/PBGitRevisionRow.m": 0.8684,
@@ -210,7 +210,7 @@
     "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
     "Classes/git/RepositoryWatchPaths.swift": 0.98,
-    "Classes/git/RepositoryWorktreeService.swift": 0.9905,
+    "Classes/git/RepositoryWorktreeService.swift": 0.9911,
     "Classes/main.m": 1.0
   },
   "groups": {
@@ -231,7 +231,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9314,
+  "minimumLineCoverage": 0.9317,
   "target": "Half Dark.app",
   "version": 1
 }

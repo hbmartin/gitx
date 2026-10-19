@@ -1088,6 +1088,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    private final class ExistingRowTable: NSTableView {
+        let existingRow = NSTableRowView()
+        private(set) var creationRequests: [Bool] = []
+
+        override func rowView(atRow row: Int, makeIfNecessary: Bool) -> NSTableRowView? {
+            creationRequests.append(makeIfNecessary)
+            return row == 0 ? existingRow : nil
+        }
+    }
+
     private final class CommitListDataSource: NSObject, NSTableViewDataSource {
         let rowCount: Int
 
@@ -1399,6 +1409,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             (historyController.commitController.arrangedObjects as? [Any])?.count
         )
         XCTAssertNotNil(tableCoordinator.tableView(historyController.commitList, rowViewForRow: 0))
+    }
+
+    func testHistoryTablePreservesExistingRowIdentityAndAssignsNewRowOwner() throws {
+        let table = ExistingRowTable()
+        XCTAssertTrue(tableCoordinator.tableView(table, rowViewForRow: 0) === table.existingRow)
+        let newRow = try XCTUnwrap(tableCoordinator.tableView(table, rowViewForRow: 1))
+        XCTAssertFalse(newRow === table.existingRow)
+        XCTAssertTrue(newRow.value(forKey: "controller") as AnyObject === historyController)
+        XCTAssertEqual(table.creationRequests, [false, false])
     }
 
     func testHistoryNibContainsNativeFlowTabAndPersistsItsSelection() throws {
