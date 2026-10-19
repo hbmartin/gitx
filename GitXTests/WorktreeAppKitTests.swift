@@ -1380,6 +1380,15 @@ final class WorktreeAppKitTests: XCTestCase {
         _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
         XCTAssertTrue(content.view.window === window.window)
 
+        // Deliver both passive reference/settings restoration paths after the
+        // inspector mounts, rather than depending on watcher notification order.
+        sidebar.reloadSidebarAfterReferencesChange()
+        XCTAssertTrue(content.view.window === window.window)
+        XCTAssertNil(history.view.window)
+        sidebar.reloadSidebarPresentation()
+        XCTAssertTrue(content.view.window === window.window)
+        XCTAssertNil(history.view.window)
+
         _ = try fixture.git(["worktree", "lock", "--reason", "refresh regression", fixture.linked.path])
         service.refresh()
         await waitUntil {
@@ -1393,6 +1402,10 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), viewedBranch)
         XCTAssertEqual(repository.currentBranch?.simpleRef(), viewedBranch)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+
+        sidebar.selectCurrentBranch()
+        await waitUntil { history.view.window === window.window }
+        XCTAssertNil(content.view.window, "An explicit branch selection still navigates to History")
     }
 
     func testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt() async throws {

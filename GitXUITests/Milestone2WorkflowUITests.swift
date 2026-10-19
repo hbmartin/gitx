@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 @MainActor
@@ -195,6 +196,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             elementText(inspectorTitle),
             "Contributor checkout through the native Pull Request inspector"
         )
+        try positionWindowForInspectorActions(in: app)
         let checkout = app.buttons["GitX.PullRequest.Checkout"]
         try requireHittable(checkout, timeout: 5)
         retainDiagnosticScreenshot(
@@ -400,6 +402,22 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         app.launch()
         try requireHarnessState("Ready.\(scenario)", in: app, timeout: 15)
         return app
+    }
+
+    private func positionWindowForInspectorActions(in app: XCUIApplication) throws {
+        let window = app.windows.firstMatch
+        let visibleFrame = try XCTUnwrap(NSScreen.main).visibleFrame
+        let displacement = visibleFrame.minX - window.frame.minX
+        guard abs(displacement) > 2 else { return }
+        // The inspector can grow a window beyond a small virtual display.
+        // Move its leading edge into view before testing its native actions.
+        let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0))
+            .withOffset(CGVector(dx: 0, dy: 12))
+        titlebar.click(forDuration: 0.2, thenDragTo: titlebar.withOffset(CGVector(dx: displacement, dy: 0)))
+        let positioned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            abs(window.frame.minX - visibleFrame.minX) < 2
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: 5), .completed)
     }
 
     private func openStagingView(in app: XCUIApplication, waitingFor element: XCUIElement) throws {

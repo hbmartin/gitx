@@ -223,17 +223,14 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
                 guard let self else { return }
                 self.beginSelectionControlsRefresh()
                 defer { self.finishSelectionControlsRefresh() }
-                let selectedRow = self.sourceView?.selectedRow
-                do {
-                    let previousRestoring = self.restoringSelection
-                    self.restoringSelection = true
-                    defer { self.restoringSelection = previousRestoring }
+                self.preservingMountedContent {
+                    let selectedRow = self.sourceView?.selectedRow
                     self.sourceView?.reloadData()
                     if let selectedRow, selectedRow >= 0 {
                         self.sourceView?.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
                     }
+                    self.selectCurrentBranch()
                 }
-                self.selectCurrentBranch()
             }
         }
         branchesObservation = repository.observe(\.branches, options: [.old, .new]) { [weak self] _, _ in
@@ -285,6 +282,17 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         guard !hasClosed else { return }
         beginSelectionControlsRefresh()
         defer { finishSelectionControlsRefresh() }
+        preservingMountedContent { restoreSidebarPresentation() }
+    }
+
+    private final func preservingMountedContent(_ restore: () -> Void) {
+        let previousRestoring = restoringSelection
+        restoringSelection = previousRestoring || windowController?.hasMountedContent == true
+        defer { restoringSelection = previousRestoring }
+        restore()
+    }
+
+    private final func restoreSidebarPresentation() {
         let selectedForgeSurface = selectedForgeSurface()
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
         let viewedRevision = repository?.currentBranch
@@ -457,6 +465,10 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     @objc dynamic func reloadSidebarAfterReferencesChange() {
         beginSelectionControlsRefresh()
         defer { finishSelectionControlsRefresh() }
+        preservingMountedContent { restoreSidebarAfterReferencesChange() }
+    }
+
+    private final func restoreSidebarAfterReferencesChange() {
         guard let repository else { return }
         let selectedForgeSurface = selectedForgeSurface()
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity

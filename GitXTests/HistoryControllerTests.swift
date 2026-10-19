@@ -2570,7 +2570,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try fixture.git(["config", "--local", "--unset", "gitx.commitMessageReplacementRules"])
     }
 
-    func testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice() throws {
+    func testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice() async throws {
         let defaults = UserDefaults.standard
         let original = defaults.object(forKey: "PBRepositoryUISettings")
         defer {
@@ -2581,16 +2581,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             }
         }
         for choice in [true, false] {
-            try verifyPushChoiceDuringFailedSubmission(choice)
+            try await verifyPushChoiceDuringFailedSubmission(choice)
         }
     }
 
-    private func verifyPushChoiceDuringFailedSubmission(_ choice: Bool) throws {
+    private func verifyPushChoiceDuringFailedSubmission(_ choice: Bool) async throws {
         let settings = PBRepositoryUISettings(repository: repository)
         settings.pushAfterCommit = !choice
         try fixture.write("push recovery\n", to: "push-recovery-\(choice).txt")
         try fixture.git(["add", "--all"])
-        let pane = try openStagingPane()
+        let pane = try await openStagingPaneAwaitingSnapshot()
         let push = try XCTUnwrap(descendant(identifier: "PushAfterCommit", in: pane.view) as? NSButton)
         push.state = choice ? .on : .off
 
@@ -2612,12 +2612,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         pane.commitMessageView.string = "Preserve exact push choice"
         let failed = expectation(forNotification: NSNotification.Name(PBGitIndexCommitHookFailed), object: repository.index)
         pane.perform(NSSelectorFromString("commit:"), with: nil)
-        XCTAssertTrue(waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: ready.path) })
+        await waitForPublishedState(timeout: 10) { FileManager.default.fileExists(atPath: ready.path) }
         var writer: Int32 = -1
-        XCTAssertTrue(waitForCondition(timeout: 10) {
+        await waitForPublishedState(timeout: 10) {
+            if writer >= 0 {
+                return true
+            }
             writer = gate.path.withCString { Darwin.open($0, O_WRONLY | O_NONBLOCK) }
             return writer >= 0
-        })
+        }
         guard writer >= 0 else { return }
         var released = false
         func releaseHook() {
@@ -2637,7 +2640,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         pane.perform(NSSelectorFromString("reloadPushRemotes"))
         XCTAssertEqual(push.state, choice ? .on : .off, "Remote availability must not replace the submitted choice")
         releaseHook()
-        wait(for: [failed], timeout: 10)
+        await fulfillment(of: [failed], timeout: 10)
         XCTAssertEqual(push.state, choice ? .on : .off)
         XCTAssertEqual(settings.pushAfterCommit, !choice, "Failed commits do not persist a preference")
 
@@ -2648,10 +2651,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let stub = try XCTUnwrap(windowController as? HistoryWindowController)
         let pushesBefore = stub.performedPushes
         try XCTUnwrap(stub.hookFailureRetryHandlers.last)()
-        wait(for: [completed], timeout: 15)
+        await fulfillment(of: [completed], timeout: 15)
+        await waitForPublishedState(timeout: 10) {
+            self.indexIsQuiescent(self.repository.index)
+                && settings.pushAfterCommit == choice
+                && stub.performedPushes == pushesBefore + (choice ? 1 : 0)
+        }
         XCTAssertEqual(settings.pushAfterCommit, choice)
         XCTAssertEqual(stub.performedPushes, pushesBefore + (choice ? 1 : 0))
-        refreshIndex()
+        await refreshIndexAwaitingSnapshot()
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Push-Choice-Recovery")
     }
 
@@ -2678,6 +2686,45 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(reloaded.historyRepositoryFactsInspectorVisible)
         XCTAssertFalse(reloaded.isSidebarGroupVisible("Stage"))
         XCTAssertTrue(reloaded.isSidebarGroupVisible("Remotes"))
+    }
+
+    @discardableResult
+    private func openStagingPaneAwaitingSnapshot() async throws -> PBStagingViewController {
+        historyController.selectedCommitDetailsIndex = 0
+        await refreshIndexAwaitingSnapshot()
+        historyController.updateUncommittedChanges()
+        await waitForPublishedState(timeout: 5) {
+            self.historyController.commitController.value(forKey: "pinnedObject") is PBUncommittedChanges
+        }
+        let workingState = try XCTUnwrap(historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges)
+        historyController.commitController.setSelectedObjects([workingState])
+        historyController.updateKeys()
+        await waitForPublishedState(timeout: 5) {
+            self.historyController.value(forKey: "stagingViewController") is PBStagingViewController
+        }
+        return try XCTUnwrap(historyController.value(forKey: "stagingViewController") as? PBStagingViewController)
+    }
+
+    private func refreshIndexAwaitingSnapshot(until expected: (@MainActor () -> Bool)? = nil) async {
+        let index = repository.index
+        await waitForPublishedState(timeout: 10) { self.indexIsQuiescent(index) }
+        let revision = index.snapshotRevision
+        index.refresh()
+        await waitForPublishedState(timeout: 10) {
+            index.snapshotRevision > revision && self.indexIsQuiescent(index) && (expected?() ?? true)
+        }
+    }
+
+    private func waitForPublishedState(timeout: TimeInterval, _ condition: @escaping @MainActor () -> Bool) async {
+        let predicate = NSPredicate { _, _ in
+            if Thread.isMainThread {
+                // swift6-safety-justification: The main-thread check proves execution is on AppKit's main actor.
+                return MainActor.assumeIsolated { condition() }
+            }
+            return DispatchQueue.main.sync { condition() }
+        }
+        let published = XCTNSPredicateExpectation(predicate: predicate, object: nil)
+        await fulfillment(of: [published], timeout: timeout)
     }
 
     @discardableResult
@@ -2927,21 +2974,43 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Working-State-Raw-Identity")
     }
 
-    func testNulDelimitedMutationsPreserveNewlineFilenameAndDiscardPartiallyStagedAddition() throws {
+    func testNulDelimitedMutationsPreserveNewlineFilenameAndDiscardPartiallyStagedAddition() async throws {
         let path = "newline\nname.txt"
         try fixture.write("indexed portion\n", to: path)
-        _ = try openStagingPane()
+        _ = try await openStagingPaneAwaitingSnapshot()
         let index = repository.index
         let added = try XCTUnwrap(index.indexChanges.first { $0.rawPath == Data(path.utf8) })
-        waitForIndexUpdate { XCTAssertTrue(index.stageFiles([added])) }
+        let staged = expectation(description: "The selected newline path finishes staging")
+        let beforeStage = index.snapshotRevision
+        XCTAssertTrue(index.stageFiles([added], completion: { success, error in
+            XCTAssertTrue(success)
+            XCTAssertNil(error)
+            staged.fulfill()
+        }))
+        await fulfillment(of: [staged], timeout: 20)
+        await waitForPublishedState(timeout: 20) {
+            index.snapshotRevision > beforeStage && self.indexIsQuiescent(index)
+                && index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.stagedStatus == .NEW && !$0.hasUnstagedChanges }
+        }
         try fixture.write("worktree portion\n", to: path)
-        refreshIndex(until: {
+        await refreshIndexAwaitingSnapshot(until: {
             index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.stagedStatus == .NEW && $0.worktreeStatus == .MODIFIED }
         })
         let partial = try XCTUnwrap(index.indexChanges.first { $0.rawPath == Data(path.utf8) })
         XCTAssertEqual(partial.stagedStatus, .NEW)
         XCTAssertEqual(partial.worktreeStatus, .MODIFIED)
-        waitForIndexUpdate { index.discardChanges(for: [partial]) }
+        let discarded = expectation(description: "The selected newline path finishes discarding")
+        let beforeDiscard = index.snapshotRevision
+        XCTAssertTrue(index.discardChanges(for: [partial], completion: { success, error in
+            XCTAssertTrue(success)
+            XCTAssertNil(error)
+            discarded.fulfill()
+        }))
+        await fulfillment(of: [discarded], timeout: 20)
+        await waitForPublishedState(timeout: 20) {
+            index.snapshotRevision > beforeDiscard && self.indexIsQuiescent(index)
+                && index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.hasStagedChanges && !$0.hasUnstagedChanges }
+        }
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent(path), encoding: .utf8),
                        "indexed portion\n")
         let reconciled = try XCTUnwrap(index.indexChanges.first { $0.rawPath == Data(path.utf8) })

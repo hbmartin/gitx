@@ -273,7 +273,8 @@ jobs:
             -only-testing:GitXUITests/WorktreeWorkflowUITests/testLocateMovedCheckoutWaitsForExplicitRepairConsentAfterAnUnrelatedLockSheet \
             -only-testing:GitXUITests/GitXScreenshotTests/testSpaceStagesFilesAndSuccessfulCommitPushesWithoutASecondConfirmation \
             -only-testing:GitXUITests/GitXScreenshotTests/testForgeNavigationToolbarMenuScreenshot \
-            -only-testing:GitXUITests/GitXScreenshotTests/testJumpToCheckedOutBranchToolbarButtonAndHotkey
+            -only-testing:GitXUITests/GitXScreenshotTests/testJumpToCheckedOutBranchToolbarButtonAndHotkey \
+            -only-testing:GitXUITests/Milestone2WorkflowUITests/testExactCheckoutFetchesOnlyApprovedRefAndSwitchesToNamedBranch
       - name: Run UI plan
         run: scripts/xcodebuild.sh --run-id "verify-ui-${{ github.run_id }}-${{ github.run_attempt }}" test ui
       - name: Upload UI result
