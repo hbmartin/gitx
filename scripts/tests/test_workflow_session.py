@@ -129,6 +129,17 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertTrue(value['producer']['started'])
             self.assertEqual((path / 'legacy.log').read_text(), 'keep')
 
+    def test_supervisor_preserves_complete_binary_output_and_failure_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = bytes(range(256)) * 4096
+            command = 'import os; os.write(1, bytes(range(256)) * 4096); os.write(2, b"failure\\n"); raise SystemExit(7)'
+            result = subprocess.run([sys.executable, str(ROOT / 'scripts/workflow_session.py'), 'run',
+                                     '--diagnostics', directory, '--', sys.executable, '-c', command],
+                                    capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(result.stdout, payload + b'failure\n')
+            self.assertEqual(json.loads((pathlib.Path(directory) / 'diagnostic-owner.json').read_text())['status'], 'failed')
+
     def test_git_environment_scrubs_repository_selectors_but_preserves_configuration(self):
         selectors = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
                      "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH", "GIT_NAMESPACE")
