@@ -134,19 +134,42 @@ log "Preflight passed (team $team_id, bundle $bundle_identifier, architecture $a
 
 temporary_dir=
 app_candidate=
-app_backup=
+release_publication_pending=false
+release_published_names=()
+release_backup_names=()
+
+rollback_release()
+{
+	local name restored=true
+	for name in ${release_published_names[@]+"${release_published_names[@]}"}; do
+		if ! rm -rf "${output_root:?}/${name:?}"; then restored=false; fi
+	done
+	for name in ${release_backup_names[@]+"${release_backup_names[@]}"}; do
+		if ! mv "$app_candidate/previous/$name" "$output_root/$name"; then restored=false; fi
+	done
+	[[ "$restored" == true ]]
+}
 
 cleanup()
 {
-	if [[ -n "$app_backup" && -d "$app_backup" && ! -e "$final_app_dir" ]]; then
-		mv "$app_backup" "$final_app_dir" || echo "[gitx-release] Previous app retained at $app_backup" >&2
+	local status=$? retain_candidate=false package_staging
+	if [[ "$release_publication_pending" == true ]] && ! rollback_release; then
+		retain_candidate=true
+		echo "[gitx-release] Previous release could not be restored; retained $app_candidate" >&2
+		if (( status == 0 )); then status=1; fi
 	fi
 	if [[ -n "$app_candidate" ]]; then
-		rm -rf "$app_candidate"
+		# A failed packager may still own a mounted image or retained recovery files.
+		for package_staging in "$app_candidate"/.gitx-package.*; do
+			if [[ -d "$package_staging" ]]; then
+				retain_candidate=true
+				echo "[gitx-release] Package staging requires recovery; retained $app_candidate" >&2
+			fi
+		done
+		if [[ "$retain_candidate" == false ]]; then rm -rf "$app_candidate"; fi
 	fi
-	if [[ -n "$temporary_dir" ]]; then
-		rm -rf "$temporary_dir"
-	fi
+	if [[ -n "$temporary_dir" ]]; then rm -rf "$temporary_dir"; fi
+	return "$status"
 }
 trap cleanup EXIT
 
@@ -255,20 +278,32 @@ exported_app="$notarized_export_path/Half Dark.app"
 
 "$root/scripts/verify_distribution_app.sh" "$exported_app" "$artifact_arch" export
 app_candidate=$(mktemp -d "$output_root/.gitx-release-app.XXXXXX")
-ditto "$exported_app" "$app_candidate/Half Dark.app"
+mkdir "$app_candidate/$distribution_prefix"
+ditto "$exported_app" "$app_candidate/$distribution_prefix/Half Dark.app"
 
-"$root/scripts/package_distribution.sh" "$app_candidate/Half Dark.app" "$output_root" "$artifact_arch"
-if [[ -e "$final_app_dir" ]]; then
-	app_backup=$(mktemp -d "$output_root/.gitx-release-previous.XXXXXX")
-	rmdir "$app_backup"
-	mv "$final_app_dir" "$app_backup"
-fi
-mv "$app_candidate" "$final_app_dir"
-app_candidate=
-if [[ -n "$app_backup" ]]; then
-	rm -rf "$app_backup"
-	app_backup=
-fi
+"$root/scripts/package_distribution.sh" "$app_candidate/$distribution_prefix/Half Dark.app" "$app_candidate" "$artifact_arch"
+release_names=("$distribution_prefix" "$distribution_zip_name" "$distribution_dmg_name" "$distribution_checksum_name")
+mkdir "$app_candidate/previous"
+for name in "${release_names[@]}"; do
+	if [[ -e "$output_root/$name" || -L "$output_root/$name" ]]; then
+		[[ ! -L "$output_root/$name" ]] || fail "Existing release output is a symbolic link: $name"
+		if [[ "$name" == "$distribution_prefix" ]]; then
+			[[ -d "$output_root/$name" ]] || fail "Existing app output is not a directory: $name"
+		else
+			[[ -f "$output_root/$name" ]] || fail "Existing package output is not a regular file: $name"
+		fi
+	fi
+done
+release_publication_pending=true
+for name in "${release_names[@]}"; do
+	if [[ -e "$output_root/$name" ]]; then
+		mv "$output_root/$name" "$app_candidate/previous/$name"
+		release_backup_names+=("$name")
+	fi
+	mv "$app_candidate/$name" "$output_root/$name"
+	release_published_names+=("$name")
+done
+release_publication_pending=false
 
 log "Release artifacts are ready:"
 printf '  App:       %s\n' "$final_app_path"
