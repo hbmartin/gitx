@@ -555,10 +555,10 @@ final class WorktreeServiceTests: XCTestCase {
             XCTAssertTrue(installed.tasks.mutations.isEmpty)
             let preflight = try installed.tasks.task(discoveryArguments, occurrence: 1)
             let records: Data
-            if case .lock = command {
-                records = Data(String(decoding: snapshot, as: UTF8.self).replacingOccurrences(of: "locked offline disk\0", with: "").utf8)
-            } else {
+            if case .unlock = command {
                 records = snapshot
+            } else {
+                records = Data(String(decoding: snapshot, as: UTF8.self).replacingOccurrences(of: "locked offline disk\0", with: "").utf8)
             }
             if removes {
                 preflight.finish(records)

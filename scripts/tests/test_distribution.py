@@ -17,7 +17,7 @@ class DistributionTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/BuildPR.yml").read_text()
         step = workflow.split("- name: Update Homebrew cask", 1)[1].split("- name:", 1)[0]
         script = textwrap.dedent(step.split("run: |", 1)[1])
-        return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
+        return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-e", "-c", script],
                               cwd=directory, env=os.environ | {"RELEASE_TAG": "1.2.3"}, capture_output=True, text=True)
 
     def test_homebrew_hashes_downloaded_dmg_and_writes_its_actual_checksum(self):

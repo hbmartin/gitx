@@ -300,6 +300,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.tagger.outputs.tag }}
         run: |
+          set -euo pipefail
           shaarm64=$(shasum -a 256 distribution/HalfDark-arm64.dmg | cut -d " " -f1)
           echo "arm64 sha256=$shaarm64"
           cat > brew/Casks/g/gitx.rb <<EOF
