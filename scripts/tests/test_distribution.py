@@ -8,6 +8,7 @@ import hashlib
 import shutil
 import tempfile
 import unittest
+import sys
 
 from distribution_fixture import DistributionFixture
 from support import ROOT, load_script
@@ -228,6 +229,31 @@ class DistributionTests(unittest.TestCase):
                     if previous: self.assertEqual(final.read_bytes(), b"previous app")
                     else: self.assertFalse(final.exists())
                     self.assertFalse(list(fixture.output.glob(".gitx-release-*")))
+
+    def test_failed_removal_during_release_rollback_keeps_the_original_app_in_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DistributionFixture(pathlib.Path(directory))
+            fixture.output.mkdir()
+            app = fixture.output / "HalfDark-arm64/Half Dark.app/Contents/MacOS/GitX"
+            app.parent.mkdir(parents=True)
+            app.write_bytes(b"previous app")
+            for suffix in ("zip", "dmg", "sha256"):
+                (fixture.output / f"HalfDark-arm64.{suffix}").write_bytes(b"previous artifact")
+            rm = fixture.root / "tools/rm"
+            rm.write_text("#!" + sys.executable + "\n" +
+                          "import os,pathlib,subprocess,sys\n" +
+                          'blocked = pathlib.Path(os.environ["GITX_DISTRIBUTION_FIXTURE"]) / "release/HalfDark-arm64"\n' +
+                          'if pathlib.Path(sys.argv[-1]).resolve() == blocked.resolve(): sys.exit(25)\n' +
+                          'sys.exit(subprocess.run(["/bin/rm", *sys.argv[1:]]).returncode)\n')
+            rm.chmod(0o755)
+            result = fixture.release("release-promotion-failure-2")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("could not be restored", result.stderr)
+            staging, = fixture.output.glob(".gitx-release-app.*")
+            backup = staging / "previous/HalfDark-arm64/Half Dark.app/Contents/MacOS/GitX"
+            self.assertTrue(backup.exists(), "A failed cleanup must retain the original app in its recovery backup")
+            self.assertEqual(backup.read_bytes(), b"previous app")
+            self.assertFalse((fixture.output / "HalfDark-arm64/HalfDark-arm64").exists())
 
     def test_failed_mounted_payload_validation_detaches_without_publishing_checksums(self):
         with tempfile.TemporaryDirectory() as directory:

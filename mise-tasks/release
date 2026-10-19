@@ -145,6 +145,11 @@ rollback_release()
 		if ! rm -rf "${output_root:?}/${name:?}"; then restored=false; fi
 	done
 	for name in ${release_backup_names[@]+"${release_backup_names[@]}"}; do
+		# A failed removal must not turn directory restoration into a nested move.
+		if [[ -e "$output_root/$name" || -L "$output_root/$name" ]]; then
+			restored=false
+			continue
+		fi
 		if ! mv "$app_candidate/previous/$name" "$output_root/$name"; then restored=false; fi
 	done
 	[[ "$restored" == true ]]
