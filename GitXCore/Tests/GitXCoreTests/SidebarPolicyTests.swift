@@ -2,6 +2,27 @@
 import XCTest
 
 final class SidebarPolicyTests: XCTestCase {
+    func testInventoryStatusSeparatesProgressRecoveryAndCapabilityGuidance() {
+        for hasSnapshot in [false, true] {
+            for status in [WorktreeInventoryStatus.checkingCapability, .updating, .fresh, .stale, .unsupported, .closed] {
+                let presentation = WorktreeInventoryPresentation(status: status, hasSnapshot: hasSnapshot,
+                                                                 capabilityExplanation: "Choose a supported Git in Git Preferences.")
+                XCTAssertEqual(presentation.isUpdating, status == .updating)
+                XCTAssertEqual(presentation.warns, status == .stale || status == .unsupported)
+                switch status {
+                case .fresh, .closed: XCTAssertNil(presentation.message)
+                case .checkingCapability: XCTAssertTrue(presentation.message?.contains("Checking") == true)
+                case .updating:
+                    XCTAssertEqual(presentation.message, hasSnapshot ? "Updating the worktree list…" : "Loading worktrees…")
+                case .stale: XCTAssertTrue(presentation.message?.contains("Refresh Worktrees") == true)
+                case .unsupported:
+                    XCTAssertTrue(presentation.message?.contains("Git Preferences") == true)
+                    XCTAssertFalse(presentation.message?.contains("Refresh") == true)
+                }
+            }
+        }
+    }
+
     func testDeferredPresentationRequiresTheActiveVisibleKeyOwnerWithoutAnotherSheet() {
         for mask in 0 ..< 32 {
             let active = mask & 1 != 0

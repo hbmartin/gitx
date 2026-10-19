@@ -18,6 +18,30 @@ public enum WorktreeRepairOfferPresentation: Equatable, Sendable {
     case chooseStyle
 }
 
+public struct WorktreeInventoryPresentation: Equatable, Sendable {
+    public let message: String?
+    public let warns: Bool
+    public let isUpdating: Bool
+
+    public init(status: WorktreeInventoryStatus, hasSnapshot: Bool, capabilityExplanation: String) {
+        isUpdating = status == .updating
+        switch status {
+        case .checkingCapability:
+            message = "Checking the selected Git executable…"; warns = false
+        case .updating:
+            message = hasSnapshot ? "Updating the worktree list…" : "Loading worktrees…"; warns = false
+        case .fresh, .closed:
+            message = nil; warns = false
+        case .stale:
+            message = hasSnapshot ? "Worktree list may be out of date. Choose Refresh Worktrees to try again."
+                : "Worktrees could not be loaded. Choose Refresh Worktrees to try again."
+            warns = true
+        case .unsupported:
+            message = capabilityExplanation; warns = true
+        }
+    }
+}
+
 public enum WorktreePresentationPolicy {
     public static func consentUpdateMessage(action: String, previouslyConfirmed: Bool, updated: Bool) -> String {
         if previouslyConfirmed {

@@ -639,7 +639,7 @@ final class WorktreeAppKitTests: XCTestCase {
         try FileManager.default.removeItem(at: gitfile)
         service.refresh()
         await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
-        let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        let style = try await waitForSheet(in: window, containing: "Absolute Paths")
         window.endSheet(style, returnCode: .alertFirstButtonReturn)
         await waitUntil { FileManager.default.fileExists(atPath: gitfile.path) || window.attachedSheet.map { self.descendants($0.contentView).contains { ($0 as? NSButton)?.title == "Reclaim" } } == true }
         XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path), "A missing ownership anchor must not be reconstructed before separate reclaim consent")
@@ -658,7 +658,7 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(try registrationMetadata(administrative), originalMetadata)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), originalHead)
         controller.repairWorktreeLinks(nil)
-        let nextStyle = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        let nextStyle = try await waitForSheet(in: window, containing: "Absolute Paths")
         window.endSheet(nextStyle, returnCode: .alertFirstButtonReturn)
         let nextConsent = try await waitForSheet(in: window, containing: "Reclaim")
         window.endSheet(nextConsent, returnCode: .alertFirstButtonReturn)
@@ -689,7 +689,7 @@ final class WorktreeAppKitTests: XCTestCase {
         try FileManager.default.removeItem(at: gitfile)
         service.refresh()
         await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
-        let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        let style = try await waitForSheet(in: window, containing: "Absolute Paths")
         window.endSheet(style, returnCode: .alertFirstButtonReturn)
         let initialConsent = try await waitForSheet(in: window, containing: "Reclaim")
         XCTAssertFalse(gate.repairWasRequested)
@@ -758,7 +758,7 @@ final class WorktreeAppKitTests: XCTestCase {
                 try FileManager.default.removeItem(at: gitfile)
                 service.refresh()
                 await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
-                let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+                let style = try await waitForSheet(in: window, containing: "Absolute Paths")
                 window.endSheet(style, returnCode: .alertFirstButtonReturn)
                 let consent = try await waitForSheet(in: window, containing: "Reclaim")
                 if hidesWindow {
@@ -785,7 +785,7 @@ final class WorktreeAppKitTests: XCTestCase {
                     XCTAssertEqual(try registrationMetadata(administrative), metadata)
                     XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
                     controller.repairWorktreeLinks(nil)
-                    let freshStyle = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+                    let freshStyle = try await waitForSheet(in: window, containing: "Absolute Paths")
                     window.endSheet(freshStyle, returnCode: .alertFirstButtonReturn)
                     let freshConsent = try await waitForSheet(in: window, containing: "Reclaim")
                     window.endSheet(freshConsent, returnCode: .alertFirstButtonReturn)
@@ -1380,12 +1380,12 @@ final class WorktreeAppKitTests: XCTestCase {
         _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
         XCTAssertTrue(content.view.window === window.window)
 
-        let published = expectation(description: "locked sibling snapshot published")
-        let observation = service.observe(\.worktrees) { _, _ in published.fulfill() }
         _ = try fixture.git(["worktree", "lock", "--reason", "refresh regression", fixture.linked.path])
         service.refresh()
-        await fulfillment(of: [published], timeout: 5)
-        observation.invalidate()
+        await waitUntil {
+            service.worktree(forBranch: "refs/heads/topic")?.lockReason == "refresh regression"
+                && service.inventoryStatus == WorktreeInventoryStatus.fresh.rawValue
+        }
 
         XCTAssertTrue(service.worktree(forBranch: "refs/heads/topic")?.isLocked == true)
         XCTAssertTrue(content.view.window === window.window)
@@ -1421,6 +1421,10 @@ final class WorktreeAppKitTests: XCTestCase {
         await waitUntil { controller.historyViewController?.view.window === controller.window }
         let sidebar = try XCTUnwrap(controller.sidebarViewController)
         let outline = try XCTUnwrap(sidebar.sourceView)
+        let initialItems = sidebar.items.map { $0 as AnyObject }
+        let groupRow = try XCTUnwrap((0 ..< outline.numberOfRows).first { (outline.item(atRow: $0) as? PBSourceViewItem)?.title == "WORKTREES" })
+        let initialGroup = try XCTUnwrap(outline.item(atRow: groupRow) as? PBSourceViewItem)
+        let initialChildren = initialGroup.sortedChildren
         let initialRows = service.worktrees.map(\.path)
         let selection = sidebar.selectedItem()?.revSpecifier?.simpleRef()
         failsDiscovery = true
@@ -1441,6 +1445,15 @@ final class WorktreeAppKitTests: XCTestCase {
         await waitUntil { !service.isSnapshotStale }
         XCTAssertEqual(service.worktrees.map(\.path), initialRows)
         XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), selection)
+        XCTAssertEqual(sidebar.items.count, initialItems.count)
+        for (before, after) in zip(initialItems, sidebar.items) {
+            XCTAssertTrue(before === after as AnyObject)
+        }
+        XCTAssertTrue(outline.item(atRow: groupRow) as? PBSourceViewItem === initialGroup)
+        XCTAssertEqual(initialGroup.sortedChildren.count, initialChildren.count)
+        for (before, after) in zip(initialChildren, initialGroup.sortedChildren) {
+            XCTAssertTrue(before === after)
+        }
         try attachScreenshot(of: XCTUnwrap(controller.window), named: "Worktrees-Equal-Snapshot-Recovery")
     }
 
@@ -1637,13 +1650,13 @@ final class WorktreeAppKitTests: XCTestCase {
         let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
         let item = NSMenuItem(); item.representedObject = tree
         controller.lockWorktree(item)
-        var sheet = try await waitForSheet(in: window)
+        var sheet = try await waitForSheet(in: window, containing: "Lock")
         try attachScreenshot(of: sheet, named: "Worktrees-Lock-Reason-Sheet")
         window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
         await waitUntil { window.attachedSheet == nil }
         XCTAssertFalse(service.worktree(forBranch: "refs/heads/topic")?.isLocked ?? true)
         controller.lockWorktree(item)
-        sheet = try await waitForSheet(in: window)
+        sheet = try await waitForSheet(in: window, containing: "Lock")
         let field = try XCTUnwrap(descendants(sheet.contentView).compactMap { $0 as? NSTextField }.first { $0.placeholderString == "Reason (optional)" })
         field.stringValue = "offline disk"
         window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
@@ -1723,8 +1736,8 @@ final class WorktreeAppKitTests: XCTestCase {
         let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
-        var sheet = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
-        XCTAssertEqual(window.attachedSheet?.defaultButtonCell?.title, "Repair with Absolute Paths")
+        var sheet = try await waitForSheet(in: window, containing: "Absolute Paths")
+        XCTAssertEqual(window.attachedSheet?.defaultButtonCell?.title, "Absolute Paths")
         try attachScreenshot(of: sheet, named: "Worktrees-Moved-Nested-Repair-Sheet")
         window.endSheet(sheet, returnCode: .alertThirdButtonReturn)
         await waitUntil { window.attachedSheet == nil }
@@ -1733,9 +1746,13 @@ final class WorktreeAppKitTests: XCTestCase {
         await Task.yield()
         XCTAssertNil(window.attachedSheet)
         controller.pruneWorktrees(nil)
-        sheet = try await waitForSheet(in: window, containing: "Repair with Relative Paths")
+        sheet = try await waitForSheet(in: window, containing: "Relative Paths")
         XCTAssertFalse(descendants(sheet.contentView).compactMap { $0 as? NSButton }.contains { $0.title == "Prune" })
         window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+        sheet = try await waitForSheet(in: window, containing: "Repair these worktree links?")
+        XCTAssertEqual(sheet.defaultButtonCell?.title, "Cancel")
+        XCTAssertTrue(sheetText(sheet).contains(WorktreePaths.canonical(movedMain.appendingPathComponent("nested").path)))
+        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
         await waitUntil { !service.worktrees.contains { $0.hasBrokenLink } }
         XCTAssertEqual(service.worktree(forBranch: "refs/heads/nested")?.path, WorktreePaths.canonical(movedMain.appendingPathComponent("nested").path))
         let link = try String(contentsOf: movedMain.appendingPathComponent("nested/.git"), encoding: .utf8)
@@ -2264,7 +2281,7 @@ final class WorktreeAppKitTests: XCTestCase {
             let guidance = try await waitForSheet(in: window)
             XCTAssertTrue(sheetText(guidance).contains("A moved worktree needs manual link repair"))
             XCTAssertTrue(sheetText(guidance).contains(WorktreePaths.canonical(movedNested.path)))
-            XCTAssertFalse(descendants(guidance.contentView).contains { ($0 as? NSButton)?.title == "Repair with Absolute Paths" || ($0 as? NSButton)?.title == "Prune" })
+            XCTAssertFalse(descendants(guidance.contentView).contains { ($0 as? NSButton)?.title == "Absolute Paths" || ($0 as? NSButton)?.title == "Prune" })
             try attachScreenshot(of: guidance, named: "Worktrees-Manual-Symlink-Menu-Guidance")
             window.endSheet(guidance, returnCode: .alertFirstButtonReturn)
             await waitUntil { window.attachedSheet == nil }
@@ -2285,8 +2302,8 @@ final class WorktreeAppKitTests: XCTestCase {
             XCTAssertTrue(text.contains("Its .git link cannot be replaced safely. Restore a regular Git link file before repairing or pruning:"))
             XCTAssertTrue(text.contains(WorktreePaths.canonical(movedNested.path)))
             let buttons = descendants(notice.contentView).compactMap { $0 as? NSButton }.map(\.title)
-            XCTAssertFalse(buttons.contains("Repair with Absolute Paths"))
-            XCTAssertFalse(buttons.contains("Repair with Relative Paths"))
+            XCTAssertFalse(buttons.contains("Absolute Paths"))
+            XCTAssertFalse(buttons.contains("Relative Paths"))
             XCTAssertFalse(buttons.contains("Prune"))
             try attachScreenshot(of: notice, named: pruning ? "Worktrees-Moved-Symlink-Prune-Blocked" : "Worktrees-Moved-Symlink-Manual-Repair")
             window.endSheet(notice, returnCode: buttons.contains("Skip Repair") ? .alertThirdButtonReturn : .alertFirstButtonReturn)
@@ -2345,7 +2362,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let item = NSMenuItem()
         item.representedObject = broken
         controller.openWorktree(item)
-        let explicit = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+        let explicit = try await waitForSheet(in: window, containing: "Absolute Paths")
         XCTAssertFalse(sheetText(explicit).contains("repository was moved"))
         XCTAssertTrue(sheetText(explicit).contains(fixture.linked.path))
         window.endSheet(explicit, returnCode: .alertFirstButtonReturn)
@@ -2500,9 +2517,9 @@ final class WorktreeAppKitTests: XCTestCase {
         try stale.write(to: gitfile)
         service.refresh()
         await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
-        let style = try await waitForSheet(in: window, containing: "Repair with Relative Paths")
-        let relative = try XCTUnwrap(descendants(style.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Repair with Relative Paths" })
-        let absolute = try XCTUnwrap(descendants(style.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Repair with Absolute Paths" })
+        let style = try await waitForSheet(in: window, containing: "Relative Paths")
+        let relative = try XCTUnwrap(descendants(style.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Relative Paths" })
+        let absolute = try XCTUnwrap(descendants(style.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Absolute Paths" })
         let relativeCell = try XCTUnwrap(relative.cell as? NSButtonCell)
         XCTAssertTrue(style.defaultButtonCell === relativeCell)
         XCTAssertEqual(absolute.keyEquivalent, "")

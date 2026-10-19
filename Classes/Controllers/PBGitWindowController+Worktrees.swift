@@ -27,6 +27,33 @@ private final class WorktreePresentationContext {
     }
 }
 
+/// A consumed preview cannot be refreshed again. Its terminal error survives every presentation wait.
+private enum WorktreePreviewPreparation<Preview> {
+    case preview(Preview)
+    case consumed
+    case failed(Error)
+
+    var preview: Preview? {
+        if case let .preview(value) = self {
+            return value
+        }
+        return nil
+    }
+
+    var error: Error? {
+        if case let .failed(error) = self {
+            return error
+        }
+        return nil
+    }
+
+    mutating func consume() -> Preview? {
+        guard let value = preview else { return nil }
+        self = .consumed
+        return value
+    }
+}
+
 /// Participates in the alert's key-equivalent traversal without changing its default button.
 private final class WorktreeConsentKeyView: NSView {
     weak var cancelButton: NSButton?
@@ -439,16 +466,16 @@ extension PBGitWindowController {
         panel.directoryURL = FileManager.default.fileExists(atPath: parent.path) ? parent : newWorktreeParent(context: context)
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, self.isCurrentWorktreePresentation(context), response == .OK, let url = panel.url else { return }
-            context.service.beginRepair(worktree: worktree, movedTo: url.path, ownerIsCurrent: { [weak self] in
-                self?.isCurrentWorktreePresentation(context) == true
-            }) { [weak self] result in
-                guard let self else {
-                    if case let .success(.requiresConsent(preview)) = result {
-                        context.discardRepairPreview(preview)
-                    }
+            context.service.prepareRepair(worktree: worktree, movedTo: url.path) { [weak self] preview, error in
+                guard let self, self.isCurrentWorktreePresentation(context) else {
+                    context.discardRepairPreview(preview)
                     return
                 }
-                receiveRepairStart(result, context: context)
+                if let error {
+                    self.showWorktreeError(error, context: context)
+                } else if let preview {
+                    self.presentRepairPreview(preview, context: context, changed: false)
+                }
             }
         }
     }
@@ -550,28 +577,34 @@ extension PBGitWindowController {
             context.discardPrunePreview(preview)
             return
         }
-        var current = preview
+        var preparation = WorktreePreviewPreparation.preview(preview)
         var updatedBeforeDisplay = false
         presentationQueue().enqueue(window: window, isCurrent: { [weak self] in
             self?.isCurrentWorktreePresentation(context) == true
         }, prepare: { [weak self] deferred, ready in
             guard let self, isCurrentWorktreePresentation(context) else { ready(nil); return }
+            if let error = preparation.error {
+                ready(errorPresentation(error, context: context)); return
+            }
             let prepared: @MainActor (PBWorktreePrunePreview) -> Void = { [weak self] updated in
                 guard let self, isCurrentWorktreePresentation(context) else {
                     context.discardPrunePreview(updated); ready(nil); return
                 }
-                current = updated
+                preparation = .preview(updated)
                 ready(.init(finishesWhenSheetEnds: false, present: { [weak self] done in
                     guard let self, isCurrentWorktreePresentation(context) else { done(); return }
                     showPruneConsent(updated, context: context, changed: changed, updatedBeforeDisplay: updatedBeforeDisplay, finished: done)
                 }, discard: { context.discardPrunePreview(updated) }))
             }
+            guard let current = preparation.preview else { ready(nil); return }
             guard deferred else { prepared(current); return }
+            _ = preparation.consume()
             context.service.refreshPrunePreview(current, ownerIsCurrent: { [weak self] in
                 self?.isCurrentWorktreePresentation(context) == true
             }) { [weak self] updated, listChanged, error in
                 updatedBeforeDisplay = updatedBeforeDisplay || listChanged
                 if let error {
+                    preparation = .failed(error)
                     ready(self?.errorPresentation(error, context: context))
                 } else if let updated {
                     prepared(updated)
@@ -579,7 +612,7 @@ extension PBGitWindowController {
                     ready(nil)
                 }
             }
-        }, discard: { context.discardPrunePreview(current) })
+        }, discard: { context.discardPrunePreview(preparation.preview) })
     }
 
     private func showPruneConsent(_ preview: PBWorktreePrunePreview, context: WorktreePresentationContext,
@@ -714,9 +747,9 @@ extension PBGitWindowController {
         }
         let alert = NSAlert()
         alert.messageText = "Some worktrees have broken repository links"
-        alert.informativeText = "Git can reconnect these worktrees with absolute or relative paths:\n\n" + broken.map { $0.movedPath ?? $0.path }.joined(separator: "\n")
-        let absolute = alert.addButton(withTitle: "Repair with Absolute Paths")
-        let relative = alert.addButton(withTitle: "Repair with Relative Paths")
+        alert.informativeText = "Choose how Git stores worktree links. You will review the exact folders before repairing them."
+        let absolute = alert.addButton(withTitle: "Absolute Paths")
+        let relative = alert.addButton(withTitle: "Relative Paths")
         alert.addButton(withTitle: "Skip Repair")
         if WorktreePolicy.preferredRepairStyle(service.worktrees.map { $0.value.linkStyle }) == .relative {
             absolute.keyEquivalent = ""
@@ -732,31 +765,18 @@ extension PBGitWindowController {
             } else {
                 return
             }
-            service.beginRepairLinks(style: style, ownerIsCurrent: { [weak self] in
-                self?.isCurrentWorktreePresentation(context) == true
-            }) { [weak self] result in
-                guard let self else {
-                    if case let .success(.requiresConsent(preview)) = result {
-                        context.discardRepairPreview(preview)
-                    }
+            service.prepareRepairLinks(style: style) { [weak self] preview, error in
+                guard let self, self.canReceiveWorktreeResult(context) else {
+                    context.discardRepairPreview(preview)
                     return
                 }
-                receiveRepairStart(result, context: context)
+                if let error {
+                    context.discardRepairPreview(preview)
+                    self.showWorktreeError(error, context: context)
+                } else if let preview {
+                    self.presentRepairPreview(preview, context: context, changed: false)
+                }
             }
-        }
-    }
-
-    private func receiveRepairStart(_ result: Result<WorktreeRepairStartResult, NSError>, context: WorktreePresentationContext) {
-        guard isCurrentWorktreePresentation(context) else {
-            if case let .success(.requiresConsent(preview)) = result {
-                context.discardRepairPreview(preview)
-            }
-            return
-        }
-        switch result {
-        case let .failure(error): showWorktreeError(error, context: context)
-        case .success(.completed): NSLog("[GitX] Completed repair without another presentation admission")
-        case let .success(.requiresConsent(preview)): presentRepairPreview(preview, context: context, changed: false)
         }
     }
 
@@ -765,38 +785,41 @@ extension PBGitWindowController {
             context.discardRepairPreview(preview)
             return
         }
-        if WorktreePresentationPolicy.repair(requiresReclaim: preview.requiresReclaim, changed: changed) == .perform {
-            performRepair(preview, context: context)
-            return
-        }
-        var current = preview
+        var preparation = WorktreePreviewPreparation.preview(preview)
         var updatedBeforeDisplay = false
         presentationQueue().enqueue(window: window, isCurrent: { [weak self] in
             self?.isCurrentWorktreePresentation(context) == true
         }, prepare: { [weak self] deferred, ready in
             guard let self, isCurrentWorktreePresentation(context) else { ready(nil); return }
+            if let error = preparation.error {
+                ready(errorPresentation(error, context: context)); return
+            }
             let prepared: @MainActor (PBWorktreeRepairPreview) -> Void = { [weak self] updated in
                 guard let self, isCurrentWorktreePresentation(context) else {
                     context.discardRepairPreview(updated); ready(nil); return
                 }
-                current = updated
+                preparation = .preview(updated)
                 ready(WorktreePresentationQueue.Prepared(finishesWhenSheetEnds: false, present: { [weak self] done in
                     guard let self, isCurrentWorktreePresentation(context) else { done(); return }
                     showRepairConsent(updated, context: context, changed: changed, updatedBeforeDisplay: updatedBeforeDisplay, finished: done)
                 }, discard: { context.discardRepairPreview(updated) }))
             }
+            guard let current = preparation.preview else { ready(nil); return }
             guard deferred else { prepared(current); return }
+            _ = preparation.consume()
             context.service.refreshRepairPreview(current, ownerIsCurrent: { [weak self] in
                 self?.isCurrentWorktreePresentation(context) == true
             }) { [weak self] result in
                 switch result {
-                case let .failure(error): ready(self?.errorPresentation(error, context: context))
+                case let .failure(error):
+                    preparation = .failed(error)
+                    ready(self?.errorPresentation(error, context: context))
                 case let .success(review):
                     updatedBeforeDisplay = updatedBeforeDisplay || review.changed
                     prepared(review.preview)
                 }
             }
-        }, discard: { context.discardRepairPreview(current) })
+        }, discard: { context.discardRepairPreview(preparation.preview) })
     }
 
     private func showRepairConsent(_ preview: PBWorktreeRepairPreview, context: WorktreePresentationContext,

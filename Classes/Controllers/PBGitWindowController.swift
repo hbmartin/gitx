@@ -213,9 +213,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         invalidateWorktreePresentation()
         NotificationCenter.default.removeObserver(self)
         focusRefreshCoordinator?.cancel()
-        repository?.cancelWorktreeDiscovery()
         worktreeObservations.removeAll()
         sidebarViewController?.closeView()
+        repository?.cancelWorktreeDiscovery()
         historyViewController?.closeView()
         _sidebarController = nil
         _historyViewController = nil

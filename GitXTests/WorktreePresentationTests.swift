@@ -55,6 +55,52 @@ import XCTest
             }
         }
 
+        func testExternalHeadChangeRejectsNormalAndForcedRemovalConsent() async throws {
+            for force in [false, true] {
+                selectGit()
+                let fixture = try makeFixture()
+                _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+                let dirty = fixture.linked.appendingPathComponent("untracked.txt")
+                let content = Data("keep uncommitted work after changed consent\n".utf8)
+                try content.write(to: dirty)
+                let origin = try await installService(in: fixture)
+                let controller = recordingController(for: origin)
+                controller.presentsErrors = true
+                let window = try XCTUnwrap(controller.window)
+                await activateWorktreeTestApplication()
+                window.makeKeyAndOrderFront(nil)
+                defer {
+                    if let sheet = window.attachedSheet {
+                        window.endSheet(sheet, returnCode: .cancel)
+                    }
+                    controller.close()
+                }
+                await waitUntil { NSApp.isActive && window.isKeyWindow }
+                let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
+                let item = NSMenuItem(); item.representedObject = tree
+                controller.removeWorktree(item)
+                var consent = try await waitForSheet(in: window, containing: "Remove")
+                if force {
+                    window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+                    consent = try await waitForSheet(in: window, containing: "Remove Anyway")
+                }
+                _ = try fixture.git(["commit", "--allow-empty", "-m", "External commit after approval"], in: fixture.linked)
+                let proof = try fixture.ownershipProof()
+                window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+                await waitUntil { controller.errors.count == 1 && window.attachedSheet != nil }
+                let error = try XCTUnwrap(controller.errors.first)
+                XCTAssertTrue(error.localizedFailureReason?.contains("Review the refreshed worktree list") == true)
+                let rejected = try XCTUnwrap(window.attachedSheet)
+                XCTAssertTrue(sheetText(rejected).contains("Review the refreshed worktree list"))
+                XCTAssertFalse(origin.gate.commands.contains(["worktree", "remove", "--force", tree.path]))
+                XCTAssertEqual(origin.gate.commands.filter { $0 == ["worktree", "remove", tree.path] }.count, force ? 1 : 0)
+                XCTAssertEqual(origin.service.worktree(forBranch: "refs/heads/topic")?.path, tree.path)
+                XCTAssertEqual(try fixture.ownershipProof(), proof)
+                XCTAssertEqual(try Data(contentsOf: dirty), content)
+                try attachScreenshot(of: rejected, named: force ? "Worktrees-Forced-Removal-Changed-HEAD-Rejected" : "Worktrees-Removal-Changed-HEAD-Rejected")
+            }
+        }
+
         func testFixtureCleanupDrainsHeldDiscoveryBeforeRestoringGitPreferences() async throws {
             let defaults = UserDefaults.standard
             let previous = defaults.object(forKey: "gitExecutable") as? NSObject
@@ -828,6 +874,78 @@ import XCTest
             XCTAssertEqual(try fixture.registrationProof(at: administrative), metadata)
         }
 
+        func testDeferredPreviewRefreshFailureSurvivesAnotherPresentationWait() async throws {
+            selectGit()
+            for repairing in [false, true] {
+                let fixture = try makeFixture()
+                _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+                let origin = try await installService(in: fixture)
+                let following = try await installService(in: fixture)
+                let controller = recordingController(for: origin)
+                controller.presentsErrors = true
+                let window = try XCTUnwrap(controller.window)
+                addTeardownBlock { @MainActor in
+                    await self.cleanupRepairPresentation(controller: controller, fixture: fixture)
+                }
+                let arguments = repairing ? ["worktree", "list", "--porcelain", "-z"] : WorktreeCommand.pruneReport.arguments
+                if repairing {
+                    try FileManager.default.removeItem(at: fixture.linked.appendingPathComponent(".git"))
+                    origin.service.refresh()
+                    await waitUntil { origin.service.worktrees.contains { $0.hasBrokenLink } }
+                    let style = try await waitForSheet(in: window, containing: "Absolute Paths")
+                    origin.gate.holdNextArguments = arguments
+                    window.endSheet(style, returnCode: .alertFirstButtonReturn)
+                } else {
+                    try FileManager.default.removeItem(at: fixture.linked)
+                    origin.gate.holdNextArguments = arguments
+                    controller.pruneWorktrees(nil)
+                }
+                await waitUntil { origin.gate.writer.isPending }
+                let occupant = unrelatedSheet(on: window)
+                let firstOutput = try fixture.git(arguments)
+                origin.gate.writer.finish(Data(firstOutput.utf8))
+                let firstDrained = expectation(description: "initial preview completes behind occupant")
+                enqueuePreview(following.service) { preview, error in
+                    XCTAssertNil(error)
+                    if let preview {
+                        following.service.discardPrunePreview(preview)
+                    }
+                    firstDrained.fulfill()
+                }
+                await fulfillment(of: [firstDrained], timeout: 15)
+                await drainCallbacks()
+                origin.gate.holdNextArguments = arguments
+                window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+                await waitUntil { origin.gate.writer.isPending }
+                // Force another wait while refresh consumes the original token.
+                window.orderOut(nil)
+                let failure = try fixture.gitFailure(["worktree", "prune", "--unknown-deferred-refresh-option"])
+                origin.gate.writer.finish(failure.data, error: failure.error)
+                let failedReadDrained = expectation(description: "failed refresh releases FIFO")
+                enqueuePreview(following.service) { preview, error in
+                    XCTAssertNil(error)
+                    if let preview {
+                        following.service.discardPrunePreview(preview)
+                    }
+                    failedReadDrained.fulfill()
+                }
+                await fulfillment(of: [failedReadDrained], timeout: 15)
+                await drainCallbacks()
+                XCTAssertEqual(controller.errors.count, 0)
+                window.makeKeyAndOrderFront(nil)
+                let errorSheet = try await waitForSheet(in: window, containing: "unknown-deferred-refresh-option")
+                XCTAssertEqual(controller.errors.count, 1)
+                XCTAssertFalse(sheetText(errorSheet).contains("cancelled, consumed"))
+                window.endSheet(errorSheet, returnCode: .OK)
+                await waitUntil { window.attachedSheet == nil }
+                window.orderOut(nil)
+                window.makeKeyAndOrderFront(nil)
+                await drainCallbacks()
+                XCTAssertEqual(controller.errors.count, 1)
+                XCTAssertFalse(origin.gate.commands.contains { $0 == WorktreeCommand.prune.arguments || $0.starts(with: ["worktree", "repair"]) })
+            }
+        }
+
         func testHiddenPruneOwnerRetainsRealPreviewFailuresUntilTheUserReturns() async throws {
             selectGit()
             for phase in HiddenPruneFailurePhase.allCases {
@@ -944,7 +1062,7 @@ import XCTest
                 try FileManager.default.removeItem(at: gitfile)
                 origin.service.refresh()
                 await waitUntil { origin.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
-                let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+                let style = try await waitForSheet(in: window, containing: "Absolute Paths")
                 let preparationCount = origin.service.repairPreparationCount
                 window.endSheet(style, returnCode: .alertFirstButtonReturn)
                 await waitUntil { origin.service.repairPreparationCount > preparationCount && window.attachedSheet == nil }
@@ -993,7 +1111,7 @@ import XCTest
                     XCTAssertNil(window.attachedSheet)
                 }
                 controller.repairWorktreeLinks(nil)
-                let freshStyle = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+                let freshStyle = try await waitForSheet(in: window, containing: "Absolute Paths")
                 window.endSheet(freshStyle, returnCode: .alertFirstButtonReturn)
                 let freshConsent = try await waitForSheet(in: window, containing: "Reclaim")
                 window.endSheet(freshConsent, returnCode: .alertSecondButtonReturn)
@@ -1020,6 +1138,7 @@ import XCTest
                 let links = try journey.fixture.registrationProof(at: journey.administrative)
                 let gitfile = try Data(contentsOf: journey.fixture.linked.appendingPathComponent(".git"))
                 journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
+                try await approveChosenRepair(journey)
                 await fulfillment(of: [checkpoint.entered], timeout: 5)
                 XCTAssertTrue(checkpoint.isWaiting)
                 if closesWindow {
@@ -1068,16 +1187,16 @@ import XCTest
             }
             let arguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
             journey.origin.gate.holdNextArguments = arguments
-            let captured = journey.origin.service.repairPreparationCount
             journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
-            await waitUntil { journey.origin.service.repairPreparationCount > captured }
+            try await approveChosenRepair(journey)
+            await waitUntil { journey.origin.gate.writer.isPending }
             let followingDone = expectation(description: "following action waits for the complete repair admission")
             enqueue(journey.following.service, command: .unlock(path: journey.fixture.linked.path)) { _, error in
                 XCTAssertNil(error)
                 followingDone.fulfill()
             }
             await waitUntil { journey.origin.gate.writer.isPending || journey.following.gate.commands.contains(["worktree", "unlock", journey.fixture.linked.path]) }
-            XCTAssertFalse(journey.following.gate.commands.contains(["worktree", "unlock", journey.fixture.linked.path]), "A proven repair must not release and reacquire admission through a preview callback")
+            XCTAssertFalse(journey.following.gate.commands.contains(["worktree", "unlock", journey.fixture.linked.path]), "An explicitly approved repair owns admission through its write and reconciliation")
             guard journey.origin.gate.writer.isPending else {
                 await fulfillment(of: [followingDone], timeout: 15)
                 return
@@ -1099,38 +1218,33 @@ import XCTest
             XCTAssertEqual(try WorktreePaths.canonical(journey.fixture.git(["rev-parse", "--absolute-git-dir"], in: journey.fixture.linked).trimmingCharacters(in: .whitespacesAndNewlines)), WorktreePaths.canonical(journey.administrative.path))
         }
 
-        func testChosenProvenRepairStyleExecutesWhileAnUnrelatedSheetRemainsAttached() async throws {
+        func testChosenRepairStyleWaitsForExactScopeApprovalAfterAnUnrelatedSheet() async throws {
             selectGit()
-            let journey = try await movedRepairJourney()
-            addTeardownBlock { @MainActor in
-                await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
+            for relative in [false, true] {
+                let journey = try await movedRepairJourney()
+                addTeardownBlock { @MainActor in
+                    await self.cleanupRepairPresentation(controller: journey.controller, fixture: journey.fixture)
+                }
+                let barrierDone = expectation(description: "writer preceding preview completes")
+                enqueue(journey.blocker.service, command: .lock(path: journey.fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); barrierDone.fulfill() }
+                let preparationCount = journey.origin.service.repairPreparationCount
+                XCTAssertFalse(sheetText(journey.style).contains(journey.fixture.linked.path), "Style selection carries no mutable target list")
+                journey.window.endSheet(journey.style, returnCode: relative ? .alertSecondButtonReturn : .alertFirstButtonReturn)
+                await waitUntil { journey.origin.service.repairPreparationCount > preparationCount && journey.window.attachedSheet == nil }
+                let occupant = unrelatedSheet(on: journey.window)
+                journey.blocker.gate.writer.finish(Data())
+                await fulfillment(of: [barrierDone], timeout: 15)
+                try await assertFollowingPreviewProgresses(journey)
+                XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+                XCTAssertTrue(journey.window.attachedSheet === occupant.window)
+                journey.window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+                try await approveChosenRepair(journey)
+                let arguments = ["worktree", "repair", relative ? "--relative-paths" : "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
+                await waitUntil { journey.origin.gate.commands.contains(arguments) && journey.origin.service.worktree(forBranch: "refs/heads/topic")?.hasBrokenLink == false }
+                XCTAssertEqual(journey.origin.gate.commands.filter { $0 == arguments }.count, 1)
+                XCTAssertEqual(journey.controller.errors.count, 0)
+                try assertRepairedJourney(journey, relative: relative)
             }
-            let barrierDone = expectation(description: "writer preceding the chosen repair style completes")
-            enqueue(journey.blocker.service, command: .lock(path: journey.fixture.linked.path, reason: "barrier")) { _, error in XCTAssertNil(error); barrierDone.fulfill() }
-            XCTAssertTrue(journey.blocker.gate.writer.isPending)
-            let preparationCount = journey.origin.service.repairPreparationCount
-            journey.window.endSheet(journey.style, returnCode: .alertSecondButtonReturn)
-            await waitUntil { journey.origin.service.repairPreparationCount > preparationCount && journey.window.attachedSheet == nil }
-            let occupant = unrelatedSheet(on: journey.window)
-            journey.blocker.gate.writer.finish(Data())
-            await fulfillment(of: [barrierDone], timeout: 15)
-            let arguments = ["worktree", "repair", "--relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
-            await waitUntil { journey.origin.gate.commands.contains(arguments) }
-            guard journey.origin.gate.commands.contains(arguments) else { return }
-            await waitUntil { journey.origin.service.worktree(forBranch: "refs/heads/topic")?.path == WorktreePaths.canonical(journey.fixture.linked.path) }
-            XCTAssertEqual(journey.origin.gate.commands.filter { $0 == arguments }.count, 1)
-            XCTAssertTrue(journey.window.attachedSheet === occupant.window, "An approved proven repair must leave the unrelated presenter's sheet attached")
-            XCTAssertEqual(journey.window.sheets.count, 1, "An unchanged proven plan needs no additional consent")
-            XCTAssertEqual(journey.controller.errors.count, 0)
-            try assertRepairedJourney(journey, relative: true)
-            try attachScreenshot(of: journey.window, named: "Worktrees-Proven-Style-Repair-Behind-Unrelated-Sheet")
-            try await assertFollowingPreviewProgresses(journey)
-            let occupantEnded = expectation(forNotification: NSWindow.didEndSheetNotification, object: journey.window)
-            journey.window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
-            await fulfillment(of: [occupantEnded], timeout: 15)
-            await drainCallbacks()
-            XCTAssertEqual(journey.controller.errors.count, 0, "The repaired operation must not leave a deferred postcondition failure")
-            XCTAssertTrue(journey.window.sheets.isEmpty)
         }
 
         func testRepairAndFollowingWorktreeFailuresWaitInOrderForTheirOriginalWindowSheet() async throws {
@@ -1145,6 +1259,7 @@ import XCTest
             let arguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
             journey.origin.gate.holdNextArguments = arguments
             journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
+            try await approveChosenRepair(journey)
             await waitUntil { journey.origin.gate.writer.isPending }
             let occupant = unrelatedSheet(on: journey.window)
             let repairFailure = try journey.fixture.gitFailure(["worktree", "repair", "--unknown-repair-overlap-option"])
@@ -1201,6 +1316,7 @@ import XCTest
                 let arguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
                 journey.origin.gate.holdNextArguments = arguments
                 journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
+                try await approveChosenRepair(journey)
                 await waitUntil { journey.origin.gate.writer.isPending }
                 let occupant = unrelatedSheet(on: journey.window)
                 let refused = try journey.fixture.gitFailure(["worktree", "repair", "--unknown-stale-overlap-option"])
@@ -1244,6 +1360,7 @@ import XCTest
             let arguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
             journey.origin.gate.holdNextArguments = arguments
             journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
+            try await approveChosenRepair(journey)
             await waitUntil { journey.origin.gate.writer.isPending }
             let occupant = unrelatedSheet(on: journey.window)
             let refused = try journey.fixture.gitFailure(["worktree", "repair", "--unknown-pending-capability-option"])
@@ -1330,6 +1447,7 @@ import XCTest
                 let arguments = ["worktree", "repair", "--no-relative-paths", WorktreePaths.canonical(journey.fixture.main.path), WorktreePaths.canonical(journey.fixture.linked.path)]
                 journey.origin.gate.holdNextArguments = arguments
                 journey.window.endSheet(journey.style, returnCode: .alertFirstButtonReturn)
+                try await approveChosenRepair(journey)
                 await waitUntil { journey.origin.gate.writer.isPending }
                 let occupant = presentation == 2 ? nil : unrelatedSheet(on: journey.window)
                 if presentation == 2 {
@@ -1466,7 +1584,7 @@ import XCTest
             try FileManager.default.removeItem(at: gitfile)
             origin.service.refresh()
             await waitUntil { origin.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
-            let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+            let style = try await waitForSheet(in: window, containing: "Absolute Paths")
             let preparationCount = origin.service.repairPreparationCount
             window.endSheet(style, returnCode: .alertFirstButtonReturn)
             await waitUntil { origin.service.repairPreparationCount > preparationCount && window.attachedSheet == nil }
@@ -1700,7 +1818,7 @@ import XCTest
             try FileManager.default.removeItem(at: gitfile)
             origin.service.refresh()
             await waitUntil { origin.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
-            let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+            let style = try await waitForSheet(in: window, containing: "Absolute Paths")
             window.endSheet(style, returnCode: .alertFirstButtonReturn)
             let initialConsent = try await waitForSheet(in: window, containing: "Reclaim")
             XCTAssertFalse(origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
@@ -1765,7 +1883,7 @@ import XCTest
             try FileManager.default.removeItem(at: gitfile)
             origin.service.refresh()
             await waitUntil { origin.service.worktrees.contains { $0.hasBrokenLink } }
-            let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+            let style = try await waitForSheet(in: window, containing: "Absolute Paths")
             window.endSheet(style, returnCode: .alertFirstButtonReturn)
             let consent = try await waitForSheet(in: window, containing: "Reclaim")
             let cancel = try XCTUnwrap(descendants(consent.contentView).compactMap { $0 as? NSButton }.first { $0.title == "Cancel" })
@@ -1835,7 +1953,7 @@ import XCTest
                 try FileManager.default.removeItem(at: fixture.linked.appendingPathComponent(".git"))
                 origin.service.refresh()
                 await waitUntil { origin.service.worktrees.contains { $0.hasBrokenLink } }
-                let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+                let style = try await waitForSheet(in: window, containing: "Absolute Paths")
                 window.endSheet(style, returnCode: .alertFirstButtonReturn)
                 consent = try await waitForSheet(in: window, containing: "Reclaim")
             } else {
@@ -2012,7 +2130,7 @@ import XCTest
                 let controller = recordingController(for: origin)
                 do {
                     let window = try XCTUnwrap(controller.window)
-                    let style = try await waitForSheet(in: window, containing: "Repair with Absolute Paths")
+                    let style = try await waitForSheet(in: window, containing: "Absolute Paths")
                     return MovedRepairJourney(fixture: fixture, blocker: blocker, origin: origin, following: following,
                                               controller: controller, window: window, style: style, tree: tree,
                                               administrative: administrative, payload: payload)
@@ -2045,6 +2163,16 @@ import XCTest
             let backlinkPath = (backlink as NSString).isAbsolutePath ? backlink : journey.administrative.appendingPathComponent(backlink).path
             XCTAssertEqual(WorktreePaths.canonical(backlinkPath), WorktreePaths.canonical(journey.fixture.linked.appendingPathComponent(".git").path))
             XCTAssertFalse(journey.origin.service.worktrees.contains { $0.hasBrokenLink })
+        }
+
+        private func approveChosenRepair(_ journey: MovedRepairJourney) async throws {
+            let consent = try await waitForSheet(in: journey.window, containing: "Repair these worktree links?")
+            XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) }, "Style choice cannot authorize a write")
+            XCTAssertTrue(sheetText(consent).contains(WorktreePaths.canonical(journey.fixture.main.path)))
+            XCTAssertTrue(sheetText(consent).contains(WorktreePaths.canonical(journey.fixture.linked.path)))
+            XCTAssertEqual(consent.defaultButtonCell?.title, "Cancel")
+            try attachScreenshot(of: consent, named: "Worktrees-Repair-Exact-Scope-Default-Cancel")
+            journey.window.endSheet(consent, returnCode: .alertFirstButtonReturn)
         }
 
         private func assertFollowingPreviewProgresses(_ journey: MovedRepairJourney) async throws {
@@ -2184,7 +2312,9 @@ import XCTest
                     // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
                     MainActor.assumeIsolated { completion(output, error as NSError?) }
                 }
-            default: XCTFail("These tests enqueue lock and unlock through public compatibility facades")
+            default:
+                XCTFail("These tests enqueue lock and unlock through public compatibility facades")
+                completion(nil, NSError(domain: "WorktreePresentationFixture", code: 1))
             }
         }
 
