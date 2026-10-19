@@ -1754,7 +1754,7 @@
     {
       "id": "ENV-001",
       "family": "Deterministic Git fixtures",
-      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input. Presentation fixtures retain files through cancellation and main-actor worker acknowledgement, restore the original Git preference once, then remove only drained fixtures.",
+      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input. Presentation fixtures retain files through cancellation and main-actor worker acknowledgement, restore the original Git preference once, then remove only drained fixtures. Explicit presentation-fixture opens establish the existing host as active and its visible owner window or sheet as key before queue actions; later production resumption remains focus-preserving.",
       "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state. Preference notifications during teardown can restart services, while premature fixture deletion races late workers.",
       "sourcePaths": [
         "GitXTests/GitXTestGitEnvironment.swift",
@@ -1804,6 +1804,13 @@
           "identifier": "GitXTests/WorktreePresentationTests/testFixtureTeardownRestoresGitOnceBeforeRemovingAllDrainedFixtures",
           "role": "valid",
           "oracle": "At the actual single preference-restoration boundary, both real fixture roots still exist and all services are drained; afterward the original preference is restored and both roots are absent."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testFixtureOpenEstablishesTheActiveVisibleKeyOwnerBeforeQueueActions",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Hide the test application, explicitly open a fixture, and require the same existing host to be active with a visible key owner before starting queue assertions."
         }
       ]
     },

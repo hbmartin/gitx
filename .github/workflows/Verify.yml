@@ -140,8 +140,8 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: scripts/verify_static.sh "$BASE_REF"
 
-  unit-and-analyze:
-    name: unit tests and analyzer
+  worktree-contracts:
+    name: worktree Release, regression and performance checks
     needs: toolchain-smoke
     runs-on: macos-26
     timeout-minutes: 75
@@ -193,6 +193,45 @@ jobs:
             -only-testing:GitXTests/GitXPerformanceTests/testWorktreeEligibilityCanonicalResolutionCost \
             -only-testing:GitXTests/GitXPerformanceTests/testFullWorktreeOwnershipScanCost \
             -only-testing:GitXTests/GitXPerformanceTests/testWorktreeHeaderOnlyOutlineUpdateCost
+      - name: Upload worktree verification results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: GitX-worktree-safety-results
+          path: |
+            artifacts/verification/*/receipt.json
+            artifacts/verification/*/Logs
+            artifacts/verification/*/Results
+
+  unit-and-analyze:
+    name: unit tests and analyzer
+    needs: [toolchain-smoke, worktree-contracts]
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: "26.6"
+      - name: Restore pinned Swift tool cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.mint
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-mint-${{ hashFiles('Mintfile') }}
+      - name: Install pinned Swift tools
+        run: |
+          brew install mint
+          mint bootstrap
+      - name: Prepare ObjectiveGit
+        run: |
+          cd External/objective-git
+          script/bootstrap
+          script/update_libgit2
       - name: Run unit and integration tests
         run: scripts/xcodebuild.sh --run-id "verify-correctness-${{ github.run_id }}-${{ github.run_attempt }}" test correctness
       - name: Run Clang static analyzer

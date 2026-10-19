@@ -18,7 +18,7 @@ import XCTest
                 let content = Data("keep uncommitted work after changed consent\n".utf8)
                 try content.write(to: dirty)
                 let origin = try await installService(in: fixture)
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 controller.presentsErrors = true
                 let window = try XCTUnwrap(controller.window)
                 await activateWorktreeTestApplication()
@@ -64,7 +64,7 @@ import XCTest
                 let content = Data("keep uncommitted work after changed consent\n".utf8)
                 try content.write(to: dirty)
                 let origin = try await installService(in: fixture)
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 controller.presentsErrors = true
                 let window = try XCTUnwrap(controller.window)
                 await activateWorktreeTestApplication()
@@ -99,6 +99,24 @@ import XCTest
                 XCTAssertEqual(try Data(contentsOf: dirty), content)
                 try attachScreenshot(of: rejected, named: force ? "Worktrees-Forced-Removal-Changed-HEAD-Rejected" : "Worktrees-Removal-Changed-HEAD-Rejected")
             }
+        }
+
+        func testFixtureOpenEstablishesTheActiveVisibleKeyOwnerBeforeQueueActions() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let origin = try await installService(in: fixture)
+            NSApp.hide(nil)
+            await waitUntil { NSApp.isHidden }
+            // This models a new explicit open, not an automatic production resume.
+            let controller = await recordingController(for: origin)
+            defer { controller.close() }
+            let window = try XCTUnwrap(controller.window)
+            XCTAssertTrue(NSApp.isActive)
+            XCTAssertFalse(NSApp.isHidden)
+            XCTAssertTrue(window.isVisible)
+            XCTAssertTrue(window.isKeyWindow)
+            XCTAssertNil(window.attachedSheet)
+            try attachScreenshot(of: window, named: "Worktrees-Explicit-Fixture-Open-Establishes-Foreground")
         }
 
         func testFixtureCleanupDrainsHeldDiscoveryBeforeRestoringGitPreferences() async throws {
@@ -585,7 +603,7 @@ import XCTest
                 let origin = try await installService(in: fixture)
                 let alternative = try await installService(in: fixture)
                 let following = try await installService(in: fixture)
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 let window = try XCTUnwrap(controller.window)
                 let document = PBGitRepositoryDocument()
                 // Use the existing Cocoa-owned repository slot without widening production API.
@@ -617,6 +635,7 @@ import XCTest
                 }
                 origin.gate.writer.finish(refused.data, error: refused.error)
                 await fulfillment(of: [completed], timeout: 15)
+                await waitUntil { controller.errors.count == 1 }
                 XCTAssertEqual(controller.errors.count, 1)
                 XCTAssertTrue(controller.errors.first?.localizedFailureReason?.contains("not locked") == true)
                 XCTAssertEqual(try fixture.ownershipProof(), initial)
@@ -630,7 +649,7 @@ import XCTest
             let origin = try await installService(in: fixture)
             let replacement = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer { origin.repository.setValue(origin.service, forKey: "worktreeService"); controller.close() }
             let initial = try fixture.ownershipProof()
@@ -670,7 +689,7 @@ import XCTest
                 let origin = try await installService(in: fixture)
                 let alternative = try await installService(in: fixture)
                 let following = try await installService(in: fixture)
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 let window = try XCTUnwrap(controller.window)
                 defer { controller.close() }
                 let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
@@ -701,7 +720,7 @@ import XCTest
             let fixture = try makeFixture()
             _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
             let origin = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer {
                 if let sheet = window.attachedSheet {
@@ -736,7 +755,7 @@ import XCTest
             try content.write(to: dirty)
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer {
                 if let sheet = window.attachedSheet {
@@ -789,7 +808,7 @@ import XCTest
             let origin = try await installService(in: fixture)
             let alternative = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer {
                 if let sheet = window.attachedSheet {
@@ -832,7 +851,7 @@ import XCTest
             let origin = try await installService(in: fixture)
             let alternative = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer {
                 if let sheet = window.attachedSheet {
@@ -881,7 +900,7 @@ import XCTest
                 _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
                 let origin = try await installService(in: fixture)
                 let following = try await installService(in: fixture)
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 controller.presentsErrors = true
                 let window = try XCTUnwrap(controller.window)
                 addTeardownBlock { @MainActor in
@@ -954,7 +973,7 @@ import XCTest
                 let administrative = try fixture.administrativeDirectory()
                 let origin = try await installService(in: fixture)
                 let following = try await installService(in: fixture)
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 let window = try XCTUnwrap(controller.window)
                 defer {
                     if let sheet = window.attachedSheet {
@@ -1016,7 +1035,7 @@ import XCTest
             let fixture = try makeFixture()
             _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
             let origin = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close() }
             let initial = try fixture.ownershipProof()
@@ -1042,7 +1061,7 @@ import XCTest
                 let origin = try await installService(in: fixture)
                 let alternative = try await installService(in: fixture)
                 let following = try await installService(in: fixture)
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 let window = try XCTUnwrap(controller.window)
                 defer {
                     if let sheet = window.attachedSheet {
@@ -1512,7 +1531,7 @@ import XCTest
             let administrative = try fixture.administrativeDirectory()
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer {
                 if let sheet = window.attachedSheet {
@@ -1564,7 +1583,7 @@ import XCTest
             let blocker = try await installService(in: fixture, holdsWriter: true)
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer {
                 if let sheet = window.attachedSheet {
@@ -1612,7 +1631,7 @@ import XCTest
             let administrative = try fixture.administrativeDirectory()
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close() }
             try FileManager.default.removeItem(at: fixture.linked)
@@ -1651,7 +1670,7 @@ import XCTest
                 let origin = try await installService(in: fixture)
                 let alternative = try await installService(in: fixture)
                 let following = try await installService(in: fixture)
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 let window = try XCTUnwrap(controller.window)
                 defer {
                     if let sheet = window.attachedSheet {
@@ -1702,7 +1721,7 @@ import XCTest
             try dirtyData.write(to: dirty)
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            var controller: RecordingWindowController? = recordingController(for: origin)
+            var controller: RecordingWindowController? = await recordingController(for: origin)
             weak let releasedController = controller
             let window = try XCTUnwrap(controller?.window)
             defer {
@@ -1757,7 +1776,7 @@ import XCTest
             let blocker = try await installService(in: fixture, holdsWriter: true)
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer {
                 if let sheet = window.attachedSheet {
@@ -1803,7 +1822,7 @@ import XCTest
             let fixture = try makeFixture()
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer {
                 if let sheet = window.attachedSheet {
@@ -1863,7 +1882,7 @@ import XCTest
             let fixture = try makeFixture()
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             let otherWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: .titled, backing: .buffered, defer: false)
             otherWindow.isReleasedWhenClosed = false
@@ -1939,7 +1958,7 @@ import XCTest
             let mainContent = try Data(contentsOf: fixture.main.appendingPathComponent("content.txt"))
             let linkedContent = try Data(contentsOf: fixture.linked.appendingPathComponent("content.txt"))
             let origin = try await installService(in: fixture, executable: executable)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             controller.presentsErrors = true
             let window = try XCTUnwrap(controller.window)
             defer {
@@ -2021,7 +2040,7 @@ import XCTest
             let blocker = try await installService(in: fixture, holdsWriter: true)
             let origin = try await installService(in: fixture)
             let following = try await installService(in: fixture)
-            let controller = recordingController(for: origin)
+            let controller = await recordingController(for: origin)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close() }
             let initial = try fixture.ownershipProof()
@@ -2127,7 +2146,7 @@ import XCTest
                 let origin = try await installService(in: fixture, executable: executable)
                 let following = try await installService(in: fixture, executable: executable)
                 let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
-                let controller = recordingController(for: origin)
+                let controller = await recordingController(for: origin)
                 do {
                     let window = try XCTUnwrap(controller.window)
                     let style = try await waitForSheet(in: window, containing: "Absolute Paths")
@@ -2241,11 +2260,21 @@ import XCTest
             return true
         }
 
-        private func recordingController(for origin: InstalledService) -> RecordingWindowController {
+        private func recordingController(for origin: InstalledService, file: StaticString = #filePath, line: UInt = #line) async -> RecordingWindowController {
             let controller = RecordingWindowController()
             controller.presentsErrors = false
             controller.repository = origin.repository
             controller.showWindow(nil)
+            guard let window = controller.window else {
+                XCTFail("The explicit fixture open must load its owner window", file: file, line: line)
+                return controller
+            }
+            await activateWorktreeTestApplication(file: file, line: line)
+            window.makeKeyAndOrderFront(nil)
+            await waitUntil({
+                NSApp.isActive && !NSApp.isHidden && window.isVisible
+                    && (window.isKeyWindow || window.attachedSheet?.isKeyWindow == true)
+            }, file: file, line: line)
             return controller
         }
 
@@ -2282,7 +2311,8 @@ import XCTest
 
         private func waitForSheet(in window: NSWindow, containing title: String) async throws -> NSWindow {
             await waitUntil { window.attachedSheet.map { self.sheetText($0).contains(title) || self.descendants($0.contentView).contains { ($0 as? NSButton)?.title == title } } == true }
-            return try XCTUnwrap(window.attachedSheet)
+            return try XCTUnwrap(window.attachedSheet,
+                                 "Expected \(title); active=\(NSApp.isActive), hidden=\(NSApp.isHidden), visible=\(window.isVisible), key=\(window.isKeyWindow), minimized=\(window.isMiniaturized)")
         }
 
         private func drainCallbacks() async {
