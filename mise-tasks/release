@@ -133,9 +133,17 @@ bundle_identifier=$(build_setting PRODUCT_BUNDLE_IDENTIFIER)
 log "Preflight passed (team $team_id, bundle $bundle_identifier, architecture $artifact_arch)"
 
 temporary_dir=
+app_candidate=
+app_backup=
 
 cleanup()
 {
+	if [[ -n "$app_backup" && -d "$app_backup" && ! -e "$final_app_dir" ]]; then
+		mv "$app_backup" "$final_app_dir" || echo "[gitx-release] Previous app retained at $app_backup" >&2
+	fi
+	if [[ -n "$app_candidate" ]]; then
+		rm -rf "$app_candidate"
+	fi
 	if [[ -n "$temporary_dir" ]]; then
 		rm -rf "$temporary_dir"
 	fi
@@ -193,12 +201,7 @@ zip_path="$output_root/$distribution_zip_name"
 dmg_path="$output_root/$distribution_dmg_name"
 checksum_path="$output_root/$distribution_checksum_name"
 
-rm -rf \
-	"$work_root" \
-	"$final_app_dir" \
-	"$zip_path" \
-	"$dmg_path" \
-	"$checksum_path"
+rm -rf "$work_root"
 mkdir -p "$logs_path" "$upload_export_path"
 
 log "Archiving GitX ($artifact_arch)"
@@ -250,10 +253,22 @@ done
 exported_app="$notarized_export_path/Half Dark.app"
 [[ -d "$exported_app" ]] || fail "The notarized export did not contain Half Dark.app"
 
-mkdir -p "$final_app_dir"
-ditto "$exported_app" "$final_app_path"
+"$root/scripts/verify_distribution_app.sh" "$exported_app" "$artifact_arch" export
+app_candidate=$(mktemp -d "$output_root/.gitx-release-app.XXXXXX")
+ditto "$exported_app" "$app_candidate/Half Dark.app"
 
-"$root/scripts/package_distribution.sh" "$final_app_path" "$output_root" "$artifact_arch"
+"$root/scripts/package_distribution.sh" "$app_candidate/Half Dark.app" "$output_root" "$artifact_arch"
+if [[ -e "$final_app_dir" ]]; then
+	app_backup=$(mktemp -d "$output_root/.gitx-release-previous.XXXXXX")
+	rmdir "$app_backup"
+	mv "$final_app_dir" "$app_backup"
+fi
+mv "$app_candidate" "$final_app_dir"
+app_candidate=
+if [[ -n "$app_backup" ]]; then
+	rm -rf "$app_backup"
+	app_backup=
+fi
 
 log "Release artifacts are ready:"
 printf '  App:       %s\n' "$final_app_path"

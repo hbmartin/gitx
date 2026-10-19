@@ -20,13 +20,31 @@ find_mount()
 {
 	hdiutil info -plist >"$staging/mounts.plist" || return $?
 	python3 - "$staging/mounts.plist" "$mount_point" "$staging/$distribution_dmg_name" <<'PY'
-import plistlib, sys
+import os, plistlib, sys
 with open(sys.argv[1], "rb") as source:
     info = plistlib.load(source)
-for image in info.get("images", []):
-    if image.get("image-path") != sys.argv[3]:
+if not isinstance(info, dict) or not isinstance(info.get("images"), list):
+    raise ValueError("Malformed attached-image inventory")
+images = info["images"]
+owned = []
+for image in images:
+    if not isinstance(image, dict) or not isinstance(image.get("image-path"), str) or not isinstance(image.get("system-entities"), list):
+        raise ValueError("Malformed attached-image record")
+    entities = image["system-entities"]
+    if any(not isinstance(entity, dict) for entity in entities):
+        raise ValueError("Malformed attached-image device")
+    if any(key in entity and not isinstance(entity[key], str) for entity in entities for key in ("mount-point", "dev-entry")):
+        raise ValueError("Malformed attached-image identity")
+    matches = os.path.realpath(image["image-path"]) == os.path.realpath(sys.argv[3])
+    occupied = any(isinstance(entity.get("mount-point"), str) and os.path.realpath(entity["mount-point"]) == os.path.realpath(sys.argv[2]) for entity in entities)
+    if occupied and not matches:
+        raise ValueError("Staging mountpoint belongs to an unidentified image")
+    if not matches:
         continue
-    entities = image.get("system-entities", [])
+    owned.append(entities)
+if len(owned) > 1:
+    raise ValueError("Distribution image has ambiguous attachment ownership")
+for entities in owned:
     for entity in entities:
         if entity.get("mount-point") == sys.argv[2] and entity.get("dev-entry"):
             print(entity["dev-entry"])

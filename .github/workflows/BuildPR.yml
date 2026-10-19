@@ -301,14 +301,37 @@ jobs:
           RELEASE_TAG: ${{ steps.tagger.outputs.tag }}
         run: |
           set -euo pipefail
-          shaarm64=$(shasum -a 256 distribution/HalfDark-arm64.dmg | cut -d " " -f1)
+          source scripts/distribution_artifact_names.sh
+          distribution_artifact_names arm64
+          shaarm64=$(python3 - "distribution/$distribution_checksum_name" "$distribution_zip_name" "$distribution_dmg_name" <<'PY'
+          import hashlib, pathlib, re, sys
+          manifest = pathlib.Path(sys.argv[1])
+          expected = set(sys.argv[2:])
+          digests = {}
+          for line in manifest.read_text().splitlines():
+              match = re.fullmatch(r"([0-9a-fA-F]{64})  (.+)", line)
+              if not match or match[2] not in expected or match[2] in digests:
+                  raise ValueError("Malformed or duplicate distribution checksum")
+              digests[match[2]] = match[1].lower()
+          if set(digests) != expected:
+              raise ValueError("Missing distribution checksum")
+          for name, digest in digests.items():
+              actual = hashlib.sha256()
+              with (manifest.parent / name).open("rb") as artifact:
+                  for chunk in iter(lambda: artifact.read(1024 * 1024), b""):
+                      actual.update(chunk)
+              if actual.hexdigest() != digest:
+                  raise ValueError("Distribution checksum mismatch")
+          print(digests[sys.argv[3]])
+          PY
+          )
           echo "arm64 sha256=$shaarm64"
           cat > brew/Casks/g/gitx.rb <<EOF
           cask "gitx" do
             version "$RELEASE_TAG"
             sha256 "$shaarm64"
 
-            url "https://github.com/gitx/gitx/releases/download/#{version}/HalfDark-arm64.dmg"
+            url "https://github.com/gitx/gitx/releases/download/#{version}/$distribution_dmg_name"
             name "Half Dark"
             desc "Git GUI"
             homepage "https://github.com/gitx/gitx"

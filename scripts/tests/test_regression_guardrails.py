@@ -95,6 +95,29 @@ class RegressionGuardrailTests(unittest.TestCase):
         self.assertGreaterEqual(len(contracts), 15)
         self.assertEqual(problems, [])
 
+    def test_fixture_runtime_contract_requires_separate_debug_and_release_evidence(self):
+        catalogue = json.loads(guard.CATALOGUE.read_text())
+        contract = next(item for item in catalogue["contracts"] if item["id"] == "INTEROP-001")
+        entries = [test for test in contract["tests"]
+                   if test["identifier"].endswith("/testWorktreeFixtureProbesAreAvailableOnlyInDebug")]
+        self.assertEqual({test.get("check", "correctness") for test in entries}, {"correctness", "release-contracts"})
+
+    def test_debug_pass_and_unrelated_release_pass_do_not_prove_the_release_oracle(self):
+        contract = copy.deepcopy(self.catalogue["contracts"][0])
+        contract["requiredChecks"] = ["correctness", "release-contracts"]
+        release = dict(contract["tests"][0], check="release-contracts")
+        contract["tests"].append(release)
+        records = [{"check": check, "validity": "valid", "status": "passed", "finishedAt": "2026-10-09T12:00:00Z",
+                    "receipt": check, "tests": [{"identifier": identifier, "configuration": configuration, "result": "Passed"}]}
+                   for check, configuration, identifier in [
+                       ("correctness", "Debug", release["identifier"]),
+                       ("release-contracts", "Release", "GitXTests/ContractTests/testBoundary")]]
+        status, _, outcomes = guard.assess_checks(contract["requiredChecks"], [contract], records)
+        self.assertEqual(status, "incomplete")
+        self.assertEqual(next(test for test in outcomes if test["check"] == "release-contracts")["status"], "incomplete")
+        records[1]["tests"][0]["identifier"] = release["identifier"]
+        self.assertEqual(guard.assess_checks(contract["requiredChecks"], [contract], records)[0], "ready")
+
     def test_catalogue_errors_are_advisory_and_do_not_accept_broken_references(self):
         for change in ({"id": "../bad"}, {"sourcePaths": ["../outside"]}, {"requiredChecks": None},
                        {"tests": [{"identifier": [], "check": [], "source": "missing"}]}):

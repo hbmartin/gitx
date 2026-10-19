@@ -1831,7 +1831,14 @@
           "source": "GitXTests/GitXInteropContractTests.swift",
           "identifier": "GitXTests/GitXInteropContractTests/testWorktreeFixtureProbesAreAvailableOnlyInDebug",
           "role": "compatibility",
-          "oracle": "Query actual Objective-C instance methods in Debug and Release: all fixture hooks, drainage and repair harness selectors must exist only in Debug, while the separate production compatibility contract stays available in both configurations."
+          "oracle": "Query actual Objective-C instance methods in Debug: fixture hooks, drainage and repair harness selectors exist, while production compatibility selectors remain available."
+        },
+        {
+          "source": "GitXTests/GitXInteropContractTests.swift",
+          "identifier": "GitXTests/GitXInteropContractTests/testWorktreeFixtureProbesAreAvailableOnlyInDebug",
+          "role": "compatibility",
+          "oracle": "Query actual Objective-C instance methods in Release: fixture hooks, drainage and repair harness selectors are absent, while production compatibility selectors remain available.",
+          "check": "release-contracts"
         }
       ]
     },

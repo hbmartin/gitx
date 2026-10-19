@@ -32,7 +32,7 @@ def app(path):
         plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark"}, output)
 failure = os.environ.get("GITX_DISTRIBUTION_FAIL", "")
 def fails(check, path):
-    stage = "zip" if "/zip/" in str(path) else "dmg" if "/mounted-dmg/" in str(path) else "input"
+    stage = "export" if "/Notarized/" in str(path) else "zip" if "/zip/" in str(path) else "dmg" if "/mounted-dmg/" in str(path) else "input"
     return failure in (check, check + ":" + stage)
 if tool == "xcodebuild":
     if "-showBuildSettings" in args:
@@ -89,6 +89,11 @@ elif tool == "hdiutil":
         if failure == "mount-info": sys.exit(16)
         mounts = [json.loads((root / "mount.json").read_text())] if (root / "mount.json").exists() else []
         images = [{"image-path": mount["image-path"], "system-entities": [mount]} for mount in mounts]
+        if failure == "foreign-mount":
+            for image in images: image["image-path"] = "/foreign/another.dmg"
+        if failure == "missing-images":
+            sys.stdout.buffer.write(plistlib.dumps({}))
+            sys.exit(0)
         sys.stdout.buffer.write(plistlib.dumps({"images": images}))
     elif args[0] == "detach":
         if failure == "detach": sys.exit(17)
