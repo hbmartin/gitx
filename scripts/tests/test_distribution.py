@@ -140,7 +140,7 @@ class DistributionTests(unittest.TestCase):
     def test_ambiguous_mount_inventory_retains_staging_and_never_detaches_foreign_devices(self):
         for releasing in (False, True):
             for failure in ("missing-images", "foreign-mount", "empty-image-identity", "conflicting-devices", "duplicate-owned-image", "malformed-entity"):
-                with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                with self.subTest(releasing=releasing, failure=failure), tempfile.TemporaryDirectory() as directory:
                     fixture = DistributionFixture(pathlib.Path(directory))
                     result = fixture.release(failure) if releasing else fixture.package(failure)
                     self.assertNotEqual(result.returncode, 0)
@@ -150,7 +150,7 @@ class DistributionTests(unittest.TestCase):
 
     def test_successful_detach_must_prove_image_absence_before_cleanup_or_publication(self):
         for releasing in (False, True):
-            with tempfile.TemporaryDirectory() as directory:
+            with self.subTest(releasing=releasing), tempfile.TemporaryDirectory() as directory:
                 fixture = DistributionFixture(pathlib.Path(directory))
                 result = fixture.release("detach-still-attached") if releasing else fixture.package("detach-still-attached")
                 self.assertNotEqual(result.returncode, 0)
