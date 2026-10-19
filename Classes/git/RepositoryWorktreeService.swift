@@ -1657,7 +1657,11 @@ final class PBRepositoryWorktreeService: NSObject {
             operation.discoveryCompletion = nil
             let complete = operation.task?.standardOutputTruncated == false && operation.task?.standardErrorTruncated == false
             operation.task = nil
-            let taskError = error.map { self.lifecycleFailure(self.operationError($0), phase: reconciling ? "reconciling" : "preparing", category: "task") }
+            let taskError: Error? = error.map { error in
+                // Reconciliation preserves its immediate cause, including Swift cancellation.
+                // Preparation still delivers the existing Cocoa cancellation contract.
+                reconciling ? error : self.lifecycleFailure(self.operationError(error), phase: "preparing", category: "task")
+            }
             self.evidence(operation: operation, {
                 if let error = taskError {
                     throw error
@@ -1667,9 +1671,10 @@ final class PBRepositoryWorktreeService: NSObject {
             }) { parsed in
                 switch parsed {
                 case let .failure(error):
-                    let reported: Error = error is WorktreeParseError
-                        ? self.lifecycleFailure(self.operationError(error), phase: reconciling ? "reconciling" : "preparing", category: "incomplete") : error
-                    self.deliverDiscovery(.failure(reported), context: context, operation: operation, reconciliationGeneration: reconciliationGeneration, completion: deliver)
+                    let reported: Error = !reconciling && error is WorktreeParseError
+                        ? self.lifecycleFailure(self.operationError(error), phase: "preparing", category: "incomplete") : error
+                    self.deliverDiscovery(.failure(reported), context: context, operation: operation, reconciliationGeneration: reconciliationGeneration,
+                                          failureCategory: taskError != nil ? "task" : error is WorktreeParseError ? "incomplete" : nil, completion: deliver)
                 case let .success(records):
                     guard self.canPublish(context) else {
                         self.finishReconciliation(operation: operation, generation: reconciliationGeneration, published: false)
@@ -1691,13 +1696,13 @@ final class PBRepositoryWorktreeService: NSObject {
     }
 
     private func deliverDiscovery(_ result: Result<WorktreeDiscoveryEvidence, Error>, context: WorktreeOperationContext,
-                                  operation: WorktreeOperation, reconciliationGeneration: UInt64?,
+                                  operation: WorktreeOperation, reconciliationGeneration: UInt64?, failureCategory: String? = nil,
                                   completion: @escaping @MainActor @Sendable (Result<[GitWorktree], Error>) -> Void)
     {
         let published: Bool
         if case let .failure(error) = result, operation.phase == .reconciling {
             let event = (error as NSError).userInfo["PBWorktreeLifecycleFailureEvent"] as? [String: String]
-            logEvent(operation.eventArguments, stage: "failed", phase: "reconciling", count: 1, category: event?["category"] ?? "context")
+            logEvent(operation.eventArguments, stage: "failed", phase: "reconciling", count: 1, category: failureCategory ?? event?["category"] ?? "context")
         }
         if case let .success(evidence) = result, canPublish(context) {
             publish(evidence)
