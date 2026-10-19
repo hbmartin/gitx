@@ -431,11 +431,11 @@ run_step() {
 	shift 3
 	started=$(python3 -c 'import time; print(time.time())')
 	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" ]]; then
-		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" -- "$@" 2>&1 | tee "$log_path" | xcbeautify --disable-logging
+		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" -- "$@" 2>&1 | xcbeautify --disable-logging
 		step_status=${PIPESTATUS[0]}
 	else
-		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" -- "$@" 2>&1 | tee "$log_path"
-		step_status=${PIPESTATUS[0]}
+		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" -- "$@"
+		step_status=$?
 	fi
 	duration=$(elapsed_seconds "$started")
 	if (( step_status == 0 )); then

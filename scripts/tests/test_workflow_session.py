@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import select
 import signal
 import subprocess
 import sys
@@ -139,6 +140,94 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 7, result.stderr)
             self.assertEqual(result.stdout, payload + b'failure\n')
             self.assertEqual(json.loads((pathlib.Path(directory) / 'diagnostic-owner.json').read_text())['status'], 'failed')
+
+    def test_captured_output_keeps_every_byte_and_the_child_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            output = root / 'command.log'
+            payload = bytes(range(256)) * 4096 + b'failure\n'
+            command = 'import os; os.write(1, bytes(range(256)) * 4096); os.write(2, b"failure\\n"); raise SystemExit(7)'
+            result = subprocess.run([sys.executable, str(ROOT / 'scripts/workflow_session.py'), 'run',
+                                     '--diagnostics', str(root / 'diagnostics'), '--output-log', str(output),
+                                     '--', sys.executable, '-c', command], capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(result.stdout, payload)
+            self.assertEqual(output.read_bytes(), payload)
+            manifest = json.loads((root / 'diagnostics/diagnostic-owner.json').read_text())
+            self.assertEqual(manifest['status'], 'failed')
+            self.assertTrue(manifest['outputCapture']['consoleComplete'])
+
+    def test_blocked_console_cannot_delay_child_completion_or_lose_the_raw_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            progress = root / 'progress'
+            os.mkfifo(progress)
+            descriptor = os.open(progress, os.O_RDWR | os.O_NONBLOCK)
+            self.addCleanup(os.close, descriptor)
+            output = root / 'command.log'
+            command = ('import sys; sys.stdout.buffer.write(bytes(range(256)) * 16384); sys.stdout.flush(); '
+                       'open(sys.argv[1], "w").write("finished"); raise SystemExit(7)')
+            with subprocess.Popen([sys.executable, str(ROOT / 'scripts/workflow_session.py'), 'run',
+                                   '--diagnostics', str(root / 'diagnostics'), '--output-log', str(output),
+                                   '--', sys.executable, '-c', command, str(progress)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                try:
+                    # Neither console stream is drained before the independent
+                    # progress signal and the supervisor's exit are observed.
+                    self.assertTrue(select.select([descriptor], [], [], 5)[0], 'Child stalled behind the console')
+                    self.assertEqual(os.read(descriptor, 32), b'finished')
+                    self.assertEqual(process.wait(timeout=5), 7)
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                    process.communicate(timeout=10)
+            self.assertEqual(output.read_bytes(), bytes(range(256)) * 16384)
+            manifest = json.loads((root / 'diagnostics/diagnostic-owner.json').read_text())
+            self.assertFalse(manifest['outputCapture']['consoleComplete'])
+            self.assertEqual(manifest['outputCapture']['capturedBytes'], output.stat().st_size)
+
+    def test_captured_output_retains_watchdog_failure_and_rejects_symlink_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            output = root / 'command.log'
+            result = subprocess.run([sys.executable, str(ROOT / 'scripts/workflow_session.py'), 'run',
+                                     '--timeout', '0.2', '--diagnostics', str(root / 'diagnostics'),
+                                     '--output-log', str(output), '--', sys.executable, '-c',
+                                     'import time; print("started", flush=True); time.sleep(30)'],
+                                    capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 124, result.stderr)
+            self.assertIn(b'started\n', output.read_bytes())
+            self.assertIn(b'Verification blocker: command-timeout', output.read_bytes())
+            target = root / 'preserve'
+            target.write_text('keep')
+            output.unlink()
+            output.symlink_to(target)
+            marker = root / 'child-started'
+            with self.assertRaises(OSError):
+                session.supervise([sys.executable, '-c', f'open({str(marker)!r}, "w").close()'],
+                                  directory=root / 'symlink-diagnostics', output_log=output)
+            self.assertFalse(marker.exists())
+            self.assertEqual(target.read_text(), 'keep')
+
+    def test_raw_capture_failure_stops_the_owned_child_and_fails_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            child = None
+            spawn = session.subprocess.Popen
+            def remember(*arguments, **keywords):
+                nonlocal child
+                process = spawn(*arguments, **keywords)
+                if keywords.get('start_new_session'):
+                    child = process
+                return process
+            with mock.patch.object(session.subprocess, 'Popen', side_effect=remember), \
+                    mock.patch.object(session.CapturedConsole, 'write', side_effect=OSError('disk full')):
+                status = session.supervise([sys.executable, '-c', 'import time; print("started", flush=True); time.sleep(30)'],
+                                           timeout=5, directory=root / 'diagnostics', output_log=root / 'command.log')
+            self.assertEqual(status, 74)
+            self.assertIsNotNone(child.returncode)
+            self.assertEqual(json.loads((root / 'diagnostics/blocker.json').read_text())['category'], 'output-capture-failed')
+            self.assertEqual(json.loads((root / 'diagnostics/diagnostic-owner.json').read_text())['status'], 'failed')
 
     def test_git_environment_scrubs_repository_selectors_but_preserves_configuration(self):
         selectors = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",

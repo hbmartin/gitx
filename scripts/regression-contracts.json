@@ -1498,7 +1498,7 @@
     {
       "id": "TASK-001",
       "family": "Drainage and process lifetime",
-      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures.",
+      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs, and capture failure remains a failing verification.",
       "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output. Treating a presentation cancellation as writer cancellation can terminate Git mid-write; shared discovery cancellation can also erase a completed write's reconciliation and release the queue too early.",
       "sourcePaths": [
         "Classes/Util/PBTask*",
@@ -1506,13 +1506,18 @@
         "Classes/git/IndexReferenceTransaction.swift",
         "Classes/git/RepositoryWorktreeService.swift",
         "GitXCore/Sources/GitXCore/WorktreeEvidence.swift",
-        "GitXTests/WorktreeServiceTests.swift"
+        "GitXTests/WorktreeServiceTests.swift",
+        "scripts/workflow_session.py",
+        "scripts/xcodebuild.sh",
+        "scripts/tests/test_workflow_session.py",
+        "scripts/tests/test_script_entrypoints.py"
       ],
       "requiredChecks": [
         "correctness",
         "address-undefined",
         "thread-sanitizer",
-        "analyze"
+        "analyze",
+        "static"
       ],
       "tests": [
         {
