@@ -165,7 +165,7 @@ final class WorktreeWorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try workspace.git(["rev-parse", "HEAD"], in: main), head)
     }
 
-    func testLocateProvenMovedCheckoutRepairsBehindAnUnrelatedLockSheet() throws {
+    func testLocateMovedCheckoutWaitsForExplicitRepairConsentAfterAnUnrelatedLockSheet() throws {
         let (main, linked) = try fixture()
         let root = main.deletingLastPathComponent()
         let detached = root.appendingPathComponent("detached-checkout")
@@ -255,6 +255,38 @@ final class WorktreeWorkflowUITests: XCTestCase, @unchecked Sendable {
         reason.typeText(occupantReason)
         try Data().write(to: proxy.release)
         let expectedBacklink = Data((destination.appendingPathComponent(".git").path + "\n").utf8)
+        let detachedOutlineRow = window.outlines.firstMatch.outlineRows.containing(.staticText, identifier: detachedRow.label).firstMatch
+        let lockedImage = detachedOutlineRow.images["Locked"]
+        let lockWasPublished = lockedImage.waitForExistence(timeout: 10)
+        XCTAssertTrue(lockWasPublished, "The first real Lock must publish before testing the following Unlock publication")
+        guard lockWasPublished else { return }
+        XCTAssertEqual(app.sheets.count, 1)
+        XCTAssertTrue(occupant.exists)
+        XCTAssertEqual(reason.value as? String, occupantReason)
+        XCTAssertTrue(occupant.buttons["Lock"].exists)
+        XCTAssertFalse(app.sheets.buttons["Reclaim"].exists)
+        XCTAssertFalse(app.sheets.buttons["Repair"].exists)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: proxy.repairArguments.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: proxy.repairInvocations.path))
+        XCTAssertEqual(try Data(contentsOf: topicAdmin.appendingPathComponent("gitdir")), originalBacklink)
+        screenshot("Worktrees-Locate-Repair-Awaits-Unrelated-Lock-Sheet", window: window)
+        occupant.buttons["Cancel"].click()
+        let review = app.sheets.containing(.button, identifier: "Repair").firstMatch
+        XCTAssertTrue(review.waitForExistence(timeout: 10))
+        XCTAssertTrue(review.buttons["Repair"].isEnabled)
+        XCTAssertTrue(review.buttons["Cancel"].isEnabled)
+        XCTAssertFalse(review.buttons["Reclaim"].exists)
+        let scope = review.staticTexts.allElementsBoundByIndex.map { $0.label + "\n" + ($0.value as? String ?? "") }.joined(separator: "\n")
+        XCTAssertTrue(scope.contains("Git will repair links for these worktree folders:\n\n" + main.path + "\n" + destination.path))
+        XCTAssertFalse(scope.contains(linked.path))
+        XCTAssertFalse(scope.contains(detached.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: proxy.repairArguments.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: proxy.repairInvocations.path))
+        XCTAssertEqual(try Data(contentsOf: topicAdmin.appendingPathComponent("gitdir")), originalBacklink)
+        XCTAssertEqual(try protectedURLs.map { try Data(contentsOf: $0) }, protected)
+        XCTAssertEqual(try workspace.git(["show-ref", "--head"], in: main), refs)
+        screenshot("Worktrees-Locate-Exact-Scope-Repair-Approval", window: window)
+        review.buttons["Repair"].click()
         guard waitForFile(topicAdmin.appendingPathComponent("gitdir"), matching: expectedBacklink) else { return }
         let repairArguments = ["--git-dir=" + main.appendingPathComponent(".git").path, "worktree", "repair", "--no-relative-paths", main.path, destination.path]
         XCTAssertEqual(try Data(contentsOf: proxy.repairArguments), nulArguments(repairArguments))
@@ -267,21 +299,8 @@ final class WorktreeWorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try protectedURLs.map { try Data(contentsOf: $0) }, protected)
         XCTAssertEqual(try workspace.git(["show-ref", "--head"], in: main), refs)
         XCTAssertEqual(try String(contentsOf: detachedAdmin.appendingPathComponent("locked"), encoding: .utf8), firstReason + "\n")
-        let detachedOutlineRow = window.outlines.firstMatch.outlineRows.containing(.staticText, identifier: detachedRow.label).firstMatch
-        let lockedImage = detachedOutlineRow.images["Locked"]
-        let lockWasPublished = lockedImage.waitForExistence(timeout: 10)
-        XCTAssertTrue(lockWasPublished, "The first real Lock must publish before testing the following Unlock publication")
-        guard lockWasPublished else { return }
-        XCTAssertEqual(app.sheets.count, 1)
-        XCTAssertTrue(occupant.exists)
-        XCTAssertEqual(reason.value as? String, occupantReason)
-        XCTAssertTrue(occupant.buttons["Lock"].exists)
-        XCTAssertFalse(app.sheets.buttons["Reclaim"].exists)
-        XCTAssertFalse(app.sheets.buttons["Repair"].exists)
-        screenshot("Worktrees-Proven-Locate-Repair-Behind-Unrelated-Lock-Sheet", window: window)
-        occupant.buttons["Cancel"].click()
-        let cancelled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: app.sheets)
-        XCTAssertEqual(XCTWaiter.wait(for: [cancelled], timeout: 10), .completed)
+        let confirmed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: app.sheets)
+        XCTAssertEqual(XCTWaiter.wait(for: [confirmed], timeout: 10), .completed)
         detachedRow.rightClick()
         XCTAssertTrue(app.menuItems["Unlock Worktree"].waitForExistence(timeout: 10))
         app.menuItems["Unlock Worktree"].click()

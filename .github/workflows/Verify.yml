@@ -266,6 +266,11 @@ jobs:
           cd External/objective-git
           script/bootstrap
           script/update_libgit2
+      - name: Repeat the fresh Locate consent journey five times
+        run: |
+          scripts/xcodebuild.sh --run-id "verify-ui-locate-${{ github.run_id }}-${{ github.run_attempt }}" \
+            test ui -test-iterations 5 \
+            -only-testing:GitXUITests/WorktreeWorkflowUITests/testLocateMovedCheckoutWaitsForExplicitRepairConsentAfterAnUnrelatedLockSheet
       - name: Run UI plan
         run: scripts/xcodebuild.sh --run-id "verify-ui-${{ github.run_id }}-${{ github.run_attempt }}" test ui
       - name: Upload UI result
@@ -277,6 +282,9 @@ jobs:
             artifacts/verification/verify-ui-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
             artifacts/verification/verify-ui-${{ github.run_id }}-${{ github.run_attempt }}/Logs
             artifacts/verification/verify-ui-${{ github.run_id }}-${{ github.run_attempt }}/Results
+            artifacts/verification/verify-ui-locate-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+            artifacts/verification/verify-ui-locate-${{ github.run_id }}-${{ github.run_attempt }}/Logs
+            artifacts/verification/verify-ui-locate-${{ github.run_id }}-${{ github.run_attempt }}/Results
 
   sanitizers:
     name: ${{ matrix.name }}

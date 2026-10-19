@@ -1043,10 +1043,10 @@
         },
         {
           "source": "GitXUITests/WorktreeWorkflowUITests.swift",
-          "identifier": "GitXUITests/WorktreeWorkflowUITests/testLocateProvenMovedCheckoutRepairsBehindAnUnrelatedLockSheet",
+          "identifier": "GitXUITests/WorktreeWorkflowUITests/testLocateMovedCheckoutWaitsForExplicitRepairConsentAfterAnUnrelatedLockSheet",
           "check": "ui",
           "role": "boundary",
-          "oracle": "Use the actual Locate panel while a controlled earlier writer holds FIFO and an unrelated Lock sheet owns the window; proven repair executes without replacing that sheet, restores exact reciprocal links, preserves HEAD/index/refs/payload and allows the following lock to complete."
+          "oracle": "Use the actual Locate panel while a controlled earlier writer holds FIFO and an unrelated Lock sheet owns the window; no repair occurs during contention or before explicit approval of the fresh exact target list. After approval, repair runs exactly once, restores reciprocal links, preserves HEAD/index/refs/payload and permits the following Unlock to complete."
         },
         {
           "source": "GitXTests/WorktreeServiceTests.swift",
