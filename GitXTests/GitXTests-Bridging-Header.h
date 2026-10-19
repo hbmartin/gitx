@@ -41,6 +41,7 @@ typedef void (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationReady)(PBWorktreePrepared
 typedef void (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationPrepare)(PBWorktreePresentationReady ready) NS_SWIFT_SENDABLE;
 typedef BOOL (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationOwner)(void) NS_SWIFT_SENDABLE;
 
+#if DEBUG
 @interface PBWorktreePreparedPresentationTestValue : NSObject
 - (instancetype)initWithFinishesWhenSheetEnds:(BOOL)finishesWhenSheetEnds
                                     present:(PBWorktreePresentationPresent)present
@@ -56,6 +57,8 @@ typedef BOOL (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationOwner)(void) NS_SWIFT_SEN
 - (void)invalidate;
 @end
 
+#endif
+
 @interface PBRepositoryWorktreeService (FixtureDrainTesting)
 - (void)refreshPrunePreview:(PBWorktreePrunePreview *)preview ownerIsCurrent:(PBWorktreePresentationOwner)ownerIsCurrent
 				 completion:(void(NS_SWIFT_UI_ACTOR ^)(PBWorktreePrunePreview *_Nullable, BOOL, NSError *_Nullable))completion
@@ -63,6 +66,7 @@ typedef BOOL (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationOwner)(void) NS_SWIFT_SEN
 - (void)confirmPrune:(PBWorktreePrunePreview *)preview ownerIsCurrent:(PBWorktreePresentationOwner)ownerIsCurrent
 		  completion:(void(NS_SWIFT_UI_ACTOR ^)(PBWorktreePrunePreview *_Nullable, NSError *_Nullable))completion
 	NS_SWIFT_NAME(confirmPrune(_:ownerIsCurrent:completion:)) __attribute__((swift_async(none)));
+#if DEBUG
 - (void)beginRepairForTestingWithWorktree:(nullable PBGitWorktree *)worktree movedTo:(nullable NSString *)path relativePaths:(BOOL)relativePaths
 						   ownerIsCurrent:(PBWorktreePresentationOwner)ownerIsCurrent
 							   completion:(void(NS_SWIFT_UI_ACTOR ^)(PBWorktreeRepairPreview *_Nullable, BOOL, NSError *_Nullable))completion
@@ -75,8 +79,11 @@ typedef BOOL (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationOwner)(void) NS_SWIFT_SEN
 @property (nonatomic, copy, nullable) PBWorktreePreparationObserver discoveryEvidenceObserver;
 @property (nonatomic, copy, nullable) void(NS_SWIFT_UI_ACTOR ^ lifecycleEventObserver)(NSString *event);
 @property (nonatomic, readonly) NSUInteger ownershipCaptureCount;
+#endif
 @property (nonatomic, readonly) BOOL isSnapshotStale;
+#if DEBUG
 - (void)drainForTestingWithCompletion:(void(NS_SWIFT_UI_ACTOR ^)(void))completion NS_SWIFT_NAME(drainForTesting(completion:));
+#endif
 @end
 
 @interface PBTaskExecutionContext : NSObject

@@ -1159,7 +1159,7 @@
         {
           "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeServiceTests/testRemovalRereadsExternalChangesWithoutAdoptingNewConsent",
-          "role": "rejection",
+          "role": "failure",
           "oracle": "Switch branch, lock, or remove a real registration without refreshing the service, then attempt normal and forced removal; the fresh list publishes and no remove process or further filesystem mutation occurs."
         },
         {
@@ -1754,7 +1754,7 @@
     {
       "id": "INTEROP-001",
       "family": "Debug and Release interoperability",
-      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations; Objective-C-imported subclasses can execute controller callbacks without Swift-only virtual dispatch failures. Legacy worktree service selectors and the programmatic showHistoryView: entry remain available alongside the separate returnToHistory: responder action in Debug and Release. Sendable capability callbacks read their exact imported task's flags only through a main-actor boundary, preserving weak retention and generation guards under fresh compiler analysis.",
+      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations; Objective-C-imported subclasses can execute controller callbacks without Swift-only virtual dispatch failures. Legacy worktree service selectors and the programmatic showHistoryView: entry remain available alongside the separate returnToHistory: responder action in Debug and Release. Sendable capability callbacks read their exact imported task's flags only through a main-actor boundary, preserving weak retention and generation guards under fresh compiler analysis. Debug-only worktree fixture selectors and their Objective-C test declarations/consumers are excluded together from Release; production-facing service tests remain executable in Release.",
       "rootCause": "Conditional runtime/test surfaces or bridge annotations compile in Debug but fail in Release; new Swift-only virtual state accessors can have missing dispatch slots in Objective-C-imported subclasses.",
       "sourcePaths": [
         "Classes/*.h",
@@ -1826,6 +1826,12 @@
           "identifier": "GitXTests/GitXInteropContractTests/testMainQueueTaskConveniencesImportMainActorCallbacks",
           "role": "compatibility",
           "oracle": "Compile all three main-queue conveniences from a nonisolated helper whose inferred callbacks bind nonoptional MainActor = #isolation, so missing callback annotations cause ordinary type errors; execute real commands and require MainActor.shared identity, exact output, nil errors and exactly-once delivery. Arbitrary-queue PBTask lifecycle tests retain their requested-queue contract."
+        },
+        {
+          "source": "GitXTests/GitXInteropContractTests.swift",
+          "identifier": "GitXTests/GitXInteropContractTests/testWorktreeFixtureProbesAreAvailableOnlyInDebug",
+          "role": "compatibility",
+          "oracle": "Query actual Objective-C instance methods in Debug and Release: all fixture hooks, drainage and repair harness selectors must exist only in Debug, while the separate production compatibility contract stays available in both configurations."
         }
       ]
     },
