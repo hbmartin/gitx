@@ -604,7 +604,7 @@
     {
       "id": "STATE-001",
       "family": "Snapshot and refresh authority",
-      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter. Prune authority is bound to the approved preview's administrative registrations and revalidated at writer admission; changed candidates require an updated preview and a new confirmation. Sidebar row restoration refreshes controls and preserves local-branch reference actions without changing mounted content or the browsed revision. Worktree callbacks and deferred confirmations retain their originating window, repository, service and presentation generation; closing or replacing an owner revokes authority even when the same objects are restored. Expected cancellation is silent while genuine current-owner failures remain observable. Repair and prune consent ignore HEAD-only changes but remain sensitive to exact links, lock and availability metadata, administrative identities, executable context and raw Git reports. Explicit History adopts the selected canonical checkout's newest captured revision; passive synchronization preserves its authoritative revision object and mounted content. Lifecycle menu actions use the clicked checkout even when several checkouts share a branch. Owner revocation cancels pending consent and publication while already-admitted checked writes drain through captured-context reconciliation. Operation-owned reconciliation retires earlier ordinary discoveries before they can republish stale records. Pure context checks do not restart capability probes; rejected queued requests coalesce a capability reprobe after admission release and never replay the write. Ownership evidence failures retain valid records and their original cause; stale ownership requires fresh discovery and a new request. Retired discoveries skip ownership scanning. Reclaim consent keeps both Return and Escape bound to cancellation. Fixture drainage delivers clients sequentially and drains the writer again after pane producers finish; revoked discard eligibility cannot reuse prior approval. Hiding, minimizing, or changing foreground windows does not revoke presentation authority: queued errors and repair/prune consent wait until the user returns to the original visible active key window without activating or restoring it. Close, repository or window replacement revokes authority. Deferred consent receives fresh single-use evidence after a genuine wait and is revalidated at confirmation; immediately available consent does not incur another inventory. Earlier invalidations are satisfied by owned reconciliation, while concurrent events and failed reconciliation retain one bounded recovery. Retained stale snapshots expose an accessible warning and Refresh action independently of row equality.",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter. Prune authority is bound to the approved preview's administrative registrations and revalidated at writer admission; changed candidates require an updated preview and a new confirmation. Sidebar row restoration refreshes controls and preserves local-branch reference actions without changing mounted content or the browsed revision. Worktree callbacks and deferred confirmations retain their originating window, repository, service and presentation generation; closing or replacing an owner revokes authority even when the same objects are restored. Expected cancellation is silent while genuine current-owner failures remain observable. Repair and prune consent ignore HEAD-only changes but remain sensitive to exact links, lock and availability metadata, administrative identities, executable context and raw Git reports. Explicit History adopts the selected canonical checkout's newest captured revision; passive synchronization preserves its authoritative revision object and mounted content. Lifecycle menu actions use the clicked checkout even when several checkouts share a branch. Owner revocation cancels pending consent and publication while already-admitted checked writes drain through captured-context reconciliation. Operation-owned reconciliation retires earlier ordinary discoveries before they can republish stale records. Pure context checks do not restart capability probes; rejected queued requests coalesce a capability reprobe after admission release and never replay the write. Ownership evidence failures retain valid records and their original cause; stale ownership requires fresh discovery and a new request. Retired discoveries skip ownership scanning. Reclaim consent keeps both Return and Escape bound to cancellation. Fixture drainage delivers clients sequentially and drains the writer again after pane producers finish; revoked discard eligibility cannot reuse prior approval. Hiding, minimizing, or changing foreground windows does not revoke presentation authority: queued errors and repair/prune consent wait until the user returns to the original visible active key window without activating or restoring it. Close, repository or window replacement revokes authority. Deferred consent receives fresh single-use evidence after a genuine wait and is revalidated at confirmation; immediately available consent does not incur another inventory. Earlier invalidations are satisfied by owned reconciliation, while concurrent events and failed reconciliation retain one bounded recovery. Retained stale snapshots expose an accessible warning and Refresh action independently of row equality. Worktree removal rereads current inventory at FIFO admission and compares it with the original approved row; missing initial inventory also requires an owned read before any ordinary mutation. Changed or missing removal evidence rejects the request without adopting refreshed consent.",
       "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content. A prune confirmation detached from current registration identity can forget worktrees the user did not approve. Restoring a row without its selection notification leaves controls stale; treating worktree rows only as lifecycle actions loses retained reference actions. Rebuilding an action from current owners or checking visibility alone lets old callbacks and deferred clicks regain authority after replacement or reopening. Comparing history state as ownership revokes harmless consent; a first-branch lookup redirects duplicate-row actions, and passive checked-out-branch following can override another checkout's selected history.",
       "sourcePaths": [
         "Classes/git/IndexRefreshCoordinator.swift",
@@ -1155,6 +1155,30 @@
           "identifier": "GitXTests/HistoryControllerTests/testSelectionReconciliationWorkingStateStatusAndTreeRestoration",
           "role": "boundary",
           "oracle": "Select the actual untracked working-state tree node, then await its rendered synthetic addition instead of a fixed delay; compare the independent full synthetic diff formatter output and preserve selection/restoration assertions."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testRemovalRereadsExternalChangesWithoutAdoptingNewConsent",
+          "role": "rejection",
+          "oracle": "Switch branch, lock, or remove a real registration without refreshing the service, then attempt normal and forced removal; the fresh list publishes and no remove process or further filesystem mutation occurs."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testInitialMutationsWaitForOwnedInventoryAndKeepMissingConsentRejected",
+          "role": "boundary",
+          "oracle": "Hold initial discovery after capability succeeds; ordinary mutations wait for an independent owned read, missing removal consent stays rejected, and late initial callbacks cannot replace reconciled rows."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testUnchangedNormalAndForcedRemovalReconcilesBeforeCompleting",
+          "role": "valid",
+          "oracle": "Unchanged consent allows exactly one normal or forced removal only after preflight; its completion waits for owned reconciliation and the real checkout is gone."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testExternalBranchChangeRejectsNormalAndForcedRemovalConsent",
+          "role": "boundary",
+          "oracle": "Change the real checkout branch while either removal confirmation is open; the existing error requires a fresh action, the new row publishes, and checkout and uncommitted bytes remain intact."
         }
       ]
     },
@@ -1562,6 +1586,24 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Hold the final validation worker, replace or close its owner, acknowledge the late result once and prove the following request advances without any repair or filesystem changes."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testRemovalPreflightFailuresNeverWriteAndReleaseFollowingWriter",
+          "role": "boundary",
+          "oracle": "Failed and truncated preflight reads never remove the checkout, preserve bytes, and release the next queued writer."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testCancelledRemovalPreflightDiscardsLateInventoryAndReleasesFIFO",
+          "role": "boundary",
+          "oracle": "Cancel an owned removal read, deliver retained late callbacks, and prove exactly-once completion, no removal, and following-service progress."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testExecutableReplacementDuringRemovalPreflightRejectsWithoutWriting",
+          "role": "boundary",
+          "oracle": "Replace the selected executable during preflight; context validation rejects removal and preserves real repository metadata and checkout bytes."
         }
       ]
     },

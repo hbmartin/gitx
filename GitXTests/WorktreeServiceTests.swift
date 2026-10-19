@@ -350,8 +350,12 @@ final class WorktreeServiceTests: XCTestCase {
             XCTAssertNotNil(error)
             following.fulfill()
         }
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        let removalStarted = installed.tasks.expect(remove)
+        try installed.tasks.task(discoveryArguments, occurrence: 1).finish(fixture.listing())
+        await fulfillment(of: [removalStarted], timeout: 5)
         XCTAssertEqual(installed.tasks.mutations, [remove])
-        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 1)
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 2)
         let next = installed.tasks.expect(lock)
         try installed.tasks.task(remove).finish(nil, error: NSError(domain: "fixture", code: 1, userInfo: [NSLocalizedDescriptionKey: "fixture refusal"]))
         await fulfillment(of: [refused, next], timeout: 5)
@@ -361,7 +365,7 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertEqual(installed.tasks.mutations, [remove, lock])
     }
 
-    func testInitialMutationRefusalReleasesFollowingWriterBeforeInventoryPublication() async throws {
+    func testInitialMutationRefusalReleasesFollowingWriterAfterInventoryPreflight() async throws {
         let fixture = try WorktreeMutationFixture()
         defer { fixture.cleanup() }
         let installed = fixture.makeService()
@@ -381,15 +385,249 @@ final class WorktreeServiceTests: XCTestCase {
         }
         let lock = ["worktree", "lock", "--reason", "initial", "/linked"]
         let unlock = ["worktree", "unlock", "/linked"]
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        let firstStarted = installed.tasks.expect(lock)
+        let unlocked = Data(String(decoding: snapshot, as: UTF8.self).replacingOccurrences(of: "locked offline disk\0", with: "").utf8)
+        try installed.tasks.task(discoveryArguments, occurrence: 1).finish(unlocked)
+        await fulfillment(of: [firstStarted], timeout: 5)
         XCTAssertEqual(installed.tasks.mutations, [lock])
-        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 1)
+        XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 2)
         let next = installed.tasks.expect(unlock)
         try installed.tasks.task(lock).finish(nil, error: NSError(domain: "fixture", code: 1))
         await fulfillment(of: [first, next], timeout: 5)
         try installed.tasks.task(unlock).finish(nil, error: NSError(domain: "fixture", code: 2))
         await fulfillment(of: [second], timeout: 5)
-        XCTAssertTrue(installed.service.worktrees.isEmpty)
+        XCTAssertEqual(installed.service.worktrees.count, 2)
         XCTAssertEqual(installed.tasks.mutations, [lock, unlock])
+    }
+
+    func testUnchangedNormalAndForcedRemovalReconcilesBeforeCompleting() async throws {
+        for force in [false, true] {
+            let fixture = try WorktreeFacadeFixture()
+            defer { fixture.cleanup() }
+            let installed = fixture.makeService()
+            let initial = try fixture.listing()
+            try await startFacade(installed, snapshot: initial)
+            let completed = expectation(description: "unchanged removal reconciles")
+            var didComplete = false
+            enqueueRemoval(installed.service, path: fixture.linked.path, force: force) { _, error in
+                XCTAssertNil(error); didComplete = true; completed.fulfill()
+            }
+            XCTAssertTrue(installed.tasks.mutations.isEmpty)
+            let arguments = ["worktree", "remove"] + (force ? ["--force"] : []) + [fixture.linked.path]
+            let started = installed.tasks.expect(arguments)
+            try installed.tasks.task(discoveryArguments, occurrence: 1).finish(initial)
+            await fulfillment(of: [started], timeout: 5)
+            _ = try fixture.git(arguments)
+            let reconciled = installed.tasks.expect(discoveryArguments)
+            try installed.tasks.task(arguments).finish(Data())
+            await fulfillment(of: [reconciled], timeout: 5)
+            XCTAssertFalse(didComplete)
+            try installed.tasks.task(discoveryArguments, occurrence: 2).finish(fixture.listing())
+            await fulfillment(of: [completed], timeout: 5)
+            XCTAssertEqual(installed.tasks.mutations, [arguments])
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.path))
+            XCTAssertEqual(installed.service.worktrees.count, 1)
+        }
+    }
+
+    func testExecutableReplacementDuringRemovalPreflightRejectsWithoutWriting() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "gitExecutable")
+        let proxy = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-removal-probe-" + UUID().uuidString)
+        defer {
+            defaults.set(previous, forKey: "gitExecutable")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+            try? FileManager.default.removeItem(at: proxy)
+        }
+        try "#!/bin/sh\nexec /usr/bin/git \"$@\"\n".write(to: proxy, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: proxy.path)
+        defaults.set(proxy.path, forKey: "gitExecutable")
+        let fixture = try WorktreeFacadeFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        try await startFacade(installed, snapshot: fixture.listing())
+        let before = try fixture.ownershipProof()
+        let rejected = expectation(description: "changed executable rejects removal preflight")
+        enqueueRemoval(installed.service, path: fixture.linked.path) { _, error in
+            XCTAssertNotNil(error); rejected.fulfill()
+        }
+        let read = try installed.tasks.task(discoveryArguments, occurrence: 1)
+        try "#!/bin/sh\n# replaced while reading\nexec /usr/bin/git \"$@\"\n".write(to: proxy, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: proxy.path)
+        try read.finish(fixture.listing())
+        await fulfillment(of: [rejected], timeout: 5)
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        XCTAssertEqual(try fixture.ownershipProof(), before)
+    }
+
+    func testRemovalRereadsExternalChangesWithoutAdoptingNewConsent() async throws {
+        for force in [false, true] {
+            for change in ["branch", "locked", "missing"] {
+                let fixture = try WorktreeFacadeFixture()
+                defer { fixture.cleanup() }
+                let installed = fixture.makeService()
+                try await startFacade(installed, snapshot: fixture.listing())
+                if change == "branch" {
+                    _ = try fixture.git(["switch", "-c", "replacement"], at: fixture.linked)
+                } else if change == "locked" {
+                    _ = try fixture.git(["worktree", "lock", fixture.linked.path])
+                } else {
+                    _ = try fixture.git(["worktree", "remove", fixture.linked.path])
+                }
+                let refreshed = try fixture.listing()
+                let rejected = expectation(description: "changed removal evidence is rejected")
+                enqueueRemoval(installed.service, path: fixture.linked.path, force: force) { _, error in
+                    XCTAssertTrue(error?.localizedFailureReason?.contains("Review the refreshed worktree list") == true)
+                    rejected.fulfill()
+                }
+                XCTAssertTrue(installed.tasks.mutations.isEmpty)
+                let read = try installed.tasks.task(discoveryArguments, occurrence: 1)
+                read.finish(refreshed)
+                await fulfillment(of: [rejected], timeout: 5)
+                XCTAssertTrue(installed.tasks.mutations.isEmpty)
+                XCTAssertEqual(try fixture.listing(), refreshed)
+                if change != "missing" {
+                    XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("tracked.txt")), Data("facade fixture content\n".utf8))
+                }
+                XCTAssertEqual(Set(installed.service.worktrees.map { WorktreePaths.identity($0.path) }), Set((change == "missing" ? [fixture.main.path] : [fixture.main.path, fixture.linked.path]).map(WorktreePaths.identity)))
+            }
+        }
+    }
+
+    func testRemovalPreflightFailuresNeverWriteAndReleaseFollowingWriter() async throws {
+        for incomplete in [false, true] {
+            let fixture = try WorktreeFacadeFixture()
+            defer { fixture.cleanup() }
+            let installed = fixture.makeService()
+            try await startFacade(installed, snapshot: fixture.listing())
+            let before = try fixture.ownershipProof()
+            let failed = expectation(description: "failed preflight reports its error")
+            let following = expectation(description: "following request progresses")
+            enqueueRemoval(installed.service, path: fixture.linked.path) { _, error in
+                XCTAssertNotNil(error); failed.fulfill()
+            }
+            enqueueLock(installed.service, path: fixture.linked.path, reason: "following") { _, error in
+                XCTAssertNotNil(error); following.fulfill()
+            }
+            let read = try installed.tasks.task(discoveryArguments, occurrence: 1)
+            let started = installed.tasks.expect(["worktree", "lock", "--reason", "following", fixture.linked.path])
+            if incomplete {
+                read.setTruncationFlags(standardOutput: true)
+                try read.finish(fixture.listing())
+            } else {
+                read.finish(nil, error: NSError(domain: "fixture-preflight", code: 1))
+            }
+            await fulfillment(of: [failed, started], timeout: 5)
+            XCTAssertFalse(installed.tasks.mutations.contains { $0.starts(with: ["worktree", "remove"]) })
+            try installed.tasks.task(["worktree", "lock", "--reason", "following", fixture.linked.path]).finish(nil, error: NSError(domain: "fixture", code: 2))
+            await fulfillment(of: [following], timeout: 5)
+            XCTAssertEqual(try fixture.ownershipProof(), before)
+        }
+    }
+
+    func testInitialMutationsWaitForOwnedInventoryAndKeepMissingConsentRejected() async throws {
+        let commands: [WorktreeCommand] = [.addExisting(path: "/created", branch: "topic"), .addNew(path: "/created", branch: "new"), .lock(path: "/linked", reason: "initial"), .unlock(path: "/linked"), .remove(path: "/linked", force: false)]
+        for command in commands {
+            let fixture = try WorktreeMutationFixture()
+            defer { fixture.cleanup() }
+            let installed = fixture.makeService()
+            let initialRead = installed.tasks.expect(discoveryArguments)
+            installed.service.start()
+            try installed.tasks.task(["--version"]).finish(Data("git version 2.48.0".utf8))
+            await fulfillment(of: [initialRead], timeout: 5)
+            let ordinary = try installed.tasks.task(discoveryArguments)
+            let completed = expectation(description: "initial mutation finishes after owned inventory")
+            let removes: Bool
+            if case .remove = command {
+                removes = true
+            } else {
+                removes = false
+            }
+            enqueueCommand(command, service: installed.service) { _, error in
+                if removes {
+                    XCTAssertNotNil(error)
+                } else {
+                    XCTAssertNil(error)
+                }
+                completed.fulfill()
+            }
+            XCTAssertTrue(installed.tasks.mutations.isEmpty)
+            let preflight = try installed.tasks.task(discoveryArguments, occurrence: 1)
+            let records: Data
+            if case .lock = command {
+                records = Data(String(decoding: snapshot, as: UTF8.self).replacingOccurrences(of: "locked offline disk\0", with: "").utf8)
+            } else {
+                records = snapshot
+            }
+            if removes {
+                preflight.finish(records)
+                await fulfillment(of: [completed], timeout: 5)
+                XCTAssertTrue(installed.tasks.mutations.isEmpty)
+            } else {
+                let started = installed.tasks.expect(command.arguments)
+                preflight.finish(records)
+                await fulfillment(of: [started], timeout: 5)
+                let reconciled = installed.tasks.expect(discoveryArguments)
+                try installed.tasks.task(command.arguments).finish(Data())
+                await fulfillment(of: [reconciled], timeout: 5)
+                try installed.tasks.task(discoveryArguments, occurrence: 2).finish(records)
+                await fulfillment(of: [completed], timeout: 5)
+                XCTAssertEqual(installed.tasks.mutations, [command.arguments])
+                XCTAssertTrue(ordinary.wasCancelled)
+                ordinary.finish(Data("worktree /obsolete\0HEAD old\0branch refs/heads/old\0\0".utf8))
+                await drainMainQueue()
+                XCTAssertFalse(installed.service.worktrees.contains { $0.path == "/obsolete" })
+            }
+        }
+    }
+
+    func testInitialInventoryFailureReleasesTheNextRequestWithoutWriting() async throws {
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        let initial = installed.tasks.expect(discoveryArguments)
+        installed.service.start()
+        try installed.tasks.task(["--version"]).finish(Data("git version 2.48.0".utf8))
+        await fulfillment(of: [initial], timeout: 5)
+        let first = expectation(description: "first initial preflight fails")
+        let second = expectation(description: "second initial preflight fails")
+        enqueueLock(installed.service, reason: "initial") { _, error in XCTAssertNotNil(error); first.fulfill() }
+        enqueueUnlock(installed.service) { _, error in XCTAssertNotNil(error); second.fulfill() }
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        let firstRead = try installed.tasks.task(discoveryArguments, occurrence: 1)
+        let nextRead = installed.tasks.expect(discoveryArguments)
+        firstRead.finish(nil, error: NSError(domain: "fixture", code: 1))
+        await fulfillment(of: [first, nextRead], timeout: 5)
+        try installed.tasks.task(discoveryArguments, occurrence: 2).finish(nil, error: NSError(domain: "fixture", code: 2))
+        await fulfillment(of: [second], timeout: 5)
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+    }
+
+    func testCancelledRemovalPreflightDiscardsLateInventoryAndReleasesFIFO() async throws {
+        let fixture = try WorktreeFacadeFixture()
+        defer { fixture.cleanup() }
+        let first = fixture.makeService()
+        let second = fixture.makeService()
+        try await startFacade(first, snapshot: fixture.listing())
+        try await startFacade(second, snapshot: fixture.listing())
+        let cancelled = expectation(description: "cancelled removal completes once")
+        cancelled.assertForOverFulfill = true
+        let following = expectation(description: "next service obtains admission")
+        enqueueRemoval(first.service, path: fixture.linked.path) { _, error in XCTAssertNotNil(error); cancelled.fulfill() }
+        let read = try first.tasks.task(discoveryArguments, occurrence: 1)
+        let late = try XCTUnwrap(read.retainedCallback())
+        enqueueLock(second.service, path: fixture.linked.path, reason: "following") { _, error in XCTAssertNotNil(error); following.fulfill() }
+        let started = second.tasks.expect(["worktree", "lock", "--reason", "following", fixture.linked.path])
+        first.service.cancel()
+        await fulfillment(of: [cancelled, started], timeout: 5)
+        XCTAssertTrue(read.wasCancelled)
+        try late(fixture.listing(), nil)
+        try read.finish(fixture.listing())
+        try second.tasks.task(["worktree", "lock", "--reason", "following", fixture.linked.path]).finish(nil, error: NSError(domain: "fixture", code: 1))
+        await fulfillment(of: [following], timeout: 5)
+        XCTAssertTrue(first.tasks.mutations.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.linked.path))
     }
 
     func testObjectiveCFacadeEqualityBindsRawSymbolicHeadAcrossUnchangedRefresh() async throws {
@@ -660,8 +898,11 @@ final class WorktreeServiceTests: XCTestCase {
         let reconciled = blocker.tasks.expect(discoveryArguments)
         try blocker.tasks.task(["worktree", "lock", "--reason", "held", "/linked"]).finish(Data())
         await fulfillment(of: [reconciled], timeout: 5)
+        let preflightStarted = target.tasks.expect(discoveryArguments)
         try blocker.tasks.task(discoveryArguments, occurrence: 1).finish(snapshot)
-        await fulfillment(of: [blockerDone, rejected], timeout: 5)
+        await fulfillment(of: [blockerDone, preflightStarted], timeout: 5)
+        try target.tasks.task(discoveryArguments, occurrence: 2).finish(changed)
+        await fulfillment(of: [rejected], timeout: 5)
         XCTAssertTrue(target.tasks.mutations.isEmpty, "A fresh cache cannot replace the evidence carried by an older request")
     }
 
@@ -810,6 +1051,9 @@ final class WorktreeServiceTests: XCTestCase {
             XCTAssertNil(error)
             removed.fulfill()
         }
+        let removalStarted = installed.tasks.expect(removeArguments)
+        try installed.tasks.task(discoveryArguments, occurrence: 2).finish(initial)
+        await fulfillment(of: [removalStarted], timeout: 5)
         _ = try fixture.git(removeArguments)
         let reconciled = installed.tasks.expect(discoveryArguments)
         try installed.tasks.task(removeArguments).finish(Data())
@@ -817,11 +1061,11 @@ final class WorktreeServiceTests: XCTestCase {
         // Reconciliation satisfies the earlier refresh. A later invalidation must survive it.
         installed.service.refresh()
         let recoveryStarted = installed.tasks.expect(discoveryArguments)
-        try installed.tasks.task(discoveryArguments, occurrence: 2).finish(fixture.listing())
+        try installed.tasks.task(discoveryArguments, occurrence: 3).finish(fixture.listing())
         await fulfillment(of: [removed, recoveryStarted], timeout: 5)
         let recoveryAccepted = expectation(description: "preserved invalidation publishes its follow-up snapshot")
         installed.service.acceptedDiscoveryObserver = { recoveryAccepted.fulfill() }
-        try installed.tasks.task(discoveryArguments, occurrence: 3).finish(fixture.listing())
+        try installed.tasks.task(discoveryArguments, occurrence: 4).finish(fixture.listing())
         await fulfillment(of: [recoveryAccepted], timeout: 5)
         installed.service.acceptedDiscoveryObserver = nil
         XCTAssertEqual(installed.service.worktrees.map { WorktreePaths.identity($0.path) }, [WorktreePaths.identity(fixture.main.path)])
@@ -1725,8 +1969,28 @@ final class WorktreeServiceTests: XCTestCase {
         }
     }
 
-    private func enqueueRemoval(_ service: PBRepositoryWorktreeService, path: String, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
-        service.removeWorktree(path: path, force: false) { output, error in
+    private func enqueueCommand(_ command: WorktreeCommand, service: PBRepositoryWorktreeService, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+        switch command {
+        case let .lock(path, reason): enqueueLock(service, path: path, reason: reason, completion: completion)
+        case let .unlock(path): enqueueUnlock(service, path: path, completion: completion)
+        case let .remove(path, force): enqueueRemoval(service, path: path, force: force, completion: completion)
+        case let .addExisting(path, branch), let .addNew(path, branch):
+            let createsBranch: Bool
+            if case .addNew = command {
+                createsBranch = true
+            } else {
+                createsBranch = false
+            }
+            service.addWorktree(path: path, branch: branch, createBranch: createsBranch) { output, error in
+                // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
+                MainActor.assumeIsolated { completion(output, error as NSError?) }
+            }
+        default: XCTFail("This fixture only enqueues ordinary worktree mutations")
+        }
+    }
+
+    private func enqueueRemoval(_ service: PBRepositoryWorktreeService, path: String, force: Bool = false, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+        service.removeWorktree(path: path, force: force) { output, error in
             // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
             MainActor.assumeIsolated { completion(output, error as NSError?) }
         }

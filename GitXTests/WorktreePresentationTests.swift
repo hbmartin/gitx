@@ -8,6 +8,52 @@ final class WorktreePresentationTests: XCTestCase {
     private var gitPreferenceRestoration: GitPreferenceRestoration?
     private var drainedFixtures: [Fixture] = []
 
+    func testExternalBranchChangeRejectsNormalAndForcedRemovalConsent() async throws {
+        for force in [false, true] {
+            selectGit()
+            let fixture = try makeFixture()
+            _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+            let dirty = fixture.linked.appendingPathComponent("untracked.txt")
+            let content = Data("keep uncommitted work after changed consent\n".utf8)
+            try content.write(to: dirty)
+            let origin = try await installService(in: fixture)
+            let controller = recordingController(for: origin)
+            controller.presentsErrors = true
+            let window = try XCTUnwrap(controller.window)
+            await activateWorktreeTestApplication()
+            window.makeKeyAndOrderFront(nil)
+            defer {
+                if let sheet = window.attachedSheet {
+                    window.endSheet(sheet, returnCode: .cancel)
+                }
+                controller.close()
+            }
+            await waitUntil { NSApp.isActive && window.isKeyWindow }
+            let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
+            let item = NSMenuItem(); item.representedObject = tree
+            controller.removeWorktree(item)
+            var consent = try await waitForSheet(in: window, containing: "Remove")
+            if force {
+                window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+                consent = try await waitForSheet(in: window, containing: "Remove Anyway")
+            }
+            _ = try fixture.git(["switch", "-c", "replacement"], in: fixture.linked)
+            let proof = try fixture.ownershipProof()
+            window.endSheet(consent, returnCode: .alertFirstButtonReturn)
+            await waitUntil { controller.errors.count == 1 && window.attachedSheet != nil }
+            let error = try XCTUnwrap(controller.errors.first)
+            XCTAssertTrue(error.localizedFailureReason?.contains("Review the refreshed worktree list") == true)
+            let rejected = try XCTUnwrap(window.attachedSheet)
+            XCTAssertTrue(sheetText(rejected).contains("Review the refreshed worktree list"))
+            XCTAssertFalse(origin.gate.commands.contains(["worktree", "remove", "--force", tree.path]))
+            XCTAssertEqual(origin.gate.commands.filter { $0 == ["worktree", "remove", tree.path] }.count, force ? 1 : 0)
+            XCTAssertEqual(origin.service.worktree(forBranch: "refs/heads/replacement")?.path, tree.path)
+            XCTAssertEqual(try fixture.ownershipProof(), proof)
+            XCTAssertEqual(try Data(contentsOf: dirty), content)
+            try attachScreenshot(of: rejected, named: force ? "Worktrees-Forced-Removal-Changed-Consent-Rejected" : "Worktrees-Removal-Changed-Consent-Rejected")
+        }
+    }
+
     func testFixtureCleanupDrainsHeldDiscoveryBeforeRestoringGitPreferences() async throws {
         let defaults = UserDefaults.standard
         let previous = defaults.object(forKey: "gitExecutable") as? NSObject
