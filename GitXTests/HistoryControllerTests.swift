@@ -2935,15 +2935,18 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let added = try XCTUnwrap(index.indexChanges.first { $0.rawPath == Data(path.utf8) })
         waitForIndexUpdate { XCTAssertTrue(index.stageFiles([added])) }
         try fixture.write("worktree portion\n", to: path)
-        refreshIndex()
+        refreshIndex(until: {
+            index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.stagedStatus == .NEW && $0.worktreeStatus == .MODIFIED }
+        })
         let partial = try XCTUnwrap(index.indexChanges.first { $0.rawPath == Data(path.utf8) })
         XCTAssertEqual(partial.stagedStatus, .NEW)
         XCTAssertEqual(partial.worktreeStatus, .MODIFIED)
         waitForIndexUpdate { index.discardChanges(for: [partial]) }
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent(path), encoding: .utf8),
                        "indexed portion\n")
-        XCTAssertTrue(partial.hasStagedChanges)
-        XCTAssertFalse(partial.hasUnstagedChanges)
+        let reconciled = try XCTUnwrap(index.indexChanges.first { $0.rawPath == Data(path.utf8) })
+        XCTAssertTrue(reconciled.hasStagedChanges)
+        XCTAssertFalse(reconciled.hasUnstagedChanges)
     }
 
     func testWorkingTreeBlameAndHistoryPreserveOrdinaryPathsWithOlderGit() throws {
@@ -6663,14 +6666,17 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertGreaterThan(repository.revisionList?.commits.count ?? 0, 0, file: file, line: line)
     }
 
-    private func refreshIndex() {
-        let expectation = expectation(
-            forNotification: Notification.Name(PBGitIndexFinishedIndexRefresh),
-            object: repository.index,
-            handler: nil
-        )
-        repository.index.refresh()
-        wait(for: [expectation], timeout: 10)
+    private func refreshIndex(until expected: (() -> Bool)? = nil, file: StaticString = #filePath, line: UInt = #line) {
+        let index = repository.index
+        guard waitForCondition(timeout: 10, { self.indexIsQuiescent(index) }) else {
+            XCTFail("Refresh waits for the actual writer and reconciliation", file: file, line: line)
+            return
+        }
+        let revision = index.snapshotRevision
+        index.refresh()
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            index.snapshotRevision > revision && self.indexIsQuiescent(index) && (expected?() ?? true)
+        }, "Refresh publishes a newer complete snapshot with the requested state", file: file, line: line)
         pumpRunLoop()
     }
 

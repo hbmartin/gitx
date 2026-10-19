@@ -8,6 +8,106 @@ import XCTest
 /// correctness and sanitizer plans.
 @MainActor
 final class GitXPerformanceTests: XCTestCase {
+    func testWorktreeEligibilityCanonicalResolutionCost() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("eligibility-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let records = (0 ..< 64).map { GitWorktree(path: root.appendingPathComponent("checkout-\($0)").path) }
+        let target = try XCTUnwrap(records.last).path
+        var repeated: [TimeInterval] = []
+        var once: [TimeInterval] = []
+        var accepted = 0
+        for _ in 0 ..< 5 {
+            repeated.append(elapsed {
+                for _ in 0 ..< 100 {
+                    if records.first(where: { WorktreePaths.identity($0.path) == WorktreePaths.identity(target) }) != nil {
+                        accepted += 1
+                    }
+                }
+            })
+            once.append(elapsed {
+                for _ in 0 ..< 100 {
+                    if WorktreeEligibility.allows(.lock(path: target, reason: ""), records: records, supported: true) {
+                        accepted += 1
+                    }
+                }
+            })
+        }
+        XCTAssertEqual(accepted, 1000)
+        attachMeasurements("Eligibility: repeated target resolution (64 rows, 100 requests)", samples: repeated)
+        attachMeasurements("Eligibility: one target resolution (64 rows, 100 requests)", samples: once)
+    }
+
+    func testFullWorktreeOwnershipScanCost() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ownership-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try gitOutput(["init", "--quiet", "--initial-branch=main"], in: root)
+        _ = try gitOutput(["commit", "--allow-empty", "--quiet", "-m", "Ownership benchmark"], in: root)
+        for number in 0 ..< 16 {
+            _ = try gitOutput(["worktree", "add", "--quiet", "-b", "topic-\(number)", root.appendingPathComponent("linked-\(number)").path], in: root)
+        }
+        let common = root.appendingPathComponent(".git").path
+        let records = try WorktreeParser.parse(Data(gitOutput(["worktree", "list", "--porcelain", "-z"], in: root).utf8))
+        XCTAssertEqual(records.count, 17)
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 5 {
+            try samples.append(elapsedThrowing {
+                _ = try WorktreeLinkInspector.captureRepairOwnershipSeeds(records: records, commonDirectory: common)
+            })
+        }
+        attachMeasurements("Full ownership safety scan (16 linked registrations)", samples: samples)
+    }
+
+    private final class SidebarBenchmarkSource: NSObject, NSOutlineViewDataSource {
+        let groups = (0 ..< 6).map { PBSourceViewItem.groupItem(withTitle: "Group \($0)") }
+        override init() {
+            super.init()
+            for group in groups {
+                for number in 0 ..< 400 {
+                    group.addChild(PBSourceViewItem.groupItem(withTitle: "Row \(number)"))
+                }
+            }
+        }
+
+        func outlineView(_: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+            (item as? PBSourceViewItem)?.sortedChildren.count ?? groups.count
+        }
+
+        func outlineView(_: NSOutlineView, isItemExpandable item: Any) -> Bool {
+            (item as? PBSourceViewItem)?.sortedChildren.isEmpty == false
+        }
+
+        func outlineView(_: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+            (item as? PBSourceViewItem)?.sortedChildren[index] ?? groups[index]
+        }
+    }
+
+    func testWorktreeHeaderOnlyOutlineUpdateCost() throws {
+        let source = SidebarBenchmarkSource()
+        let outline = NSOutlineView(frame: NSRect(x: 0, y: 0, width: 240, height: 600))
+        outline.addTableColumn(NSTableColumn(identifier: .init("Sidebar")))
+        outline.dataSource = source
+        outline.reloadData()
+        source.groups.forEach { outline.expandItem($0) }
+        let header = try XCTUnwrap(source.groups.first)
+        let rowCount = outline.numberOfRows
+        var full: [TimeInterval] = []
+        var headerOnly: [TimeInterval] = []
+        for _ in 0 ..< 5 {
+            full.append(elapsed { for _ in 0 ..< 100 {
+                outline.reloadData()
+            } })
+            headerOnly.append(elapsed { for _ in 0 ..< 100 {
+                outline.reloadItem(header, reloadChildren: false)
+            } })
+        }
+        XCTAssertEqual(outline.numberOfRows, rowCount)
+        XCTAssertTrue(outline.item(atRow: 0) as? PBSourceViewItem === header)
+        attachMeasurements("Sidebar outline: all rows (2400 children, 100 updates)", samples: full)
+        attachMeasurements("Sidebar outline: one header (2400 children, 100 updates)", samples: headerOnly)
+    }
+
     private struct DiffFixture {
         let fileCount: Int
         let byteCount: Int

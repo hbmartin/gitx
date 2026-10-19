@@ -169,6 +169,30 @@ jobs:
           cd External/objective-git
           script/bootstrap
           script/update_libgit2
+      - name: Execute Release service and runtime contracts
+        run: |
+          scripts/xcodebuild.sh --configuration Release \
+            --run-id "verify-release-contracts-${{ github.run_id }}-${{ github.run_attempt }}" \
+            test correctness \
+            -only-testing:GitXTests/WorktreeServiceTests \
+            -only-testing:GitXTests/GitXInteropContractTests
+      - name: Repeat the four stabilized CI regressions five times
+        run: |
+          scripts/xcodebuild.sh \
+            --run-id "verify-ci-regressions-${{ github.run_id }}-${{ github.run_attempt }}" \
+            test correctness -test-iterations 5 \
+            -only-testing:GitXTests/HistoryControllerTests/testNulDelimitedMutationsPreserveNewlineFilenameAndDiscardPartiallyStagedAddition \
+            -only-testing:GitXTests/HistoryControllerTests/testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice \
+            -only-testing:GitXTests/WorktreeAppKitTests/testWorktreeSnapshotRefreshPreservesMountedContentAndBranchSelection \
+            -only-testing:GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation
+      - name: Measure Release worktree safety and header update costs
+        run: |
+          scripts/xcodebuild.sh --configuration Release \
+            --run-id "verify-worktree-performance-${{ github.run_id }}-${{ github.run_attempt }}" \
+            test performance \
+            -only-testing:GitXTests/GitXPerformanceTests/testWorktreeEligibilityCanonicalResolutionCost \
+            -only-testing:GitXTests/GitXPerformanceTests/testFullWorktreeOwnershipScanCost \
+            -only-testing:GitXTests/GitXPerformanceTests/testWorktreeHeaderOnlyOutlineUpdateCost
       - name: Run unit and integration tests
         run: scripts/xcodebuild.sh --run-id "verify-correctness-${{ github.run_id }}-${{ github.run_attempt }}" test correctness
       - name: Run Clang static analyzer
