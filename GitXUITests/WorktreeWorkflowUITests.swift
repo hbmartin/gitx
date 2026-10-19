@@ -276,10 +276,13 @@ final class WorktreeWorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(review.buttons["Repair"].isEnabled)
         XCTAssertTrue(review.buttons["Cancel"].isEnabled)
         XCTAssertFalse(review.buttons["Reclaim"].exists)
-        let scope = review.staticTexts.allElementsBoundByIndex.map { $0.label + "\n" + ($0.value as? String ?? "") }.joined(separator: "\n")
-        XCTAssertTrue(scope.contains("Git will repair links for these worktree folders:\n\n" + main.path + "\n" + destination.path))
-        XCTAssertFalse(scope.contains(linked.path))
-        XCTAssertFalse(scope.contains(detached.path))
+        let scopePrefix = "Git will repair links for these worktree folders:\n\n"
+        let scope = try XCTUnwrap(review.staticTexts.allElementsBoundByIndex
+            .flatMap { [$0.label, $0.value as? String ?? ""] }
+            .first { $0.contains(scopePrefix) })
+        let paths = try XCTUnwrap(scope.components(separatedBy: scopePrefix).last).split(separator: "\n").map(String.init)
+        XCTAssertEqual(paths.count, 2)
+        XCTAssertEqual(Set(paths), Set([detached.path, destination.path]), "Git repair reviews every linked target, including the healthy detached checkout")
         XCTAssertFalse(FileManager.default.fileExists(atPath: proxy.repairArguments.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: proxy.repairInvocations.path))
         XCTAssertEqual(try Data(contentsOf: topicAdmin.appendingPathComponent("gitdir")), originalBacklink)
