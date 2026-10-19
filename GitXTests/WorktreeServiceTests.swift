@@ -665,7 +665,16 @@ final class WorktreeServiceTests: XCTestCase {
             await fulfillment(of: [written, recoveryStarted], timeout: 5)
             XCTAssertEqual(installed.service.worktrees.count, 2, "A failed reread cannot erase the last snapshot")
             let recovery = try installed.tasks.task(discoveryArguments, occurrence: 3)
+            let recoveryFailed = expectation(description: "failed recovery reaches its main-thread completion")
+            installed.service.lifecycleEventObserver = { event in
+                if event == "worktree.list.failed phase=discovery count=0 category=task" {
+                    recoveryFailed.fulfill()
+                }
+            }
+            defer { installed.service.lifecycleEventObserver = nil }
             recovery.finish(nil, error: NSError(domain: "fixture-recovery", code: 2))
+            await fulfillment(of: [recoveryFailed], timeout: 5)
+            installed.service.lifecycleEventObserver = nil
             await drainMainQueue()
             XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 4, "A failed recovery must not start an automatic retry loop")
             XCTAssertEqual(installed.service.worktrees.count, 2)
