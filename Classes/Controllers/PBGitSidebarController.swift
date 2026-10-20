@@ -940,8 +940,7 @@ public extension PBGitSidebarController {
             cell.setAccessibilityValue(nil)
         }
         if item === worktreesGroup, let service = repository?.worktreeService {
-            let status = WorktreeInventoryStatus(rawValue: service.inventoryStatus) ?? .stale
-            let presentation = WorktreeInventoryPresentation(status: status, hasSnapshot: service.hasPublishedSnapshot, capabilityExplanation: service.explanation)
+            let presentation = WorktreeInventoryPresentation(rawStatus: service.inventoryStatus, hasSnapshot: service.hasPublishedSnapshot, capabilityExplanation: service.explanation)
             cell.imageView?.image = presentation.warns ? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: presentation.message) : nil
             cell.toolTip = presentation.message
             if presentation.isUpdating {

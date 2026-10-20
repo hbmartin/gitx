@@ -1598,6 +1598,7 @@
             let conditions = [
                 view.accessibilityIdentifier() == "RepositoryForgeCollaboration",
                 controller.sidebarRepositories.isEmpty,
+                !controller.includesAttention,
                 gateway != nil,
                 status?.stringValue == "Resolving repository access…",
                 firstResponder != nil,

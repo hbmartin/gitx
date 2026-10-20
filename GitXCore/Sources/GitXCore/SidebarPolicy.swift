@@ -23,6 +23,12 @@ public struct WorktreeInventoryPresentation: Equatable, Sendable {
     public let warns: Bool
     public let isUpdating: Bool
 
+    /// Unknown service values retain actionable inventory recovery guidance.
+    public init(rawStatus: Int, hasSnapshot: Bool, capabilityExplanation: String) {
+        self.init(status: WorktreeInventoryStatus(rawValue: rawStatus) ?? .stale,
+                  hasSnapshot: hasSnapshot, capabilityExplanation: capabilityExplanation)
+    }
+
     public init(status: WorktreeInventoryStatus, hasSnapshot: Bool, capabilityExplanation: String) {
         isUpdating = status == .updating
         switch status {

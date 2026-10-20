@@ -6,7 +6,7 @@ final class SidebarPolicyTests: XCTestCase {
         for hasSnapshot in [false, true] {
             let status = WorktreeInventoryStatus(rawValue: Int.max)
             XCTAssertNil(status)
-            let presentation = WorktreeInventoryPresentation(status: status ?? .stale, hasSnapshot: hasSnapshot,
+            let presentation = WorktreeInventoryPresentation(rawStatus: Int.max, hasSnapshot: hasSnapshot,
                                                              capabilityExplanation: "Choose a supported Git.")
             XCTAssertTrue(presentation.warns)
             XCTAssertFalse(presentation.isUpdating)
@@ -19,6 +19,8 @@ final class SidebarPolicyTests: XCTestCase {
             for status in [WorktreeInventoryStatus.checkingCapability, .updating, .fresh, .stale, .unsupported, .closed] {
                 let presentation = WorktreeInventoryPresentation(status: status, hasSnapshot: hasSnapshot,
                                                                  capabilityExplanation: "Choose a supported Git in Git Preferences.")
+                XCTAssertEqual(WorktreeInventoryPresentation(rawStatus: status.rawValue, hasSnapshot: hasSnapshot,
+                                                             capabilityExplanation: "Choose a supported Git in Git Preferences."), presentation)
                 XCTAssertEqual(presentation.isUpdating, status == .updating)
                 XCTAssertEqual(presentation.warns, status == .stale || status == .unsupported)
                 switch status {
