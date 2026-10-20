@@ -2588,14 +2588,26 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     private func verifyPushChoiceDuringFailedSubmission(_ choice: Bool) async throws {
         let settings = PBRepositoryUISettings(repository: repository)
         settings.pushAfterCommit = !choice
-        try fixture.write("push recovery\n", to: "push-recovery-\(choice).txt")
+        let committedPath = "push-recovery-\(choice).txt"
+        try fixture.write("push recovery\n", to: committedPath)
         try fixture.git(["add", "--all"])
         let pane = try await openStagingPaneAwaitingSnapshot()
         let push = try XCTUnwrap(descendant(identifier: "PushAfterCommit", in: pane.view) as? NSButton)
         push.state = choice ? .on : .off
 
-        let hookDirectory = URL(fileURLWithPath: fixture.path).appendingPathComponent("recovery-hooks-\(choice)")
+        // Hook controls are not user changes. Keep them outside the watched
+        // checkout so the following choice cannot stage or render them.
+        let hookDirectory = URL(fileURLWithPath: fixture.path).appendingPathExtension("recovery-hooks-\(choice)")
         try FileManager.default.createDirectory(at: hookDirectory, withIntermediateDirectories: true)
+        let originalHooksPath = try? fixture.git(["config", "--get", "core.hooksPath"])
+        defer {
+            if let originalHooksPath {
+                _ = try? fixture.git(["config", "core.hooksPath", originalHooksPath])
+            } else {
+                _ = try? fixture.git(["config", "--unset", "core.hooksPath"])
+            }
+            try? FileManager.default.removeItem(at: hookDirectory)
+        }
         let gate = hookDirectory.appendingPathComponent("release")
         let ready = hookDirectory.appendingPathComponent("ready")
         XCTAssertEqual(gate.path.withCString { Darwin.mkfifo($0, 0o600) }, 0)
@@ -2650,15 +2662,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let completed = expectation(forNotification: NSNotification.Name(PBGitIndexFinishedCommit), object: repository.index)
         let stub = try XCTUnwrap(windowController as? HistoryWindowController)
         let pushesBefore = stub.performedPushes
+        let beforeRetry = repository.index.snapshotRevision
         try XCTUnwrap(stub.hookFailureRetryHandlers.last)()
         await fulfillment(of: [completed], timeout: 15)
-        await waitForPublishedState(timeout: 10) {
-            self.indexIsQuiescent(self.repository.index)
-                && settings.pushAfterCommit == choice
-                && stub.performedPushes == pushesBefore + (choice ? 1 : 0)
-        }
+        await waitForIndexPublication(after: beforeRetry)
         XCTAssertEqual(settings.pushAfterCommit, choice)
         XCTAssertEqual(stub.performedPushes, pushesBefore + (choice ? 1 : 0))
+        XCTAssertEqual(try fixture.git(["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"]), committedPath + "\0")
+        XCTAssertEqual(try fixture.git(["status", "--porcelain", "-z"]), "", "Hook controls must not become repository changes")
         await refreshIndexAwaitingSnapshot()
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Push-Choice-Recovery")
     }
@@ -2707,12 +2718,55 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     private func refreshIndexAwaitingSnapshot(until expected: (@MainActor () -> Bool)? = nil) async {
         let index = repository.index
-        await waitForPublishedState(timeout: 10) { self.indexIsQuiescent(index) }
+        await waitForIndexPublication()
         let revision = index.snapshotRevision
         index.refresh()
-        await waitForPublishedState(timeout: 10) {
-            index.snapshotRevision > revision && self.indexIsQuiescent(index) && (expected?() ?? true)
+        await waitForIndexPublication(after: revision, until: expected)
+    }
+
+    @MainActor private final class IndexPublicationWaitState {
+        var active = true
+        var fulfilled = false
+    }
+
+    private func waitForIndexPublication(after minimumRevision: UInt? = nil,
+                                         until expected: (@MainActor () -> Bool)? = nil,
+                                         timeout: TimeInterval = 10,
+                                         file: StaticString = #filePath, line: UInt = #line) async
+    {
+        let index = repository.index
+        let writer = IndexRepositoryCommandRunner(repository: repository)
+        let state = IndexPublicationWaitState()
+        let published = expectation(description: "Index publication and reconciliation finish with no queued writer")
+        let check: @MainActor @Sendable () -> Void = {
+            guard state.active, !state.fulfilled,
+                  minimumRevision.map({ index.snapshotRevision > $0 }) ?? true,
+                  !index.mutationReconciliationPending, !index.submissionActive, !writer.isWriterBusy,
+                  expected?() ?? true else { return }
+            state.fulfilled = true
+            published.fulfill()
         }
+        // Observe the operation's real publication and admission state. Queue
+        // checks after KVO setters finish rather than polling AppKit's run loop.
+        let changed: @Sendable () -> Void = { DispatchQueue.main.async { check() } }
+        let observations = [
+            index.observe(\.snapshotRevision, options: []) { _, _ in changed() },
+            index.observe(\.mutationReconciliationPending, options: []) { _, _ in changed() },
+            index.observe(\.submissionActive, options: []) { _, _ in changed() },
+        ]
+        let writerObservation = PBIndexMutationCoordinator(
+            repository: repository, service: PBIndexMutationService(repository: repository, runner: writer), stateHandler: { _ in changed() }
+        )
+        defer {
+            state.active = false
+            observations.forEach { $0.invalidate() }
+            writerObservation.close()
+        }
+        check()
+        await fulfillment(of: [published], timeout: timeout)
+        XCTAssertTrue(state.fulfilled,
+                      "revision=\(index.snapshotRevision), expectedAfter=\(String(describing: minimumRevision)), reconciliation=\(index.mutationReconciliationPending), submission=\(index.submissionActive), writer=\(writer.isWriterBusy)",
+                      file: file, line: line)
     }
 
     private func waitForPublishedState(timeout: TimeInterval, _ condition: @escaping @MainActor () -> Bool) async {
@@ -2988,10 +3042,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             staged.fulfill()
         }))
         await fulfillment(of: [staged], timeout: 20)
-        await waitForPublishedState(timeout: 20) {
-            index.snapshotRevision > beforeStage && self.indexIsQuiescent(index)
-                && index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.stagedStatus == .NEW && !$0.hasUnstagedChanges }
-        }
+        await waitForIndexPublication(after: beforeStage, until: {
+            index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.stagedStatus == .NEW && !$0.hasUnstagedChanges }
+        }, timeout: 20)
         try fixture.write("worktree portion\n", to: path)
         await refreshIndexAwaitingSnapshot(until: {
             index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.stagedStatus == .NEW && $0.worktreeStatus == .MODIFIED }
@@ -3007,10 +3060,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             discarded.fulfill()
         }))
         await fulfillment(of: [discarded], timeout: 20)
-        await waitForPublishedState(timeout: 20) {
-            index.snapshotRevision > beforeDiscard && self.indexIsQuiescent(index)
-                && index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.hasStagedChanges && !$0.hasUnstagedChanges }
-        }
+        await waitForIndexPublication(after: beforeDiscard, until: {
+            index.indexChanges.contains { $0.rawPath == Data(path.utf8) && $0.hasStagedChanges && !$0.hasUnstagedChanges }
+        }, timeout: 20)
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent(path), encoding: .utf8),
                        "indexed portion\n")
         let reconciled = try XCTUnwrap(index.indexChanges.first { $0.rawPath == Data(path.utf8) })

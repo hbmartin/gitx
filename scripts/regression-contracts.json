@@ -604,7 +604,7 @@
           "identifier": "GitXTests/HistoryControllerTests/testNulDelimitedMutationsPreserveNewlineFilenameAndDiscardPartiallyStagedAddition",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "Await the actual stage/discard callbacks and newer quiescent snapshots without blocking the main actor; preserve raw newline-path identity, staged NEW state and indexed file bytes."
+          "oracle": "Await exact stage/discard completions and observed newer snapshot, reconciliation and writer state; preserve the newline raw path, staged bytes and physical partially staged addition without relying on incidental notifications or polling the main run loop."
         }
       ]
     },
@@ -1442,7 +1442,7 @@
           "identifier": "GitXTests/HistoryControllerTests/testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "Hold the real failing hook while remotes disappear and return, await hook and retry completion plus actual reconciliation/settings/push state, and preserve each captured push choice without synchronous run-loop waits."
+          "oracle": "Hold a real pre-commit hook outside the checkout while remotes change; retry the captured choice, observe newer index publication, reconciliation and writer state, then assert exact preference/push count, an otherwise clean checkout and only the intended committed path. Control files never enter the index."
         }
       ]
     },
