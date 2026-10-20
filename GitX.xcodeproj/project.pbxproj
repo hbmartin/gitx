@@ -21,6 +21,10 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		E1AA5104C33F4D2AB7BB05AF /* GitXManagedTestBootstrap.m in Sources */ = {isa = PBXBuildFile; fileRef = A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */; };
+		3010942C5817454DBC2FFB2D /* GitXManagedTestBootstrap.m in Sources */ = {isa = PBXBuildFile; fileRef = A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */; };
+		F2EDDDC9818A472B8EB5134A /* GitXManagedTestObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */; };
+		52326BB36A0C49D78A35193D /* GitXManagedTestObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */; };
 		F0BA93000000000000000001 /* WorktreeGitProxy.sh in Resources */ = {isa = PBXBuildFile; fileRef = F0BA93000000000000000002 /* WorktreeGitProxy.sh */; };
 		C0D085A00000000000000001 /* GitXFixtureRepositoryPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */; };
 		C0D085A00000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */; };
@@ -696,6 +700,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = GitXManagedTestBootstrap.m; sourceTree = "<group>"; };
+		53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXManagedTestObserver.swift; sourceTree = "<group>"; };
 		F0BA93000000000000000002 /* WorktreeGitProxy.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = WorktreeGitProxy.sh; sourceTree = "<group>"; };
 		C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXFixtureRepositoryPolicyTests.swift; sourceTree = "<group>"; };
 		C0DE90010000000000000002 /* StagingImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingImageReader.swift; sourceTree = "<group>"; };
@@ -1883,6 +1889,8 @@
 				284FF6D365052CB33482C14E /* RepositoryPushRecoveryCharacterizationTests.swift */,
 				79FCF5818306419CBC6A5DC5 /* PBTaskDiagnosticCaptureTests.swift */,
 				C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */,
+				53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */,
+				A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */,
 				7DC142ED4D85E60DE599B838 /* GitXTestGitEnvironment.swift */,
 				A9A9B26FDD3C352A3A70DC16 /* GitXTestGitFixture.swift */,
 				A0FFF8AE72434DE9BE23C6D4 /* GitXTestGitFixtureTests.swift */,
@@ -2655,6 +2663,8 @@
 				F3A67C695A45DA2CA6D7A75D /* PBTaskDiagnosticCaptureTests.swift in Sources */,
 				C0D085A00000000000000001 /* GitXFixtureRepositoryPolicyTests.swift in Sources */,
 				C0D085A00000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */,
+				F2EDDDC9818A472B8EB5134A /* GitXManagedTestObserver.swift in Sources */,
+				E1AA5104C33F4D2AB7BB05AF /* GitXManagedTestBootstrap.m in Sources */,
 				C137031CE257FFB1B354C3A8 /* GitXTestGitEnvironment.swift in Sources */,
 				9474297A52657CFFDC54AE68 /* GitXTestGitFixture.swift in Sources */,
 				653AEC053A6FE7B2FF308D6E /* GitXTestGitFixtureTests.swift in Sources */,
@@ -2745,6 +2755,8 @@
 				D0C700000000000000000001 /* GitXUIActivationPreflightTests.swift in Sources */,
 				D0C700000000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */,
 				CC0000010000001 /* GitXScreenshotTests.m in Sources */,
+				52326BB36A0C49D78A35193D /* GitXManagedTestObserver.swift in Sources */,
+				3010942C5817454DBC2FFB2D /* GitXManagedTestBootstrap.m in Sources */,
 				E416809E89064750A21724C2 /* GitXTestGitEnvironment.swift in Sources */,
 				F0F200000000000000000019 /* Milestone2WorkflowUITests.swift in Sources */,
 				D3A300000000000000000007 /* Milestone3WorkflowUITests.swift in Sources */,

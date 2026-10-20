@@ -40,6 +40,21 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertNil(unowned["GITX_TEST_STDERR_DIRECTORY"])
     }
 
+    func testManagedObserverRegistersIdempotentlyInThisTestBundle() throws {
+        GitXManagedTestObserver.install()
+        GitXManagedTestObserver.install()
+        let environment = ProcessInfo.processInfo.environment
+        guard let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"],
+              let invocation = environment["GITX_TEST_INVOCATION_ID"] else { return }
+        let records = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: directory), includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("startup-") }
+            .compactMap { try JSONSerialization.jsonObject(with: Data(contentsOf: $0)) as? [String: Any] }
+        XCTAssertTrue(records.contains {
+            $0["event"] as? String == "bundle-start" && $0["invocationID"] as? String == invocation
+                && $0["bundleID"] as? String == "net.phere.GitXTests"
+        }, "The loading shim must register before the bundle-start callback, in Debug and Release")
+    }
+
     func testEmptyDiagnosticRequestsAreRemovedAndProgressSurvivesEmptyLaunchEnvironment() {
         let empty = GitXTestGitEnvironment.isolated(
             ["GITX_TEST_STDERR_DIRECTORY": ""], nativeDiagnosticDirectory: "", progressDirectory: "", invocationID: ""

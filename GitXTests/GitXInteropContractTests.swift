@@ -12,6 +12,18 @@ final class GitXInteropContractTests: XCTestCase {
         XCTAssertNotNil(class_getInstanceMethod(PBTaskDiagnosticCapture.self, NSSelectorFromString("seal")))
     }
 
+    func testNativeCaptureBootstrapIsDebugOnly() {
+        let bootstrap = NSClassFromString("PBGitXTestProcessDiagnostics")
+        #if DEBUG
+            XCTAssertNotNil(bootstrap)
+            if let bootstrap {
+                XCTAssertNotNil(class_getClassMethod(bootstrap, NSSelectorFromString("installAtApplicationStartup")))
+            }
+        #else
+            XCTAssertNil(bootstrap)
+        #endif
+    }
+
     func testConfigurationDependentRuntimeSurface() {
         #if DEBUG
             XCTAssertNotNil(NSClassFromString("PBTaskDiagnosticCaptureLifetimeProbe"))

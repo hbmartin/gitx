@@ -840,65 +840,239 @@ def test_output_started(data):
     return any(marker in data for marker in (b"Test Suite ", b"Test Case ", b"Test case '"))
 
 
-class NativeTestProgress:
-    """Read startup evidence only from fresh files in this command's native log directory."""
-
-    @classmethod
-    def for_capture(cls, capture, environment):
-        configured = environment.get("TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY")
-        if not capture or not configured:
-            return None
-        try:
-            if pathlib.Path(configured).resolve() != capture.path.parent / "Native":
+def read_native_record(directory, name, invocation, session):
+    """Read one complete owned record; incomplete or substituted files remain untrusted."""
+    if not re.fullmatch(r'(startup|capture)-[0-9]+-[A-Fa-f0-9-]+\.json', name):
+        return None
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(descriptor, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_size > 65536:
                 return None
-            return cls(configured)
-        except (OSError, RuntimeError):
+            record = json.loads(stream.read(65537))
+        if (not isinstance(record, dict) or type(record.get('schemaVersion')) is not int or
+                record['schemaVersion'] != 1 or record.get('invocationID') != invocation or
+                record.get('verificationSession') != session or type(record.get('pid')) is not int or record['pid'] <= 0):
             return None
+        expected_event = 'bundle-start' if name.startswith('startup-') else 'capture'
+        if record.get('event') != expected_event or int(name.split('-')[1]) != record['pid']:
+            return None
+        return record
+    except (OSError, ValueError, UnicodeError):
+        return None
 
-    def __init__(self, directory):
+
+class NativeTestProgress:
+    """XCTest bundle events are independent of optional stderr capture and console files."""
+
+    def __init__(self, directory, invocation, session, bundles):
         self.descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        self.invocation, self.session, self.bundles = invocation, session, set(bundles)
+
+    def records(self):
         try:
-            # A prior host probe must never establish this command's startup.
-            self.existing = set(os.listdir(self.descriptor))
-        except BaseException:
-            self.close()
-            raise
-        self.reads = {}
+            names = os.listdir(self.descriptor)
+        except OSError:
+            return []
+        return [record for name in names if (record := read_native_record(
+            self.descriptor, name, self.invocation, self.session)) is not None]
 
     def observed(self):
-        try:
-            names = set(os.listdir(self.descriptor)) - self.existing
-        except OSError:
-            return False
-        for name in names:
-            if not re.fullmatch(r"GitX-[0-9]+\.stderr\.log", name):
-                continue
-            try:
-                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-                                     dir_fd=self.descriptor)
-                with os.fdopen(descriptor, 'rb', buffering=0) as stream:
-                    identity = os.fstat(stream.fileno())
-                    if not stat.S_ISREG(identity.st_mode) or identity.st_uid != os.getuid():
-                        continue
-                    key = (name, identity.st_dev, identity.st_ino)
-                    offset, tail = self.reads.get(key, (0, b""))
-                    if identity.st_size < offset:
-                        offset, tail = 0, b""
-                    stream.seek(offset)
-                    data = stream.read(65536)
-                    tail = (tail + data)[-65536:]
-                    self.reads[key] = (offset + len(data), tail)
-                    if test_output_started(tail):
-                        return True
-            except OSError:
-                continue
-        return False
+        return any(record.get('event') == 'bundle-start' and record.get('bundleID') in self.bundles
+                   for record in self.records())
 
     def close(self):
         os.close(self.descriptor)
 
 
-def supervise(command, timeout=7200, startup_timeout=None, desktop=False, directory=None, env=None, pass_fds=(), merge_stderr=True, cwd=None, output_log=None):
+class NativeConsoleMirror:
+    """Read retained files on a daemon; a blocked console cannot hold the watchdog."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.ready = threading.Event()
+        self.finished = threading.Event()
+        self.streams = {}
+        self.mirrored_bytes = 0
+        self.error = None
+        self.console = sys.stdout.fileno()
+        self.worker = threading.Thread(target=self.mirror, daemon=True, name='native-diagnostic-console')
+        self.worker.start()
+
+    def add(self, path):
+        with self.lock:
+            if str(path) in self.streams:
+                self.ready.set()
+                return
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+            try:
+                info = os.fstat(descriptor)
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                    return
+                self.streams[str(path)] = {'offset': 0, 'identity': (info.st_dev, info.st_ino)}
+            finally:
+                os.close(descriptor)
+        self.ready.set()
+
+    def mirror(self):
+        try:
+            while True:
+                self.ready.clear()
+                with self.lock:
+                    sources = list(self.streams.items())
+                produced = False
+                for path, state in sources:
+                    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+                    with os.fdopen(descriptor, 'rb', buffering=0) as stream:
+                        info = os.fstat(stream.fileno())
+                        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or
+                                (info.st_dev, info.st_ino) != state['identity']):
+                            raise OSError('Native diagnostic identity changed')
+                        stream.seek(state['offset'])
+                        data = stream.read(65536)
+                    if data:
+                        produced = True
+                        remaining = memoryview(data)
+                        while remaining:
+                            written = os.write(self.console, remaining)
+                            self.mirrored_bytes += written
+                            remaining = remaining[written:]
+                        state['offset'] += len(data)
+                if not produced:
+                    if self.finished.is_set():
+                        return
+                    self.ready.wait(.2)
+        except OSError as error:
+            self.error = type(error).__name__
+
+    def close(self):
+        self.finished.set()
+        self.ready.set()
+        self.worker.join(timeout=1)
+        return {'consoleComplete': not self.worker.is_alive() and self.error is None,
+                'consoleError': self.error, 'mirroredBytes': self.mirrored_bytes}
+
+
+class NativeTestDiagnostics:
+    """Own one invocation's local files and best-effort artifact collection."""
+
+    def __init__(self, root, artifact_directory, session, bundles, capture_stderr):
+        self.invocation = uuid.uuid4().hex
+        self.session = session
+        self.requested = capture_stderr
+        self.warnings = set()
+        self.archive = pathlib.Path(artifact_directory) / self.invocation
+        self.mirror = NativeConsoleMirror()
+        try:
+            base = pathlib.Path(root)
+            if not base.is_absolute() or base.is_symlink():
+                raise ValueError('Invalid native diagnostic root')
+            base.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.root = pathlib.Path(tempfile.mkdtemp(prefix='invocation-', dir=base))
+        except (OSError, ValueError):
+            # The startup channel remains available even if optional capture storage fails.
+            self.root = pathlib.Path(tempfile.mkdtemp(prefix='gitx-test-progress-'))
+            self.warnings.add('cache-directory')
+            capture_stderr = False
+        self.progress_directory = self.root / 'Progress'
+        self.progress_directory.mkdir(mode=0o700)
+        self.stderr_directory = self.root / 'Stderr'
+        self.capture_enabled = capture_stderr
+        if capture_stderr:
+            try:
+                self.stderr_directory.mkdir(mode=0o700)
+            except OSError:
+                self.capture_enabled = False
+                self.warnings.add('capture-directory')
+        self.progress = NativeTestProgress(self.progress_directory, self.invocation, session, bundles)
+
+    def configure(self, environment):
+        values = {'GITX_TEST_PROGRESS_DIRECTORY': str(self.progress_directory),
+                  'GITX_TEST_INVOCATION_ID': self.invocation, 'GITX_VERIFICATION_SESSION': self.session,
+                  'GITX_TEST_STDERR_DIRECTORY': str(self.stderr_directory) if self.capture_enabled else ''}
+        for key, value in values.items():
+            environment[key] = value
+            environment['TEST_RUNNER_' + key] = value
+
+    def poll(self):
+        if self.capture_enabled:
+            try:
+                for path in self.stderr_directory.iterdir():
+                    if re.fullmatch(r'GitX-[0-9]+-[A-Fa-f0-9-]+\.stderr\.log', path.name):
+                        self.mirror.add(path)
+            except OSError:
+                self.warnings.add('capture-read')
+        return self.progress.observed()
+
+    def close(self):
+        self.poll()
+        captures = [record for record in self.progress.records() if record.get('event') == 'capture']
+        if self.requested:
+            if not captures:
+                self.warnings.add('capture-unconfirmed')
+            if any(record.get('state') == 'unavailable' for record in captures):
+                self.warnings.add('capture-unavailable')
+        collected, archive_ready = [], False
+        try:
+            if self.archive.parent.is_symlink() or not self.archive.resolve().is_relative_to(verification_artifact_root(ROOT).resolve()):
+                raise ValueError('Invalid native artifact directory')
+            self.archive.mkdir(parents=True, mode=0o700)
+            archive_ready = True
+            for directory in (self.progress_directory, self.stderr_directory):
+                if not directory.is_dir():
+                    continue
+                for source in directory.iterdir():
+                    if not (re.fullmatch(r'GitX-[0-9]+-[A-Fa-f0-9-]+\.stderr\.log', source.name) or
+                            re.fullmatch(r'(startup|capture)-[0-9]+-[A-Fa-f0-9-]+\.json', source.name)):
+                        continue
+                    try:
+                        descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+                        with os.fdopen(descriptor, 'rb') as stream:
+                            info = os.fstat(stream.fileno())
+                            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                                self.warnings.add('collection-identity')
+                                continue
+                            destination = self.archive / source.name
+                            with destination.open('xb') as output:
+                                shutil.copyfileobj(stream, output)
+                            destination.chmod(0o600)
+                            if destination.stat().st_size != os.fstat(stream.fileno()).st_size:
+                                self.warnings.add('collection-incomplete')
+                            collected.append({'name': source.name, 'bytes': destination.stat().st_size})
+                    except OSError:
+                        self.warnings.add('collection-incomplete')
+        except (OSError, ValueError):
+            self.warnings.add('collection-incomplete')
+        if self.warnings:
+            warning = self.root / 'warnings.log'
+            try:
+                warning.write_text('Native diagnostics warning: ' + ', '.join(sorted(self.warnings)) + '\n')
+                self.mirror.add(warning)
+                if archive_ready:
+                    (self.archive / 'warnings.log').write_bytes(warning.read_bytes())
+            except OSError:
+                self.warnings.add('warning-retention')
+        metrics = self.mirror.close()
+        if not metrics['consoleComplete']:
+            self.warnings.add('console-incomplete')
+        self.progress.close()
+        result = {'invocationID': self.invocation, 'sourceDirectory': str(self.root),
+                  'artifactDirectory': str(self.archive), 'captureRequested': self.requested,
+                  'captures': captures, 'warnings': sorted(self.warnings), 'files': collected,
+                  'collectionScope': 'observed-files-at-command-completion',
+                  'collectionComplete': not self.warnings.intersection({'collection-incomplete', 'collection-identity'}),
+                  **metrics}
+        if archive_ready:
+            try:
+                atomic_json(self.archive / 'native-diagnostics.json', result)
+            except OSError:
+                result['warnings'] = sorted(self.warnings | {'metadata-retention'})
+        return result
+
+
+def supervise(command, timeout=7200, startup_timeout=None, desktop=False, directory=None, env=None, pass_fds=(), merge_stderr=True, cwd=None, output_log=None, native_test_root=None, native_artifact_directory=None,
+              native_test_bundles=None, capture_native_stderr=False):
     """Bound a process group, retaining diagnostics and killing only that group."""
     directory = pathlib.Path(directory) if directory is not None else verification_artifact_root(ROOT) / "diagnostics" / ("owned-" + uuid.uuid4().hex)
     keeper = None
@@ -932,14 +1106,21 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
     except (OSError, ValueError):
         atomic_json(manifest, ownership | {"status": "failed", "category": "output-capture-failed"})
         raise
-    native_progress = None
+    native_diagnostics = None
     try:
-        native_progress = NativeTestProgress.for_capture(capture, child_env) if startup_timeout else None
+        if native_test_root is not None:
+            native_diagnostics = NativeTestDiagnostics(
+                native_test_root, native_artifact_directory or directory / 'Native', tag,
+                native_test_bundles or ['net.phere.GitXTests', 'net.phere.GitXUITests'], capture_native_stderr)
+            native_diagnostics.configure(child_env)
+            ownership['nativeDiagnostics'] = {'invocationID': native_diagnostics.invocation,
+                'sourceDirectory': str(native_diagnostics.root), 'progressDirectory': str(native_diagnostics.progress_directory)}
+            atomic_json(manifest, ownership)
         child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge_stderr else None,
                                  start_new_session=True, env=child_env, pass_fds=pass_fds, cwd=cwd)
     except BaseException:
-        if native_progress:
-            native_progress.close()
+        if native_diagnostics:
+            ownership['nativeDiagnostics'] = native_diagnostics.close()
         if capture:
             ownership['outputCapture'] = capture.close()
         atomic_json(manifest, ownership | {"status": "failed", "category": "command-start-failed"})
@@ -974,9 +1155,10 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             if elapsed > timeout:
                 category = "command-timeout"
                 break
-            if not host_started and native_progress and native_progress.observed():
+            native_started = native_diagnostics.poll() if native_diagnostics else False
+            if not host_started and native_started:
                 host_started = True
-                host_startup("native-stderr")
+                host_startup("xctest-observer")
             if startup_timeout and not host_started and elapsed > startup_timeout:
                 category = "unknown-host-startup-timeout"
                 break
@@ -995,7 +1177,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     sys.stdout.buffer.write(data)
                     sys.stdout.buffer.flush()
                 buffered = (buffered + data)[-65536:]
-                if not host_started and test_output_started(buffered):
+                if not native_diagnostics and not host_started and test_output_started(buffered):
                     host_started = True
                     host_startup("command-output")
             if category:
@@ -1062,8 +1244,11 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                             "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
             selector.close()
             child.stdout.close()
-            if native_progress:
-                native_progress.close()
+            if native_diagnostics:
+                ownership['nativeDiagnostics'] = native_diagnostics.close()
+                with contextlib.suppress(OSError, ValueError):
+                    atomic_json(manifest, ownership | {"status": "failed" if category or child.returncode else "passed",
+                                "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
             for sig, handler in original.items():
                 signal.signal(sig, handler)
             if keeper:
@@ -1257,6 +1442,10 @@ def main():
     bounded.add_argument("--desktop", action="store_true")
     bounded.add_argument("--diagnostics", type=pathlib.Path)
     bounded.add_argument("--output-log", type=pathlib.Path)
+    bounded.add_argument("--native-test-root", type=pathlib.Path)
+    bounded.add_argument("--native-artifact-directory", type=pathlib.Path)
+    bounded.add_argument("--native-test-bundle", action="append")
+    bounded.add_argument("--capture-native-stderr", action="store_true")
     bounded.add_argument("arguments", nargs=argparse.REMAINDER)
     paths = sub.add_parser("paths")
     paths.add_argument("--configuration", default="Debug")
@@ -1283,7 +1472,9 @@ def main():
             command = args.arguments[1:] if args.arguments[:1] == ["--"] else args.arguments
             inherited = Leases([], {"runId": os.environ.get("GITX_SESSION_ID", "command")})
             return supervise(command, args.timeout, args.startup_timeout, args.desktop, args.diagnostics,
-                             pass_fds=inherited.descriptors(), output_log=args.output_log)
+                             pass_fds=inherited.descriptors(), output_log=args.output_log,
+                             native_test_root=args.native_test_root, native_artifact_directory=args.native_artifact_directory,
+                             native_test_bundles=args.native_test_bundle, capture_native_stderr=args.capture_native_stderr)
         if args.command == "signatures":
             print(json.dumps(verify_signatures(args.derived_data)))
         if args.command == "desktop":

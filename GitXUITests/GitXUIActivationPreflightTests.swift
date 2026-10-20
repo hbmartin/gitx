@@ -34,6 +34,20 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
         super.tearDown()
     }
 
+    func testManagedObserverRegistersBeforeUIBundleStartup() throws {
+        GitXManagedTestObserver.install()
+        let environment = ProcessInfo.processInfo.environment
+        guard let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"],
+              let invocation = environment["GITX_TEST_INVOCATION_ID"] else { return }
+        let files = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: directory), includingPropertiesForKeys: nil)
+        let records = try files.filter { $0.lastPathComponent.hasPrefix("startup-") }
+            .compactMap { try JSONSerialization.jsonObject(with: Data(contentsOf: $0)) as? [String: Any] }
+        XCTAssertTrue(records.contains {
+            $0["event"] as? String == "bundle-start" && $0["invocationID"] as? String == invocation
+                && $0["bundleID"] as? String == "net.phere.GitXUITests"
+        })
+    }
+
     func testRepositoryWindowActivates() throws {
         NSLog("[GitXUIActivationPreflightTests] preparing deterministic repository fixture")
         let repository = try makeRepositoryFixture()
