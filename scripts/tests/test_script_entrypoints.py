@@ -2377,6 +2377,46 @@ class VerificationWorkflowTests(unittest.TestCase):
                         )
                         self.assertEqual(result.returncode == 0, tests == analyzer == worktrees == 'success')
 
+    def test_native_setup_marker_follows_all_prerequisites_and_keeps_default_success_condition(self):
+        for job in ['worktree-contracts', 'ui']:
+            with self.subTest(job=job):
+                body = self.jobs()[job]
+                marker = '- name: Record successful native setup'
+                setup = body.split(marker, 1)[1].split('- name:', 1)[0]
+                self.assertIn('id: native_setup_ready', setup)
+                self.assertIn("run: 'true'", setup)
+                self.assertNotIn('if:', setup, 'A failed prerequisite must skip the readiness marker')
+                self.assertLess(body.index('- name: Prepare ObjectiveGit'), body.index(marker))
+                if job == 'worktree-contracts':
+                    self.assertLess(body.index('- name: Install pinned Swift tools'), body.index(marker))
+                    first_test = '- name: Execute Release service and runtime contracts'
+                else:
+                    first_test = '- name: Repeat Locate consent and stabilized UI regressions five times'
+                self.assertLess(body.index(marker), body.index(first_test))
+
+    def test_follow_on_predicates_reject_unready_setup_but_preserve_independent_failure_collection(self):
+        # This evaluates only the two supported atoms extracted from the workflow,
+        # not GitHub's runner or its prerequisite/default-condition implementation.
+        steps = [
+            ('worktree-contracts', 'Repeat the stabilized native CI regressions five times'),
+            ('worktree-contracts', 'Measure Release worktree safety and header update costs'),
+            ('ui', 'Run UI plan'),
+        ]
+        for job, name in steps:
+            step = self.jobs()[job].split('- name: ' + name, 1)[1].split('- name:', 1)[0]
+            condition = step.split('if: ${{ ', 1)[1].split(' }}', 1)[0]
+            self.assertEqual(condition, "!cancelled() && steps.native_setup_ready.outcome == 'success'")
+            for setup in ['success', 'failure', 'cancelled', 'skipped', '']:
+                for earlier_test in ['success', 'failure', 'cancelled', 'skipped', '']:
+                    for cancelled in [False, True]:
+                        with self.subTest(job=job, step=name, setup=setup, earlier_test=earlier_test, cancelled=cancelled):
+                            atoms = {
+                                '!cancelled()': not cancelled,
+                                "steps.native_setup_ready.outcome == 'success'": setup == 'success',
+                            }
+                            actual = all(atoms[atom] for atom in condition.split(' && '))
+                            self.assertEqual(actual, setup == 'success' and not cancelled)
+
     def test_focused_failures_keep_independent_plans_and_artifact_uploads_enabled(self):
         jobs = self.jobs()
         for job, name in [
@@ -2386,7 +2426,7 @@ class VerificationWorkflowTests(unittest.TestCase):
         ]:
             with self.subTest(job=job, step=name):
                 step = jobs[job].split('- name: ' + name, 1)[1].split('- name:', 1)[0]
-                self.assertIn('if: ${{ !cancelled() }}', step)
+                self.assertIn("if: ${{ !cancelled() && steps.native_setup_ready.outcome == 'success' }}", step)
                 self.assertNotIn('continue-on-error', jobs[job])
         for job, upload in [('worktree-contracts', 'Upload worktree verification results'),
                             ('ui', 'Upload UI result'), ('unit-tests', 'Upload correctness results')]:
