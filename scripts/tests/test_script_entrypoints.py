@@ -2352,7 +2352,10 @@ class VerificationWorkflowTests(unittest.TestCase):
         gate = jobs['unit-and-analyze']
         self.assertIn('name: unit tests and analyzer', gate)
         self.assertIn(f'needs: [{tests}, {analyzer}, worktree-contracts]', gate)
-        self.assertIn('if: ${{ always() }}', gate)
+        self.assertIn('if: ${{ !cancelled() }}', gate)
+        self.assertNotIn('if: ${{ always() }}', gate)
+        self.assertIn('timeout-minutes: 5', gate)
+        self.assertIn('needs: toolchain-smoke', jobs['worktree-contracts'])
         self.assertIn("UNIT_RESULT: ${{ needs['unit-tests'].result }}", gate)
         self.assertIn('ANALYSIS_RESULT: ${{ needs.analyzer.result }}', gate)
         self.assertIn("WORKTREE_RESULT: ${{ needs['worktree-contracts'].result }}", gate)

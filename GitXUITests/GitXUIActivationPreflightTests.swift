@@ -49,6 +49,7 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
     }
 
     func testRepositoryWindowActivates() throws {
+        try testManagedObserverRegistersBeforeUIBundleStartup()
         NSLog("[GitXUIActivationPreflightTests] preparing deterministic repository fixture")
         let repository = try makeRepositoryFixture()
         let isolatedHome = try fixtureWorkspace.makeIsolatedHome(named: "home")
