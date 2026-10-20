@@ -835,6 +835,69 @@ class CapturedConsole:
                 "consoleComplete": not self.worker.is_alive() and self.mirrored_bytes == self.captured_bytes}
 
 
+
+def test_output_started(data):
+    return any(marker in data for marker in (b"Test Suite ", b"Test Case ", b"Test case '"))
+
+
+class NativeTestProgress:
+    """Read startup evidence only from fresh files in this command's native log directory."""
+
+    @classmethod
+    def for_capture(cls, capture, environment):
+        configured = environment.get("TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY")
+        if not capture or not configured:
+            return None
+        try:
+            if pathlib.Path(configured).resolve() != capture.path.parent / "Native":
+                return None
+            return cls(configured)
+        except (OSError, RuntimeError):
+            return None
+
+    def __init__(self, directory):
+        self.descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            # A prior host probe must never establish this command's startup.
+            self.existing = set(os.listdir(self.descriptor))
+        except BaseException:
+            self.close()
+            raise
+        self.reads = {}
+
+    def observed(self):
+        try:
+            names = set(os.listdir(self.descriptor)) - self.existing
+        except OSError:
+            return False
+        for name in names:
+            if not re.fullmatch(r"GitX-[0-9]+\.stderr\.log", name):
+                continue
+            try:
+                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                                     dir_fd=self.descriptor)
+                with os.fdopen(descriptor, 'rb', buffering=0) as stream:
+                    identity = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(identity.st_mode) or identity.st_uid != os.getuid():
+                        continue
+                    key = (name, identity.st_dev, identity.st_ino)
+                    offset, tail = self.reads.get(key, (0, b""))
+                    if identity.st_size < offset:
+                        offset, tail = 0, b""
+                    stream.seek(offset)
+                    data = stream.read(65536)
+                    tail = (tail + data)[-65536:]
+                    self.reads[key] = (offset + len(data), tail)
+                    if test_output_started(tail):
+                        return True
+            except OSError:
+                continue
+        return False
+
+    def close(self):
+        os.close(self.descriptor)
+
+
 def supervise(command, timeout=7200, startup_timeout=None, desktop=False, directory=None, env=None, pass_fds=(), merge_stderr=True, cwd=None, output_log=None):
     """Bound a process group, retaining diagnostics and killing only that group."""
     directory = pathlib.Path(directory) if directory is not None else verification_artifact_root(ROOT) / "diagnostics" / ("owned-" + uuid.uuid4().hex)
@@ -869,10 +932,14 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
     except (OSError, ValueError):
         atomic_json(manifest, ownership | {"status": "failed", "category": "output-capture-failed"})
         raise
+    native_progress = None
     try:
+        native_progress = NativeTestProgress.for_capture(capture, child_env) if startup_timeout else None
         child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge_stderr else None,
                                  start_new_session=True, env=child_env, pass_fds=pass_fds, cwd=cwd)
     except BaseException:
+        if native_progress:
+            native_progress.close()
         if capture:
             ownership['outputCapture'] = capture.close()
         atomic_json(manifest, ownership | {"status": "failed", "category": "command-start-failed"})
@@ -881,6 +948,13 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
         keeper = subprocess.Popen(["/usr/bin/caffeinate", "-di", "-w", str(child.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     started, host_started, interrupted = time.monotonic(), False, None
     original = {}
+    def host_startup(source):
+        if not startup_timeout:
+            return
+        ownership['hostStartup'] = {"source": source, "observedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
+        with contextlib.suppress(OSError, ValueError):
+            atomic_json(manifest, ownership)
+
     def interrupt(signum, _):
         nonlocal interrupted
         interrupted = signum
@@ -903,6 +977,9 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             if startup_timeout and not host_started and elapsed > startup_timeout:
                 category = "unknown-host-startup-timeout"
                 break
+            if not host_started and native_progress and native_progress.observed():
+                host_started = True
+                host_startup("native-stderr")
             for key, _ in selector.select(.2):
                 data = os.read(key.fd, 65536)
                 if not data:
@@ -918,8 +995,9 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     sys.stdout.buffer.write(data)
                     sys.stdout.buffer.flush()
                 buffered = (buffered + data)[-65536:]
-                if b"Test Suite " in buffered or b"Test Case " in buffered or b"Test case '" in buffered:
+                if not host_started and test_output_started(buffered):
                     host_started = True
+                    host_startup("command-output")
             if category:
                 break
         if category:
@@ -984,6 +1062,8 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                             "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
             selector.close()
             child.stdout.close()
+            if native_progress:
+                native_progress.close()
             for sig, handler in original.items():
                 signal.signal(sig, handler)
             if keeper:

@@ -620,6 +620,109 @@ class WorkflowSessionTests(unittest.TestCase):
             session.stop_detached(owned)
             kill.assert_not_called()
 
+    def test_native_progress_requires_a_fresh_regular_file_and_complete_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            native = root / 'Native'
+            native.mkdir()
+            (native / 'GitX-1.stderr.log').write_bytes(b'Test Suite old probe started')
+            foreign = root / 'foreign'
+            foreign.write_bytes(b'Test Suite foreign source started')
+            progress = session.NativeTestProgress(native)
+            try:
+                (native / 'unrelated.log').write_bytes(b'Test Suite wrong filename started')
+                (native / 'GitX-2.stderr.log').symlink_to(foreign)
+                os.mkfifo(native / 'GitX-3.stderr.log')
+                self.assertFalse(progress.observed())
+                current = native / 'GitX-4.stderr.log'
+                current.write_bytes(b'Test Sui')
+                self.assertFalse(progress.observed())
+                with current.open('ab') as stream:
+                    stream.write(b'te current tests started')
+                self.assertTrue(progress.observed())
+            finally:
+                progress.close()
+
+    def native_startup_probe(self, mode):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            entry, output, diagnostics = self.capture_fixture(root)
+            native = output.parent / 'Native'
+            native.mkdir()
+            selected = root / 'ForeignNative' if mode == 'foreign' else native
+            selected.mkdir(exist_ok=True)
+            if mode == 'prior':
+                (native / 'GitX-123.stderr.log').write_bytes(b'Test Suite previous host started\n')
+            sentinel = root / 'sentinel'
+            sentinel.write_bytes(b'Test Suite foreign source started\n')
+            fifo = root / 'release'
+            os.mkfifo(fifo)
+            gate = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
+            command = r'''
+import os, pathlib, sys
+native, mode, fifo, sentinel = map(str, sys.argv[1:])
+path = pathlib.Path(native) / ('GitX-123.stderr.log' if mode == 'prior' else f'GitX-{os.getpid()}.stderr.log')
+if mode == 'symlink':
+    path.symlink_to(sentinel)
+else:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.write(fd, b'Test Sui' if mode == 'split' else b'app launched without XCTest\n' if mode == 'quiet' else b'Test Suite selected tests started\n')
+reader = os.open(fifo, os.O_RDONLY)
+if mode == 'split':
+    os.read(reader, 1)
+    os.write(fd, b'te selected tests started\n')
+os.read(reader, 1)
+print('completed', flush=True)
+'''
+            environment = dict(os.environ, TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY=str(selected))
+            process = subprocess.Popen([sys.executable, str(entry), 'run', '--timeout', '10',
+                                        '--startup-timeout', '2', '--diagnostics', str(diagnostics),
+                                        '--output-log', str(output), '--', sys.executable, '-c', command,
+                                        str(selected), mode, str(fifo), str(sentinel)],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+            manifest = diagnostics / 'diagnostic-owner.json'
+            split_released = released = False
+            deadline = time.monotonic() + 15
+            try:
+                while process.poll() is None and time.monotonic() < deadline:
+                    if mode == 'split' and not split_released and any(
+                            p.read_bytes() == b'Test Sui' for p in native.glob('*.log')):
+                        os.write(gate, b'1')
+                        split_released = True
+                    if manifest.exists():
+                        state = json.loads(manifest.read_text())
+                        if state.get('hostStartup') and not released:
+                            os.write(gate, b'2')
+                            released = True
+                    threading.Event().wait(.01)
+                self.assertIsNotNone(process.poll(), 'The owned supervisor must finish within its backstop')
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                stdout, stderr = process.communicate(timeout=10)
+                os.close(gate)
+            state = json.loads(manifest.read_text())
+            blocker = json.loads((diagnostics / 'blocker.json').read_text()) if (diagnostics / 'blocker.json').exists() else None
+            return process.returncode, state, blocker, stdout, stderr
+
+    def test_fresh_native_xctest_startup_is_observed_without_console_output(self):
+        for mode in ('live', 'split'):
+            with self.subTest(mode=mode):
+                status, state, blocker, stdout, stderr = self.native_startup_probe(mode)
+                self.assertEqual(status, 0, stderr)
+                self.assertEqual(state['hostStartup']['source'], 'native-stderr')
+                self.assertIsNone(blocker)
+                self.assertIn(b'completed', stdout)
+
+    def test_prior_native_host_and_foreign_logs_cannot_hide_missing_startup(self):
+        for mode in ('prior', 'foreign', 'quiet', 'symlink'):
+            with self.subTest(mode=mode):
+                status, state, blocker, stdout, stderr = self.native_startup_probe(mode)
+                self.assertEqual(status, 124, stderr)
+                self.assertNotIn('hostStartup', state)
+                self.assertEqual(blocker['category'], 'unknown-host-startup-timeout')
+                self.assertNotIn(b'completed', stdout)
+
     def test_watchdog_preserves_failure_and_bounds_startup(self):
         with tempfile.TemporaryDirectory() as directory:
             failed = session.supervise([sys.executable, "-c", "raise SystemExit(9)"], timeout=2, directory=directory)
