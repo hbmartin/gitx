@@ -93,6 +93,16 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasPrefix(".pending-") })
     }
 
+    func testProgressSerializationFailureLeavesNoPartialEvidence() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        XCTAssertThrowsError(try GitXTestProgressRecords.write(
+            ["unsupported": Date()], prefix: "startup", directory: directory.path
+        ))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+    }
+
     func testEmptyDiagnosticRequestsAreRemovedAndProgressSurvivesEmptyLaunchEnvironment() {
         let empty = GitXTestGitEnvironment.isolated(
             ["GITX_TEST_STDERR_DIRECTORY": "/previous", "GITX_TEST_PROGRESS_DIRECTORY": "/previous", "GITX_TEST_INVOCATION_ID": "old"],

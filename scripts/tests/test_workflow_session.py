@@ -21,6 +21,25 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_native_record_requires_filename_pid_and_owned_invocation_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            self.addCleanup(os.close, descriptor)
+            record = {'schemaVersion': 1, 'event': 'bundle-start', 'pid': 42,
+                      'bundleID': 'bundle', 'invocationID': 'invocation', 'verificationSession': 'session'}
+            source = root / 'startup-42-a.json'
+            source.write_text(json.dumps(record))
+            self.assertEqual(session.read_native_record(descriptor, source.name, 'invocation', 'session'), record)
+            for name, invocation, verification in [('startup-43-a.json', 'invocation', 'session'),
+                                                    (source.name, 'other', 'session'),
+                                                    (source.name, 'invocation', 'other')]:
+                with self.subTest(name=name, invocation=invocation, verification=verification):
+                    if name != source.name:
+                        (root / name).write_bytes(source.read_bytes())
+                    self.assertIsNone(session.read_native_record(descriptor, name, invocation, verification))
+            self.assertEqual(json.loads(source.read_text()), record)
+
     def capture_fixture(self, root):
         scripts = root / 'scripts'
         scripts.mkdir()
