@@ -15,7 +15,7 @@ public enum WorktreeRepairOfferPresentation: Equatable, Sendable {
 public struct WorktreeInventoryPresentation: Equatable, Sendable {
     public let message: String?
     public let warns: Bool
-    public let isUpdating: Bool
+    public let showsInitialProgress: Bool
 
     /// Unknown service values retain actionable inventory recovery guidance.
     public init(rawStatus: Int, hasSnapshot: Bool, capabilityExplanation: String) {
@@ -24,12 +24,12 @@ public struct WorktreeInventoryPresentation: Equatable, Sendable {
     }
 
     public init(status: WorktreeInventoryStatus, hasSnapshot: Bool, capabilityExplanation: String) {
-        isUpdating = status == .updating
+        showsInitialProgress = !hasSnapshot && (status == .updating || status == .checkingCapability)
         switch status {
         case .checkingCapability:
             message = "Checking the selected Git executable…"; warns = false
         case .updating:
-            message = hasSnapshot ? "Updating the worktree list…" : "Loading worktrees…"; warns = false
+            message = hasSnapshot ? nil : "Loading worktrees…"; warns = false
         case .fresh, .closed:
             message = nil; warns = false
         case .stale:
@@ -48,14 +48,21 @@ public struct WorktreeInventoryHeaderState: Sendable {
 
     public init() {}
 
-    public mutating func presentation(rawStatus: Int, hasSnapshot: Bool, capabilityExplanation: String) -> WorktreeInventoryPresentation {
+    public mutating func presentation(rawStatus: Int, hasSnapshot: Bool, isSnapshotStale: Bool, capabilityExplanation: String) -> WorktreeInventoryPresentation {
         let status = WorktreeInventoryStatus(rawValue: rawStatus) ?? .stale
         if status == .updating, hasSnapshot {
-            return settled ?? WorktreeInventoryPresentation(status: .fresh, hasSnapshot: true, capabilityExplanation: capabilityExplanation)
+            return settled ?? WorktreeInventoryPresentation(status: isSnapshotStale ? .stale : .fresh, hasSnapshot: true,
+                                                            capabilityExplanation: capabilityExplanation)
         }
         let current = WorktreeInventoryPresentation(status: status, hasSnapshot: hasSnapshot, capabilityExplanation: capabilityExplanation)
-        if status != .updating, status != .checkingCapability {
+        switch status {
+        case .fresh, .stale:
             settled = current
+        case .checkingCapability, .unsupported, .closed:
+            // Inventory guidance from another executable context is not reusable.
+            settled = nil
+        case .updating:
+            break
         }
         return current
     }

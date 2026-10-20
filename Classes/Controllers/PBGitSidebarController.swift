@@ -29,6 +29,13 @@ private struct WorktreeSidebarSelectionPolicy {
     }
 }
 
+private struct WorktreeInventoryHeaderInput: Equatable {
+    let status: Int
+    let hasSnapshot: Bool
+    let isStale: Bool
+    let capabilityExplanation: String
+}
+
 private enum RepositoryForgeSidebarDestination: Equatable {
     case surface(ForgeCollaborationSurface)
     case chooseBinding
@@ -86,6 +93,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     private var hasClosed = false
     private var inventoryHeaderState = WorktreeInventoryHeaderState()
     private var inventoryHeaderPresentation: WorktreeInventoryPresentation?
+    private var inventoryHeaderInput: WorktreeInventoryHeaderInput?
+    private weak var inventoryHeaderCell: PBSidebarTableViewCell?
     private weak var inventoryHeaderService: PBRepositoryWorktreeService?
     private var worktreeHistoryOrigin: WorktreeHistorySelectionOrigin?
     private var selectionControlsRefresh = SidebarSelectionControlsRefreshState()
@@ -205,6 +214,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     override open func closeView() {
         hasClosed = true
+        inventoryHeaderCell?.setInventoryProgress(visible: false, message: nil)
         worktreeObservations.removeAll()
         currentBranchObservation = nil
         branchesObservation = nil
@@ -332,21 +342,27 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         Self.logger.info("Refreshed worktree sidebar while preserving mounted content")
     }
 
-    private func currentInventoryHeaderPresentation() -> WorktreeInventoryPresentation? {
-        guard let service = repository?.worktreeService else { return nil }
+    @discardableResult
+    private func updateInventoryHeaderPresentation() -> Bool {
+        guard let service = repository?.worktreeService else { return false }
         if inventoryHeaderService !== service {
             inventoryHeaderService = service
             inventoryHeaderState = WorktreeInventoryHeaderState()
+            inventoryHeaderInput = nil
         }
-        return inventoryHeaderState.presentation(rawStatus: service.inventoryStatus, hasSnapshot: service.hasPublishedSnapshot,
-                                                 capabilityExplanation: service.explanation)
+        let input = WorktreeInventoryHeaderInput(status: service.inventoryStatus, hasSnapshot: service.hasPublishedSnapshot,
+                                                isStale: service.isSnapshotStale, capabilityExplanation: service.explanation)
+        guard input != inventoryHeaderInput else { return false }
+        inventoryHeaderInput = input
+        let presentation = inventoryHeaderState.presentation(rawStatus: input.status, hasSnapshot: input.hasSnapshot,
+                                                             isSnapshotStale: input.isStale, capabilityExplanation: input.capabilityExplanation)
+        let changed = presentation != inventoryHeaderPresentation
+        inventoryHeaderPresentation = presentation
+        return changed
     }
 
     private func reloadWorktreeHeader() {
-        guard !hasClosed else { return }
-        let presentation = currentInventoryHeaderPresentation()
-        guard presentation != inventoryHeaderPresentation else { return }
-        inventoryHeaderPresentation = presentation
+        guard !hasClosed, updateInventoryHeaderPresentation() else { return }
         guard let worktreesGroup else { return }
         sourceView?.reloadItem(worktreesGroup, reloadChildren: false)
         Self.logger.debug("Updated settled worktree inventory header without rebuilding sidebar rows")
@@ -797,6 +813,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
             branchPresentation = BranchSidebarPresentation(repository: repository)
         }
         branchPresentation?.reload()
+        updateInventoryHeaderPresentation()
         mutableItems.removeAllObjects()
 
         let project = PBSourceViewItem.groupItem(withTitle: repository.projectName() ?? "")
@@ -955,6 +972,7 @@ public extension PBGitSidebarController {
             withIdentifier: sidebarCellIdentifier,
             owner: outlineView
         ) as? PBSidebarTableViewCell else { return nil }
+        cell.setInventoryProgress(visible: false, message: nil)
         cell.textField?.stringValue = item.title
         cell.imageView?.image = item.icon
         cell.isCheckedOut = item.revSpecifier?.isEqual(repository?.headRef()) == true
@@ -978,8 +996,9 @@ public extension PBGitSidebarController {
             cell.setAccessibilityHelp(nil)
             cell.setAccessibilityValue(nil)
         }
-        if item === worktreesGroup, let presentation = currentInventoryHeaderPresentation() {
-            inventoryHeaderPresentation = presentation
+        if item === worktreesGroup, let presentation = inventoryHeaderPresentation {
+            inventoryHeaderCell = cell
+            cell.setInventoryProgress(visible: presentation.showsInitialProgress, message: presentation.message)
             cell.imageView?.image = presentation.warns ? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: presentation.message) : nil
             cell.toolTip = presentation.message
             cell.setAccessibilityIdentifier("RepositoryWorktreesGroup")

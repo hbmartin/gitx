@@ -3,6 +3,41 @@ import AppKit
 @objc(PBSidebarTableViewCell)
 final class PBSidebarTableViewCell: NSTableCellView {
     @IBOutlet private weak var checkedOutImageView: NSImageView?
+    private var inventoryProgress: NSProgressIndicator?
+    private var showsInventoryProgress = false
+
+    func setInventoryProgress(visible: Bool, message: String?) {
+        showsInventoryProgress = visible
+        if visible, inventoryProgress == nil {
+            let progress = NSProgressIndicator()
+            progress.style = .spinning
+            progress.controlSize = .small
+            progress.isIndeterminate = true
+            progress.isDisplayedWhenStopped = false
+            progress.identifier = NSUserInterfaceItemIdentifier("RepositoryWorktreesInitialProgress")
+            progress.setAccessibilityIdentifier("RepositoryWorktreesInitialProgress")
+            progress.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(progress)
+            NSLayoutConstraint.activate([
+                progress.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+                progress.centerYAnchor.constraint(equalTo: centerYAnchor),
+                progress.widthAnchor.constraint(equalToConstant: 16),
+                progress.heightAnchor.constraint(equalToConstant: 16),
+            ])
+            inventoryProgress = progress
+        }
+        inventoryProgress?.setAccessibilityLabel(message)
+        inventoryProgress?.isHidden = !visible
+        updateInventoryProgressAnimation()
+    }
+
+    private func updateInventoryProgressAnimation() {
+        if showsInventoryProgress, window != nil {
+            inventoryProgress?.startAnimation(nil)
+        } else {
+            inventoryProgress?.stopAnimation(nil)
+        }
+    }
 
     @objc dynamic var isCheckedOut = false {
         didSet { updateCheckmarkImage() }
@@ -26,6 +61,7 @@ final class PBSidebarTableViewCell: NSTableCellView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        updateInventoryProgressAnimation()
         let center = NotificationCenter.default
         center.removeObserver(self, name: NSWindow.didBecomeMainNotification, object: nil)
         center.removeObserver(self, name: NSWindow.didResignMainNotification, object: nil)

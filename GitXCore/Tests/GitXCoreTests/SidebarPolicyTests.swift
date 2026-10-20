@@ -4,12 +4,9 @@ import XCTest
 final class SidebarPolicyTests: XCTestCase {
     func testUnknownInventoryStatusRetainsStaleRecoveryGuidance() {
         for hasSnapshot in [false, true] {
-            let status = WorktreeInventoryStatus(rawValue: Int.max)
-            XCTAssertNil(status)
-            let presentation = WorktreeInventoryPresentation(rawStatus: Int.max, hasSnapshot: hasSnapshot,
-                                                             capabilityExplanation: "Choose a supported Git.")
+            let presentation = WorktreeInventoryPresentation(rawStatus: Int.max, hasSnapshot: hasSnapshot, capabilityExplanation: "Git Preferences")
             XCTAssertTrue(presentation.warns)
-            XCTAssertFalse(presentation.isUpdating)
+            XCTAssertFalse(presentation.showsInitialProgress)
             XCTAssertTrue(presentation.message?.contains("Refresh Worktrees") == true)
         }
     }
@@ -21,13 +18,12 @@ final class SidebarPolicyTests: XCTestCase {
                                                                  capabilityExplanation: "Choose a supported Git in Git Preferences.")
                 XCTAssertEqual(WorktreeInventoryPresentation(rawStatus: status.rawValue, hasSnapshot: hasSnapshot,
                                                              capabilityExplanation: "Choose a supported Git in Git Preferences."), presentation)
-                XCTAssertEqual(presentation.isUpdating, status == .updating)
+                XCTAssertEqual(presentation.showsInitialProgress, !hasSnapshot && (status == .updating || status == .checkingCapability))
                 XCTAssertEqual(presentation.warns, status == .stale || status == .unsupported)
                 switch status {
                 case .fresh, .closed: XCTAssertNil(presentation.message)
                 case .checkingCapability: XCTAssertTrue(presentation.message?.contains("Checking") == true)
-                case .updating:
-                    XCTAssertEqual(presentation.message, hasSnapshot ? "Updating the worktree list…" : "Loading worktrees…")
+                case .updating: XCTAssertEqual(presentation.message, hasSnapshot ? nil : "Loading worktrees…")
                 case .stale: XCTAssertTrue(presentation.message?.contains("Refresh Worktrees") == true)
                 case .unsupported:
                     XCTAssertTrue(presentation.message?.contains("Git Preferences") == true)
@@ -40,29 +36,49 @@ final class SidebarPolicyTests: XCTestCase {
     func testBackgroundInventoryReadsRetainSettledWarningsAndAccessibilityUntilRecovery() {
         var state = WorktreeInventoryHeaderState()
         let explanation = "Choose a supported Git in Git Preferences."
-        let loading = state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: false, capabilityExplanation: explanation)
-        XCTAssertEqual(loading.message, "Loading worktrees…")
-        let fresh = state.presentation(rawStatus: WorktreeInventoryStatus.fresh.rawValue, hasSnapshot: true, capabilityExplanation: explanation)
+        let loading = state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: false, isSnapshotStale: true, capabilityExplanation: explanation)
+        XCTAssertTrue(loading.showsInitialProgress)
+        let fresh = state.presentation(rawStatus: WorktreeInventoryStatus.fresh.rawValue, hasSnapshot: true, isSnapshotStale: false, capabilityExplanation: explanation)
         for _ in 0 ..< 5 {
-            XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, capabilityExplanation: explanation), fresh)
+            XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, isSnapshotStale: true, capabilityExplanation: explanation), fresh)
         }
-        let stale = state.presentation(rawStatus: WorktreeInventoryStatus.stale.rawValue, hasSnapshot: true, capabilityExplanation: explanation)
+        let stale = state.presentation(rawStatus: WorktreeInventoryStatus.stale.rawValue, hasSnapshot: true, isSnapshotStale: true, capabilityExplanation: explanation)
         XCTAssertTrue(stale.warns)
-        XCTAssertTrue(stale.message?.contains("Refresh Worktrees") == true)
-        XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, capabilityExplanation: explanation), stale)
-        XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.fresh.rawValue, hasSnapshot: true, capabilityExplanation: explanation), fresh)
-        let unsupported = state.presentation(rawStatus: WorktreeInventoryStatus.unsupported.rawValue, hasSnapshot: true, capabilityExplanation: explanation)
-        XCTAssertTrue(unsupported.warns)
-        XCTAssertEqual(unsupported.message, explanation)
-        XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, capabilityExplanation: explanation), unsupported)
-        XCTAssertNil(state.presentation(rawStatus: WorktreeInventoryStatus.closed.rawValue, hasSnapshot: true, capabilityExplanation: explanation).message)
+        XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, isSnapshotStale: true, capabilityExplanation: explanation), stale)
+        XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.fresh.rawValue, hasSnapshot: true, isSnapshotStale: false, capabilityExplanation: explanation), fresh)
     }
 
     func testNewHeaderStateHandlesBackgroundReadsAndUnknownCapabilityWithoutPriorRendering() {
-        var state = WorktreeInventoryHeaderState()
-        XCTAssertNil(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, capabilityExplanation: "Git Preferences").message)
-        XCTAssertTrue(state.presentation(rawStatus: Int.max, hasSnapshot: true, capabilityExplanation: "Git Preferences").warns)
-        XCTAssertTrue(state.presentation(rawStatus: WorktreeInventoryStatus.checkingCapability.rawValue, hasSnapshot: true, capabilityExplanation: "Git Preferences").message?.contains("Checking") == true)
+        for isStale in [false, true] {
+            var state = WorktreeInventoryHeaderState()
+            let current = state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, isSnapshotStale: isStale, capabilityExplanation: "Git Preferences")
+            XCTAssertEqual(current.warns, isStale)
+            XCTAssertFalse(current.showsInitialProgress)
+            XCTAssertEqual(current.message?.contains("Refresh Worktrees") == true, isStale)
+            XCTAssertTrue(state.presentation(rawStatus: Int.max, hasSnapshot: true, isSnapshotStale: isStale, capabilityExplanation: "Git Preferences").warns)
+        }
+    }
+
+    func testSupportedCapabilityRecoveryCannotRestoreObsoleteUnsupportedGuidance() {
+        for hasSnapshot in [false, true] {
+            var state = WorktreeInventoryHeaderState()
+            let explanation = "Choose a supported Git in Git Preferences."
+            let unsupported = state.presentation(rawStatus: WorktreeInventoryStatus.unsupported.rawValue, hasSnapshot: hasSnapshot, isSnapshotStale: true, capabilityExplanation: explanation)
+            XCTAssertEqual(unsupported.message, explanation)
+            let checking = state.presentation(rawStatus: WorktreeInventoryStatus.checkingCapability.rawValue, hasSnapshot: hasSnapshot, isSnapshotStale: true, capabilityExplanation: explanation)
+            XCTAssertEqual(checking.showsInitialProgress, !hasSnapshot)
+            XCTAssertFalse(checking.warns)
+            let supportedRead = state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: hasSnapshot, isSnapshotStale: true, capabilityExplanation: explanation)
+            XCTAssertNotEqual(supportedRead.message, explanation)
+            XCTAssertEqual(supportedRead.warns, hasSnapshot)
+            XCTAssertEqual(supportedRead.showsInitialProgress, !hasSnapshot)
+            let recovered = state.presentation(rawStatus: WorktreeInventoryStatus.fresh.rawValue, hasSnapshot: true, isSnapshotStale: false, capabilityExplanation: explanation)
+            XCTAssertNil(recovered.message)
+            XCTAssertFalse(recovered.showsInitialProgress)
+            let closed = state.presentation(rawStatus: WorktreeInventoryStatus.closed.rawValue, hasSnapshot: true, isSnapshotStale: true, capabilityExplanation: explanation)
+            XCTAssertNil(closed.message)
+            XCTAssertFalse(closed.showsInitialProgress)
+        }
     }
 
     func testDeferredPresentationRequiresTheActiveVisibleKeyOwnerWithoutAnotherSheet() {
