@@ -14,7 +14,7 @@ from support import ROOT
 
 
 TOOLS = r'''
-import json, os, pathlib, plistlib, shutil, sys
+import json, os, pathlib, plistlib, shutil, subprocess, sys
 tool = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 root = pathlib.Path(os.environ["GITX_DISTRIBUTION_FIXTURE"])
@@ -32,7 +32,7 @@ def app(path):
         plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark"}, output)
 failure = os.environ.get("GITX_DISTRIBUTION_FAIL", "")
 def fails(check, path):
-    stage = "zip" if "/zip/" in str(path) else "dmg" if "/mounted-dmg/" in str(path) else "input"
+    stage = "export" if "/Notarized/" in str(path) else "zip" if "/zip/" in str(path) else "dmg" if "/mounted-dmg/" in str(path) else "input"
     return failure in (check, check + ":" + stage)
 if tool == "xcodebuild":
     if "-showBuildSettings" in args:
@@ -70,6 +70,26 @@ elif tool == "ditto":
         payload = pathlib.Path(str(destination) + ".payload")
         shutil.copytree(source, payload / source.name, dirs_exist_ok=True, symlinks=True)
     else: shutil.copytree(args[-2], args[-1], dirs_exist_ok=True, symlinks=True)
+elif tool == "mv":
+    names = {"HalfDark-arm64.zip", "HalfDark-arm64.dmg", "HalfDark-arm64.sha256"}
+    if failure.startswith(("publish-failure-", "release-promotion-failure-")) or failure == "publish-and-restore-failure":
+        for source in args[:-1]:
+            source = pathlib.Path(source)
+            if failure == "publish-and-restore-failure" and source.parent.name == "previous": sys.exit(24)
+            promoting_release = failure.startswith("release-promotion-failure-")
+            expected_names = names | {"HalfDark-arm64"} if promoting_release else names
+            destination = pathlib.Path(args[-1])
+            public_destination = destination if len(args) == 2 else destination / source.name
+            publishing = (public_destination.parent.resolve() == (root / "release").resolve() and public_destination.name in expected_names
+                          and source.parent.name != "previous" and not source.name.startswith(".gitx-release-previous.")) if promoting_release else (source.name in names and source.parent.name.startswith(".gitx-package."))
+            if publishing:
+                count_path = root / "publication-count"
+                count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+                count_path.write_text(str(count))
+                if count == (2 if failure == "publish-and-restore-failure" else int(failure.rsplit("-", 1)[1])): sys.exit(23)
+            result = subprocess.run(["/bin/mv", str(source), args[-1]])
+            if result.returncode: sys.exit(result.returncode)
+    else: sys.exit(subprocess.run(["/bin/mv", *args]).returncode)
 elif tool == "hdiutil":
     if args[0] == "create":
         destination = pathlib.Path(args[-1])
@@ -89,8 +109,24 @@ elif tool == "hdiutil":
         if failure == "mount-info": sys.exit(16)
         mounts = [json.loads((root / "mount.json").read_text())] if (root / "mount.json").exists() else []
         images = [{"image-path": mount["image-path"], "system-entities": [mount]} for mount in mounts]
+        if failure == "foreign-mount":
+            for image in images: image["image-path"] = "/foreign/another.dmg"
+        if failure == "empty-image-identity":
+            for image in images:
+                image["image-path"] = ""
+                image["system-entities"][0].pop("mount-point", None)
+        if failure == "conflicting-devices":
+            for image in images:
+                image["system-entities"].append(dict(image["system-entities"][0], **{"dev-entry": "/dev/contradictory-device"}))
+        if failure == "duplicate-owned-image": images += images[:1]
+        if failure == "malformed-entity":
+            for image in images: image["system-entities"] = ["unidentified device"]
+        if failure == "missing-images":
+            sys.stdout.buffer.write(plistlib.dumps({}))
+            sys.exit(0)
         sys.stdout.buffer.write(plistlib.dumps({"images": images}))
     elif args[0] == "detach":
+        if failure == "detach-still-attached": sys.exit(0)
         if failure == "detach": sys.exit(17)
         mount = json.loads((root / "mount.json").read_text())
         if args[1] != mount["dev-entry"]: sys.exit(18)
@@ -124,7 +160,7 @@ class DistributionFixture:
         script = tools / "fixture-tool"
         script.write_text(f"#!{sys.executable}\n" + TOOLS)
         script.chmod(0o755)
-        for name in ("xcodebuild", "xcrun", "codesign", "lipo", "spctl", "ditto", "hdiutil"):
+        for name in ("xcodebuild", "xcrun", "codesign", "lipo", "spctl", "ditto", "hdiutil", "mv"):
             (tools / name).symlink_to(script)
         python = tools / "python3"
         python.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + ' "$@"\n')

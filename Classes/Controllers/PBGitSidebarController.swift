@@ -71,6 +71,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     @objc private dynamic var branches: PBSourceViewItem?
     private var worktreesGroup: PBSourceViewItem?
     private var restoringSelection = false
+    private var hasClosed = false
     private var worktreeHistoryOrigin: WorktreeHistorySelectionOrigin?
     private var selectionControlsRefresh = SidebarSelectionControlsRefreshState()
     private lazy var sidebarHistoryMenuBuilder: HistoryMenuBuilder? = repository.map { HistoryMenuBuilder(repository: $0) }
@@ -187,6 +188,17 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         )
     }
 
+    override open func closeView() {
+        hasClosed = true
+        worktreeObservations.removeAll()
+        currentBranchObservation = nil
+        branchesObservation = nil
+        refsObservation = nil
+        stashesObservation = nil
+        NotificationCenter.default.removeObserver(self)
+        super.closeView()
+    }
+
     isolated deinit {
         collaborationController?.closeView()
         NotificationCenter.default.removeObserver(self)
@@ -208,20 +220,17 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     private func installRepositoryObservations(_ repository: PBGitRepository) {
         currentBranchObservation = repository.observe(\.currentBranch, options: []) { [weak self] _, _ in
             Self.performRepositoryObservationOnMain { [weak self] in
-                guard let self else { return }
+                guard let self, !self.hasClosed else { return }
                 self.beginSelectionControlsRefresh()
                 defer { self.finishSelectionControlsRefresh() }
-                let selectedRow = self.sourceView?.selectedRow
-                do {
-                    let previousRestoring = self.restoringSelection
-                    self.restoringSelection = true
-                    defer { self.restoringSelection = previousRestoring }
+                self.preservingMountedContent {
+                    let selectedRow = self.sourceView?.selectedRow
                     self.sourceView?.reloadData()
                     if let selectedRow, selectedRow >= 0 {
                         self.sourceView?.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
                     }
+                    self.selectCurrentBranch()
                 }
-                self.selectCurrentBranch()
             }
         }
         branchesObservation = repository.observe(\.branches, options: [.old, .new]) { [weak self] _, _ in
@@ -241,11 +250,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
             repository.observe(\.worktreeFeatureAvailable, options: []) { [weak self] _, _ in
                 Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreePresentation() }
             },
-            repository.observe(\.worktreeService.isSnapshotStale, options: []) { [weak self] _, _ in
-                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreePresentation() }
-            },
-            repository.observe(\.worktreeService.hasPublishedSnapshot, options: []) { [weak self] _, _ in
-                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreePresentation() }
+            repository.observe(\.worktreeService.inventoryStatus, options: []) { [weak self] _, _ in
+                Self.performRepositoryObservationOnMain { [weak self] in self?.reloadWorktreeHeader() }
             },
         ]
         stashesObservation = repository.observe(\.stashes, options: []) { [weak self] _, _ in
@@ -256,7 +262,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     private func reloadStashes() {
-        guard let stashes, let repository else { return }
+        guard !hasClosed, let stashes, let repository else { return }
         for item in stashes.sortedChildren {
             stashes.removeChild(item)
         }
@@ -273,8 +279,20 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc dynamic func reloadSidebarPresentation() {
+        guard !hasClosed else { return }
         beginSelectionControlsRefresh()
         defer { finishSelectionControlsRefresh() }
+        preservingMountedContent { restoreSidebarPresentation() }
+    }
+
+    private final func preservingMountedContent(_ restore: () -> Void) {
+        let previousRestoring = restoringSelection
+        restoringSelection = previousRestoring || windowController?.hasMountedContent == true
+        defer { restoringSelection = previousRestoring }
+        restore()
+    }
+
+    private final func restoreSidebarPresentation() {
         let selectedForgeSurface = selectedForgeSurface()
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
         let viewedRevision = repository?.currentBranch
@@ -296,6 +314,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     /// Discovery restores sidebar rows without taking navigation authority from
     /// the content currently mounted by an inspector or another presenter.
     private final func reloadWorktreePresentation() {
+        guard !hasClosed else { return }
         beginSelectionControlsRefresh()
         defer { finishSelectionControlsRefresh() }
         let previousRestoring = restoringSelection
@@ -303,6 +322,12 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         defer { restoringSelection = previousRestoring }
         reloadSidebarPresentation()
         Self.logger.info("Refreshed worktree sidebar while preserving mounted content")
+    }
+
+    private func reloadWorktreeHeader() {
+        guard !hasClosed, let worktreesGroup else { return }
+        sourceView?.reloadItem(worktreesGroup, reloadChildren: false)
+        Self.logger.debug("Updated worktree inventory header without rebuilding sidebar rows")
     }
 
     @objc(showForgeAttention:)
@@ -438,8 +463,13 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc dynamic func reloadSidebarAfterReferencesChange() {
+        guard !hasClosed else { return }
         beginSelectionControlsRefresh()
         defer { finishSelectionControlsRefresh() }
+        preservingMountedContent { restoreSidebarAfterReferencesChange() }
+    }
+
+    private final func restoreSidebarAfterReferencesChange() {
         guard let repository else { return }
         let selectedForgeSurface = selectedForgeSurface()
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
@@ -910,14 +940,18 @@ public extension PBGitSidebarController {
             cell.setAccessibilityValue(nil)
         }
         if item === worktreesGroup, let service = repository?.worktreeService {
-            let warning = WorktreePresentationPolicy.freshnessWarning(hasSnapshot: service.hasPublishedSnapshot, isStale: service.isSnapshotStale)
-            cell.imageView?.image = warning == nil ? nil : NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: warning)
-            cell.toolTip = warning
+            let status = WorktreeInventoryStatus(rawValue: service.inventoryStatus) ?? .stale
+            let presentation = WorktreeInventoryPresentation(status: status, hasSnapshot: service.hasPublishedSnapshot, capabilityExplanation: service.explanation)
+            cell.imageView?.image = presentation.warns ? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: presentation.message) : nil
+            cell.toolTip = presentation.message
+            if presentation.isUpdating {
+                cell.textField?.stringValue = item.title + " (Updating…)"
+            }
             cell.setAccessibilityIdentifier("RepositoryWorktreesGroup")
             cell.setAccessibilityLabel("Worktrees")
-            cell.setAccessibilityValue(warning ?? "Up to date")
+            cell.setAccessibilityValue(presentation.message ?? "Up to date")
             cell.textField?.setAccessibilityIdentifier("RepositoryWorktreesGroup")
-            cell.textField?.setAccessibilityHelp(warning)
+            cell.textField?.setAccessibilityHelp(presentation.message)
         }
         return cell
     }

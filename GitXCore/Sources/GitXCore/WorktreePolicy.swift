@@ -12,6 +12,10 @@ public struct WorktreeRefreshState: Sendable {
 
     public init() {}
 
+    public var isReading: Bool {
+        inFlight
+    }
+
     public mutating func request() -> UInt64? {
         guard !isClosed else { return nil }
         guard !inFlight else { needsRefresh = true; return nil }
@@ -33,28 +37,35 @@ public struct WorktreeRefreshState: Sendable {
         return refresh ? request() : nil
     }
 
-    /// The owned reread supersedes all invalidations that preceded its start.
-    public mutating func beginReconciliation() -> UInt64? {
+    /// An admitted read supersedes every older ordinary result, even if no write follows.
+    public mutating func beginOwnedDiscovery(invalidatingSnapshot: Bool = false) -> UInt64? {
         guard !isClosed else { return nil }
         guard !reconciling else { needsRefresh = true; return nil }
         needsRefresh = false
         generation &+= 1
         inFlight = true
         reconciling = true
-        isStale = true
+        isStale = isStale || invalidatingSnapshot
         return generation
     }
 
-    /// Only this failed owned pass earns an automatic recovery read. A failed
-    /// ordinary recovery stays stale until another event or explicit refresh.
-    public mutating func completeReconciliation(_ candidate: UInt64, succeeded: Bool) -> UInt64? {
+    public mutating func beginReconciliation() -> UInt64? {
+        beginOwnedDiscovery(invalidatingSnapshot: true)
+    }
+
+    /// Only post-write failure earns automatic recovery. Events during either owned read survive.
+    public mutating func completeOwnedDiscovery(_ candidate: UInt64, succeeded: Bool, recoverOnFailure: Bool = false) -> UInt64? {
         guard !isClosed, inFlight, reconciling, candidate == generation else { return nil }
         inFlight = false
         reconciling = false
         isStale = !succeeded
-        let refresh = needsRefresh || !succeeded
+        let refresh = needsRefresh || (recoverOnFailure && !succeeded)
         needsRefresh = false
         return refresh ? request() : nil
+    }
+
+    public mutating func completeReconciliation(_ candidate: UInt64, succeeded: Bool) -> UInt64? {
+        completeOwnedDiscovery(candidate, succeeded: succeeded, recoverOnFailure: true)
     }
 
     public mutating func didPublishSnapshot() {
@@ -95,18 +106,35 @@ public struct WorktreeEligibility: Equatable, Sendable {
         guard supported else { return false }
         switch command {
         case let .remove(path, _):
-            guard let current = records.first(where: { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }),
+            let identity = WorktreePaths.identity(path)
+            guard let current = records.first(where: { WorktreePaths.identity($0.path) == identity }),
                   Self(current, supported: supported).canRemove else { return false }
             guard let previousRecords else { return true }
-            guard let previous = previousRecords.first(where: { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }) else { return false }
-            return previous.branchIdentity == current.branchIdentity && WorktreeConsentRecord(previous) == WorktreeConsentRecord(current)
+            guard let previous = previousRecords.first(where: { WorktreePaths.identity($0.path) == identity }) else { return false }
+            return WorktreeRemovalConsent(previous) == WorktreeRemovalConsent(current)
         case let .lock(path, _):
-            return records.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }.map { Self($0, supported: supported).canLock } ?? false
+            let identity = WorktreePaths.identity(path)
+            return records.first { WorktreePaths.identity($0.path) == identity }.map { Self($0, supported: supported).canLock } ?? false
         case let .unlock(path):
-            return records.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(path) }.map { Self($0, supported: supported).canUnlock } ?? false
+            let identity = WorktreePaths.identity(path)
+            return records.first { WorktreePaths.identity($0.path) == identity }.map { Self($0, supported: supported).canUnlock } ?? false
         case .addExisting, .addNew: return true
         case .pruneReport, .prune, .repairLinks: return false
         }
+    }
+
+    public static func removalRejection(path: String, records: [GitWorktree], consent: WorktreeRemovalConsent?) -> WorktreeRemovalRejection? {
+        guard let consent else { return .missingConsent }
+        let identity = WorktreePaths.identity(path)
+        guard let current = records.first(where: { WorktreePaths.identity($0.path) == identity }),
+              WorktreeRemovalConsent(current) == consent else { return .changedConsent }
+        if current.isMain {
+            return .mainWorktree
+        }
+        if current.isCurrent {
+            return .currentWorktree
+        }
+        return current.isLocked ? .lockedWorktree : nil
     }
 
     public static func canPrune(_ worktrees: [GitWorktree], supported: Bool) -> Bool {
@@ -169,6 +197,42 @@ public struct WorktreeConsentRecord: Equatable, Sendable {
         movedPathIdentity = record.movedPath.map { Data($0.utf8) }
         movedEndpointIdentity = record.movedPath.map(WorktreePaths.identity)
     }
+}
+
+/// Removal can discard the only reference to a detached commit. Its consent includes history.
+public struct WorktreeRemovalConsent: Equatable, Sendable {
+    private let registration: WorktreeConsentRecord
+    private let head: Data?
+    private let reference: Data?
+    private let detached: Bool
+
+    public init(_ record: GitWorktree) {
+        registration = WorktreeConsentRecord(record)
+        head = record.head.map { Data($0.utf8) }
+        reference = record.headRefIdentity
+        detached = record.isDetached
+    }
+}
+
+public enum WorktreeRemovalRejection: Error, LocalizedError, Sendable {
+    case missingConsent, changedConsent, mainWorktree, currentWorktree, lockedWorktree
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingConsent:
+            "Remove requires a previously reviewed worktree. Review the refreshed worktree list before trying again."
+        case .changedConsent:
+            "The worktree registration or eligibility changed. Review the refreshed worktree list before trying again."
+        case .mainWorktree: "The main worktree cannot be removed."
+        case .currentWorktree: "The current worktree cannot be removed from its own window."
+        case .lockedWorktree: "This worktree is locked. Unlock it before choosing Remove again."
+        }
+    }
+}
+
+/// Stable read-only production status shared by Swift presentation and the Objective-C service facade.
+public enum WorktreeInventoryStatus: Int, Sendable {
+    case checkingCapability, updating, fresh, stale, unsupported, closed
 }
 
 public enum WorktreeHistoryRevision: Equatable, Sendable {

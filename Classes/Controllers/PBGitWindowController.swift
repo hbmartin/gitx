@@ -8,6 +8,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc private dynamic var _historyViewController: PBGitHistoryController? // swiftlint:disable:this identifier_name
     @objc private dynamic weak var contentController: PBViewController?
 
+    final var hasMountedContent: Bool {
+        contentController != nil
+    }
+
     private var explicitlyAssignedRepository: PBGitRepository?
     private var focusRefreshCoordinator: RepositoryFocusRefreshCoordinator?
     private var actionContextResolver: RepositoryActionContextResolver?
@@ -213,9 +217,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         invalidateWorktreePresentation()
         NotificationCenter.default.removeObserver(self)
         focusRefreshCoordinator?.cancel()
-        repository?.cancelWorktreeDiscovery()
         worktreeObservations.removeAll()
         sidebarViewController?.closeView()
+        repository?.cancelWorktreeDiscovery()
         historyViewController?.closeView()
         _sidebarController = nil
         _historyViewController = nil

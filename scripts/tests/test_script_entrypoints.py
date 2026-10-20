@@ -109,6 +109,24 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
 
+    def test_xcodebuild_captures_complete_output_before_console_forwarding(self) -> None:
+        script = self.install_script('xcodebuild.sh')
+        self.install_mock_xcodebuild(self.root / 'Products')
+        mock = self.developer_directory / 'usr/bin/xcodebuild'
+        mock.write_text(mock.read_text() + '\nif [[ " $* " == *" build "* ]]; then\n'
+                        '  printf "raw stdout\\n"\n  printf "raw stderr\\n" >&2\n  exit 9\nfi\n')
+        result = subprocess.run([script, '--run-id', 'captured-failure', 'build'],
+                                capture_output=True, text=True, env=self.environment, timeout=30)
+        self.assertEqual(result.returncode, 9, result.stdout + result.stderr)
+        receipt = self.receipt('captured-failure')
+        failed = next(step for step in receipt['steps'] if step['exitCode'] == 9)
+        log = (self.root / failed['log']).resolve()
+        self.assertEqual(log.read_text(), 'raw stdout\nraw stderr\n')
+        diagnostic = next((self.root / 'artifacts/verification/captured-failure/Diagnostics').rglob('diagnostic-owner.json'))
+        capture = json.loads(diagnostic.read_text())['outputCapture']
+        self.assertEqual(capture['path'], str(log))
+        self.assertEqual(capture['capturedBytes'], len(b'raw stdout\nraw stderr\n'))
+
     def test_verification_preserves_resolved_packages_when_a_newer_version_is_available(self) -> None:
         script = self.install_script("xcodebuild.sh")
         self.install_mock_xcodebuild(self.root / "Products")

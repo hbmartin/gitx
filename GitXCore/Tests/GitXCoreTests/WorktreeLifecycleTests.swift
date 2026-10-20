@@ -26,7 +26,7 @@ final class WorktreePolicyTests: XCTestCase {
         let original = GitWorktree(path: "/linked", head: "old", branchRefName: "refs/heads/topic")
         let command = WorktreeCommand.remove(path: "/linked", force: false)
         let committed = GitWorktree(path: "/linked", head: "new", branchRefName: "refs/heads/topic")
-        XCTAssertTrue(WorktreeEligibility.allows(command, records: [committed], supported: true, previousRecords: [original]))
+        XCTAssertFalse(WorktreeEligibility.allows(command, records: [committed], supported: true, previousRecords: [original]))
         for replacement in [GitWorktree(path: "/linked", branchRefName: "refs/heads/other"),
                             GitWorktree(path: "/linked", branchRefName: "refs/heads/topic", hasBrokenLink: true)]
         {
@@ -47,6 +47,61 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertTrue(state.isStale)
         state.didPublishSnapshot()
         XCTAssertFalse(state.isStale)
+    }
+
+    func testRemovalConsentIncludesExactHistoryAndPreservesUnchangedApproval() {
+        let original = GitWorktree(path: "/linked", head: "A", branchRefName: "refs/heads/topic")
+        let consent = WorktreeRemovalConsent(original)
+        XCTAssertNil(WorktreeEligibility.removalRejection(path: original.path, records: [original], consent: consent))
+        let replacements = [
+            GitWorktree(path: original.path, head: "B", branchRefName: "refs/heads/topic"),
+            GitWorktree(path: original.path, head: "A", headRefName: "refs/tags/topic"),
+            GitWorktree(path: original.path, head: "A", isDetached: true),
+            GitWorktree(path: original.path, head: "A", branchRefName: "refs/heads/topic", isLocked: true),
+        ]
+        for replacement in replacements {
+            XCTAssertEqual(WorktreeEligibility.removalRejection(path: original.path, records: [replacement], consent: consent), .changedConsent)
+            for force in [false, true] {
+                XCTAssertFalse(WorktreeEligibility.allows(.remove(path: original.path, force: force), records: [replacement], supported: true, previousRecords: [original]))
+            }
+        }
+        let detached = GitWorktree(path: original.path, head: "A", isDetached: true)
+        let advanced = GitWorktree(path: original.path, head: "B", isDetached: true)
+        XCTAssertNotEqual(WorktreeRemovalConsent(detached), WorktreeRemovalConsent(advanced))
+        XCTAssertEqual(WorktreeConsentRecord(detached), WorktreeConsentRecord(advanced), "Repair and prune consent remains history-insensitive")
+        XCTAssertEqual(WorktreeEligibility.removalRejection(path: original.path, records: [], consent: consent), .changedConsent)
+        XCTAssertEqual(WorktreeEligibility.removalRejection(path: original.path, records: [original], consent: nil), .missingConsent)
+        XCTAssertTrue(WorktreeRemovalRejection.missingConsent.localizedDescription.contains("previously reviewed"))
+        XCTAssertTrue(WorktreeRemovalRejection.changedConsent.localizedDescription.contains("Review the refreshed"))
+        for (record, reason) in [(GitWorktree(path: "/linked", isMain: true), WorktreeRemovalRejection.mainWorktree),
+                                 (GitWorktree(path: "/linked", isCurrent: true), .currentWorktree),
+                                 (GitWorktree(path: "/linked", isLocked: true), .lockedWorktree)]
+        {
+            XCTAssertEqual(WorktreeEligibility.removalRejection(path: record.path, records: [record], consent: WorktreeRemovalConsent(record)), reason)
+            XCTAssertFalse(reason.localizedDescription.isEmpty)
+        }
+    }
+
+    func testOwnedPreflightRetiresOrdinaryReadAndOnlyReplaysLaterInvalidations() throws {
+        for succeeds in [false, true] {
+            var state = WorktreeRefreshState()
+            state.didPublishSnapshot()
+            let ordinary = try XCTUnwrap(state.request())
+            XCTAssertNil(state.request())
+            let owned = try XCTUnwrap(state.beginOwnedDiscovery())
+            XCTAssertTrue(state.isReading)
+            XCTAssertFalse(state.isStale)
+            XCTAssertFalse(state.accepts(ordinary))
+            XCTAssertNil(state.complete(ordinary))
+            XCTAssertNil(state.completeOwnedDiscovery(owned, succeeded: succeeds))
+            XCTAssertEqual(state.isStale, !succeeds)
+            XCTAssertFalse(state.isReading)
+            let nextOwned = try XCTUnwrap(state.beginOwnedDiscovery())
+            XCTAssertNil(state.request())
+            let followup = try XCTUnwrap(state.completeOwnedDiscovery(nextOwned, succeeded: true))
+            XCTAssertTrue(state.accepts(followup))
+            XCTAssertNil(state.complete(followup))
+        }
     }
 
     func testReconciliationRetiresOrdinaryReadAndPreservesInvalidations() throws {

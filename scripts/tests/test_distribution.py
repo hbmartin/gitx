@@ -5,8 +5,10 @@ import os
 import subprocess
 import textwrap
 import hashlib
+import shutil
 import tempfile
 import unittest
+import sys
 
 from distribution_fixture import DistributionFixture
 from support import ROOT, load_script
@@ -14,24 +16,57 @@ from support import ROOT, load_script
 
 class DistributionTests(unittest.TestCase):
     def homebrew_step(self, directory):
+        scripts = pathlib.Path(directory) / "scripts"
+        scripts.mkdir(exist_ok=True)
+        shutil.copy2(ROOT / "scripts/distribution_artifact_names.sh", scripts)
         workflow = (ROOT / ".github/workflows/BuildPR.yml").read_text()
         step = workflow.split("- name: Update Homebrew cask", 1)[1].split("- name:", 1)[0]
         script = textwrap.dedent(step.split("run: |", 1)[1])
         return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-e", "-c", script],
                               cwd=directory, env=os.environ | {"RELEASE_TAG": "1.2.3"}, capture_output=True, text=True)
 
+    def write_distribution(self, root):
+        distribution = root / "distribution"
+        distribution.mkdir()
+        (root / "brew/Casks/g").mkdir(parents=True)
+        lines = []
+        for suffix in ("zip", "dmg"):
+            artifact = distribution / ("HalfDark-arm64." + suffix)
+            artifact.write_bytes(("downloaded fixture " + suffix).encode())
+            lines.append(hashlib.sha256(artifact.read_bytes()).hexdigest() + "  " + artifact.name)
+        manifest = distribution / "HalfDark-arm64.sha256"
+        manifest.write_text("\n".join(lines) + "\n")
+        return manifest
+
     def test_homebrew_hashes_downloaded_dmg_and_writes_its_actual_checksum(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            (root / "distribution").mkdir()
-            (root / "brew/Casks/g").mkdir(parents=True)
+            self.write_distribution(root)
             dmg = root / "distribution/HalfDark-arm64.dmg"
-            dmg.write_bytes(b"downloaded distribution fixture")
             result = self.homebrew_step(root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             cask = (root / "brew/Casks/g/gitx.rb").read_text()
             self.assertIn('sha256 "' + hashlib.sha256(dmg.read_bytes()).hexdigest() + '"', cask)
             self.assertIn('version "1.2.3"', cask)
+
+    def test_homebrew_rejects_invalid_packaged_evidence_before_cask_creation(self):
+        for failure in ("missing-manifest", "duplicate-dmg", "malformed-digest", "changed-dmg", "missing-zip"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                manifest = self.write_distribution(root)
+                if failure == "missing-manifest":
+                    manifest.unlink()
+                elif failure == "duplicate-dmg":
+                    manifest.write_text(manifest.read_text() + manifest.read_text().splitlines()[1] + "\n")
+                elif failure == "malformed-digest":
+                    manifest.write_text("invalid  HalfDark-arm64.dmg\n")
+                elif failure == "changed-dmg":
+                    (root / "distribution/HalfDark-arm64.dmg").write_bytes(b"changed after packaging")
+                else:
+                    (root / "distribution/HalfDark-arm64.zip").unlink()
+                result = self.homebrew_step(root)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((root / "brew/Casks/g/gitx.rb").exists())
 
     def test_homebrew_missing_download_fails_before_cask_creation_even_with_root_decoy(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -58,10 +93,11 @@ class DistributionTests(unittest.TestCase):
             result = fixture.release()
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             validations = [command[-1] for command in fixture.commands if command[:3] == ["xcrun", "stapler", "validate"]]
-            self.assertEqual(len(validations), 3)
-            self.assertIn("HalfDark-arm64/Half Dark.app", validations[0])
-            self.assertIn("/zip/", validations[1])
-            self.assertIn("/mounted-dmg/", validations[2])
+            self.assertEqual(len(validations), 4)
+            self.assertIn("/Notarized/Half Dark.app", validations[0])
+            self.assertIn("/.gitx-release-app.", validations[1])
+            self.assertIn("/zip/", validations[2])
+            self.assertIn("/mounted-dmg/", validations[3])
             for suffix in ("zip", "dmg", "sha256"):
                 self.assertTrue((fixture.output / f"HalfDark-arm64.{suffix}").exists())
 
@@ -73,6 +109,151 @@ class DistributionTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(any(command[:2] == ["hdiutil", "create"] for command in fixture.commands))
                 self.assertFalse((fixture.output / "HalfDark-arm64.sha256").exists())
+
+    def test_failed_release_never_promotes_an_unverified_app_or_replaces_previous_app(self):
+        for failure in ("signature", "ticket", "gatekeeper", "signature:input", "signature:zip", "mounted"):
+            for previous in (False, True):
+                with self.subTest(failure=failure, previous=previous), tempfile.TemporaryDirectory() as directory:
+                    fixture = DistributionFixture(pathlib.Path(directory))
+                    final = fixture.output / "HalfDark-arm64/Half Dark.app"
+                    if previous:
+                        (final / "Contents/MacOS").mkdir(parents=True)
+                        (final / "Contents/MacOS/GitX").write_bytes(b"previous verified app")
+                    result = fixture.release(failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    if previous:
+                        self.assertEqual((final / "Contents/MacOS/GitX").read_bytes(), b"previous verified app")
+                    else:
+                        self.assertFalse(final.exists())
+
+    def test_successful_release_promotes_the_validated_app_and_removes_its_private_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DistributionFixture(pathlib.Path(directory))
+            final = fixture.output / "HalfDark-arm64/Half Dark.app"
+            (final / "Contents/MacOS").mkdir(parents=True)
+            (final / "Contents/MacOS/GitX").write_bytes(b"previous verified app")
+            result = fixture.release()
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((final / "Contents/MacOS/GitX").read_bytes(), b"#!/bin/sh\nexit 0\n")
+            self.assertFalse(list(fixture.output.glob(".gitx-release-*")))
+
+    def test_ambiguous_mount_inventory_retains_staging_and_never_detaches_foreign_devices(self):
+        for releasing in (False, True):
+            for failure in ("missing-images", "foreign-mount", "empty-image-identity", "conflicting-devices", "duplicate-owned-image", "malformed-entity"):
+                with self.subTest(releasing=releasing, failure=failure), tempfile.TemporaryDirectory() as directory:
+                    fixture = DistributionFixture(pathlib.Path(directory))
+                    result = fixture.release(failure) if releasing else fixture.package(failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("retained", result.stderr)
+                    self.assertTrue(list(fixture.output.rglob(".gitx-package.*")))
+                    self.assertFalse(any(command[:2] == ["hdiutil", "detach"] for command in fixture.commands))
+
+    def test_successful_detach_must_prove_image_absence_before_cleanup_or_publication(self):
+        for releasing in (False, True):
+            with self.subTest(releasing=releasing), tempfile.TemporaryDirectory() as directory:
+                fixture = DistributionFixture(pathlib.Path(directory))
+                result = fixture.release("detach-still-attached") if releasing else fixture.package("detach-still-attached")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("retained", result.stderr)
+                self.assertTrue(list(fixture.output.rglob(".gitx-package.*")))
+                self.assertFalse(list(fixture.output.glob("*.sha256")))
+
+    def test_publication_failure_restores_the_complete_previous_artifact_set(self):
+        for failing_rename in (1, 2, 3):
+            for previous in (False, True):
+                with self.subTest(failing_rename=failing_rename, previous=previous), tempfile.TemporaryDirectory() as directory:
+                    fixture = DistributionFixture(pathlib.Path(directory))
+                    fixture.output.mkdir()
+                    names = ("HalfDark-arm64.zip", "HalfDark-arm64.dmg", "HalfDark-arm64.sha256")
+                    original = {name: ("previous " + name).encode() for name in names} if previous else {}
+                    for name, content in original.items(): (fixture.output / name).write_bytes(content)
+                    result = fixture.package("publish-failure-" + str(failing_rename), outputs=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    actual = {name: (fixture.output / name).read_bytes() for name in names if (fixture.output / name).exists()}
+                    self.assertEqual(actual, original)
+                    self.assertFalse((fixture.root / "outputs").exists())
+                    self.assertFalse(list(fixture.output.glob(".gitx-package.*")))
+
+    def test_failed_rollback_retains_original_artifacts_for_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DistributionFixture(pathlib.Path(directory))
+            fixture.output.mkdir()
+            names = ("HalfDark-arm64.zip", "HalfDark-arm64.dmg", "HalfDark-arm64.sha256")
+            original = {name: ("previous " + name).encode() for name in names}
+            for name, content in original.items(): (fixture.output / name).write_bytes(content)
+            result = fixture.package("publish-and-restore-failure", outputs=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Could not restore", result.stderr)
+            staging, = fixture.output.glob(".gitx-package.*")
+            self.assertEqual((staging / "previous" / names[0]).read_bytes(), original[names[0]])
+            self.assertEqual((staging / "previous" / names[1]).read_bytes(), original[names[1]])
+            self.assertEqual((fixture.output / names[2]).read_bytes(), original[names[2]])
+            self.assertFalse((fixture.root / "outputs").exists())
+
+    def test_nonregular_artifact_destinations_preserve_all_previous_outputs(self):
+        for symlink in (False, True):
+            with self.subTest(symlink=symlink), tempfile.TemporaryDirectory() as directory:
+                fixture = DistributionFixture(pathlib.Path(directory))
+                fixture.output.mkdir()
+                zip_path = fixture.output / "HalfDark-arm64.zip"
+                zip_path.write_bytes(b"previous zip")
+                blocked = fixture.output / "HalfDark-arm64.dmg"
+                sentinel = fixture.root / "unrelated"
+                sentinel.write_bytes(b"unrelated content")
+                if symlink: blocked.symlink_to(sentinel)
+                else: blocked.mkdir()
+                result = fixture.package()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(zip_path.read_bytes(), b"previous zip")
+                self.assertEqual(sentinel.read_bytes(), b"unrelated content")
+                self.assertTrue(blocked.is_symlink() if symlink else blocked.is_dir())
+                self.assertFalse(list(fixture.output.glob(".gitx-package.*")))
+
+    def test_release_promotion_failure_restores_app_and_all_matching_packages(self):
+        for failing_rename in (1, 2, 3, 4):
+            for previous in (False, True):
+                with self.subTest(failing_rename=failing_rename, previous=previous), tempfile.TemporaryDirectory() as directory:
+                    fixture = DistributionFixture(pathlib.Path(directory))
+                    fixture.output.mkdir()
+                    names = ("HalfDark-arm64.zip", "HalfDark-arm64.dmg", "HalfDark-arm64.sha256")
+                    original = {name: ("previous " + name).encode() for name in names} if previous else {}
+                    final = fixture.output / "HalfDark-arm64/Half Dark.app/Contents/MacOS/GitX"
+                    if previous:
+                        final.parent.mkdir(parents=True)
+                        final.write_bytes(b"previous app")
+                    for name, content in original.items(): (fixture.output / name).write_bytes(content)
+                    result = fixture.release("release-promotion-failure-" + str(failing_rename))
+                    self.assertNotEqual(result.returncode, 0)
+                    actual = {name: (fixture.output / name).read_bytes() for name in names if (fixture.output / name).exists()}
+                    self.assertEqual(actual, original)
+                    if previous: self.assertEqual(final.read_bytes(), b"previous app")
+                    else: self.assertFalse(final.exists())
+                    self.assertFalse(list(fixture.output.glob(".gitx-release-*")))
+
+    def test_failed_removal_during_release_rollback_keeps_the_original_app_in_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DistributionFixture(pathlib.Path(directory))
+            fixture.output.mkdir()
+            app = fixture.output / "HalfDark-arm64/Half Dark.app/Contents/MacOS/GitX"
+            app.parent.mkdir(parents=True)
+            app.write_bytes(b"previous app")
+            for suffix in ("zip", "dmg", "sha256"):
+                (fixture.output / f"HalfDark-arm64.{suffix}").write_bytes(b"previous artifact")
+            rm = fixture.root / "tools/rm"
+            rm.write_text("#!" + sys.executable + "\n" +
+                          "import os,pathlib,subprocess,sys\n" +
+                          'blocked = pathlib.Path(os.environ["GITX_DISTRIBUTION_FIXTURE"]) / "release/HalfDark-arm64"\n' +
+                          'if pathlib.Path(sys.argv[-1]).resolve() == blocked.resolve(): sys.exit(25)\n' +
+                          'sys.exit(subprocess.run(["/bin/rm", *sys.argv[1:]]).returncode)\n')
+            rm.chmod(0o755)
+            result = fixture.release("release-promotion-failure-2")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("could not be restored", result.stderr)
+            staging, = fixture.output.glob(".gitx-release-app.*")
+            backup = staging / "previous/HalfDark-arm64/Half Dark.app/Contents/MacOS/GitX"
+            self.assertTrue(backup.exists(), "A failed cleanup must retain the original app in its recovery backup")
+            self.assertEqual(backup.read_bytes(), b"previous app")
+            self.assertFalse((fixture.output / "HalfDark-arm64/HalfDark-arm64").exists())
 
     def test_failed_mounted_payload_validation_detaches_without_publishing_checksums(self):
         with tempfile.TemporaryDirectory() as directory:
