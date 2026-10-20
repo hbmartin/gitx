@@ -40,6 +40,38 @@ class DistributionTests(unittest.TestCase):
         return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-e", "-c", script],
                               cwd=directory, env=os.environ | {"RELEASE_TAG": "1.2.3"}, capture_output=True, text=True)
 
+    def test_unrelated_optional_device_metadata_cannot_block_owned_image_cleanup(self):
+        for image_path in ("/unrelated/another.dmg", "ram://128000"):
+            for device in ("", 42):
+                with self.subTest(image_path=image_path, device=device), tempfile.TemporaryDirectory() as directory:
+                    fixture = DistributionFixture(pathlib.Path(directory))
+                    (fixture.root / "additional-images.json").write_text(json.dumps([{
+                        "image-path": image_path,
+                        "system-entities": [{"mount-point": "/Volumes/Unrelated", "dev-entry": device}],
+                    }]))
+                    result = fixture.package()
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertFalse(list(fixture.output.glob(".gitx-package.*")))
+                    self.assertTrue((fixture.output / "HalfDark-arm64.sha256").exists())
+                    self.assertEqual([command[2] for command in fixture.commands if command[:2] == ["hdiutil", "detach"]], ["/dev/fixture-disk"])
+
+    def test_unidentified_images_and_malformed_unrelated_mountpoints_remain_unknown(self):
+        images = [
+            {"system-entities": [{"mount-point": "/Volumes/Unrelated", "dev-entry": "/dev/unrelated"}]},
+            {"image-path": "ram://128000", "system-entities": [{"mount-point": 42}]},
+            {"image-path": "/unrelated/another.dmg", "system-entities": [{"mount-point": ""}]},
+        ]
+        for image in images:
+            with self.subTest(image=image), tempfile.TemporaryDirectory() as directory:
+                fixture = DistributionFixture(pathlib.Path(directory))
+                (fixture.root / "additional-images.json").write_text(json.dumps([image]))
+                result = fixture.package()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Mount state is unknown", result.stderr)
+                self.assertTrue(list(fixture.output.glob(".gitx-package.*")))
+                self.assertFalse(list(fixture.output.glob("*.sha256")))
+                self.assertFalse(any(command[:2] == ["hdiutil", "detach"] for command in fixture.commands))
+
     def write_distribution(self, root):
         distribution = root / "distribution"
         distribution.mkdir()
@@ -154,7 +186,7 @@ class DistributionTests(unittest.TestCase):
 
     def test_ambiguous_mount_inventory_retains_staging_and_never_detaches_foreign_devices(self):
         for releasing in (False, True):
-            for failure in ("missing-images", "foreign-mount", "empty-image-identity", "conflicting-devices", "duplicate-owned-image", "malformed-entity"):
+            for failure in ("missing-images", "foreign-mount", "empty-image-identity", "conflicting-devices", "duplicate-owned-image", "malformed-entity", "unrelated-conflicting-mount", "empty-owned-device"):
                 with self.subTest(releasing=releasing, failure=failure), tempfile.TemporaryDirectory() as directory:
                     fixture = DistributionFixture(pathlib.Path(directory))
                     result = fixture.release(failure) if releasing else fixture.package(failure)

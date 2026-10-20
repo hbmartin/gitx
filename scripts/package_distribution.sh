@@ -47,14 +47,18 @@ for image in images:
     entities = image["system-entities"]
     if any(not isinstance(entity, dict) for entity in entities):
         raise ValueError("Malformed attached-image device")
-    if any(key in entity and (not isinstance(entity[key], str) or not entity[key].strip()) for entity in entities for key in ("mount-point", "dev-entry")):
-        raise ValueError("Malformed attached-image identity")
+    # Every mountpoint matters: an unrelated image may occupy our staging directory.
+    if any("mount-point" in entity and (not isinstance(entity["mount-point"], str) or not entity["mount-point"].strip()) for entity in entities):
+        raise ValueError("Malformed attached-image mountpoint")
     matches = os.path.realpath(image["image-path"]) == os.path.realpath(sys.argv[3])
     occupied = any(isinstance(entity.get("mount-point"), str) and os.path.realpath(entity["mount-point"]) == os.path.realpath(sys.argv[2]) for entity in entities)
     if occupied and not matches:
         raise ValueError("Staging mountpoint belongs to an unidentified image")
     if not matches:
         continue
+    # Device metadata grants detach authority only for this exact distribution image.
+    if any("dev-entry" in entity and (not isinstance(entity["dev-entry"], str) or not entity["dev-entry"].strip()) for entity in entities):
+        raise ValueError("Malformed owned-image device identity")
     owned.append(entities)
 if len(owned) > 1:
     raise ValueError("Distribution image has ambiguous attachment ownership")
