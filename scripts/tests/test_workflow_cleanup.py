@@ -1531,6 +1531,27 @@ class CleanupTests(unittest.TestCase):
         self.assertGreater(report['protectedExcessBytes'], 0)
         self.assertNotIn(str(failed), self.candidate_paths(report))
 
+    def test_fingerprint_rejects_a_lock_removed_after_directory_enumeration(self):
+        directory = self.base / 'changing-inventory'
+        directory.mkdir()
+        lock = directory / 'maintenance.lock'
+        lock.write_text('owned by another writer')
+        unrelated = self.base / 'unrelated'
+        unrelated.write_text('preserve')
+        listdir = os.listdir
+
+        def remove_after_enumeration(descriptor):
+            entries = listdir(descriptor)
+            if 'maintenance.lock' in entries:
+                lock.unlink()
+            return entries
+
+        with mock.patch.object(cleanup.os, 'listdir', side_effect=remove_after_enumeration):
+            with self.assertRaises(FileNotFoundError) as failure:
+                cleanup.fingerprint(directory)
+        self.assertEqual(failure.exception.filename, 'maintenance.lock')
+        self.assertEqual(unrelated.read_text(), 'preserve')
+
     def test_cli_preview_does_not_create_bytecode_or_cleanup_state(self):
         self.run_directory('old')
         before = cleanup.fingerprint(self.root)
