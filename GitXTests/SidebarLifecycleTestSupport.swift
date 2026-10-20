@@ -8,6 +8,11 @@ enum SidebarLifecycleTestSupport {
     static func assertClosedNavigationIsInert(_ owner: NSObject) throws {
         let sidebar = try XCTUnwrap(owner as? GitX.PBGitSidebarController)
         XCTAssertFalse(sidebar.browseSelectedWorktreeHistory())
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        if let item = sidebar.selectedItem() {
+            XCTAssertNil(sidebar.outlineView(outline, viewFor: nil, item: item))
+            XCTAssertFalse(sidebar.outlineView(outline, shouldSelectItem: item))
+        }
         let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
         let repository = try ForgeRepositoryIdentity(forge: forge, owner: "fixture", name: "closed-sidebar")
         #if DEBUG

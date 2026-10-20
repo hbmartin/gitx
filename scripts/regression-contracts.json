@@ -1390,7 +1390,7 @@
           "identifier": "GitXTests/WorktreeAppKitTests/testClosedSidebarRejectsDirectNavigationCheckoutAndRowRemoval",
           "check": "correctness",
           "role": "failure",
-          "oracle": "Retain a closed sidebar with another branch selected, invoke Swift History and Forge navigation plus direct checkout, removal, sort and remote actions, and require identical retained rows, revision object and Git HEAD with no Forge opening attempt."
+          "oracle": "Retain a closed sidebar with another branch selected, invoke direct checkout, removal, sort and remote actions, then retain a selected checkout and invoke Swift History and Forge navigation. Closed rendering and selection remain inert; a newly configured remote cannot rebuild rows. Require identical retained rows, revision object and Git HEAD with no Forge opening attempt."
         },
         {
           "source": "GitXTests/WorktreeAppKitTests.swift",

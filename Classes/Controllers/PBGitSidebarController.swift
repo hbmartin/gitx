@@ -545,6 +545,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc private dynamic func synchronizeConfiguredRemotes() {
+        guard !hasClosed else { return }
         guard let remotes, let repository else { return }
         let remoteItems = remotes.sortedChildren
         var nonEmptyNames: [String] = []
@@ -960,7 +961,7 @@ public extension PBGitSidebarController {
         viewFor tableColumn: NSTableColumn?,
         item: Any
     ) -> NSView? {
-        guard let item = item as? PBSourceViewItem else { return nil }
+        guard !hasClosed, let item = item as? PBSourceViewItem else { return nil }
         if item === branches {
             let header = (outlineView.makeView(withIdentifier: branchesHeaderCellIdentifier, owner: self) as? NSTableCellView)
                 ?? makeBranchesHeader(for: outlineView)
@@ -1105,6 +1106,7 @@ public extension PBGitSidebarController {
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
+        guard !hasClosed else { return false }
         if let forgeItem = item as? RepositoryForgeSourceViewItem {
             return forgeItem.destination != nil
         }
@@ -1180,6 +1182,7 @@ extension PBGitSidebarController {
     /// Restoring a row updates its controls even when navigation is suppressed
     /// or AppKit emits no selection notification.
     private func refreshSelectionControls() {
+        guard !hasClosed else { return }
         updateActionMenu()
         updateRemoteControls()
     }
@@ -1192,6 +1195,7 @@ extension PBGitSidebarController {
 
     @objc(addMenuItemsForRef:toMenu:)
     dynamic func addMenuItems(for ref: PBGitRef?, to menu: NSMenu) {
+        guard !hasClosed else { return }
         guard let ref, let items = sidebarHistoryMenuBuilder?.menuItems(for: ref) else { return }
         for item in items {
             menu.addItem(item)
@@ -1200,6 +1204,7 @@ extension PBGitSidebarController {
 
     @objc(addMenuItemsForSubmodule:toMenu:)
     dynamic func addMenuItems(for submodule: PBSourceViewGitSubmoduleItem?, to menu: NSMenu) {
+        guard !hasClosed else { return }
         guard let submodule else { return }
         let item = menu.addItem(
             withTitle: NSLocalizedString("Open Submodule", comment: "Open Submodule menu item"),
@@ -1219,6 +1224,7 @@ extension PBGitSidebarController {
     }
 
     private func addWorktreeMenuItems(for viewItem: PBSourceViewItem?, to menu: NSMenu) -> Bool {
+        guard !hasClosed else { return false }
         guard let builder = sidebarHistoryMenuBuilder else { return false }
         let items: [NSMenuItem]
         if let worktree = viewItem as? PBSourceViewGitWorktreeItem {

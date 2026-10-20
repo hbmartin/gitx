@@ -42,6 +42,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         _ = try fixture.git(["branch", "other"])
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         await ready(service)
@@ -62,6 +63,19 @@ final class WorktreeAppKitTests: XCTestCase {
         _ = sidebar.perform(NSSelectorFromString("showForgeAttention:"), with: nil)
         sidebar.toggleBranchSort(sidebar)
         sidebar.fetchPullPushAction(nil)
+        let checkoutRow = try XCTUnwrap((0 ..< outline.numberOfRows).first {
+            (outline.item(atRow: $0) as? PBSourceViewGitWorktreeItem)?.worktree.path == WorktreePaths.canonical(fixture.linked.path)
+        })
+        // Retain a stale clicked checkout after owner revocation without sending
+        // another navigation notification through the closed outline delegate.
+        outline.delegate = nil
+        outline.selectRowIndexes(IndexSet(integer: checkoutRow), byExtendingSelection: false)
+        try SidebarLifecycleTestSupport.assertClosedNavigationIsInert(sidebar)
+        let remotes = try XCTUnwrap(sidebar.remotes)
+        let remoteRows = remotes.sortedChildren
+        _ = try fixture.git(["remote", "add", "after-close", "https://example.invalid/closed.git"])
+        sidebar.synchronizeConfiguredRemotes()
+        XCTAssertEqual(remotes.sortedChildren.map(ObjectIdentifier.init), remoteRows.map(ObjectIdentifier.init))
         XCTAssertTrue(sidebar.menu(forRow: outline.selectedRow).items.isEmpty)
         XCTAssertEqual(branches.sortedChildren.count, originalRows.count)
         XCTAssertEqual(branches.sortedChildren.map(ObjectIdentifier.init), originalRows.map(ObjectIdentifier.init))
