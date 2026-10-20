@@ -2,6 +2,18 @@
 import XCTest
 
 final class WorktreePolicyTests: XCTestCase {
+    func testRemovalAdapterDistinguishesImplicitCurrentEligibilityFromExplicitMissingConsent() {
+        let eligible = GitWorktree(path: "/linked", head: "A", isDetached: true)
+        for force in [false, true] {
+            let command = WorktreeCommand.remove(path: eligible.path, force: force)
+            XCTAssertTrue(WorktreeEligibility.allows(command, records: [eligible], supported: true))
+            XCTAssertTrue(WorktreeEligibility.allows(command, records: [eligible], supported: true, previousRecords: [eligible]))
+            XCTAssertFalse(WorktreeEligibility.allows(command, records: [eligible], supported: true, previousRecords: []))
+            XCTAssertFalse(WorktreeEligibility.allows(command, records: [eligible], supported: false))
+            XCTAssertFalse(WorktreeEligibility.allows(command, records: [], supported: true))
+        }
+    }
+
     func testFreshLifecycleEligibilityRejectsRemovedAndLockedTargetsAndUnsupportedGit() {
         let main = GitWorktree(path: "/main", isMain: true, isCurrent: true)
         let linked = GitWorktree(path: "/linked")

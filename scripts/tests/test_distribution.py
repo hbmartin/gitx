@@ -5,6 +5,7 @@ import os
 import subprocess
 import textwrap
 import hashlib
+import json
 import shutil
 import tempfile
 import unittest
@@ -15,6 +16,20 @@ from support import ROOT, load_script
 
 
 class DistributionTests(unittest.TestCase):
+    def test_packaging_ignores_identified_unrelated_file_and_ram_images(self):
+        for image_path in ("/unrelated/another.dmg", "ram://128000"):
+            with self.subTest(image_path=image_path), tempfile.TemporaryDirectory() as directory:
+                fixture = DistributionFixture(pathlib.Path(directory))
+                (fixture.root / "additional-images.json").write_text(json.dumps([{
+                    "image-path": image_path,
+                    "system-entities": [{"mount-point": "/Volumes/Unrelated", "dev-entry": "/dev/unrelated"}],
+                }]))
+                result = fixture.package()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse(list(fixture.output.glob(".gitx-package.*")))
+                detaches = [command[2] for command in fixture.commands if command[:2] == ["hdiutil", "detach"]]
+                self.assertEqual(detaches, ["/dev/fixture-disk"])
+
     def homebrew_step(self, directory):
         scripts = pathlib.Path(directory) / "scripts"
         scripts.mkdir(exist_ok=True)
