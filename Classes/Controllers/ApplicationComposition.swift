@@ -133,9 +133,6 @@ final nonisolated class ApplicationComposition: NSObject {
         userDefaults: UserDefaults,
         automaticallyStartsForgeServices: Bool
     ) {
-        #if DEBUG
-            GitXTestProcessDiagnostics.installAtApplicationStartup()
-        #endif
         let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: userDefaults)
         let avatarLoadingPreferenceSource = ForgeAvatarLoadingPreferenceSource(userDefaults: userDefaults)
         let trustedExternalOrigins = ForgeTrustedExternalOriginStore(defaults: userDefaults)

@@ -40,6 +40,20 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertNil(unowned["GITX_TEST_STDERR_DIRECTORY"])
     }
 
+    func testEmptyDiagnosticRequestsAreRemovedAndProgressSurvivesEmptyLaunchEnvironment() {
+        let empty = GitXTestGitEnvironment.isolated(
+            ["GITX_TEST_STDERR_DIRECTORY": ""], nativeDiagnosticDirectory: "", progressDirectory: "", invocationID: ""
+        )
+        XCTAssertNil(empty["GITX_TEST_STDERR_DIRECTORY"])
+        XCTAssertNil(empty["GITX_TEST_PROGRESS_DIRECTORY"])
+        XCTAssertNil(empty["GITX_TEST_INVOCATION_ID"])
+        let progress = GitXTestGitEnvironment.isolated(
+            [:], nativeDiagnosticDirectory: nil, progressDirectory: "/fixture/progress", invocationID: "invocation-1"
+        )
+        XCTAssertEqual(progress["GITX_TEST_PROGRESS_DIRECTORY"], "/fixture/progress")
+        XCTAssertEqual(progress["GITX_TEST_INVOCATION_ID"], "invocation-1")
+    }
+
     func testExplicitNativeDirectoryAndSessionRemainLiteralAcrossRepeatedIsolation() {
         let directory = "/fixture/cache with spaces/Native"
         let first = GitXTestGitEnvironment.isolated(

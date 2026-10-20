@@ -115,9 +115,13 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 		@"GITX_UITEST_FORGE_STORAGE_ROOT" :
 			[isolatedHome stringByAppendingPathComponent:@"Library/Application Support/GitX/Forge"],
 	}];
-	NSString *diagnosticDirectory = NSProcessInfo.processInfo.environment[@"GITX_TEST_STDERR_DIRECTORY"];
-	if (diagnosticDirectory.length)
-		environment[@"GITX_TEST_STDERR_DIRECTORY"] = diagnosticDirectory;
+	for (NSString *key in @[@"GITX_TEST_STDERR_DIRECTORY", @"GITX_TEST_PROGRESS_DIRECTORY", @"GITX_TEST_INVOCATION_ID"]) {
+		NSString *value = NSProcessInfo.processInfo.environment[key];
+		if (value.length)
+			environment[key] = value;
+		else if ([environment[key] length] == 0)
+			[environment removeObjectForKey:key];
+	}
 	return environment;
 }
 

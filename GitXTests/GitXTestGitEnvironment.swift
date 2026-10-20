@@ -7,7 +7,9 @@
         static func isolated(
             _ inherited: [String: String] = ProcessInfo.processInfo.environment,
             verificationSession: String? = ProcessInfo.processInfo.environment["GITX_VERIFICATION_SESSION"],
-            nativeDiagnosticDirectory: String? = ProcessInfo.processInfo.environment["GITX_TEST_STDERR_DIRECTORY"]
+            nativeDiagnosticDirectory: String? = ProcessInfo.processInfo.environment["GITX_TEST_STDERR_DIRECTORY"],
+            progressDirectory: String? = ProcessInfo.processInfo.environment["GITX_TEST_PROGRESS_DIRECTORY"],
+            invocationID: String? = ProcessInfo.processInfo.environment["GITX_TEST_INVOCATION_ID"]
         ) -> [String: String] {
             var environment = inherited.filter { !$0.key.hasPrefix("GIT_") }.merging([
                 "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
@@ -22,43 +24,126 @@
             if let verificationSession {
                 environment["GITX_VERIFICATION_SESSION"] = verificationSession
             }
-            if let nativeDiagnosticDirectory {
-                environment["GITX_TEST_STDERR_DIRECTORY"] = nativeDiagnosticDirectory
+            for (key, selected) in [
+                ("GITX_TEST_STDERR_DIRECTORY", nativeDiagnosticDirectory),
+                ("GITX_TEST_PROGRESS_DIRECTORY", progressDirectory),
+                ("GITX_TEST_INVOCATION_ID", invocationID),
+            ] {
+                if let selected, !selected.isEmpty {
+                    environment[key] = selected
+                } else if environment[key]?.isEmpty == true {
+                    environment.removeValue(forKey: key)
+                }
             }
             return environment
         }
     }
 
-    /// XCTest's app stderr pipe can stop draining while it processes activity
-    /// events. Keep native diagnostics in a run-owned file before any fixture
-    /// starts work, without changing unified logging or the runner's stdout.
-    nonisolated enum GitXTestProcessDiagnostics {
-        private static let installation: Result<URL?, Error> = Result {
-            guard let directory = ProcessInfo.processInfo.environment["GITX_TEST_STDERR_DIRECTORY"] else { return nil }
-            guard directory.hasPrefix("/") else { throw POSIXError(.EINVAL) }
-            let url = URL(fileURLWithPath: directory, isDirectory: true)
-                .appendingPathComponent("GitX-\(getpid()).stderr.log")
-            let descriptor = url.path.withCString {
-                Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC | O_APPEND, 0o600)
+    /// Publish complete records atomically without replacing any previous evidence.
+    nonisolated enum GitXTestProgressRecords {
+        @discardableResult
+        static func write(_ record: [String: Any], prefix: String, directory: String) throws -> URL {
+            let parent = directory.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+            guard parent >= 0 else { throw POSIXError(.EIO) }
+            defer { Darwin.close(parent) }
+            var parentInfo = stat()
+            guard fstat(parent, &parentInfo) == 0, parentInfo.st_uid == geteuid() else { throw POSIXError(.EIO) }
+            let identity = UUID().uuidString
+            let temporary = ".pending-\(identity)"
+            let filename = "\(prefix)-\(getpid())-\(identity).json"
+            let descriptor = temporary.withCString { openat(parent, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600) }
+            guard descriptor >= 0 else { throw POSIXError(.EIO) }
+            defer {
+                Darwin.close(descriptor)
+                _ = temporary.withCString { unlinkat(parent, $0, 0) }
             }
-            guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-            defer { Darwin.close(descriptor) }
-            guard dup2(descriptor, STDERR_FILENO) >= 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+            try data.withUnsafeBytes { bytes in
+                var offset = 0
+                while offset < bytes.count {
+                    let count = Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                    if count < 0, errno == EINTR { continue }
+                    guard count > 0 else { throw POSIXError(.EIO) }
+                    offset += count
+                }
             }
-            return url
-        }
-
-        static func installIfRequested() throws {
-            _ = try installation.get()
-        }
-
-        static func installAtApplicationStartup() {
-            do {
-                try installIfRequested()
-            } catch {
-                fatalError("Could not retain native test stderr: \(error)")
+            let linked = temporary.withCString { temporaryName in
+                filename.withCString { linkat(parent, temporaryName, parent, $0, 0) }
             }
+            guard linked == 0 else { throw POSIXError(.EIO) }
+            return URL(fileURLWithPath: directory).appendingPathComponent(filename)
         }
     }
+#endif
+
+#if GITX_APP_TARGET && DEBUG
+    /// Optional managed-test diagnostics. File failures never abort application startup.
+    // The Objective-C main entry point owns installation, outside Swift's call graph.
+    // swiftlint:disable unused_declaration
+    @objc(PBGitXTestProcessDiagnostics)
+    final nonisolated class GitXTestProcessDiagnostics: NSObject {
+        struct Outcome: Sendable {
+            let state: String
+            let category: String?
+            let filename: String?
+        }
+
+        private static let installation: Outcome = {
+            let environment = ProcessInfo.processInfo.environment
+            let launchID = UUID().uuidString
+            let outcome = install(directory: environment["GITX_TEST_STDERR_DIRECTORY"], launchID: launchID)
+            if let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"], directory.hasPrefix("/"),
+               let invocation = environment["GITX_TEST_INVOCATION_ID"], !invocation.isEmpty {
+                var record: [String: Any] = [
+                    "schemaVersion": 1, "event": "capture", "invocationID": invocation,
+                    "verificationSession": environment["GITX_VERIFICATION_SESSION"] ?? "",
+                    "pid": getpid(), "state": outcome.state,
+                ]
+                record["category"] = outcome.category
+                record["filename"] = outcome.filename
+                try? GitXTestProgressRecords.write(record, prefix: "capture", directory: directory)
+            }
+            return outcome
+        }()
+
+        @objc static func installAtApplicationStartup() {
+            _ = installation
+        }
+
+        /// Injectable descriptor operations allow failure coverage without replacing XCTest's stderr.
+        static func install(
+            directory: String?, processIdentifier: Int32 = getpid(), launchID: String = UUID().uuidString,
+            openCapture: ((Int32, String) -> Int32)? = nil,
+            redirect: (Int32) -> Int32 = { dup2($0, STDERR_FILENO) }
+        ) -> Outcome {
+            guard let directory, !directory.isEmpty else {
+                return Outcome(state: "not-requested", category: nil, filename: nil)
+            }
+            guard directory.hasPrefix("/"), UUID(uuidString: launchID) != nil else {
+                return Outcome(state: "unavailable", category: "configuration", filename: nil)
+            }
+            let parent = directory.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+            guard parent >= 0 else { return Outcome(state: "unavailable", category: "directory", filename: nil) }
+            defer { Darwin.close(parent) }
+            var parentInfo = stat()
+            guard fstat(parent, &parentInfo) == 0, parentInfo.st_uid == geteuid() else {
+                return Outcome(state: "unavailable", category: "directory", filename: nil)
+            }
+            let filename = "GitX-\(processIdentifier)-\(launchID).stderr.log"
+            let descriptor = openCapture?(parent, filename) ?? filename.withCString {
+                openat(parent, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC | O_APPEND, 0o600)
+            }
+            guard descriptor >= 0 else { return Outcome(state: "unavailable", category: "open", filename: nil) }
+            defer { Darwin.close(descriptor) }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_uid == geteuid() else {
+                return Outcome(state: "unavailable", category: "open", filename: nil)
+            }
+            guard redirect(descriptor) >= 0 else {
+                return Outcome(state: "unavailable", category: "redirect", filename: filename)
+            }
+            return Outcome(state: "captured", category: nil, filename: filename)
+        }
+    }
+    // swiftlint:enable unused_declaration
 #endif
