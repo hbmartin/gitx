@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -108,6 +109,64 @@ class ScriptEntrypointTests(unittest.TestCase):
         test_build = next(value for value in invocations if "\nbuild-for-testing\n" in value)
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
+
+    def test_native_startup_reaches_innermost_preset_and_raw_watchdogs(self) -> None:
+        script = self.install_script('xcodebuild.sh')
+        # Keep the production wrapper shape and shorten only the copied fixture's
+        # backstop so a disconnected inner watchdog fails promptly.
+        script.write_text(script.read_text().replace('--startup-timeout 120', '--startup-timeout 2'))
+        self.install_mock_xcodebuild(self.root / 'Products')
+        mock = self.developer_directory / 'usr/bin/xcodebuild'
+        mock.write_text(mock.read_text() + r'''
+if [[ " $* " == *" test-without-building "* && " $* " == *" -testPlan GitX "* ]]; then
+python3 <<'PYTHON'
+import os, pathlib
+native = pathlib.Path(os.environ['TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY'])
+fd = os.open(native / f'GitX-{os.getpid()}.stderr.log', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.write(fd, b"Test Suite 'Selected tests' started\n")
+os.close(fd)
+gate = os.open(os.environ['GITX_TEST_NATIVE_STARTUP_GATE'], os.O_RDONLY)
+os.read(gate, 1)
+os.close(gate)
+PYTHON
+fi
+''')
+        for name, arguments, diagnostic in (
+                ('preset', ['test', 'correctness', '-only-testing:GitXTests/ExampleTests'], 'GitX'),
+                ('raw', ['raw', '--', 'test', '-testPlan', 'GitX', '-only-testing:GitXTests/ExampleTests'], 'raw-tests')):
+            with self.subTest(entrypoint=name):
+                run_id = 'inner-native-' + name
+                run = self.root / 'artifacts/verification' / run_id
+                gate_path = self.root / ('native-startup-gate-' + name)
+                os.mkfifo(gate_path)
+                gate = os.open(gate_path, os.O_RDWR | os.O_NONBLOCK)
+                environment = dict(self.environment, GITX_TEST_NATIVE_STARTUP_GATE=str(gate_path))
+                process = subprocess.Popen([script, '--run-id', run_id, *arguments], env=environment,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                manifest = run / 'Diagnostics' / diagnostic / 'diagnostic-owner.json'
+                released = False
+                deadline = time.monotonic() + 20
+                wake = threading.Event()
+                try:
+                    while process.poll() is None and time.monotonic() < deadline:
+                        if manifest.exists():
+                            state = json.loads(manifest.read_text())
+                            if state.get('hostStartup', {}).get('source') == 'native-stderr' and not released:
+                                os.write(gate, b'1')
+                                released = True
+                        wake.wait(.01)
+                    self.assertIsNotNone(process.poll(), 'The canonical wrapper must finish within its backstop')
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                    stdout, stderr = process.communicate(timeout=10)
+                    os.close(gate)
+                self.assertEqual(process.returncode, 0, (stdout + stderr).decode(errors='replace'))
+                self.assertTrue(released, 'The innermost watchdog must acknowledge native startup before release')
+                state = json.loads(manifest.read_text())
+                self.assertEqual(state['hostStartup']['source'], 'native-stderr')
+                self.assertTrue(state['outputCapture']['captureComplete'])
+                self.assertEqual(self.receipt(run_id)['status'], 'passed')
 
     def test_xcodebuild_captures_complete_output_before_console_forwarding(self) -> None:
         script = self.install_script('xcodebuild.sh')

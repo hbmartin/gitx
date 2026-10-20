@@ -589,7 +589,7 @@ xcode_test() {
 			${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
-		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" -- \
+		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" --output-log "$logs/$plan-console.log" -- \
 		"$xcodebuild" "${common[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
 		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@"
 	local test_status=$?
@@ -906,7 +906,7 @@ case "$command" in
 				"$xcodebuild" test-without-building "${probe_arguments[@]}" -testPlan GitXHostPreflight \
 				-only-testing:GitXTests/GitXHostStartTests/testHostStarts -resultBundlePath "$results/raw-host.xcresult" || exit $?
 			run_step raw "$logs/raw.log" "$result_path" \
-				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw" -- \
+				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw-tests" --output-log "$logs/raw-console.log" -- \
 				"$xcodebuild" test-without-building "${suite_arguments[@]}"
 			raw_status=$?
 			run_step evidence "$logs/raw-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"
