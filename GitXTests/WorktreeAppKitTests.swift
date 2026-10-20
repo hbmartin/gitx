@@ -1620,7 +1620,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let link = foreign.linked.appendingPathComponent(".git")
         let original = try Data(contentsOf: link)
         do {
-            try await service.repair(worktree: tree, movedTo: foreign.linked.path)
+            try await service.prepareAndConfirmRepair(worktree: tree, movedTo: foreign.linked.path)
             XCTFail("Wrong folder was accepted")
         } catch {}
         XCTAssertEqual(try Data(contentsOf: link), original)
@@ -1818,7 +1818,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
         let moved = fixture.root.appendingPathComponent("relocated")
         try FileManager.default.moveItem(at: fixture.linked, to: moved)
-        try await service.repair(worktree: tree, movedTo: moved.path)
+        try await service.prepareAndConfirmRepair(worktree: tree, movedTo: moved.path)
         XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.path, WorktreePaths.canonical(moved.path))
         XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: moved), "refs/heads/topic\n")
         let copy = fixture.root.appendingPathComponent("copy")
@@ -1828,7 +1828,7 @@ final class WorktreeAppKitTests: XCTestCase {
         defer { copiedService.cancel() }
         await ready(copiedService)
         let original = try Data(contentsOf: moved.appendingPathComponent(".git"))
-        do { try await copiedService.repairLinks(relativePaths: true); XCTFail("Copy changed foreign links") } catch {}
+        do { try await copiedService.prepareAndConfirmRepairLinks(relativePaths: true); XCTFail("Copy changed foreign links") } catch {}
         XCTAssertEqual(try Data(contentsOf: moved.appendingPathComponent(".git")), original)
         XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.path, WorktreePaths.canonical(moved.path))
     }

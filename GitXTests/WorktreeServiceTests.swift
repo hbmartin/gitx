@@ -2,6 +2,70 @@ import Foundation
 import GitXCore
 import XCTest
 
+// Tests explicitly approve the first complete scope. A renewed scope never inherits that approval.
+@MainActor
+extension PBRepositoryWorktreeService {
+    func prepareAndConfirmRepair(worktree: PBGitWorktree, movedTo path: String,
+                                 confirmationRequested: (@MainActor @Sendable () -> Void)? = nil,
+                                 completion: @escaping @MainActor @Sendable (NSError?) -> Void)
+    {
+        prepareRepair(worktree: worktree, movedTo: path) { preview, error in
+            MainActor.assumeIsolated {
+                self.approveInitialRepairPreview(preview, error: error as NSError?, confirmationRequested: confirmationRequested, completion: completion)
+            }
+        }
+    }
+
+    func prepareAndConfirmRepairLinks(relativePaths: Bool, completion: @escaping @MainActor @Sendable (NSError?) -> Void) {
+        prepareRepairLinks(relativePaths: relativePaths) { preview, error in
+            MainActor.assumeIsolated {
+                self.approveInitialRepairPreview(preview, error: error as NSError?, confirmationRequested: nil, completion: completion)
+            }
+        }
+    }
+
+    private func approveInitialRepairPreview(_ preview: PBWorktreeRepairPreview?, error: NSError?,
+                                             confirmationRequested: (@MainActor @Sendable () -> Void)?,
+                                             completion: @escaping @MainActor @Sendable (NSError?) -> Void)
+    {
+        if let error { completion(error); return }
+        guard let preview else {
+            XCTFail("Preparation returned neither a repair preview nor an error")
+            completion(NSError(domain: "GitXRepairTestApproval", code: 1))
+            return
+        }
+        XCTAssertFalse(preview.paths.isEmpty, "Test approval must identify the complete repair scope")
+        repair(confirmedPreview: preview) { renewed, error in
+            MainActor.assumeIsolated {
+                if let renewed {
+                    self.discardRepairPreview(renewed)
+                    completion(NSError(domain: "GitXRepairTestApproval", code: 2,
+                                       userInfo: [NSLocalizedDescriptionKey: "The repair scope changed and requires another explicit approval."]))
+                } else {
+                    completion(error as NSError?)
+                }
+            }
+        }
+        confirmationRequested?()
+    }
+
+    func prepareAndConfirmRepair(worktree: PBGitWorktree, movedTo path: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            prepareAndConfirmRepair(worktree: worktree, movedTo: path) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+    }
+
+    func prepareAndConfirmRepairLinks(relativePaths: Bool) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            prepareAndConfirmRepairLinks(relativePaths: relativePaths) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+    }
+}
+
 // swift6-safety-justification: The lock protects every callback, output, and cancellation access, including delivery from the discovery queue.
 private final nonisolated class ControlledWorktreeTask: PBTask, @unchecked Sendable {
     private let lock = NSLock()
@@ -520,6 +584,97 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertEqual(installed.tasks.requests.count, 1)
     }
 
+    #if DEBUG
+        func testFailedPreflightRecoversOnceAndRetiredReadCannotOverwriteItsResult() async throws {
+            for failure in ["timeout", "malformed", "truncated"] {
+                for recoverySucceeds in [false, true] {
+                    let fixture = try WorktreeFacadeFixture()
+                    defer { fixture.cleanup() }
+                    let installed = fixture.makeService()
+                    let initial = try fixture.listing()
+                    try await startFacade(installed, snapshot: initial)
+                    installed.service.refresh()
+                    let retired = try installed.tasks.task(discoveryArguments, occurrence: 1)
+                    let failed = expectation(description: "preflight failure is delivered once")
+                    failed.assertForOverFulfill = true
+                    enqueueRemoval(installed.service, path: fixture.linked.path) { _, error in
+                        XCTAssertNotNil(error)
+                        failed.fulfill()
+                    }
+                    let recoveryStarted = installed.tasks.expect(discoveryArguments)
+                    let preflight = try installed.tasks.task(discoveryArguments, occurrence: 2)
+                    switch failure {
+                    case "timeout": preflight.finish(nil, error: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+                    case "malformed": preflight.finish(Data("not a porcelain record\0".utf8))
+                    default:
+                        preflight.setTruncationFlags(standardOutput: true)
+                        preflight.finish(initial)
+                    }
+                    await fulfillment(of: [failed, recoveryStarted], timeout: 5)
+                    let recovered = expectation(description: "ordinary recovery publishes its terminal status")
+                    let status = installed.service.observe(\.inventoryStatus) { service, _ in
+                        MainActor.assumeIsolated {
+                            let expected = recoverySucceeds ? WorktreeInventoryStatus.fresh : .stale
+                            if service.inventoryStatus == expected.rawValue { recovered.fulfill() }
+                        }
+                    }
+                    defer { status.invalidate() }
+                    let recovery = try installed.tasks.task(discoveryArguments, occurrence: 3)
+                    if recoverySucceeds {
+                        _ = try fixture.git(["switch", "-c", "recovered"], at: fixture.linked)
+                        try recovery.finish(fixture.listing())
+                    } else {
+                        recovery.finish(nil, error: NSError(domain: "fixture-recovery", code: 1))
+                    }
+                    await fulfillment(of: [recovered], timeout: 5)
+                    retired.finish(initial)
+                    let drained = expectation(description: "retired callback and recovery acknowledgements drain")
+                    enqueueDrain(installed.service) { drained.fulfill() }
+                    await fulfillment(of: [drained], timeout: 5)
+                    XCTAssertTrue(retired.wasCancelled)
+                    XCTAssertTrue(installed.tasks.mutations.isEmpty)
+                    XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == discoveryArguments }.count, 4)
+                    XCTAssertEqual(installed.service.isSnapshotStale, !recoverySucceeds)
+                    XCTAssertEqual(installed.service.worktree(forBranch: recoverySucceeds ? "refs/heads/recovered" : "refs/heads/topic")?.path,
+                                   WorktreePaths.canonical(fixture.linked.path))
+                }
+            }
+        }
+
+        func testInventoryAdmissionReportsTypedEligibilityWithoutRemovalConsentDiagnostics() async throws {
+            let cases: [(WorktreeCommand, Bool, WorktreeEligibilityRejection)] = [
+                (.lock(path: "/missing", reason: ""), false, .missingRegistration),
+                (.lock(path: "/main", reason: ""), false, .mainWorktree),
+                (.lock(path: "/linked", reason: ""), true, .alreadyLocked),
+                (.unlock(path: "/linked"), false, .notLocked),
+            ]
+            for (command, locked, reason) in cases {
+                let fixture = try WorktreeMutationFixture()
+                defer { fixture.cleanup() }
+                let installed = fixture.makeService()
+                installed.service.start()
+                let initialStarted = installed.tasks.expect(discoveryArguments)
+                try installed.tasks.task(["--version"]).finish(Data("git version 2.48.0".utf8))
+                await fulfillment(of: [initialStarted], timeout: 5)
+                var events: [String] = []
+                installed.service.lifecycleEventObserver = { events.append($0) }
+                let rejected = expectation(description: "typed inventory admission rejection")
+                enqueueCommand(command, service: installed.service) { _, error in
+                    XCTAssertEqual(error?.userInfo[NSUnderlyingErrorKey] as? WorktreeEligibilityRejection, reason)
+                    rejected.fulfill()
+                }
+                let records = locked ? snapshot : Data(String(decoding: snapshot, as: UTF8.self).replacingOccurrences(of: "locked offline disk\0", with: "").utf8)
+                try installed.tasks.task(discoveryArguments, occurrence: 1).finish(records)
+                await fulfillment(of: [rejected], timeout: 5)
+                XCTAssertTrue(installed.tasks.mutations.isEmpty)
+                XCTAssertEqual(events.filter { $0.contains(".rejected") && $0.hasSuffix("category=eligibility") }.count, 1)
+                XCTAssertFalse(events.contains { $0.hasSuffix("category=consent") })
+                installed.service.cancel()
+                try installed.tasks.task(discoveryArguments).finish(records)
+            }
+        }
+    #endif
+
     func testNormalAndForcedRemovalRejectExternalCommitsOnBranchAndDetachedHead() async throws {
         for detached in [false, true] {
             for force in [false, true] {
@@ -593,6 +748,7 @@ final class WorktreeServiceTests: XCTestCase {
                     rejected.fulfill()
                 }
                 let preflight = try installed.tasks.task(discoveryArguments, occurrence: 2)
+                let recoveryStarted = failsRead ? installed.tasks.expect(discoveryArguments) : nil
                 if failsRead {
                     preflight.finish(nil, error: NSError(domain: "fixture", code: 2))
                 } else {
@@ -600,16 +756,18 @@ final class WorktreeServiceTests: XCTestCase {
                 }
                 await fulfillment(of: [rejected], timeout: 5)
                 XCTAssertTrue(ordinary.wasCancelled)
+                if let recoveryStarted {
+                    await fulfillment(of: [recoveryStarted], timeout: 5)
+                    try installed.tasks.task(discoveryArguments, occurrence: 3).finish(fixture.listing())
+                }
                 ordinary.finish(initial)
                 let drained = expectation(description: "late discovery callback and evidence workers drained")
                 enqueueDrain(installed.service) { drained.fulfill() }
                 await fulfillment(of: [drained], timeout: 5)
                 XCTAssertTrue(installed.tasks.mutations.isEmpty)
-                if failsRead {
-                    XCTAssertTrue(installed.service.isSnapshotStale)
-                } else {
-                    XCTAssertEqual(installed.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.headRefName, "refs/heads/replacement")
-                }
+                XCTAssertFalse(installed.service.isSnapshotStale)
+                XCTAssertEqual(installed.service.inventoryStatus, WorktreeInventoryStatus.fresh.rawValue)
+                XCTAssertEqual(installed.service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.headRefName, "refs/heads/replacement")
             }
         }
     #endif
@@ -2344,10 +2502,6 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             default: try Data(("gitdir: " + fixture.root.appendingPathComponent("missing-administrator").path + "\n").utf8).write(to: link)
             }
             let damaged = FileManager.default.fileExists(atPath: link.path) ? try Data(contentsOf: link) : nil
-            let legacy = expectation(description: "legacy wrapper cannot authorize reclaim")
-            enqueue { service.repair(worktree: tree, movedTo: fixture.linked.path) { error in XCTAssertNotNil(error); legacy.fulfill() } }
-            await fulfillment(of: [legacy], timeout: 10)
-            XCTAssertEqual(repairCommands, 0)
             let captured = await prepareRepairPreview(service, worktree: tree, path: fixture.linked.path)
             XCTAssertNil(captured.error)
             let preview = try XCTUnwrap(captured.preview)
@@ -2574,7 +2728,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
         let rejected = expectation(description: "repair requires an accepted ownership discovery")
         let result = WriterCharacterizationResult()
-        enqueue { service.repairLinks(relativePaths: false) { error in
+        enqueue { service.prepareAndConfirmRepairLinks(relativePaths: false) { error in
             // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
             MainActor.assumeIsolated { result.error = error as NSError?; rejected.fulfill() }
         } }
@@ -2631,7 +2785,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             XCTAssertEqual(publications, 0)
             let completed = expectation(description: "new repair uses the newly accepted administrative identity")
             let selected = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
-            enqueue { service.repair(worktree: selected, movedTo: selected.path) { error in
+            enqueue { service.prepareAndConfirmRepair(worktree: selected, movedTo: selected.path) { error in
                 XCTAssertNil(error); completed.fulfill()
             } }
             await fulfillment(of: [completed], timeout: 10)
@@ -2730,7 +2884,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let rejected = expectation(description: "old queued request refuses a replaced registration despite the newer cache")
             checkpoint.expectResult()
             cleanup.repairRequests += 1
-            enqueue { service.repair(worktree: selected, movedTo: selected.path) { error in
+            enqueue { service.prepareAndConfirmRepair(worktree: selected, movedTo: selected.path) { error in
                 // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
                 MainActor.assumeIsolated {
                     defer { repairResults.advance() }
@@ -2773,7 +2927,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let fresh = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
             cleanup.repairRequests += 1
             cleanup.successfulCompletionRequired = true
-            enqueue { service.repair(worktree: fresh, movedTo: fresh.path) { error in
+            enqueue { service.prepareAndConfirmRepair(worktree: fresh, movedTo: fresh.path) { error in
                 defer { repairResults.advance() }
                 cleanup.completedSuccessfully = error == nil
                 XCTAssertNil(error); freshDone.fulfill()
@@ -2979,7 +3133,20 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             checkpoint.expectResult()
             cleanup.successfulCompletionRequired = true
             enqueue {
-                service.repair(worktree: selected, movedTo: fixture.linked.path) { error in
+                service.prepareAndConfirmRepair(worktree: selected, movedTo: fixture.linked.path, confirmationRequested: {
+                    cleanup.followingRequested = true
+                    self.enqueue {
+                        following.lockWorktree(path: fixture.linked.path, reason: "after sibling recapture") { _, error in
+                            // swift6-safety-justification: The service delivers lifecycle completions on the main queue.
+                            MainActor.assumeIsolated {
+                                defer { followingResults.advance() }
+                                XCTAssertNil(error)
+                                completions.names.append("following")
+                                followingDone.fulfill()
+                            }
+                        }
+                    }
+                }) { error in
                     // swift6-safety-justification: The service delivers lifecycle completions on the main queue.
                     MainActor.assumeIsolated {
                         completions.error = error as NSError?
@@ -3002,18 +3169,6 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let refs = try fixture.git(["show-ref", "--head"])
             let gitfile = try Data(contentsOf: fixture.linked.appendingPathComponent(".git"))
             let content = try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt"))
-            cleanup.followingRequested = true
-            enqueue {
-                following.lockWorktree(path: fixture.linked.path, reason: "after sibling recapture") { _, error in
-                    // swift6-safety-justification: The service delivers lifecycle completions on the main queue.
-                    MainActor.assumeIsolated {
-                        defer { followingResults.advance() }
-                        XCTAssertNil(error)
-                        completions.names.append("following")
-                        followingDone.fulfill()
-                    }
-                }
-            }
             XCTAssertTrue(completions.names.isEmpty)
             XCTAssertTrue(repairCommands.isEmpty)
             XCTAssertEqual(followingCommands, 0)
@@ -3793,7 +3948,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             await fulfillment(of: [launched], timeout: 5)
             let done = expectation(description: "HEAD-only change does not invalidate repair")
             done.assertForOverFulfill = true
-            enqueue { service.repair(worktree: tree, movedTo: fixture.linked.path) { error in XCTAssertNil(error); done.fulfill() } }
+            enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: fixture.linked.path) { error in XCTAssertNil(error); done.fulfill() } }
             if detached {
                 _ = try fixture.git(["checkout", "--detach", "HEAD"], in: fixture.linked)
             } else {
@@ -4128,7 +4283,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let selected = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
             let result = WriterCharacterizationResult()
             let repaired = expectation(description: "Locate style operation finished")
-            enqueue { service.repair(worktree: selected, movedTo: located.path) { error in
+            enqueue { service.prepareAndConfirmRepair(worktree: selected, movedTo: located.path) { error in
                 // swift6-safety-justification: The service delivers lifecycle completion on the main queue.
                 MainActor.assumeIsolated { result.error = error as NSError?; repaired.fulfill() }
             } }
@@ -4189,7 +4344,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let before = try protected.map { try Data(contentsOf: $0) }
         let refs = try fixture.git(["show-ref", "--head"], in: moved)
         let done = expectation(description: "Locate repairs every checkout in its captured scope")
-        enqueue { service.repair(worktree: selected, movedTo: selectedPath.path) { error in XCTAssertNil(error); done.fulfill() } }
+        enqueue { service.prepareAndConfirmRepair(worktree: selected, movedTo: selectedPath.path) { error in XCTAssertNil(error); done.fulfill() } }
         await fulfillment(of: [done], timeout: 10)
         XCTAssertEqual(commands.filter { $0.contains("repair") }.count, 1)
         for (name, path) in [("linked", selectedPath), ("second", siblingPath)] {
@@ -4707,7 +4862,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
     }
 
     #if DEBUG
-        func testQueuedGlobalRepairUsesCapturedCheckoutWhenMovedDirectoryAliasChanges() async throws {
+        func testQueuedGlobalRepairRequiresFreshLocateApprovalWhenMovedDirectoryAliasChanges() async throws {
             let fixture = try RepairFixture(label: "argument-alias-own")
             let foreign = try RepairFixture(label: "argument-alias-foreign")
             defer { fixture.cleanup(); foreign.cleanup() }
@@ -4749,7 +4904,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
                     }
                 }
             }
-            enqueue { service.repairLinks(relativePaths: false) { error in XCTAssertNil(error); repaired.fulfill() } }
+            enqueue { service.prepareAndConfirmRepairLinks(relativePaths: false) { error in XCTAssertNotNil(error); repaired.fulfill() } }
             await fulfillment(of: [captured], timeout: 10)
             captureObservation.invalidate()
             let progressed = expectation(description: "next queued writer completes")
@@ -4763,6 +4918,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let ownRefs = try fixture.git(["show-ref", "--head"], in: movedMain)
             blocked.finish(Data())
             await fulfillment(of: [held, repaired, progressed], timeout: 10)
+            // The alias changed the globally prepared scope. A new Locate action explicitly approves the owned canonical folder.
+            let located = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+            try await service.prepareAndConfirmRepair(worktree: located, movedTo: ownedCheckout.path)
             XCTAssertEqual(try Data(contentsOf: foreign.linked.appendingPathComponent(".git")), foreignLink)
             XCTAssertEqual(try metadata(in: foreign), foreignMetadata)
             XCTAssertEqual(try foreign.git(["show-ref", "--head"]), foreignRefs)
@@ -4805,9 +4963,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             await fulfillment(of: [launched], timeout: 5)
             let refused = expectation(description: "new foreign ownership rejected")
             if repositoryWide {
-                enqueue { service.repairLinks(relativePaths: false) { error in XCTAssertNotNil(error); refused.fulfill() } }
+                enqueue { service.prepareAndConfirmRepairLinks(relativePaths: false) { error in XCTAssertNotNil(error); refused.fulfill() } }
             } else {
-                enqueue { service.repair(worktree: tree, movedTo: fixture.linked.path) { error in XCTAssertNotNil(error); refused.fulfill() } }
+                enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: fixture.linked.path) { error in XCTAssertNotNil(error); refused.fulfill() } }
             }
             let next = expectation(description: "subsequent queued writer completes")
             enqueue { service.unlockWorktree(path: fixture.linked.path) { _, _ in next.fulfill() } }
@@ -4862,7 +5020,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         enqueue { service.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in XCTAssertNil(error); firstDone.fulfill() } }
         await fulfillment(of: [launched], timeout: 5)
         let repairDone = expectation(description: "stale repair rejected")
-        enqueue { service.repair(worktree: tree, movedTo: selected.path) { error in XCTAssertNotNil(error); repairDone.fulfill() } }
+        enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path) { error in XCTAssertNotNil(error); repairDone.fulfill() } }
         let followingDone = expectation(description: "next queued writer released")
         enqueue { service.unlockWorktree(path: fixture.linked.path) { _, _ in followingDone.fulfill() } }
         try FileManager.default.moveItem(at: selected, to: fixture.root.appendingPathComponent("preserved-own"))
@@ -4893,7 +5051,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         enqueue { service.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in XCTAssertNil(error); firstDone.fulfill() } }
         await fulfillment(of: [launched], timeout: 5)
         let repairDone = expectation(description: "reused registration rejected")
-        enqueue { service.repair(worktree: tree, movedTo: selected.path) { error in XCTAssertNotNil(error); repairDone.fulfill() } }
+        enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path) { error in XCTAssertNotNil(error); repairDone.fulfill() } }
         let administrative = fixture.main.appendingPathComponent(".git/worktrees/linked")
         let archive = fixture.root.appendingPathComponent("original-admin")
         try FileManager.default.moveItem(at: administrative, to: archive)
@@ -4923,7 +5081,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         enqueue { service.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in XCTAssertNil(error); firstDone.fulfill() } }
         await fulfillment(of: [launched], timeout: 5)
         let repairDone = expectation(description: "valid queued repair completed")
-        enqueue { service.repair(worktree: tree, movedTo: selected.path) { error in XCTAssertNil(error); repairDone.fulfill() } }
+        enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path) { error in XCTAssertNil(error); repairDone.fulfill() } }
         blocked.finish(Data())
         await fulfillment(of: [firstDone, repairDone], timeout: 10)
         let registered = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
@@ -5181,9 +5339,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             try FileManager.default.removeItem(at: fixture.linked.appendingPathComponent(".git"))
             let done = expectation(description: "failed bidirectional proof")
             if repositoryWide {
-                enqueue { service.repairLinks(relativePaths: false) { error in XCTAssertNotNil(error); done.fulfill() } }
+                enqueue { service.prepareAndConfirmRepairLinks(relativePaths: false) { error in XCTAssertNotNil(error); done.fulfill() } }
             } else {
-                enqueue { service.repair(worktree: tree, movedTo: fixture.linked.path) { error in XCTAssertNotNil(error); done.fulfill() } }
+                enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: fixture.linked.path) { error in XCTAssertNotNil(error); done.fulfill() } }
             }
             await fulfillment(of: [done], timeout: 10)
             XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linked.appendingPathComponent(".git").path))
@@ -5245,9 +5403,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         await fulfillment(of: [launched], timeout: 5)
         let repairDone = expectation(description: "reappeared sibling ownership rejected")
         if repositoryWide {
-            enqueue { service.repairLinks(relativePaths: false) { error in XCTAssertNotNil(error); repairDone.fulfill() } }
+            enqueue { service.prepareAndConfirmRepairLinks(relativePaths: false) { error in XCTAssertNotNil(error); repairDone.fulfill() } }
         } else {
-            enqueue { service.repair(worktree: tree, movedTo: selected.path) { error in XCTAssertNotNil(error); repairDone.fulfill() } }
+            enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path) { error in XCTAssertNotNil(error); repairDone.fulfill() } }
         }
         let followingDone = expectation(description: "ownership rejection releases next writer")
         enqueue { service.unlockWorktree(path: fixture.linked.path) { _, _ in followingDone.fulfill() } }

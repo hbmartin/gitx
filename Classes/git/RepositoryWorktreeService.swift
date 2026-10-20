@@ -226,7 +226,7 @@ final nonisolated class PBWorktreeLifecycleDiagnostics: NSObject {
         }
         let stages = ["started", "completed", "failed", "rejected", "cancelled", "draining", "published"]
         let phases = ["reserved", "preparing", "writing", "reconciling", "terminal", "discovery", "capability"]
-        let categories = ["none", "ownership", "context", "capability", "incomplete", "task", "moved", "consent"]
+        let categories = ["none", "ownership", "context", "capability", "incomplete", "task", "moved", "consent", "eligibility"]
         return "worktree." + operation + "." + (stages.contains(stage) ? stage : "unknown")
             + " phase=" + (phases.contains(phase) ? phase : "unknown")
             + " count=" + String(max(0, count)) + " category=" + (categories.contains(category) ? category : "unknown")
@@ -448,11 +448,6 @@ private final class WorktreePreparedReservation<Value: Sendable> {
         started = true
         return result
     }
-}
-
-enum WorktreeRepairStartResult {
-    case completed
-    case requiresConsent(PBWorktreeRepairPreview)
 }
 
 struct WorktreeRepairReview {
@@ -890,16 +885,16 @@ final class PBRepositoryWorktreeService: NSObject {
     /// All getters use one backing value. Every post-change callback sees the complete new tuple.
     private func commitInventory(_ evidence: WorktreeDiscoveryEvidence? = nil) {
         var updated = publishedInventory
+        let changedRows = evidence.map { $0.records != publishedInventory.records } ?? false
         if let evidence {
             updated.hasSnapshot = true
-            if updated.records != evidence.records {
+            if changedRows {
                 updated.records = evidence.records
                 updated.rows = evidence.records.map(PBGitWorktree.init)
             }
         }
         updated.isStale = state.isStale
         updated.status = currentInventoryStatus
-        let changedRows = updated.records != publishedInventory.records
         var keys: [String] = []
         if changedRows {
             keys.append("worktrees")
@@ -1036,8 +1031,10 @@ final class PBRepositoryWorktreeService: NSObject {
                     self.finish(operation) { fail(self.failure(rejection.localizedDescription, underlying: rejection)) }
                     return
                 }
-                guard validatesRemoval || !requiresFreshInventory || WorktreeEligibility.allows(command, records: records, supported: self.isSupported) else {
-                    self.finish(operation) { fail(self.failure(WorktreeRemovalRejection.changedConsent.localizedDescription, underlying: WorktreeRemovalRejection.changedConsent)) }
+                if !validatesRemoval, requiresFreshInventory,
+                   let rejection = WorktreeEligibility.nonRemovalRejection(command, records: records)
+                {
+                    self.finish(operation) { fail(self.failure(rejection.localizedDescription, underlying: rejection)) }
                     return
                 }
                 self.executeTask(command, operation: operation) { result in
@@ -1228,40 +1225,7 @@ final class PBRepositoryWorktreeService: NSObject {
         }
     }
 
-    func beginRepair(worktree: PBGitWorktree, movedTo path: String,
-                     ownerIsCurrent: @escaping @MainActor () -> Bool,
-                     completion: @escaping @MainActor @Sendable (Result<WorktreeRepairStartResult, NSError>) -> Void)
-    {
-        requestRepair(selection: WorktreeRepairSelection(originalPath: worktree.path, path: path), style: nil,
-                      ownerIsCurrent: ownerIsCurrent, startCompletion: completion)
-    }
-
-    func beginRepairLinks(style: WorktreeLinkStyle, ownerIsCurrent: @escaping @MainActor () -> Bool,
-                          completion: @escaping @MainActor @Sendable (Result<WorktreeRepairStartResult, NSError>) -> Void)
-    {
-        requestRepair(selection: nil, style: style, ownerIsCurrent: ownerIsCurrent, startCompletion: completion)
-    }
-
     #if DEBUG
-        @objc(beginRepairForTestingWithWorktree:movedTo:relativePaths:ownerIsCurrent:completion:)
-        func beginRepairForTesting(worktree: PBGitWorktree?, movedTo path: String?, relativePaths: Bool,
-                                   ownerIsCurrent: @escaping @MainActor () -> Bool,
-                                   completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, Bool, NSError?) -> Void)
-        {
-            let deliver: @MainActor @Sendable (Result<WorktreeRepairStartResult, NSError>) -> Void = { result in
-                switch result {
-                case .success(.completed): completion(nil, true, nil)
-                case let .success(.requiresConsent(preview)): completion(preview, false, nil)
-                case let .failure(error): completion(nil, false, error)
-                }
-            }
-            if let worktree, let path {
-                beginRepair(worktree: worktree, movedTo: path, ownerIsCurrent: ownerIsCurrent, completion: deliver)
-            } else {
-                beginRepairLinks(style: relativePaths ? .relative : .absolute, ownerIsCurrent: ownerIsCurrent, completion: deliver)
-            }
-        }
-
         @objc(refreshRepairPreviewForTesting:ownerIsCurrent:completion:)
         func refreshRepairPreviewForTesting(_ preview: PBWorktreeRepairPreview, ownerIsCurrent: @escaping @MainActor () -> Bool,
                                             completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, Bool, NSError?) -> Void)
@@ -1381,32 +1345,11 @@ final class PBRepositoryWorktreeService: NSObject {
         }
     }
 
-    @objc(repairWorktree:movedTo:completion:)
-    func repair(worktree: PBGitWorktree, movedTo path: String, completion: @escaping @MainActor @Sendable (NSError?) -> Void) {
-        requestRepair(selection: WorktreeRepairSelection(originalPath: worktree.path, path: path), style: nil, legacyCompletion: completion)
-    }
-
-    @objc(repairLinksWithRelativePaths:completion:)
-    func repairLinks(relativePaths: Bool, completion: @escaping @MainActor @Sendable (NSError?) -> Void) {
-        repairLinks(style: relativePaths ? .relative : .absolute, completion: completion)
-    }
-
-    func repairLinks(style: WorktreeLinkStyle, completion: @escaping @MainActor @Sendable (NSError?) -> Void) {
-        requestRepair(selection: nil, style: style, legacyCompletion: completion)
-    }
-
     /// Request-bound identities precede the wait; the complete touch scope is captured after admission.
     private func requestRepair(selection: WorktreeRepairSelection?, style: WorktreeLinkStyle?,
-                               completion: (@MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void)? = nil,
-                               legacyCompletion: (@MainActor @Sendable (NSError?) -> Void)? = nil,
-                               ownerIsCurrent: (@MainActor () -> Bool)? = nil,
-                               startCompletion: (@MainActor @Sendable (Result<WorktreeRepairStartResult, NSError>) -> Void)? = nil)
+                               completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void)
     {
-        let fail = requestFailure(["worktree", "repair"]) { error in
-            completion?(nil, error)
-            legacyCompletion?(error)
-            startCompletion?(.failure(error))
-        }
+        let fail = requestFailure(["worktree", "repair"]) { completion(nil, $0) }
         do {
             let context = try requestContext()
             guard let evidence = repairOwnershipEvidence, evidence.generation == versionGeneration else {
@@ -1435,34 +1378,11 @@ final class PBRepositoryWorktreeService: NSObject {
                             switch captured {
                             case let .failure(error): self.finish(operation) { fail(self.operationError(error)) }
                             case let .success(plan):
-                                guard ownerIsCurrent?() != false else {
-                                    self.finish(operation) { fail(Self.cancelledError()) }
-                                    return
-                                }
-                                if legacyCompletion != nil || startCompletion != nil, !plan.scope.requiresReclaim {
-                                    self.performRepair(plan, operation: operation, ownerIsCurrent: ownerIsCurrent) { error in
-                                        let reconciled = operation.phase == .reconciling
-                                        self.finish(operation) {
-                                            if let error, !reconciled {
-                                                fail(error)
-                                            } else if let error {
-                                                legacyCompletion?(error); startCompletion?(.failure(error))
-                                            } else {
-                                                legacyCompletion?(nil); startCompletion?(.success(.completed))
-                                            }
-                                        }
-                                    }
-                                } else if let legacyCompletion {
-                                    self.logEvent(["worktree", "repair"], stage: "rejected", count: plan.scope.targets.count, category: "consent")
-                                    self.finish(operation) { legacyCompletion(self.failure("These checkout links require explicit Reclaim approval. Review a fresh repair preview before replacing them.")) }
-                                } else {
-                                    let preview = PBWorktreeRepairPreview(plan: plan)
-                                    self.logEvent(["worktree", "repair"], stage: "completed", count: plan.scope.targets.count)
-                                    self.finish(operation) {
-                                        self.repairPreviews.insert(preview.identifier)
-                                        completion?(preview, nil)
-                                        startCompletion?(.success(.requiresConsent(preview)))
-                                    }
+                                let preview = PBWorktreeRepairPreview(plan: plan)
+                                self.logEvent(["worktree", "repair"], stage: "completed", count: plan.scope.targets.count)
+                                self.finish(operation) {
+                                    self.repairPreviews.insert(preview.identifier)
+                                    completion(preview, nil)
                                 }
                             }
                         }
@@ -1717,7 +1637,7 @@ final class PBRepositoryWorktreeService: NSObject {
     private func finishReconciliation(operation: WorktreeOperation, generation: UInt64?, published: Bool) {
         defer { synchronizeFreshness() }
         if let generation,
-           let next = state.completeOwnedDiscovery(generation, succeeded: published, recoverOnFailure: operation.phase == .reconciling)
+           let next = state.completeOwnedDiscovery(generation, succeeded: published, recoverOnFailure: true)
         {
             // The operation still owns admission. Enqueue its follow-up only
             // after release, before the operation's drainage acknowledgement.
@@ -1939,7 +1859,7 @@ final class PBRepositoryWorktreeService: NSObject {
             guard let underlying = (cause as NSError).userInfo[NSUnderlyingErrorKey] as? Error else { break }
             cause = underlying
         }
-        let category = cause is WorktreeRemovalRejection ? "consent" : cause is WorktreeCapabilityError ? "capability" : cause is WorktreeEvidenceError ? "ownership" : "context"
+        let category = cause is WorktreeRemovalRejection ? "consent" : cause is WorktreeEligibilityRejection ? "eligibility" : cause is WorktreeCapabilityError ? "capability" : cause is WorktreeEvidenceError ? "ownership" : "context"
         logEvent(arguments, stage: "rejected", count: count, category: category)
     }
 

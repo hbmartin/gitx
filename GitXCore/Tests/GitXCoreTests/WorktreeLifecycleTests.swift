@@ -61,6 +61,50 @@ final class WorktreePolicyTests: XCTestCase {
         XCTAssertFalse(state.isStale)
     }
 
+    func testOwnedPreflightFailureCoalescesOneRecoveryWithoutReplayingRetiredCallbacks() throws {
+        for succeeds in [false, true] {
+            var state = WorktreeRefreshState()
+            state.didPublishSnapshot()
+            let retired = try XCTUnwrap(state.request())
+            let owned = try XCTUnwrap(state.beginOwnedDiscovery())
+            XCTAssertNil(state.request())
+            XCTAssertNil(state.request())
+            let recovery = try XCTUnwrap(state.completeOwnedDiscovery(owned, succeeded: false, recoverOnFailure: true))
+            XCTAssertTrue(state.isStale)
+            XCTAssertFalse(state.accepts(retired))
+            XCTAssertNil(state.complete(retired))
+            XCTAssertNil(state.completeOwnedDiscovery(owned, succeeded: true, recoverOnFailure: true))
+            XCTAssertTrue(state.accepts(recovery))
+            XCTAssertNil(state.complete(recovery, succeeded: succeeds))
+            XCTAssertEqual(state.isStale, !succeeds)
+            XCTAssertFalse(state.isReading, "A failed ordinary recovery must not loop")
+        }
+    }
+
+    func testNonRemovalRejectionsHaveCommandSpecificReasonsAndPreserveAddAdmission() {
+        let main = GitWorktree(path: "/main", isMain: true)
+        let unlocked = GitWorktree(path: "/linked")
+        let locked = GitWorktree(path: "/linked", isLocked: true)
+        let cases: [(WorktreeCommand, [GitWorktree], WorktreeEligibilityRejection?)] = [
+            (.lock(path: "/missing", reason: ""), [unlocked], .missingRegistration),
+            (.unlock(path: "/missing"), [locked], .missingRegistration),
+            (.lock(path: main.path, reason: ""), [main], .mainWorktree),
+            (.unlock(path: main.path), [main], .mainWorktree),
+            (.lock(path: locked.path, reason: ""), [locked], .alreadyLocked),
+            (.unlock(path: unlocked.path), [unlocked], .notLocked),
+            (.lock(path: unlocked.path, reason: ""), [unlocked], nil),
+            (.unlock(path: locked.path), [locked], nil),
+            (.addNew(path: "/new", branch: "topic"), [], nil),
+            (.addExisting(path: "/new", branch: "topic"), [], nil),
+        ]
+        for (command, records, expected) in cases {
+            XCTAssertEqual(WorktreeEligibility.nonRemovalRejection(command, records: records), expected)
+            XCTAssertEqual(WorktreeEligibility.allows(command, records: records, supported: true), expected == nil)
+            XCTAssertFalse(WorktreeEligibility.allows(command, records: records, supported: false))
+            if let expected { XCTAssertFalse(expected.localizedDescription.isEmpty) }
+        }
+    }
+
     func testRemovalConsentIncludesExactHistoryAndPreservesUnchangedApproval() {
         let original = GitWorktree(path: "/linked", head: "A", branchRefName: "refs/heads/topic")
         let consent = WorktreeRemovalConsent(original)

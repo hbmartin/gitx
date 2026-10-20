@@ -53,7 +53,7 @@ public struct WorktreeRefreshState: Sendable {
         beginOwnedDiscovery(invalidatingSnapshot: true)
     }
 
-    /// Only post-write failure earns automatic recovery. Events during either owned read survive.
+    /// An owned failure may schedule one ordinary recovery read; ordinary failures never retry themselves.
     public mutating func completeOwnedDiscovery(_ candidate: UInt64, succeeded: Bool, recoverOnFailure: Bool = false) -> UInt64? {
         guard !isClosed, inFlight, reconciling, candidate == generation else { return nil }
         inFlight = false
@@ -107,17 +107,11 @@ public struct WorktreeEligibility: Equatable, Sendable {
         switch command {
         case let .remove(path, _):
             let identity = WorktreePaths.identity(path)
-            guard let current = records.first(where: { WorktreePaths.identity($0.path) == identity }),
-                  Self(current, supported: supported).canRemove else { return false }
-            guard let previousRecords else { return true }
-            guard let previous = previousRecords.first(where: { WorktreePaths.identity($0.path) == identity }) else { return false }
-            return WorktreeRemovalConsent(previous) == WorktreeRemovalConsent(current)
-        case let .lock(path, _):
-            let identity = WorktreePaths.identity(path)
-            return records.first { WorktreePaths.identity($0.path) == identity }.map { Self($0, supported: supported).canLock } ?? false
-        case let .unlock(path):
-            let identity = WorktreePaths.identity(path)
-            return records.first { WorktreePaths.identity($0.path) == identity }.map { Self($0, supported: supported).canUnlock } ?? false
+            let current = record(identity: identity, in: records)
+            let approved = previousRecords.map { record(identity: identity, in: $0) } ?? current
+            return removalRejection(current: current, consent: approved.map(WorktreeRemovalConsent.init)) == nil
+        case .lock, .unlock:
+            return nonRemovalRejection(command, records: records) == nil
         case .addExisting, .addNew: return true
         case .pruneReport, .prune, .repairLinks: return false
         }
@@ -126,7 +120,32 @@ public struct WorktreeEligibility: Equatable, Sendable {
     public static func removalRejection(path: String, records: [GitWorktree], consent: WorktreeRemovalConsent?) -> WorktreeRemovalRejection? {
         guard let consent else { return .missingConsent }
         let identity = WorktreePaths.identity(path)
-        guard let current = records.first(where: { WorktreePaths.identity($0.path) == identity }),
+        return removalRejection(current: record(identity: identity, in: records), consent: consent)
+    }
+
+    /// Capability belongs to the validated service context; these are inventory admission reasons.
+    public static func nonRemovalRejection(_ command: WorktreeCommand, records: [GitWorktree]) -> WorktreeEligibilityRejection? {
+        let path: String
+        let locking: Bool
+        switch command {
+        case let .lock(value, _): path = value; locking = true
+        case let .unlock(value): path = value; locking = false
+        default: return nil
+        }
+        let identity = WorktreePaths.identity(path)
+        guard let current = record(identity: identity, in: records) else { return .missingRegistration }
+        if current.isMain { return .mainWorktree }
+        if locking, current.isLocked { return .alreadyLocked }
+        return !locking && !current.isLocked ? .notLocked : nil
+    }
+
+    private static func record(identity: Data, in records: [GitWorktree]) -> GitWorktree? {
+        records.first { WorktreePaths.identity($0.path) == identity }
+    }
+
+    private static func removalRejection(current: GitWorktree?, consent: WorktreeRemovalConsent?) -> WorktreeRemovalRejection? {
+        guard let consent else { return .missingConsent }
+        guard let current,
               WorktreeRemovalConsent(current) == consent else { return .changedConsent }
         if current.isMain {
             return .mainWorktree
@@ -139,6 +158,19 @@ public struct WorktreeEligibility: Equatable, Sendable {
 
     public static func canPrune(_ worktrees: [GitWorktree], supported: Bool) -> Bool {
         supported && !worktrees.contains { $0.movedPath != nil }
+    }
+}
+
+public enum WorktreeEligibilityRejection: Error, LocalizedError, Equatable, Sendable {
+    case missingRegistration, mainWorktree, alreadyLocked, notLocked
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingRegistration: "The worktree is no longer registered. Review the refreshed worktree list before trying again."
+        case .mainWorktree: "The main worktree cannot be locked or unlocked."
+        case .alreadyLocked: "This worktree is already locked. Review the refreshed worktree list before trying again."
+        case .notLocked: "This worktree is not locked. Review the refreshed worktree list before trying again."
+        }
     }
 }
 

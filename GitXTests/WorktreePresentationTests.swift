@@ -377,13 +377,16 @@ import XCTest
                     let done = expectation(description: "Swift Locate delivers its terminal result")
                     var completed = 0
                     var failure: NSError?
-                    service.beginRepairForTesting(worktree: tree, movedTo: journey.fixture.linked.path, relativePaths: false, ownerIsCurrent: { true }) { preview, succeeded, error in
-                        XCTAssertNil(preview, "A proven moved checkout requires no additional consent")
-                        if succeeded {
-                            completed += 1
+                    service.prepareRepair(worktree: tree, movedTo: journey.fixture.linked.path) { preview, error in
+                        XCTAssertNil(error)
+                        guard let preview else { XCTFail("Locate must prepare a read-only preview"); done.fulfill(); return }
+                        XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
+                        service.repair(confirmedPreview: preview) { renewed, error in
+                            XCTAssertNil(renewed, "Unchanged final evidence must use the explicitly approved scope")
+                            if error == nil, renewed == nil { completed += 1 }
+                            failure = error as NSError?
+                            done.fulfill()
                         }
-                        failure = error as NSError?
-                        done.fulfill()
                     }
                     if changesEvidence {
                         await fulfillment(of: [checkpoint.entered], timeout: 5)
@@ -416,9 +419,8 @@ import XCTest
                     await waitUntil { service.worktrees.contains { $0.hasBrokenLink } }
                     let requested = expectation(description: "Swift repair releases admission for consent")
                     var captured: PBWorktreeRepairPreview?
-                    service.beginRepairForTesting(worktree: nil, movedTo: nil, relativePaths: false, ownerIsCurrent: { true }) { preview, completed, error in
+                    service.prepareRepairLinks(relativePaths: false) { preview, error in
                         XCTAssertNil(error)
-                        XCTAssertFalse(completed)
                         captured = preview
                         requested.fulfill()
                     }
@@ -464,9 +466,8 @@ import XCTest
                         await fulfillment(of: [rejected], timeout: 15)
                     }
                     let following = expectation(description: "a fresh consent request progresses after owner revocation")
-                    service.beginRepairForTesting(worktree: nil, movedTo: nil, relativePaths: false, ownerIsCurrent: { true }) { renewed, completed, error in
+                    service.prepareRepairLinks(relativePaths: false) { renewed, error in
                         XCTAssertNil(error)
-                        XCTAssertFalse(completed)
                         XCTAssertNotNil(renewed)
                         if let renewed {
                             service.discardRepairPreview(renewed)
