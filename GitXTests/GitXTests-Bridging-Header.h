@@ -519,6 +519,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @interface PBForgeMarkdownAvatarProductHarness : NSObject
 #if DEBUG
 + (uint64_t)readPresentationProof;
++ (uint64_t)factsReplacementProof;
 #endif
 + (uint64_t)markdownProof;
 + (uint64_t)requestProof;

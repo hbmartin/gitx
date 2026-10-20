@@ -27,6 +27,45 @@
             func openInBrowser(destination _: ForgeDestination) {}
         }
 
+        @objc static func factsReplacementProof() -> UInt64 {
+            do {
+                let view = RepositoryFactsInspectorView(frame: .zero)
+                let initial = RepositoryFactsPresentation(
+                    title: "Repository Facts", subtitle: "Original facts",
+                    rows: [RepositoryFactsRowPresentation(label: "Description", value: "Original value")],
+                    isLoading: false, accessibilityLabel: "Repository Facts; original"
+                )
+                view.apply(initial)
+                let originalValue = descendants(in: view).compactMap { $0 as? NSTextField }
+                    .first { $0.stringValue == "Original value" }
+                let originalRow = originalValue?.superview
+                view.apply(RepositoryFactsPresenter.present(.loading(previous: nil)))
+                let cleared = originalRow != nil && originalRow?.superview == nil
+                    && !descendants(in: view).contains { ($0 as? NSTextField)?.stringValue == "Original value" }
+                    && view.accessibilityLabel() == "Repository Facts; loading"
+                view.apply(initial)
+                view.apply(initial)
+                let replacedOnce = descendants(in: view).compactMap { $0 as? NSTextField }
+                    .filter { $0.stringValue == "Original value" }.count == 1
+                let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+                let repository = try ForgeRepositoryIdentity(forge: forge, owner: "example", name: "repo")
+                let badges = try HistoryForgeBadgePresenter.present(.value(RepositoryForgeOverlaySnapshot(
+                    value: ForgeHistoryOverlay(
+                        repository: repository,
+                        commit: ForgeCommitID("0123456789abcdef0123456789abcdef01234567"),
+                        checkRollup: .available(.succeeded), pullRequests: .unavailable(.permissionDenied)
+                    ),
+                    fetchedAt: Date(timeIntervalSince1970: 1), isPartial: true, isStale: false
+                )))
+                let unavailableBadges = badges.pullRequestText == "—"
+                    && badges.pullRequestAccessibilityLabel == "Pull Request badges unavailable"
+                    && badges.checkText == "✓ Passed" && !badges.isLoading
+                return (cleared && replacedOnce ? 1 : 0) | (unavailableBadges ? 2 : 0)
+            } catch {
+                return 0
+            }
+        }
+
         @objc static func readPresentationProof() -> UInt64 {
             do {
                 let loading = RepositoryFactsPresenter.present(.loading(previous: nil))

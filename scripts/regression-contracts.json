@@ -632,7 +632,8 @@
         "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
         "Classes/Controllers/HistoryForgeOverlayPresentation.swift",
         "Classes/Views/ForgeReadSurfaceViewController.swift",
-        "Classes/Controllers/RepositoryForgeCollaborationController.swift"
+        "Classes/Controllers/RepositoryForgeCollaborationController.swift",
+        "GitXTests/ForgeMarkdownAvatarProductHarness.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -1287,6 +1288,13 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged."
+        },
+        {
+          "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
+          "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppFactsReplacementRemovesPreviousRowsAndDistinguishesUnavailableBadges",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Execute the app module facts view: loading detaches previous rows, repeated replacement displays one copy, and permission-denied Pull Request badges stay distinct from an empty successful response."
         }
       ]
     },

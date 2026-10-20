@@ -993,6 +993,10 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
     }
 
     #if DEBUG
+        func testAppFactsReplacementRemovesPreviousRowsAndDistinguishesUnavailableBadges() {
+            XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.factsReplacementProof(), 0b11)
+        }
+
         func testAppReadPresentationsPreserveLoadingAndRefreshFailureState() {
             XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.readPresentationProof(), 0b111)
         }
