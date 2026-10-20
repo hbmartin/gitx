@@ -68,10 +68,6 @@ typedef BOOL (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationOwner)(void) NS_SWIFT_SEN
 		  completion:(void(NS_SWIFT_UI_ACTOR ^)(PBWorktreePrunePreview *_Nullable, NSError *_Nullable))completion
 	NS_SWIFT_NAME(confirmPrune(_:ownerIsCurrent:completion:)) __attribute__((swift_async(none)));
 #if DEBUG
-- (void)beginRepairForTestingWithWorktree:(nullable PBGitWorktree *)worktree movedTo:(nullable NSString *)path relativePaths:(BOOL)relativePaths
-						   ownerIsCurrent:(PBWorktreePresentationOwner)ownerIsCurrent
-							   completion:(void(NS_SWIFT_UI_ACTOR ^)(PBWorktreeRepairPreview *_Nullable, BOOL, NSError *_Nullable))completion
-	NS_SWIFT_NAME(beginRepairForTesting(worktree:movedTo:relativePaths:ownerIsCurrent:completion:)) __attribute__((swift_async(none)));
 - (void)refreshRepairPreviewForTesting:(PBWorktreeRepairPreview *)preview ownerIsCurrent:(PBWorktreePresentationOwner)ownerIsCurrent
 							completion:(void(NS_SWIFT_UI_ACTOR ^)(PBWorktreeRepairPreview *_Nullable, BOOL, NSError *_Nullable))completion
 	NS_SWIFT_NAME(refreshRepairPreviewForTesting(_:ownerIsCurrent:completion:)) __attribute__((swift_async(none)));

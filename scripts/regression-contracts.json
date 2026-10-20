@@ -405,9 +405,9 @@
         },
         {
           "source": "GitXTests/WorktreeServiceTests.swift",
-          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedGlobalRepairUsesCapturedCheckoutWhenMovedDirectoryAliasChanges",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedGlobalRepairRequiresFreshLocateApprovalWhenMovedDirectoryAliasChanges",
           "role": "valid",
-          "oracle": "Retarget a moved checkout directory alias while global repair waits; Git repairs the captured canonical checkout rather than the alias's new foreign target, preserving foreign links, metadata, HEAD, index, content and refs while the owned checkout becomes the published registration with its exact administrative backlink."
+          "oracle": "Retarget a moved checkout directory alias while global repair waits; Git repairs the captured canonical checkout rather than the alias's new foreign target, preserving foreign links, metadata, HEAD, index, content and refs while the owned checkout becomes the published registration with its exact administrative backlink. Modernized preview/confirm requires new Locate approval after alias changes; foreign state remains protected and the explicitly selected owned canonical checkout is repaired."
         },
         {
           "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
@@ -611,7 +611,7 @@
     {
       "id": "STATE-001",
       "family": "Snapshot and refresh authority",
-      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter. Prune authority is bound to the approved preview's administrative registrations and revalidated at writer admission; changed candidates require an updated preview and a new confirmation. Sidebar row restoration refreshes controls and preserves local-branch reference actions without changing mounted content or the browsed revision. Worktree callbacks and deferred confirmations retain their originating window, repository, service and presentation generation; closing or replacing an owner revokes authority even when the same objects are restored. Expected cancellation is silent while genuine current-owner failures remain observable. Repair and prune consent ignore HEAD-only changes but remain sensitive to exact links, lock and availability metadata, administrative identities, executable context and raw Git reports. Explicit History adopts the selected canonical checkout's newest captured revision; passive synchronization preserves its authoritative revision object and mounted content. Lifecycle menu actions use the clicked checkout even when several checkouts share a branch. Owner revocation cancels pending consent and publication while already-admitted checked writes drain through captured-context reconciliation. Operation-owned reconciliation retires earlier ordinary discoveries before they can republish stale records. Pure context checks do not restart capability probes; rejected queued requests coalesce a capability reprobe after admission release and never replay the write. Ownership evidence failures retain valid records and their original cause; stale ownership requires fresh discovery and a new request. Retired discoveries skip ownership scanning. Reclaim consent keeps both Return and Escape bound to cancellation. Fixture drainage delivers clients sequentially and drains the writer again after pane producers finish; revoked discard eligibility cannot reuse prior approval. Hiding, minimizing, or changing foreground windows does not revoke presentation authority: queued errors and repair/prune consent wait until the user returns to the original visible active key window without activating or restoring it. Close, repository or window replacement revokes authority. Deferred consent receives fresh single-use evidence after a genuine wait and is revalidated at confirmation; immediately available consent does not incur another inventory. Earlier invalidations are satisfied by owned reconciliation, while concurrent events and failed reconciliation retain one bounded recovery. Retained stale snapshots expose an accessible warning and Refresh action independently of row equality. Worktree removal rereads current inventory at FIFO admission and compares it with the original approved row; missing initial inventory also requires an owned read before any ordinary mutation. Changed or missing removal evidence rejects the request without adopting refreshed consent. Removal approval additionally binds HEAD OID, exact symbolic reference and detached state. Every owned preflight retires ordinary generations even when it rejects or fails. Inventory rows, flags and status publish coherently; status-only updates retain sidebar object identities. Style selection only prepares a plan; every repair write follows explicit approval of its fresh complete target list. A consumed-preview refresh failure remains terminal through repeated presentation waits. Passive current-branch, reference and settings selection restoration preserves already-mounted content; explicit branch selection remains a navigation action. Queued repository observations lose sidebar restoration authority when closeView disconnects their owner.",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files. List transactions publish one complete ordered selection of raw bytes and staging sides. Unchanged selection preserves capture; genuine selection changes and the exact caller raw-path set control discard authority. Background worktree discovery restores sidebar selection without replacing content mounted by an inspector or presenter. Prune authority is bound to the approved preview's administrative registrations and revalidated at writer admission; changed candidates require an updated preview and a new confirmation. Sidebar row restoration refreshes controls and preserves local-branch reference actions without changing mounted content or the browsed revision. Worktree callbacks and deferred confirmations retain their originating window, repository, service and presentation generation; closing or replacing an owner revokes authority even when the same objects are restored. Expected cancellation is silent while genuine current-owner failures remain observable. Repair and prune consent ignore HEAD-only changes but remain sensitive to exact links, lock and availability metadata, administrative identities, executable context and raw Git reports. Explicit History adopts the selected canonical checkout's newest captured revision; passive synchronization preserves its authoritative revision object and mounted content. Lifecycle menu actions use the clicked checkout even when several checkouts share a branch. Owner revocation cancels pending consent and publication while already-admitted checked writes drain through captured-context reconciliation. Operation-owned reconciliation retires earlier ordinary discoveries before they can republish stale records. Pure context checks do not restart capability probes; rejected queued requests coalesce a capability reprobe after admission release and never replay the write. Ownership evidence failures retain valid records and their original cause; stale ownership requires fresh discovery and a new request. Retired discoveries skip ownership scanning. Reclaim consent keeps both Return and Escape bound to cancellation. Fixture drainage delivers clients sequentially and drains the writer again after pane producers finish; revoked discard eligibility cannot reuse prior approval. Hiding, minimizing, or changing foreground windows does not revoke presentation authority: queued errors and repair/prune consent wait until the user returns to the original visible active key window without activating or restoring it. Close, repository or window replacement revokes authority. Deferred consent receives fresh single-use evidence after a genuine wait and is revalidated at confirmation; immediately available consent does not incur another inventory. Earlier invalidations are satisfied by owned reconciliation, while concurrent events and failed reconciliation retain one bounded recovery. Retained stale snapshots expose an accessible warning and Refresh action independently of row equality. Worktree removal rereads current inventory at FIFO admission and compares it with the original approved row; missing initial inventory also requires an owned read before any ordinary mutation. Changed or missing removal evidence rejects the request without adopting refreshed consent. Removal approval additionally binds HEAD OID, exact symbolic reference and detached state. Every owned preflight retires ordinary generations even when it rejects or fails. Inventory rows, flags and status publish coherently; status-only updates retain sidebar object identities. Style selection only prepares a plan; every repair write follows explicit approval of its fresh complete target list. A consumed-preview refresh failure remains terminal through repeated presentation waits. Passive current-branch, reference and settings selection restoration preserves already-mounted content; explicit branch selection remains a navigation action. Queued repository observations lose sidebar restoration authority when closeView disconnects their owner. Failed owned preflight schedules one coalesced ordinary recovery after FIFO release; failure of that recovery cannot self-retry. Non-removal admission reports typed eligibility rather than removal consent. Repair preparation is read-only and the removed direct-repair API cannot bypass approval. Passive sidebar restoration suppresses navigation before any content is mounted and restores canonical checkout/reference identity rather than row numbers. Closed owners reject direct rebuild/selection and late Forge choices as well as queued KVO. Background inventory reads preserve settled header appearance and accessibility; only initial loading or a changed settled result updates the header.",
       "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content. A prune confirmation detached from current registration identity can forget worktrees the user did not approve. Restoring a row without its selection notification leaves controls stale; treating worktree rows only as lifecycle actions loses retained reference actions. Rebuilding an action from current owners or checking visibility alone lets old callbacks and deferred clicks regain authority after replacement or reopening. Comparing history state as ownership revokes harmless consent; a first-branch lookup redirects duplicate-row actions, and passive checked-out-branch following can override another checkout's selected history. Removal discards history and therefore cannot use history-insensitive repair ownership consent. Old ordinary reads can otherwise overwrite a newer preflight. Retrying a consumed preview replaces the original failure with a token error.",
       "sourcePaths": [
         "Classes/git/IndexRefreshCoordinator.swift",
@@ -1259,7 +1259,7 @@
           "identifier": "GitXTests/WorktreeAppKitTests/testClosedSidebarRejectsQueuedRepositoryRestoration",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "Queue off-main current-branch, reference, branch and stash notifications while MainActor is occupied, then close the retained sidebar before delivery; no rows are rebuilt, selection is restored or shared revision is changed."
+          "oracle": "Queue off-main current-branch, reference, branch and stash notifications while MainActor is occupied, then close the retained sidebar before delivery; no rows are rebuilt, selection is restored or shared revision is changed. Also invoke direct current-branch selection, list population and Forge notification after closure; none may regain authority."
         },
         {
           "source": "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
@@ -1295,6 +1295,65 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Execute the app module facts view: loading detaches previous rows, repeated replacement displays one copy, and permission-denied Pull Request badges stay distinct from an empty successful response."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testFailedPreflightRecoversOnceAndRetiredReadCannotOverwriteItsResult",
+          "role": "failure",
+          "oracle": "Inject timeout, malformed and truncated preflight results; complete or fail the single recovery, deliver the retired callback after recovery, and assert current rows/status, no writes and no automatic loop."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testInventoryAdmissionReportsTypedEligibilityWithoutRemovalConsentDiagnostics",
+          "role": "failure",
+          "oracle": "Assert actual underlying eligibility reasons and one finite eligibility event for missing, main, already locked and unlocked targets; no consent event or mutation is permitted."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeLifecycleTests.swift",
+          "identifier": "GitXCoreTests/WorktreePolicyTests/testOwnedPreflightFailureCoalescesOneRecoveryWithoutReplayingRetiredCallbacks",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Retire older generation and coalesce concurrent invalidations; only one ordinary recovery is scheduled and failed recovery has no automatic successor."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeLifecycleTests.swift",
+          "identifier": "GitXCoreTests/WorktreePolicyTests/testNonRemovalRejectionsHaveCommandSpecificReasonsAndPreserveAddAdmission",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Compare typed inventory rejection reasons, boolean adapter results, add admission and unsupported capability behavior."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeLifecycleTests.swift",
+          "identifier": "GitXCoreTests/WorktreePolicyTests/testRemovalAdapterDistinguishesImplicitCurrentEligibilityFromExplicitMissingConsent",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Explicit missing consent remains rejected while the compatibility boolean adapter preserves uncaptured current-row eligibility."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testPassiveRowInsertionPreservesRevisionAndDuplicateCheckoutBeforeContentMounts",
+          "role": "boundary",
+          "oracle": "Insert a preceding branch into the actual outline data while no content controller exists; deliver current-branch KVO and assert the authoritative revision object, canonical duplicate checkout identity and actual Git HEAD survive."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testForgeBindingApprovalDeliveredAfterSidebarCloseCannotPersistOrRebuild",
+          "role": "failure",
+          "oracle": "Present the real Forge binding chooser, close its sidebar before delivering approval, and assert no binding persists, no rows rebuild and no selection is restored."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
+          "identifier": "GitXCoreTests/SidebarPolicyTests/testBackgroundInventoryReadsRetainSettledWarningsAndAccessibilityUntilRecovery",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Compare settled presentations across repeated background reads, initial loading, failed reads, equal-row recovery, capability loss and closure."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
+          "identifier": "GitXCoreTests/SidebarPolicyTests/testNewHeaderStateHandlesBackgroundReadsAndUnknownCapabilityWithoutPriorRendering",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "A newly created presenter has a quiet retained-snapshot fallback and keeps actionable unknown-status and capability guidance."
         }
       ]
     },
@@ -1565,8 +1624,8 @@
     {
       "id": "TASK-001",
       "family": "Drainage and process lifetime",
-      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe. Debug native test applications retain stderr in a run-owned regular file before fixture work; an undrained XCTest activity pipe must not block logging, Git completion or index publication. Unified logging stays enabled and native diagnostics remain uploaded. The startup watchdog observes actual XCTest startup text in fresh native stderr files for the current command within its unchanged deadline; prior-probe files, foreign directories, symlinks and nonregular files cannot establish startup. Canonical preset and raw entrypoints provide the innermost startup watchdog its own captured console log and diagnostic directory; an outer capture cannot substitute for that wiring. Queued native startup evidence is observed before the startup-deadline verdict, matching command-output event handling when a selector wakeup crosses the boundary. Full native correctness and fresh analysis run in independent CI jobs with unchanged 75-minute limits. The existing required unit tests and analyzer check runs after both jobs and accepts only two successful results, including failure, cancellation and skipped-dependency cases.",
-      "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output. Treating a presentation cancellation as writer cancellation can terminate Git mid-write; shared discovery cancellation can also erase a completed write's reconciliation and release the queue too early. Serial independent native checks can exhaust a shared job limit before fresh analysis finishes.",
+      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe. Debug native test applications retain stderr in a run-owned regular file before fixture work; an undrained XCTest activity pipe must not block logging, Git completion or index publication. Unified logging stays enabled and native diagnostics remain uploaded. The startup watchdog observes actual XCTest startup text in fresh native stderr files for the current command within its unchanged deadline; prior-probe files, foreign directories, symlinks and nonregular files cannot establish startup. Canonical preset and raw entrypoints provide the innermost startup watchdog its own captured console log and diagnostic directory; an outer capture cannot substitute for that wiring. Queued native startup evidence is observed before the startup-deadline verdict, matching command-output event handling when a selector wakeup crosses the boundary. Full native correctness and fresh analysis run in independent CI jobs with unchanged 75-minute limits. Correctness, analysis and worktree contracts depend only on toolchain smoke. The existing required unit tests and analyzer check runs after all three jobs and accepts only three successful results, rejecting failure, cancellation and skipped or missing results. Independent full UI, native regression and performance steps remain eligible after focused failures unless cancelled; failures remain blocking and artifact upload always runs. Distribution cleanup validates inventory structure and all mountpoints, then validates detach identities only for the exact owned image. Identified unrelated file or RAM images cannot block cleanup through irrelevant device metadata. Missing identity, malformed mountpoints, foreign occupancy and ambiguous owned devices remain unknown and retain staging; failed attachment cleanup and publication rollback remain protected by the required static script suite.",
+      "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output. Treating a presentation cancellation as writer cancellation can terminate Git mid-write; shared discovery cancellation can also erase a completed write's reconciliation and release the queue too early. Serial independent native checks can exhaust a shared job limit before fresh analysis finishes. Validating irrelevant device metadata before establishing image ownership can strand packaging; ignoring unknown identity or mountpoint conflicts can instead authorize unsafe cleanup.",
       "sourcePaths": [
         "Classes/Util/PBTask*",
         "Classes/Util/PBChildProcessOwner.swift",
@@ -1582,7 +1641,10 @@
         "Classes/Controllers/ApplicationComposition.swift",
         "GitXUITests/GitXScreenshotTests.m",
         "scripts/tests/test_native_test_diagnostics.py",
-        ".github/workflows/Verify.yml"
+        ".github/workflows/Verify.yml",
+        "scripts/package_distribution.sh",
+        "scripts/tests/distribution_fixture.py",
+        "scripts/tests/test_distribution.py"
       ],
       "requiredChecks": [
         "correctness",
@@ -1742,14 +1804,14 @@
           "source": "GitXTests/GitXTestGitFixtureTests.swift",
           "identifier": "GitXTests/GitXTestGitFixtureTests/testNativeDiagnosticsReachAnEmptyUILaunchEnvironment",
           "role": "boundary",
-          "oracle": "Forward the native log directory into an initially empty UI launch environment and preserve the unowned case. The required static check independently executes the real Logger against an undrained pipe, verifies complete binary file capture and refusal to replace previous evidence, and checks both canonical entrypoints. Static supervisor fixtures hold the child behind a FIFO until actual native startup is acknowledged, exercise split markers, and retain missing-startup failure for previous-probe, quiet, foreign and symlink sources. Execute the real preset and raw shell wrappers with controlled mock native output, holding the child behind a FIFO until the innermost native-startup acknowledgment. Preserve distinct inner diagnostics through completion. A deterministic clock and selector emit native startup at0.9seconds and return at1.1seconds for a1second startup deadline; the actual held child must complete after acknowledgment without changing production timeouts."
+          "oracle": "Forward the native log directory into an initially empty UI launch environment and preserve the unowned case. The required static check independently executes the real Logger against an undrained pipe, verifies complete binary file capture and refusal to replace previous evidence, and checks both canonical entrypoints. Static supervisor fixtures hold the child behind a FIFO until actual native startup is acknowledged, exercise split markers, and retain missing-startup failure for previous-probe, quiet, foreign and symlink sources. Execute the real preset and raw shell wrappers with controlled mock native output, holding the child behind a FIFO until the innermost native-startup acknowledgment. Preserve distinct inner diagnostics through completion. A deterministic clock and selector emit native startup at0.9seconds and return at1.1seconds for a1second startup deadline; the actual held child must complete after acknowledgment without changing production timeouts. The required static script suite also executes the actual three-input aggregate shell across all 125 terminal-result combinations, checks that correctness does not wait on worktree contracts, and preserves complete UI/native/performance plans and always-upload behavior after focused failures."
         }
       ]
     },
     {
       "id": "DIAG-001",
       "family": "Credential-safe diagnostics",
-      "invariant": "Rendered and exported diagnostics redact credentials across every chunk/cutoff boundary while preserving ordinary URLs. Public worktree lifecycle diagnostics contain finite operation, phase and rejection categories plus counts; raw Git arguments, output, lock reasons, branch names and filesystem paths never enter those public events. Sensitive diagnostic details use existing redaction and private visibility while execution and authorization evidence stay raw. Each terminal lifecycle failure has one logging owner preserving its actual phase and finite category; removal consent rejection uses consent.",
+      "invariant": "Rendered and exported diagnostics redact credentials across every chunk/cutoff boundary while preserving ordinary URLs. Public worktree lifecycle diagnostics contain finite operation, phase and rejection categories plus counts; raw Git arguments, output, lock reasons, branch names and filesystem paths never enter those public events. Sensitive diagnostic details use existing redaction and private visibility while execution and authorization evidence stay raw. Each terminal lifecycle failure has one logging owner preserving its actual phase and finite category; removal consent rejection uses consent. Non-removal inventory admission uses typed eligibility reasons and the finite eligibility category, distinct from removal approval and executable context failures.",
       "rootCause": "Truncating before redaction or parsing only common userinfo shapes can expose secrets. Interpolating full lifecycle arguments or failed output publicly exposes user-authored lock reasons and repository details.",
       "sourcePaths": [
         "Classes/Util/PBTaskDiagnostic*",
@@ -1797,6 +1859,12 @@
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testLifecyclePublicEventsExcludePrivateArgumentsAndOutputsFromRealRoutes",
           "role": "failure",
           "oracle": "After real service routes, poll fresh current-process OSLog snapshots on one utility task with 0/250/500/1000ms backoff, a monotonic retry deadline and propagated query errors; require both exact positive events and reject every raw argument, output and lock-reason canary in the same successful snapshot."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testInventoryAdmissionReportsTypedEligibilityWithoutRemovalConsentDiagnostics",
+          "role": "failure",
+          "oracle": "Inspect the actual underlying eligibility error and emitted finite terminal category for each invalid lock/unlock target; no removal-consent event or writer is permitted."
         }
       ]
     },
@@ -1902,7 +1970,7 @@
     {
       "id": "INTEROP-001",
       "family": "Debug and Release interoperability",
-      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations; Objective-C-imported subclasses can execute controller callbacks without Swift-only virtual dispatch failures. Legacy worktree service selectors and the programmatic showHistoryView: entry remain available alongside the separate returnToHistory: responder action in Debug and Release. Sendable capability callbacks read their exact imported task's flags only through a main-actor boundary, preserving weak retention and generation guards under fresh compiler analysis. Debug-only worktree fixture selectors and their Objective-C test declarations/consumers are excluded together from Release; production-facing service tests remain executable in Release. Read-only inventoryStatus is observable in both configurations and has no setter.",
+      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations; Objective-C-imported subclasses can execute controller callbacks without Swift-only virtual dispatch failures. Retained worktree service selectors and the programmatic showHistoryView: entry remain available alongside the separate returnToHistory: responder action in Debug and Release. Sendable capability callbacks read their exact imported task's flags only through a main-actor boundary, preserving weak retention and generation guards under fresh compiler analysis. Debug-only worktree fixture selectors and their Objective-C test declarations/consumers are excluded together from Release; production-facing service tests remain executable in Release. Read-only inventoryStatus is observable in both configurations and has no setter. Intentional API modernization removes repairWorktree:movedTo:completion: and repairLinksWithRelativePaths:completion: plus the obsolete begin-repair fixture bridge in both configurations; prepare/confirm and every other retained service selector remain available.",
       "rootCause": "Conditional runtime/test surfaces or bridge annotations compile in Debug but fail in Release; new Swift-only virtual state accessors can have missing dispatch slots in Objective-C-imported subclasses.",
       "sourcePaths": [
         "Classes/*.h",
@@ -1967,7 +2035,7 @@
           "source": "GitXTests/GitXInteropContractTests.swift",
           "identifier": "GitXTests/GitXInteropContractTests/testWorktreeCompatibilityAndExplicitHistorySelectorsRemainAvailable",
           "role": "compatibility",
-          "oracle": "Runtime queries preserve all existing worktree service selectors and distinguish programmatic History from explicit History in both test consumers."
+          "oracle": "Runtime queries preserve retained worktree service selectors and distinguish programmatic History from explicit History; direct-repair selectors were intentionally removed by the approved API modernization."
         },
         {
           "source": "GitXTests/GitXInteropContractTests.swift",
@@ -1986,6 +2054,19 @@
           "identifier": "GitXTests/GitXInteropContractTests/testWorktreeFixtureProbesAreAvailableOnlyInDebug",
           "role": "compatibility",
           "oracle": "Query actual Objective-C instance methods in Release: fixture hooks, drainage and repair harness selectors are absent, while production compatibility selectors remain available.",
+          "check": "release-contracts"
+        },
+        {
+          "source": "GitXTests/GitXInteropContractTests.swift",
+          "identifier": "GitXTests/GitXInteropContractTests/testDirectRepairSelectorsAreAbsentInEveryConfiguration",
+          "role": "compatibility",
+          "oracle": "Runtime queries require both removed direct-repair selectors and the obsolete begin-repair fixture bridge to be absent; production repair preparation and confirmation remain available."
+        },
+        {
+          "source": "GitXTests/GitXInteropContractTests.swift",
+          "identifier": "GitXTests/GitXInteropContractTests/testDirectRepairSelectorsAreAbsentInEveryConfiguration",
+          "role": "compatibility",
+          "oracle": "Runtime queries require both removed direct-repair selectors and the obsolete begin-repair fixture bridge to be absent; production repair preparation and confirmation remain available.",
           "check": "release-contracts"
         }
       ]

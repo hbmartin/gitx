@@ -2310,29 +2310,51 @@ class VerificationWorkflowTests(unittest.TestCase):
         tests = next(name for name, body in jobs.items() if '"verify-correctness-' in body)
         analyzer = next(name for name, body in jobs.items() if '"verify-analyze-' in body)
         self.assertNotEqual(tests, analyzer, 'Independent checks must not consume the same job budget')
-        self.assertIn('needs: [toolchain-smoke, worktree-contracts]', jobs[tests])
+        self.assertIn('needs: toolchain-smoke', jobs[tests])
+        self.assertNotIn('needs: [toolchain-smoke, worktree-contracts]', jobs[tests])
         self.assertIn('needs: toolchain-smoke', jobs[analyzer])
         gate = jobs['unit-and-analyze']
         self.assertIn('name: unit tests and analyzer', gate)
-        self.assertIn(f'needs: [{tests}, {analyzer}]', gate)
+        self.assertIn(f'needs: [{tests}, {analyzer}, worktree-contracts]', gate)
         self.assertIn('if: ${{ always() }}', gate)
         self.assertIn("UNIT_RESULT: ${{ needs['unit-tests'].result }}", gate)
         self.assertIn('ANALYSIS_RESULT: ${{ needs.analyzer.result }}', gate)
+        self.assertIn("WORKTREE_RESULT: ${{ needs['worktree-contracts'].result }}", gate)
 
-    def test_required_native_ci_gate_only_accepts_two_successes(self):
+    def test_required_native_ci_gate_only_accepts_three_successes(self):
         gate = self.jobs()['unit-and-analyze']
-        marker = '- name: Require both native verification jobs'
+        marker = '- name: Require all native verification jobs'
         self.assertIn(marker, gate)
         script = textwrap.dedent(gate.split(marker, 1)[1].split('run: |', 1)[1])
         for tests in ['success', 'failure', 'cancelled', 'skipped', '']:
             for analyzer in ['success', 'failure', 'cancelled', 'skipped', '']:
-                with self.subTest(tests=tests, analyzer=analyzer):
-                    result = subprocess.run(
-                        ['/bin/bash', '--noprofile', '--norc', '-e', '-c', script],
-                        env={'PATH': os.defpath, 'UNIT_RESULT': tests, 'ANALYSIS_RESULT': analyzer},
-                        capture_output=True, text=True,
-                    )
-                    self.assertEqual(result.returncode == 0, tests == analyzer == 'success')
+                for worktrees in ['success', 'failure', 'cancelled', 'skipped', '']:
+                    with self.subTest(tests=tests, analyzer=analyzer, worktrees=worktrees):
+                        result = subprocess.run(
+                            ['/bin/bash', '--noprofile', '--norc', '-e', '-c', script],
+                            env={'PATH': os.defpath, 'UNIT_RESULT': tests, 'ANALYSIS_RESULT': analyzer,
+                                 'WORKTREE_RESULT': worktrees},
+                            capture_output=True, text=True,
+                        )
+                        self.assertEqual(result.returncode == 0, tests == analyzer == worktrees == 'success')
+
+    def test_focused_failures_keep_independent_plans_and_artifact_uploads_enabled(self):
+        jobs = self.jobs()
+        for job, name in [
+            ('worktree-contracts', 'Repeat the stabilized native CI regressions five times'),
+            ('worktree-contracts', 'Measure Release worktree safety and header update costs'),
+            ('ui', 'Run UI plan'),
+        ]:
+            with self.subTest(job=job, step=name):
+                step = jobs[job].split('- name: ' + name, 1)[1].split('- name:', 1)[0]
+                self.assertIn('if: ${{ !cancelled() }}', step)
+                self.assertNotIn('continue-on-error', jobs[job])
+        for job, upload in [('worktree-contracts', 'Upload worktree verification results'),
+                            ('ui', 'Upload UI result'), ('unit-tests', 'Upload correctness results')]:
+            step = jobs[job].split('- name: ' + upload, 1)[1]
+            self.assertIn('if: always()', step)
+        self.assertIn('needs: toolchain-smoke', jobs['worktree-contracts'])
+        self.assertIn('needs: toolchain-smoke', jobs['ui'])
 
 
 if __name__ == "__main__":

@@ -109,6 +109,12 @@ elif tool == "hdiutil":
         if failure == "mount-info": sys.exit(16)
         mounts = [json.loads((root / "mount.json").read_text())] if (root / "mount.json").exists() else []
         images = [{"image-path": mount["image-path"], "system-entities": [mount]} for mount in mounts]
+        additional_images = root / "additional-images.json"
+        if additional_images.exists(): images += json.loads(additional_images.read_text())
+        if failure == "unrelated-conflicting-mount" and mounts:
+            images.append({"image-path": "ram://128000", "system-entities": [dict(mounts[0], **{"dev-entry": "/dev/unrelated"})]})
+        if failure == "empty-owned-device":
+            for image in images: image["system-entities"][0]["dev-entry"] = ""
         if failure == "foreign-mount":
             for image in images: image["image-path"] = "/foreign/another.dmg"
         if failure == "empty-image-identity":

@@ -70,7 +70,6 @@ final class GitXInteropContractTests: XCTestCase {
                          "repairValidationObserver", "repairValidationResultObserver", "repairPreparationResultObserver",
                          "preferenceFingerprintObserver", "preferenceFingerprintResultObserver", "acceptedDiscoveryObserver", "lifecycleEventObserver",
                          "drainForTestingWithCompletion:", "initWithRepository:taskFactory:repairPreparationObserver:",
-                         "beginRepairForTestingWithWorktree:movedTo:relativePaths:ownerIsCurrent:completion:",
                          "refreshRepairPreviewForTesting:ownerIsCurrent:completion:"]
         for name in selectors {
             #if DEBUG
@@ -78,6 +77,14 @@ final class GitXInteropContractTests: XCTestCase {
             #else
                 XCTAssertNil(class_getInstanceMethod(PBRepositoryWorktreeService.self, NSSelectorFromString(name)), name)
             #endif
+        }
+    }
+
+    func testDirectRepairSelectorsAreAbsentInEveryConfiguration() {
+        for name in ["repairWorktree:movedTo:completion:", "repairLinksWithRelativePaths:completion:",
+                     "beginRepairForTestingWithWorktree:movedTo:relativePaths:ownerIsCurrent:completion:"]
+        {
+            XCTAssertNil(class_getInstanceMethod(PBRepositoryWorktreeService.self, NSSelectorFromString(name)), name)
         }
     }
 
@@ -96,8 +103,6 @@ final class GitXInteropContractTests: XCTestCase {
             "hasPublishedSnapshot",
             "inventoryStatus",
             "discardPrunePreview:",
-            "repairLinksWithRelativePaths:completion:",
-            "repairWorktree:movedTo:completion:",
             "prepareRepairLinksWithRelativePaths:completion:",
             "prepareRepairWorktree:movedTo:completion:",
             "repairWithConfirmedPreview:completion:",

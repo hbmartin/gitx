@@ -177,6 +177,7 @@ jobs:
             -only-testing:GitXTests/WorktreeServiceTests \
             -only-testing:GitXTests/GitXInteropContractTests
       - name: Repeat the stabilized native CI regressions five times
+        if: ${{ !cancelled() }}
         run: |
           scripts/xcodebuild.sh \
             --run-id "verify-ci-regressions-${{ github.run_id }}-${{ github.run_attempt }}" \
@@ -189,6 +190,7 @@ jobs:
             -only-testing:GitXTests/WorktreeAppKitTests/testHistoryReturnKeepsViewedRevisionWhenTheSelectedRegistrationIsNoLongerPublished \
             -only-testing:GitXTests/WorktreeAppKitTests/testMissingWorktreeGitFileOffersSameLocationRepairWithoutCheckout
       - name: Measure Release worktree safety and header update costs
+        if: ${{ !cancelled() }}
         run: |
           scripts/xcodebuild.sh --configuration Release \
             --run-id "verify-worktree-performance-${{ github.run_id }}-${{ github.run_attempt }}" \
@@ -209,21 +211,23 @@ jobs:
   unit-and-analyze:
     name: unit tests and analyzer
     if: ${{ always() }}
-    needs: [unit-tests, analyzer]
+    needs: [unit-tests, analyzer, worktree-contracts]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require both native verification jobs
+      - name: Require all native verification jobs
         env:
           UNIT_RESULT: ${{ needs['unit-tests'].result }}
           ANALYSIS_RESULT: ${{ needs.analyzer.result }}
+          WORKTREE_RESULT: ${{ needs['worktree-contracts'].result }}
         run: |
           test "$UNIT_RESULT" = success
           test "$ANALYSIS_RESULT" = success
+          test "$WORKTREE_RESULT" = success
 
   unit-tests:
     name: unit tests and coverage
-    needs: [toolchain-smoke, worktree-contracts]
+    needs: toolchain-smoke
     runs-on: macos-26
     timeout-minutes: 75
     steps:
@@ -333,6 +337,7 @@ jobs:
             -only-testing:GitXUITests/GitXScreenshotTests/testJumpToCheckedOutBranchToolbarButtonAndHotkey \
             -only-testing:GitXUITests/Milestone2WorkflowUITests/testExactCheckoutFetchesOnlyApprovedRefAndSwitchesToNamedBranch
       - name: Run UI plan
+        if: ${{ !cancelled() }}
         run: scripts/xcodebuild.sh --run-id "verify-ui-${{ github.run_id }}-${{ github.run_attempt }}" test ui
       - name: Upload UI result
         if: always()
