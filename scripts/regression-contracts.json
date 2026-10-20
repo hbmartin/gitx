@@ -629,7 +629,10 @@
         "Resources/en.lproj/MainMenu.xib",
         "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
         "GitXTests/WorktreeAppKitTests.swift",
-        "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift"
+        "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
+        "Classes/Controllers/HistoryForgeOverlayPresentation.swift",
+        "Classes/Views/ForgeReadSurfaceViewController.swift",
+        "Classes/Controllers/RepositoryForgeCollaborationController.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -1256,6 +1259,34 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Queue off-main current-branch, reference, branch and stash notifications while MainActor is occupied, then close the retained sidebar before delivery; no rows are rebuilt, selection is restored or shared revision is changed."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
+          "identifier": "GitXCoreTests/SidebarPolicyTests/testUnknownInventoryStatusRetainsStaleRecoveryGuidance",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "An unknown inventory status retains an actionable stale warning with or without prior rows, rather than claiming freshness or neutral progress."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testInitialLockRejectsNewlyLockedInventoryAndReleasesTheFollowingWriter",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Hold initial ordinary discovery, publish newly locked rows through owned admission, reject lock without launching it, release the following eligible writer and ignore the retired ordinary callback."
+        },
+        {
+          "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
+          "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppReadPresentationsPreserveLoadingAndRefreshFailureState",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Execute the app module presentation types: initial facts loading stays accessible and empty; default-revision changes preserve the selected inspector and refresh failure, and another error replaces its banner exactly once."
+        },
+        {
+          "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
+          "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged."
         }
       ]
     },

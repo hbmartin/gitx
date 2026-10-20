@@ -2,6 +2,18 @@
 import XCTest
 
 final class SidebarPolicyTests: XCTestCase {
+    func testUnknownInventoryStatusRetainsStaleRecoveryGuidance() {
+        for hasSnapshot in [false, true] {
+            let status = WorktreeInventoryStatus(rawValue: Int.max)
+            XCTAssertNil(status)
+            let presentation = WorktreeInventoryPresentation(status: status ?? .stale, hasSnapshot: hasSnapshot,
+                                                             capabilityExplanation: "Choose a supported Git.")
+            XCTAssertTrue(presentation.warns)
+            XCTAssertFalse(presentation.isUpdating)
+            XCTAssertTrue(presentation.message?.contains("Refresh Worktrees") == true)
+        }
+    }
+
     func testInventoryStatusSeparatesProgressRecoveryAndCapabilityGuidance() {
         for hasSnapshot in [false, true] {
             for status in [WorktreeInventoryStatus.checkingCapability, .updating, .fresh, .stale, .unsupported, .closed] {
