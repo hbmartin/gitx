@@ -43,6 +43,8 @@ NS_SWIFT_UI_ACTOR
 @interface PBRepositoryWorktreeService : NSObject
 #if DEBUG
 @property (readonly) uint64_t repairPreparationCount;
+@property (copy, nullable) PBWorktreePreparationObserver repairValidationObserver;
+@property (copy, nullable) void (NS_SWIFT_UI_ACTOR ^repairValidationResultObserver)(void);
 @property (copy, nullable) void (NS_SWIFT_UI_ACTOR ^repairPreparationResultObserver)(void);
 @property (copy, nullable) PBWorktreePreparationObserver preferenceFingerprintObserver;
 @property (copy, nullable) void (NS_SWIFT_UI_ACTOR ^preferenceFingerprintResultObserver)(void);

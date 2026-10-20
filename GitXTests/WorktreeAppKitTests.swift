@@ -1864,10 +1864,12 @@ final class WorktreeAppKitTests: XCTestCase {
         let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
         let link = foreign.linked.appendingPathComponent(".git")
         let original = try Data(contentsOf: link)
-        do {
-            try await service.prepareAndConfirmRepair(worktree: tree, movedTo: foreign.linked.path)
-            XCTFail("Wrong folder was accepted")
-        } catch {}
+        let rejected = expectation(description: "foreign folder rejected during read-only preparation")
+        service.prepareRepairForTest(worktree: tree, movedTo: foreign.linked.path) { preview, error in
+            service.assertRejectedRepairPreparation(preview, error: error, cause: .invalidRepair(""))
+            rejected.fulfill()
+        }
+        await fulfillment(of: [rejected], timeout: 10)
         XCTAssertEqual(try Data(contentsOf: link), original)
         XCTAssertNotNil(service.worktree(forBranch: "refs/heads/topic"))
     }
@@ -2063,7 +2065,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
         let moved = fixture.root.appendingPathComponent("relocated")
         try FileManager.default.moveItem(at: fixture.linked, to: moved)
-        try await service.prepareAndConfirmRepair(worktree: tree, movedTo: moved.path)
+        try await service.prepareAndConfirmRepair(worktree: tree, movedTo: moved.path, approval: .repair(paths: [moved.path]))
         XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.path, WorktreePaths.canonical(moved.path))
         XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: moved), "refs/heads/topic\n")
         let copy = fixture.root.appendingPathComponent("copy")
@@ -2073,7 +2075,12 @@ final class WorktreeAppKitTests: XCTestCase {
         defer { copiedService.cancel() }
         await ready(copiedService)
         let original = try Data(contentsOf: moved.appendingPathComponent(".git"))
-        do { try await copiedService.prepareAndConfirmRepairLinks(relativePaths: true); XCTFail("Copy changed foreign links") } catch {}
+        let rejected = expectation(description: "copied registration cannot authorize foreign repair")
+        copiedService.prepareRepairForTest(relativePaths: true) { preview, error in
+            copiedService.assertRejectedRepairPreparation(preview, error: error)
+            rejected.fulfill()
+        }
+        await fulfillment(of: [rejected], timeout: 10)
         XCTAssertEqual(try Data(contentsOf: moved.appendingPathComponent(".git")), original)
         XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.path, WorktreePaths.canonical(moved.path))
     }
