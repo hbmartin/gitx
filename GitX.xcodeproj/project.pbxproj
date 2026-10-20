@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		8D66D8FE296C4D12B236E789 /* HistoryIndexWriterObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */; };
 		E1AA5104C33F4D2AB7BB05AF /* GitXManagedTestBootstrap.m in Sources */ = {isa = PBXBuildFile; fileRef = A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */; };
 		3010942C5817454DBC2FFB2D /* GitXManagedTestBootstrap.m in Sources */ = {isa = PBXBuildFile; fileRef = A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */; };
 		F2EDDDC9818A472B8EB5134A /* GitXManagedTestObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */; };
@@ -700,6 +701,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryIndexWriterObservation.swift; sourceTree = "<group>"; };
 		A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = GitXManagedTestBootstrap.m; sourceTree = "<group>"; };
 		53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXManagedTestObserver.swift; sourceTree = "<group>"; };
 		F0BA93000000000000000002 /* WorktreeGitProxy.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = WorktreeGitProxy.sh; sourceTree = "<group>"; };
@@ -1883,6 +1885,7 @@
 				D3A400000000000000000101 /* Milestone2CompositionCoverageHarnessTests.swift */,
 				C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */,
 				C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */,
+				FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
 				C0DEC0000000000000000002 /* WindowControllerTests.m */,
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
@@ -2665,6 +2668,7 @@
 				C0D085A00000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */,
 				F2EDDDC9818A472B8EB5134A /* GitXManagedTestObserver.swift in Sources */,
 				E1AA5104C33F4D2AB7BB05AF /* GitXManagedTestBootstrap.m in Sources */,
+				8D66D8FE296C4D12B236E789 /* HistoryIndexWriterObservation.swift in Sources */,
 				C137031CE257FFB1B354C3A8 /* GitXTestGitEnvironment.swift in Sources */,
 				9474297A52657CFFDC54AE68 /* GitXTestGitFixture.swift in Sources */,
 				653AEC053A6FE7B2FF308D6E /* GitXTestGitFixtureTests.swift in Sources */,

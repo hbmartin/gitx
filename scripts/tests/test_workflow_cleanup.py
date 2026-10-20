@@ -503,6 +503,8 @@ class CleanupTests(unittest.TestCase):
         self.git('config', 'user.name', 'Fixture')
         self.git('config', 'user.email', 'fixture@example.invalid')
         self.git('config', 'commit.gpgsign', 'false')
+        self.git('config', 'maintenance.auto', 'false')
+        self.git('config', 'gc.auto', '0')
         (self.root / '.gitignore').write_text('artifacts/\nbuild/\n__pycache__/\n')
         (self.root / 'source.txt').write_text('source')
         (self.root / 'scripts').mkdir()
@@ -718,10 +720,14 @@ class CleanupTests(unittest.TestCase):
         dependency_git('config', 'user.name', 'Fixture')
         dependency_git('config', 'user.email', 'fixture@example.invalid')
         dependency_git('config', 'commit.gpgsign', 'false')
+        dependency_git('config', 'maintenance.auto', 'false')
+        dependency_git('config', 'gc.auto', '0')
         (dependency / 'source.c').write_text('int value = 1;\n')
         dependency_git('add', '.')
         dependency_git('commit', '-qm', 'dependency fixture')
         self.git('-c', 'protocol.file.allow=always', 'submodule', 'add', str(dependency), 'External/Fixture')
+        for key, value in [('maintenance.auto', 'false'), ('gc.auto', '0')]:
+            self.git('-C', str(self.root / 'External/Fixture'), 'config', key, value)
         self.git('commit', '-qam', 'add dependency')
         self.git('config', 'diff.ignoreSubmodules', 'all')
         (self.root / 'External/Fixture/source.c').write_text('int value = 2;\n')
@@ -1555,6 +1561,22 @@ class CleanupTests(unittest.TestCase):
                 cleanup.fingerprint(directory)
         self.assertEqual(failure.exception.filename, 'maintenance.lock')
         self.assertEqual(unrelated.read_text(), 'preserve')
+
+    def test_independent_fixture_git_mutations_inherit_persisted_maintenance_suppression(self):
+        environment = fixture_git_environment()
+        for key, expected in [('maintenance.auto', 'false'), ('gc.auto', '0')]:
+            result = subprocess.run(['git', '-C', str(self.root), 'config', '--local', '--get', key],
+                                    env=environment, check=True, capture_output=True, text=True)
+            self.assertEqual(result.stdout.strip(), expected)
+        trace = self.base / 'independent-git-events.jsonl'
+        subprocess.run(['git', '-C', str(self.root), 'commit', '--allow-empty', '-qm', 'independent mutation'],
+                       env=environment | {'GIT_TRACE2_EVENT': str(trace)}, check=True, capture_output=True, text=True)
+        events = [json.loads(line) for line in trace.read_text().splitlines()]
+        automatic = [event for event in events if event.get('event') == 'child_start'
+                     and '--auto' in event.get('argv', [])
+                     and any(name in event.get('argv', []) for name in ['maintenance', 'gc'])]
+        self.assertEqual(automatic, [])
+        self.assertEqual(self.git('log', '-1', '--format=%s').stdout.strip(), 'independent mutation')
 
     def test_fixture_git_commits_do_not_start_background_housekeeping(self):
         self.git('config', 'maintenance.auto', 'true')

@@ -110,7 +110,6 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertNil(history.view.window)
         XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), "refs/heads/main")
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
-        _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
         let viewedRevision = try XCTUnwrap(repository.currentBranch)
         let action = NSSelectorFromString("returnToHistory:")
         XCTAssertTrue(window.responds(to: action))
@@ -1472,7 +1471,8 @@ final class WorktreeAppKitTests: XCTestCase {
         })
         outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         let sheet = try await waitForSheet(in: window, containing: "Use Repository")
-        let originalItems = sidebar.items.compactMap { $0 as? PBSourceViewItem }.map(ObjectIdentifier.init)
+        let originalItems = sidebar.items.compactMap { $0 as? PBSourceViewItem }
+        let originalTitles = originalItems.map(\.title)
         try attachScreenshot(of: sheet, named: "Worktrees-Forge-Choice-Before-Owner-Revocation")
         sidebar.closeView()
         outline.deselectAll(nil)
@@ -1480,7 +1480,10 @@ final class WorktreeAppKitTests: XCTestCase {
         await waitUntil { window.attachedSheet == nil }
         await drainPruneCallbacks()
         XCTAssertEqual(coordinator.resolveBinding().kind, .requiresChoice, "A late approval cannot persist a binding for its closed owner")
-        XCTAssertEqual(sidebar.items.compactMap { $0 as? PBSourceViewItem }.map(ObjectIdentifier.init), originalItems)
+        let finalItems = sidebar.items.compactMap { $0 as? PBSourceViewItem }
+        XCTAssertEqual(finalItems.count, originalItems.count)
+        XCTAssertEqual(finalItems.map(ObjectIdentifier.init), originalItems.map(ObjectIdentifier.init))
+        XCTAssertEqual(finalItems.map(\.title), originalTitles)
         XCTAssertEqual(outline.selectedRow, -1)
     }
 
@@ -2587,7 +2590,8 @@ final class WorktreeAppKitTests: XCTestCase {
         }
         XCTAssertNil(sidebar.selectedItem() as? PBSourceViewGitWorktreeItem, "The accepted replacement inventory removes the obsolete worktree row")
         let othersBeforeReturn = try XCTUnwrap(sidebar.value(forKey: "others") as? PBSourceViewItem)
-        let originalOtherItems = sourceItems(othersBeforeReturn).map(ObjectIdentifier.init)
+        let originalOtherItems = sourceItems(othersBeforeReturn)
+        let originalOtherRevisions = originalOtherItems.map { $0.revSpecifier?.simpleRef() }
         // Recreate the retained selection boundary explicitly: its UI row outlives its registration.
         let worktrees = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "WORKTREES" })
         worktrees.addChild(clicked)
@@ -2609,7 +2613,10 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(history.selectedCommits.first?.sha, capturedOID)
         XCTAssertEqual(history.webCommits.map(\.sha), renderingInputs)
         let others = try XCTUnwrap(sidebar.value(forKey: "others") as? PBSourceViewItem)
-        XCTAssertEqual(sourceItems(others).map(ObjectIdentifier.init), originalOtherItems, "History return must not insert a stale Other revision")
+        let finalOtherItems = sourceItems(others)
+        XCTAssertEqual(finalOtherItems.count, originalOtherItems.count)
+        XCTAssertEqual(finalOtherItems.map(ObjectIdentifier.init), originalOtherItems.map(ObjectIdentifier.init), "History return must not insert a stale Other revision")
+        XCTAssertEqual(finalOtherItems.map { $0.revSpecifier?.simpleRef() }, originalOtherRevisions)
         XCTAssertTrue(sourceItems(others).contains { $0.revSpecifier?.isEqual(revision) == true })
         XCTAssertFalse(gate.repairWasRequested)
         XCTAssertFalse(gate.pruneWasRequested)
