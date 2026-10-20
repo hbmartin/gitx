@@ -17,6 +17,28 @@ func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt 
 
 @MainActor
 final class WorktreeAppKitTests: XCTestCase {
+    func testLiveSidebarDirectRemovalUpdatesOnlyItsPresentation() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        defer { service.cancel() }
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        _ = sidebar.view
+        defer { sidebar.closeView() }
+        let revision = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/presentation-only"))
+        let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+        let item = PBSourceViewItem(title: "presentation-only", revSpecifier: revision)
+        branches.addChild(item)
+        let viewed = repository.currentBranch
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        _ = sidebar.perform(NSSelectorFromString("removeRevSpec:"), with: revision)
+        XCTAssertFalse(branches.sortedChildren.contains { $0 === item })
+        XCTAssertTrue(repository.currentBranch === viewed)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+    }
+
     func testRepairOfferThroughObjectiveCImportedSubclassKeepsWindowState() {
         let controller = RepairWindowControllerFixture(window: nil)
         let initiallyLoaded = controller.isWindowLoaded

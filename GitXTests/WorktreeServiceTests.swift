@@ -2399,6 +2399,36 @@ final class WorktreeServiceTests: XCTestCase {
 
 @MainActor
 final class WorktreeRepairSafetyTests: XCTestCase {
+    func testPreparedRepairReleasesAdmissionWhileApprovalWaits() async throws {
+        let fixture = try RepairFixture(label: "approval-wait-boundary")
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        var repairs = 0
+        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            if arguments.contains("repair") { repairs += 1 }
+            return nil
+        })
+        let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"))
+        defer { service.cancel(); following.cancel() }
+        try await ready(service); try await ready(following)
+        let result = await prepareRepairPreview(service)
+        XCTAssertNil(result.error)
+        let preview = try XCTUnwrap(result.preview)
+        let done = expectation(description: "writer progresses while repair approval waits")
+        following.lockWorktree(path: fixture.linked.path, reason: "during approval") { _, error in
+            XCTAssertNil(error); done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 10)
+        XCTAssertEqual(repairs, 0)
+        XCTAssertEqual(following.worktree(forBranch: "refs/heads/topic")?.lockReason, "during approval")
+        let confirmation = await confirmRepairPreview(service, preview: preview)
+        XCTAssertNil(confirmation.error)
+        let renewed = try XCTUnwrap(confirmation.preview)
+        XCTAssertFalse(renewed === preview)
+        XCTAssertEqual(repairs, 0, "The intervening writer requires renewed approval")
+        service.discardRepairPreview(renewed)
+    }
+
     @MainActor
     private final class PruneOwnerState { var isCurrent = true }
 
