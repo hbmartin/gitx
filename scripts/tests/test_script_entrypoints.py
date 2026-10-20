@@ -1093,13 +1093,30 @@ python3 - "$@" <<'PY'
 import json, os, pathlib, sys
 arguments = sys.argv[1:]
 record = {"plan": arguments[arguments.index("-testPlan") + 1],
-          "root": os.environ.get("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT")}
+          "root": os.environ.get("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT"),
+          "diagnostics": os.environ.get("TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY")}
 with pathlib.Path(os.environ["CAPTURED_FORGE_ENVIRONMENT"]).open("a") as output:
     output.write(json.dumps(record) + "\\n")
 PY
 fi
 ''')
         return captured
+
+    def test_native_verification_keeps_app_stderr_in_each_runs_log_directory(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.capture_forge_test_environment()
+        for name, arguments in (("preset", ["test", "correctness", "-only-testing:GitXTests/ExampleTests"]),
+                                ("raw", ["raw", "--", "test", "-testPlan", "GitX"])):
+            with self.subTest(entrypoint=name):
+                result = subprocess.run([script, "--run-id", f"native-stderr-{name}", *arguments],
+                                        capture_output=True, text=True, env=self.environment)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line) for line in captured.read_text().splitlines()]
+        self.assertEqual(len(records), 4)
+        for record, name in zip(records, ("preset", "preset", "raw", "raw")):
+            expected = self.root / "artifacts/verification" / f"native-stderr-{name}" / "Logs/Native"
+            self.assertEqual(record["diagnostics"], str(expected))
+            self.assertTrue(expected.is_dir())
 
     def test_native_verification_preserves_explicit_forwarded_forge_store(self) -> None:
         script = self.install_script("xcodebuild.sh")

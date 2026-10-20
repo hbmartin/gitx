@@ -542,6 +542,10 @@ configure_test_forge_storage() {
 	mkdir -p "$forge_test_root" || return $?
 	export TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT="$forge_test_root"
 	printf 'Test Forge storage: %s\n' "$forge_test_root"
+	# The Debug app captures its stderr before fixture work. XCTest activity
+	# collection must not hold up native log producers; retain all bytes in Logs.
+	mkdir -p "$logs/Native" || return $?
+	export TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY="$logs/Native"
 }
 
 xcode_test() {

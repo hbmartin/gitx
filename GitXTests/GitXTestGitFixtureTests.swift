@@ -33,6 +33,13 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertNil(unowned["GITX_VERIFICATION_SESSION"])
     }
 
+    func testNativeDiagnosticsReachAnEmptyUILaunchEnvironment() {
+        let environment = GitXTestGitEnvironment.isolated([:], nativeDiagnosticDirectory: "/run/Logs/Native")
+        XCTAssertEqual(environment["GITX_TEST_STDERR_DIRECTORY"], "/run/Logs/Native")
+        let unowned = GitXTestGitEnvironment.isolated([:], nativeDiagnosticDirectory: nil)
+        XCTAssertNil(unowned["GITX_TEST_STDERR_DIRECTORY"])
+    }
+
     func testFixtureRunnerCommitsLiteralFilesAndPreservesIntentionalLocalHooks() throws {
         let directory = try makeRepository()
         let hook = directory.appendingPathComponent(".git/hooks/pre-commit")

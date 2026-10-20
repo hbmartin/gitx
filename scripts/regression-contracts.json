@@ -1519,7 +1519,7 @@
     {
       "id": "TASK-001",
       "family": "Drainage and process lifetime",
-      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe.",
+      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe. Debug native test applications retain stderr in a run-owned regular file before fixture work; an undrained XCTest activity pipe must not block logging, Git completion or index publication. Unified logging stays enabled and native diagnostics remain uploaded.",
       "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output. Treating a presentation cancellation as writer cancellation can terminate Git mid-write; shared discovery cancellation can also erase a completed write's reconciliation and release the queue too early.",
       "sourcePaths": [
         "Classes/Util/PBTask*",
@@ -1531,7 +1531,11 @@
         "scripts/workflow_session.py",
         "scripts/xcodebuild.sh",
         "scripts/tests/test_workflow_session.py",
-        "scripts/tests/test_script_entrypoints.py"
+        "scripts/tests/test_script_entrypoints.py",
+        "GitXTests/GitXTestGitEnvironment.swift",
+        "Classes/Controllers/ApplicationComposition.swift",
+        "GitXUITests/GitXScreenshotTests.m",
+        "scripts/tests/test_native_test_diagnostics.py"
       ],
       "requiredChecks": [
         "correctness",
@@ -1686,6 +1690,12 @@
           "identifier": "GitXTests/WorktreeServiceTests/testExecutableReplacementDuringRemovalPreflightRejectsWithoutWriting",
           "role": "boundary",
           "oracle": "Replace the selected executable during preflight; context validation rejects removal and preserves real repository metadata and checkout bytes."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testNativeDiagnosticsReachAnEmptyUILaunchEnvironment",
+          "role": "boundary",
+          "oracle": "Forward the native log directory into an initially empty UI launch environment and preserve the unowned case. The required static check independently executes the real Logger against an undrained pipe, verifies complete binary file capture and refusal to replace previous evidence, and checks both canonical entrypoints."
         }
       ]
     },
