@@ -1992,9 +1992,9 @@
     },
     {
       "id": "ENV-002",
-      "family": "Finder metadata in UI fixtures",
-      "invariant": "UI fixture repositories ignore untracked Finder metadata while preserving real untracked files, explicitly tracked metadata and existing exclusion rules.",
-      "rootCause": "Finder-created .DS_Store files alter first-file selection, dirty counts and before/after status oracles.",
+      "family": "UI fixture isolation and Finder metadata",
+      "invariant": "UI fixture repositories ignore untracked Finder metadata while preserving real untracked files, explicitly tracked metadata and existing exclusion rules. Isolated fixture homes create independent preferences directories and remain owned by workspace cleanup in every consuming test target.",
+      "rootCause": "Finder-created .DS_Store files alter first-file selection, dirty counts and before/after status oracles. The fixture workspace is compiled into both unit and UI targets; the isolated-home helper had no unit-target coverage, leaving unused-declaration analysis dependent on the selected compilation context.",
       "sourcePaths": [
         "GitXUITests/GitXUITestFixtureWorkspace.swift",
         "GitXUITests/GitXScreenshotTests.m",
@@ -2009,7 +2009,8 @@
         "ui",
         "debug-test-build",
         "release-test-build",
-        "static"
+        "static",
+        "analyze"
       ],
       "tests": [
         {
@@ -2052,6 +2053,13 @@
           "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testCloneCreationAppliesTheSameFixturePolicy",
           "role": "boundary",
           "oracle": "A clone automatically receives metadata exclusion through the shared creation boundary.",
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+          "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testIsolatedHomesCreateIndependentPreferencesAndRemainOwnedByWorkspaceCleanup",
+          "role": "boundary",
+          "oracle": "Create default and explicitly named homes through the actual shared helper; assert preferences directories are initially empty and independent, both homes are tracked, and cleanup removes only the owned homes. Direct unit-target coverage also prevents the shared helper from appearing unused in that compilation context.",
           "check": "correctness"
         }
       ]

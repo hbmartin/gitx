@@ -23,6 +23,29 @@ final class GitXFixtureRepositoryPolicyTests: XCTestCase, @unchecked Sendable {
         try fixtureWorkspace.git(arguments, in: directory)
     }
 
+    func testIsolatedHomesCreateIndependentPreferencesAndRemainOwnedByWorkspaceCleanup() throws {
+        let standard = try fixtureWorkspace.makeIsolatedHome()
+        let named = try fixtureWorkspace.makeIsolatedHome(named: "named home")
+        XCTAssertNotEqual(standard, named)
+        XCTAssertEqual(Set(fixtureWorkspace.directories), [standard, named])
+        let fileManager = FileManager.default
+        for home in [standard, named] {
+            let preferences = home.appendingPathComponent("Library/Preferences", isDirectory: true)
+            var isDirectory: ObjCBool = false
+            XCTAssertTrue(fileManager.fileExists(atPath: preferences.path, isDirectory: &isDirectory))
+            XCTAssertTrue(isDirectory.boolValue)
+            XCTAssertEqual(try fileManager.contentsOfDirectory(atPath: preferences.path), [])
+        }
+        let preference = "Library/Preferences/fixture.plist"
+        try Data("isolated preference".utf8).write(to: standard.appendingPathComponent(preference))
+        XCTAssertFalse(fileManager.fileExists(atPath: named.appendingPathComponent(preference).path))
+
+        fixtureWorkspace.removeAll()
+        XCTAssertTrue(fixtureWorkspace.directories.isEmpty)
+        XCTAssertFalse(fileManager.fileExists(atPath: standard.path))
+        XCTAssertFalse(fileManager.fileExists(atPath: named.path))
+    }
+
     func testFixtureKeepsRealUntrackedFilesAndExplicitlyTrackedFinderMetadata() throws {
         let repository = try makeWorkingRepository(name: "fixture-metadata-characterization")
         let metadata = repository.appendingPathComponent(".DS_Store")
