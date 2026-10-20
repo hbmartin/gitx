@@ -176,7 +176,7 @@ jobs:
             test correctness \
             -only-testing:GitXTests/WorktreeServiceTests \
             -only-testing:GitXTests/GitXInteropContractTests
-      - name: Repeat the four stabilized CI regressions five times
+      - name: Repeat the stabilized native CI regressions five times
         run: |
           scripts/xcodebuild.sh \
             --run-id "verify-ci-regressions-${{ github.run_id }}-${{ github.run_attempt }}" \
@@ -184,7 +184,10 @@ jobs:
             -only-testing:GitXTests/HistoryControllerTests/testNulDelimitedMutationsPreserveNewlineFilenameAndDiscardPartiallyStagedAddition \
             -only-testing:GitXTests/HistoryControllerTests/testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice \
             -only-testing:GitXTests/WorktreeAppKitTests/testWorktreeSnapshotRefreshPreservesMountedContentAndBranchSelection \
-            -only-testing:GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation
+            -only-testing:GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation \
+            -only-testing:GitXTests/WorktreeAppKitTests/testExplicitBranchSelectionReturnsMountedContentToHistoryWithoutCheckout \
+            -only-testing:GitXTests/WorktreeAppKitTests/testHistoryReturnKeepsViewedRevisionWhenTheSelectedRegistrationIsNoLongerPublished \
+            -only-testing:GitXTests/WorktreeAppKitTests/testMissingWorktreeGitFileOffersSameLocationRepairWithoutCheckout
       - name: Measure Release worktree safety and header update costs
         run: |
           scripts/xcodebuild.sh --configuration Release \

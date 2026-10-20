@@ -756,7 +756,7 @@
           "source": "GitXTests/WorktreeAppKitTests.swift",
           "identifier": "GitXTests/WorktreeAppKitTests/testExplicitBranchSelectionReturnsMountedContentToHistoryWithoutCheckout",
           "role": "valid",
-          "oracle": "Explicit branch selection returns real mounted content to history while preserving checkout HEAD; the existing general reload behavior remains observable."
+          "oracle": "Explicit branch selection and the History action mount History without checkout; an intervening passive presentation reload preserves the mounted inspector and viewed branch."
         },
         {
           "source": "GitXTests/WorktreeAppKitTests.swift",
@@ -992,7 +992,7 @@
           "source": "GitXTests/WorktreeAppKitTests.swift",
           "identifier": "GitXTests/WorktreeAppKitTests/testHistoryReturnKeepsViewedRevisionWhenTheSelectedRegistrationIsNoLongerPublished",
           "role": "boundary",
-          "oracle": "Remove the real detached registration, retain its outlined capture across service replacement, invoke History, and preserve the actual browsed revision/rendering without writing or stale Other insertion."
+          "oracle": "Install the replacement before its accepted inventory publication and wait for the obsolete outlined row to disappear. Retain that row for History return; preserve browsed revision, rendering and Other item identities without writing."
         },
         {
           "source": "GitXTests/WorktreePresentationTests.swift",
@@ -1221,6 +1221,13 @@
           "check": "correctness",
           "role": "valid",
           "oracle": "Both styles wait behind sheet contention, present the complete fresh scope with Cancel as default, and write only after explicit approval."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testMissingWorktreeGitFileOffersSameLocationRepairWithoutCheckout",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "The informational path-style chooser promises a later exact folder review without retaining the old folder list. Fresh Reclaim consent names the affected folder, defaults to Cancel and precedes every link modification; preserve checkout HEADs and registration evidence."
         },
         {
           "source": "GitXTests/WorktreePresentationTests.swift",

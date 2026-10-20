@@ -106,7 +106,8 @@ final class WorktreeAppKitTests: XCTestCase {
 
         _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
         _ = sidebar.perform(NSSelectorFromString("reloadSidebarPresentation"))
-        XCTAssertTrue(history.view.window === window.window)
+        XCTAssertTrue(content.view.window === window.window, "Passive presentation reload preserves the mounted inspector")
+        XCTAssertNil(history.view.window)
         XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), "refs/heads/main")
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
         _ = window.perform(NSSelectorFromString("changeContentController:"), with: content)
@@ -2410,10 +2411,13 @@ final class WorktreeAppKitTests: XCTestCase {
         controller.openWorktree(item)
         let explicit = try await waitForSheet(in: window, containing: "Absolute Paths")
         XCTAssertFalse(sheetText(explicit).contains("repository was moved"))
-        XCTAssertTrue(sheetText(explicit).contains(fixture.linked.path))
+        XCTAssertTrue(sheetText(explicit).contains("You will review the exact folders before repairing them."))
+        XCTAssertFalse(sheetText(explicit).contains(fixture.linked.path), "Style selection defers the affected folder list to fresh consent")
         window.endSheet(explicit, returnCode: .alertFirstButtonReturn)
         let reclaim = try await waitForSheet(in: window, containing: "Reclaim")
         XCTAssertTrue(sheetText(reclaim).contains(fixture.linked.path))
+        XCTAssertEqual(reclaim.defaultButtonCell?.title, "Cancel")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: link.path), "Choosing a style cannot authorize link modification")
         window.endSheet(reclaim, returnCode: .alertFirstButtonReturn)
         await waitUntil {
             FileManager.default.fileExists(atPath: link.path)
@@ -2457,14 +2461,21 @@ final class WorktreeAppKitTests: XCTestCase {
         let gate = PruneTaskGate(fixture: fixture)
         let replacement = PBRepositoryWorktreeService(repository: repository, taskFactory: gate.makeTask)
         defer { replacement.cancel(); repository.setValue(origin, forKey: "worktreeService") }
-        // Installing the ready replacement also updates the independently observed freshness state.
+        // Observe the replacement before it publishes its accepted inventory;
+        // a header status change does not publish replacement sidebar rows.
+        repository.setValue(replacement, forKey: "worktreeService")
+        XCTAssertTrue(repository.worktreeService === replacement)
         replacement.start()
         await ready(replacement)
         await waitUntil { replacement.worktrees.count == 1 }
         XCTAssertFalse(replacement.worktrees.contains { WorktreePaths.identity($0.path) == clicked.identity })
-        repository.setValue(replacement, forKey: "worktreeService")
-        XCTAssertTrue(repository.worktreeService === replacement)
+        await waitUntil {
+            let group = sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "WORKTREES" }
+            return group?.sortedChildren.compactMap { $0 as? PBSourceViewGitWorktreeItem }.contains { $0.identity == clicked.identity } == false
+        }
         XCTAssertNil(sidebar.selectedItem() as? PBSourceViewGitWorktreeItem, "The accepted replacement inventory removes the obsolete worktree row")
+        let othersBeforeReturn = try XCTUnwrap(sidebar.value(forKey: "others") as? PBSourceViewItem)
+        let originalOtherItems = sourceItems(othersBeforeReturn).map(ObjectIdentifier.init)
         // Recreate the retained selection boundary explicitly: its UI row outlives its registration.
         let worktrees = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "WORKTREES" })
         worktrees.addChild(clicked)
@@ -2486,6 +2497,7 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertEqual(history.selectedCommits.first?.sha, capturedOID)
         XCTAssertEqual(history.webCommits.map(\.sha), renderingInputs)
         let others = try XCTUnwrap(sidebar.value(forKey: "others") as? PBSourceViewItem)
+        XCTAssertEqual(sourceItems(others).map(ObjectIdentifier.init), originalOtherItems, "History return must not insert a stale Other revision")
         XCTAssertTrue(sourceItems(others).contains { $0.revSpecifier?.isEqual(revision) == true })
         XCTAssertFalse(gate.repairWasRequested)
         XCTAssertFalse(gate.pruneWasRequested)
