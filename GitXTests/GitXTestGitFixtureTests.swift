@@ -40,6 +40,20 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertNil(unowned["GITX_TEST_STDERR_DIRECTORY"])
     }
 
+    func testExplicitNativeDirectoryAndSessionRemainLiteralAcrossRepeatedIsolation() {
+        let directory = "/fixture/cache with spaces/Native"
+        let first = GitXTestGitEnvironment.isolated(
+            ["PATH": "/fixture/tools"], verificationSession: "run-1", nativeDiagnosticDirectory: directory
+        )
+        let second = GitXTestGitEnvironment.isolated(
+            first, verificationSession: "run-1", nativeDiagnosticDirectory: directory
+        )
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(second["GITX_TEST_STDERR_DIRECTORY"], directory)
+        XCTAssertEqual(second["GITX_VERIFICATION_SESSION"], "run-1")
+        XCTAssertEqual(second["PATH"], "/fixture/tools")
+    }
+
     func testFixtureRunnerCommitsLiteralFilesAndPreservesIntentionalLocalHooks() throws {
         let directory = try makeRepository()
         let hook = directory.appendingPathComponent(".git/hooks/pre-commit")

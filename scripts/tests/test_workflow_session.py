@@ -621,6 +621,13 @@ class WorkflowSessionTests(unittest.TestCase):
             session.stop_detached(owned)
             kill.assert_not_called()
 
+    def test_generic_console_startup_recognizes_xctest_spellings_and_requires_complete_marker(self):
+        for marker in (b"Test Suite selected started", b"Test Case '-[Suite test]' started", b"Test case 'test' started"):
+            with self.subTest(marker=marker):
+                self.assertTrue(session.test_output_started(marker))
+        self.assertFalse(session.test_output_started(b"Test Sui"))
+        self.assertFalse(session.test_output_started(b"application launched without tests"))
+
     def test_native_progress_requires_a_fresh_regular_file_and_complete_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
