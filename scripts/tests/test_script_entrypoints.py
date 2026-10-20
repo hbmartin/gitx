@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import plistlib
+import re
 import shutil
 import signal
 import subprocess
@@ -2279,6 +2280,29 @@ fi
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=2)
+
+
+class VerificationWorkflowTests(unittest.TestCase):
+    @staticmethod
+    def jobs():
+        workflow = (ROOT / '.github/workflows/Verify.yml').read_text().split('\njobs:\n', 1)[1]
+        markers = list(re.finditer(r'^  ([a-z][a-z0-9-]+):[ \t]*$', workflow, re.MULTILINE))
+        return {marker.group(1): workflow[marker.end():markers[index + 1].start()
+                                        if index + 1 < len(markers) else len(workflow)]
+                for index, marker in enumerate(markers)}
+
+    def test_native_ci_keeps_complete_check_commands_and_budgets(self):
+        commands = [
+            'scripts/xcodebuild.sh --run-id "verify-correctness-${{ github.run_id }}-${{ github.run_attempt }}" test correctness',
+            'scripts/xcodebuild.sh --run-id "verify-analyze-${{ github.run_id }}-${{ github.run_attempt }}" analyze',
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                matching = [body for body in self.jobs().values() if command in body]
+                self.assertEqual(len(matching), 1)
+                self.assertIn('runs-on: macos-26', matching[0])
+                self.assertIn('timeout-minutes: 75', matching[0])
+                self.assertIn('xcode-version: "26.6"', matching[0])
 
 
 if __name__ == "__main__":
