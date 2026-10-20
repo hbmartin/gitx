@@ -401,6 +401,43 @@ final class WorktreeServiceTests: XCTestCase {
         XCTAssertEqual(installed.tasks.mutations, [lock, unlock])
     }
 
+    func testInitialLockRejectsNewlyLockedInventoryAndReleasesTheFollowingWriter() async throws {
+        let fixture = try WorktreeMutationFixture()
+        defer { fixture.cleanup() }
+        let installed = fixture.makeService()
+        let initialRead = installed.tasks.expect(discoveryArguments)
+        installed.service.start()
+        try installed.tasks.task(["--version"]).finish(Data("git version 2.48.0".utf8))
+        await fulfillment(of: [initialRead], timeout: 5)
+        let ordinary = try installed.tasks.task(discoveryArguments)
+        let rejected = expectation(description: "newly locked worktree rejects initial lock")
+        rejected.assertForOverFulfill = true
+        let following = expectation(description: "following eligible writer completes")
+        let unlock = ["worktree", "unlock", "/linked"]
+        let followingStarted = installed.tasks.expect(unlock)
+        enqueueLock(installed.service, reason: "initial") { output, error in
+            XCTAssertNil(output)
+            XCTAssertNotNil(error)
+            rejected.fulfill()
+        }
+        enqueueUnlock(installed.service) { _, error in
+            XCTAssertNotNil(error)
+            following.fulfill()
+        }
+        XCTAssertTrue(installed.tasks.mutations.isEmpty)
+        try installed.tasks.task(discoveryArguments, occurrence: 1).finish(snapshot)
+        await fulfillment(of: [rejected, followingStarted], timeout: 5)
+        XCTAssertEqual(installed.tasks.mutations, [unlock], "The rejected lock must never launch")
+        XCTAssertTrue(installed.service.worktrees.first { $0.path == "/linked" }?.isLocked == true)
+        try installed.tasks.task(unlock).finish(nil, error: NSError(domain: "fixture", code: 1))
+        await fulfillment(of: [following], timeout: 5)
+        XCTAssertTrue(ordinary.wasCancelled)
+        ordinary.finish(Data(String(decoding: snapshot, as: UTF8.self).replacingOccurrences(of: "locked offline disk\0", with: "").utf8))
+        await drainMainQueue()
+        XCTAssertTrue(installed.service.worktrees.first { $0.path == "/linked" }?.isLocked == true)
+        XCTAssertFalse(installed.service.isSnapshotStale)
+    }
+
     func testWorktreeNotificationPublishesCompleteRowsAndSuccessfulFreshness() async throws {
         let fixture = try WorktreeFacadeFixture()
         defer { fixture.cleanup() }

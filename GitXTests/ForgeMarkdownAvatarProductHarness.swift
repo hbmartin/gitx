@@ -22,6 +22,91 @@
             }
         }
 
+        private final class ReadRouter: ForgeReadDestinationRouting {
+            func openNative(destination _: ForgeDestination) {}
+            func openInBrowser(destination _: ForgeDestination) {}
+        }
+
+        @objc static func factsReplacementProof() -> UInt64 {
+            do {
+                let view = RepositoryFactsInspectorView(frame: .zero)
+                let initial = RepositoryFactsPresentation(
+                    title: "Repository Facts", subtitle: "Original facts",
+                    rows: [RepositoryFactsRowPresentation(label: "Description", value: "Original value")],
+                    isLoading: false, accessibilityLabel: "Repository Facts; original"
+                )
+                view.apply(initial)
+                let originalValue = descendants(in: view).compactMap { $0 as? NSTextField }
+                    .first { $0.stringValue == "Original value" }
+                view.apply(RepositoryFactsPresenter.present(.loading(previous: nil)))
+                let cleared = originalValue != nil && originalValue?.isDescendant(of: view) == false
+                    && !descendants(in: view).contains { ($0 as? NSTextField)?.stringValue == "Original value" }
+                    && view.accessibilityLabel() == "Repository Facts; loading"
+                view.apply(initial)
+                view.apply(initial)
+                let replacedOnce = descendants(in: view).compactMap { $0 as? NSTextField }
+                    .filter { $0.stringValue == "Original value" }.count == 1
+                let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+                let repository = try ForgeRepositoryIdentity(forge: forge, owner: "example", name: "repo")
+                let badges = try HistoryForgeBadgePresenter.present(.value(RepositoryForgeOverlaySnapshot(
+                    value: ForgeHistoryOverlay(
+                        repository: repository,
+                        commit: ForgeCommitID("0123456789abcdef0123456789abcdef01234567"),
+                        checkRollup: .available(.succeeded), pullRequests: .unavailable(.permissionDenied)
+                    ),
+                    fetchedAt: Date(timeIntervalSince1970: 1), isPartial: true, isStale: false
+                )))
+                let unavailableBadges = badges.pullRequestText == "—"
+                    && badges.pullRequestAccessibilityLabel == "Pull Request badges unavailable"
+                    && badges.checkText == "✓ Passed" && !badges.isLoading
+                return (cleared && replacedOnce ? 1 : 0) | (unavailableBadges ? 2 : 0)
+            } catch {
+                return 0
+            }
+        }
+
+        @objc static func readPresentationProof() -> UInt64 {
+            do {
+                let loading = RepositoryFactsPresenter.present(.loading(previous: nil))
+                let initialLoad = loading.isLoading && loading.rows.isEmpty
+                    && loading.subtitle == "Loading…"
+                    && loading.accessibilityLabel == "Repository Facts; loading"
+                let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+                let repository = try ForgeRepositoryIdentity(forge: forge, owner: "example", name: "repo")
+                let issue = try ForgeIssueSummary(
+                    repository: repository, number: ForgeItemNumber(8), state: .open,
+                    title: "Retained inspector", author: .unavailable(.notRequested),
+                    createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 2),
+                    labels: .available([])
+                )
+                let markdownRouter = Router()
+                let inspector = try ForgeReadInspectorViewController(
+                    markdownRenderer: ForgeReadNativeMarkdownRenderer(router: markdownRouter),
+                    avatarRenderer: ForgeReadNativeAvatarRenderer(owner: .anonymous),
+                    destinationRouter: ReadRouter(), defaultRevision: .branch(ForgeRefName("main"))
+                )
+                inspector.apply(ForgeReadInspectorPresentation(
+                    item: .issue(issue), title: issue.title, subtitle: "Issue #8", author: nil,
+                    metadata: [], bodyMarkdown: nil, bodyUnavailableMessage: nil, timeline: [],
+                    timelineUnavailableMessage: nil, nextTimelineCursor: nil, nextCheckCursor: nil,
+                    isMutationStateFresh: false, freshnessMessage: "Retained stale details"
+                ))
+                inspector.showRefreshError("First refresh failed", freshnessMessage: "Retained stale details")
+                try inspector.updateDefaultRevision(.branch(ForgeRefName("next-default")))
+                let retainedError = (descendant(identifier: "ForgeInspectorRefreshError", in: inspector.view) as? NSTextField)?
+                    .stringValue.contains("First refresh failed") == true
+                let retainedTitle = (descendant(identifier: "ForgeInspectorTitle", in: inspector.view) as? NSTextField)?
+                    .stringValue == issue.title
+                inspector.showRefreshError("Second refresh failed", freshnessMessage: "Retained stale details")
+                let errors = descendants(in: inspector.view).filter { $0.accessibilityIdentifier() == "ForgeInspectorRefreshError" }
+                let replacedError = errors.count == 1
+                    && (errors.first as? NSTextField)?.stringValue.contains("Second refresh failed") == true
+                return (initialLoad ? 1 : 0) | (retainedError && retainedTitle ? 2 : 0) | (replacedError ? 4 : 0)
+            } catch {
+                return 0
+            }
+        }
+
         @objc static func markdownProof() -> UInt64 {
             autoreleasepool {
                 makeMarkdownProof()
@@ -1539,13 +1624,24 @@
             let status = descendant(identifier: "ForgeCollaborationAccountStatus", in: view)
                 as? NSTextField
             let firstResponder = controller.firstResponder()
+            let initialHead = try Data(contentsOf: repositoryURL.appendingPathComponent(".git/HEAD"))
+            let initialConfiguration = try Data(contentsOf: repositoryURL.appendingPathComponent(".git/config"))
+            let syncFork = descendant(identifier: "GitX.SyncFork", in: view) as? NSButton
+            _ = controller.perform(NSSelectorFromString("syncFork:"), with: nil)
+            let finalHead = try Data(contentsOf: repositoryURL.appendingPathComponent(".git/HEAD"))
+            let finalConfiguration = try Data(contentsOf: repositoryURL.appendingPathComponent(".git/config"))
+            let unavailableSyncPreservesRepository = syncFork?.isEnabled == false
+                && descendant(identifier: "ForgeCollaborationGateway", in: view) === gateway
+                && finalHead == initialHead && finalConfiguration == initialConfiguration
             let conditions = [
                 view.accessibilityIdentifier() == "RepositoryForgeCollaboration",
                 controller.sidebarRepositories.isEmpty,
+                !controller.includesAttention,
                 gateway != nil,
                 status?.stringValue == "Resolving repository access…",
                 firstResponder != nil,
                 !nativeOpen,
+                unavailableSyncPreservesRepository,
             ]
             controller.closeView()
             return conditions.allSatisfy { $0 }
@@ -2045,6 +2141,10 @@
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
             return false
+        }
+
+        private static func descendants(in root: NSView) -> [NSView] {
+            [root] + root.subviews.flatMap { descendants(in: $0) }
         }
 
         private static func descendant(identifier: String, in root: NSView) -> NSView? {

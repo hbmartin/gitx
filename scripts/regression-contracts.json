@@ -604,7 +604,7 @@
           "identifier": "GitXTests/HistoryControllerTests/testNulDelimitedMutationsPreserveNewlineFilenameAndDiscardPartiallyStagedAddition",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "Await the actual stage/discard callbacks and newer quiescent snapshots without blocking the main actor; preserve raw newline-path identity, staged NEW state and indexed file bytes."
+          "oracle": "Await exact stage/discard completions and observed newer snapshot, reconciliation and writer state; preserve the newline raw path, staged bytes and physical partially staged addition without relying on incidental notifications or polling the main run loop."
         }
       ]
     },
@@ -629,7 +629,11 @@
         "Resources/en.lproj/MainMenu.xib",
         "GitXCore/Tests/GitXCoreTests/WorktreeScopeTests.swift",
         "GitXTests/WorktreeAppKitTests.swift",
-        "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift"
+        "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
+        "Classes/Controllers/HistoryForgeOverlayPresentation.swift",
+        "Classes/Views/ForgeReadSurfaceViewController.swift",
+        "Classes/Controllers/RepositoryForgeCollaborationController.swift",
+        "GitXTests/ForgeMarkdownAvatarProductHarness.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -756,7 +760,7 @@
           "source": "GitXTests/WorktreeAppKitTests.swift",
           "identifier": "GitXTests/WorktreeAppKitTests/testExplicitBranchSelectionReturnsMountedContentToHistoryWithoutCheckout",
           "role": "valid",
-          "oracle": "Explicit branch selection returns real mounted content to history while preserving checkout HEAD; the existing general reload behavior remains observable."
+          "oracle": "Explicit branch selection and the History action mount History without checkout; an intervening passive presentation reload preserves the mounted inspector and viewed branch."
         },
         {
           "source": "GitXTests/WorktreeAppKitTests.swift",
@@ -992,7 +996,7 @@
           "source": "GitXTests/WorktreeAppKitTests.swift",
           "identifier": "GitXTests/WorktreeAppKitTests/testHistoryReturnKeepsViewedRevisionWhenTheSelectedRegistrationIsNoLongerPublished",
           "role": "boundary",
-          "oracle": "Remove the real detached registration, retain its outlined capture across service replacement, invoke History, and preserve the actual browsed revision/rendering without writing or stale Other insertion."
+          "oracle": "Install the replacement before its accepted inventory publication and wait for the obsolete outlined row to disappear. Retain that row for History return; preserve browsed revision, rendering and Other item identities without writing."
         },
         {
           "source": "GitXTests/WorktreePresentationTests.swift",
@@ -1223,6 +1227,13 @@
           "oracle": "Both styles wait behind sheet contention, present the complete fresh scope with Cancel as default, and write only after explicit approval."
         },
         {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testMissingWorktreeGitFileOffersSameLocationRepairWithoutCheckout",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "The informational path-style chooser promises a later exact folder review without retaining the old folder list. Fresh Reclaim consent names the affected folder, defaults to Cancel and precedes every link modification; preserve checkout HEADs and registration evidence."
+        },
+        {
           "source": "GitXTests/WorktreePresentationTests.swift",
           "identifier": "GitXTests/WorktreePresentationTests/testDeferredPreviewRefreshFailureSurvivesAnotherPresentationWait",
           "check": "correctness",
@@ -1249,6 +1260,41 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Queue off-main current-branch, reference, branch and stash notifications while MainActor is occupied, then close the retained sidebar before delivery; no rows are rebuilt, selection is restored or shared revision is changed."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/SidebarPolicyTests.swift",
+          "identifier": "GitXCoreTests/SidebarPolicyTests/testUnknownInventoryStatusRetainsStaleRecoveryGuidance",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "An unknown inventory status retains an actionable stale warning with or without prior rows, rather than claiming freshness or neutral progress."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeServiceTests/testInitialLockRejectsNewlyLockedInventoryAndReleasesTheFollowingWriter",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Hold initial ordinary discovery, publish newly locked rows through owned admission, reject lock without launching it, release the following eligible writer and ignore the retired ordinary callback."
+        },
+        {
+          "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
+          "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppReadPresentationsPreserveLoadingAndRefreshFailureState",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Execute the app module presentation types: initial facts loading stays accessible and empty; default-revision changes preserve the selected inspector and refresh failure, and another error replaces its banner exactly once."
+        },
+        {
+          "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
+          "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged."
+        },
+        {
+          "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
+          "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppFactsReplacementRemovesPreviousRowsAndDistinguishesUnavailableBadges",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Execute the app module facts view: loading detaches previous rows, repeated replacement displays one copy, and permission-denied Pull Request badges stay distinct from an empty successful response."
         }
       ]
     },
@@ -1442,7 +1488,7 @@
           "identifier": "GitXTests/HistoryControllerTests/testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "Hold the real failing hook while remotes disappear and return, await hook and retry completion plus actual reconciliation/settings/push state, and preserve each captured push choice without synchronous run-loop waits."
+          "oracle": "Hold a real pre-commit hook outside the checkout while remotes change; retry the captured choice, observe newer index publication, reconciliation and writer state, then assert exact preference/push count, an otherwise clean checkout and only the intended committed path. Control files never enter the index. The preexisting hook path, including embedded newline and trailing space, round-trips literally after both choices."
         }
       ]
     },
@@ -1519,8 +1565,8 @@
     {
       "id": "TASK-001",
       "family": "Drainage and process lifetime",
-      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe.",
-      "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output. Treating a presentation cancellation as writer cancellation can terminate Git mid-write; shared discovery cancellation can also erase a completed write's reconciliation and release the queue too early.",
+      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe. Debug native test applications retain stderr in a run-owned regular file before fixture work; an undrained XCTest activity pipe must not block logging, Git completion or index publication. Unified logging stays enabled and native diagnostics remain uploaded. The startup watchdog observes actual XCTest startup text in fresh native stderr files for the current command within its unchanged deadline; prior-probe files, foreign directories, symlinks and nonregular files cannot establish startup. Canonical preset and raw entrypoints provide the innermost startup watchdog its own captured console log and diagnostic directory; an outer capture cannot substitute for that wiring. Queued native startup evidence is observed before the startup-deadline verdict, matching command-output event handling when a selector wakeup crosses the boundary. Full native correctness and fresh analysis run in independent CI jobs with unchanged 75-minute limits. The existing required unit tests and analyzer check runs after both jobs and accepts only two successful results, including failure, cancellation and skipped-dependency cases.",
+      "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output. Treating a presentation cancellation as writer cancellation can terminate Git mid-write; shared discovery cancellation can also erase a completed write's reconciliation and release the queue too early. Serial independent native checks can exhaust a shared job limit before fresh analysis finishes.",
       "sourcePaths": [
         "Classes/Util/PBTask*",
         "Classes/Util/PBChildProcessOwner.swift",
@@ -1531,7 +1577,12 @@
         "scripts/workflow_session.py",
         "scripts/xcodebuild.sh",
         "scripts/tests/test_workflow_session.py",
-        "scripts/tests/test_script_entrypoints.py"
+        "scripts/tests/test_script_entrypoints.py",
+        "GitXTests/GitXTestGitEnvironment.swift",
+        "Classes/Controllers/ApplicationComposition.swift",
+        "GitXUITests/GitXScreenshotTests.m",
+        "scripts/tests/test_native_test_diagnostics.py",
+        ".github/workflows/Verify.yml"
       ],
       "requiredChecks": [
         "correctness",
@@ -1686,6 +1737,12 @@
           "identifier": "GitXTests/WorktreeServiceTests/testExecutableReplacementDuringRemovalPreflightRejectsWithoutWriting",
           "role": "boundary",
           "oracle": "Replace the selected executable during preflight; context validation rejects removal and preserves real repository metadata and checkout bytes."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testNativeDiagnosticsReachAnEmptyUILaunchEnvironment",
+          "role": "boundary",
+          "oracle": "Forward the native log directory into an initially empty UI launch environment and preserve the unowned case. The required static check independently executes the real Logger against an undrained pipe, verifies complete binary file capture and refusal to replace previous evidence, and checks both canonical entrypoints. Static supervisor fixtures hold the child behind a FIFO until actual native startup is acknowledged, exercise split markers, and retain missing-startup failure for previous-probe, quiet, foreign and symlink sources. Execute the real preset and raw shell wrappers with controlled mock native output, holding the child behind a FIFO until the innermost native-startup acknowledgment. Preserve distinct inner diagnostics through completion. A deterministic clock and selector emit native startup at0.9seconds and return at1.1seconds for a1second startup deadline; the actual held child must complete after acknowledgment without changing production timeouts."
         }
       ]
     },
@@ -1780,8 +1837,8 @@
     {
       "id": "ENV-001",
       "family": "Deterministic Git fixtures",
-      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input. Presentation fixtures retain files through cancellation and main-actor worker acknowledgement, restore the original Git preference once, then remove only drained fixtures. Explicit presentation-fixture opens establish the existing host as active and its visible owner window or sheet as key before queue actions; later production resumption remains focus-preserving.",
-      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state. Preference notifications during teardown can restart services, while premature fixture deletion races late workers.",
+      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input. Presentation fixtures retain files through cancellation and main-actor worker acknowledgement, restore the original Git preference once, then remove only drained fixtures. Explicit presentation-fixture opens establish the existing host as active and its visible owner window or sheet as key before queue actions; later production resumption remains focus-preserving. Cleanup Git fixtures suppress automatic maintenance and GC under isolated configuration so detached writers cannot race read-only snapshot assertions. Fingerprinting still rejects entries removed after enumeration.",
+      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state. Preference notifications during teardown can restart services, while premature fixture deletion races late workers. Detached Git auto-maintenance can change a fixture after its commit has returned.",
       "sourcePaths": [
         "GitXTests/GitXTestGitEnvironment.swift",
         "GitXTests/GitXTestGitFixture.swift",
@@ -1790,7 +1847,9 @@
         "scripts/workflow_session.py",
         "scripts/workflow_records.py",
         "scripts/regression_guardrails.py",
-        "GitXTests/WorktreePresentationTests.swift"
+        "GitXTests/WorktreePresentationTests.swift",
+        "scripts/tests/test_workflow_cleanup.py",
+        "scripts/tests/support.py"
       ],
       "requiredChecks": [
         "correctness",
@@ -1933,9 +1992,9 @@
     },
     {
       "id": "ENV-002",
-      "family": "Finder metadata in UI fixtures",
-      "invariant": "UI fixture repositories ignore untracked Finder metadata while preserving real untracked files, explicitly tracked metadata and existing exclusion rules.",
-      "rootCause": "Finder-created .DS_Store files alter first-file selection, dirty counts and before/after status oracles.",
+      "family": "UI fixture isolation and Finder metadata",
+      "invariant": "UI fixture repositories ignore untracked Finder metadata while preserving real untracked files, explicitly tracked metadata and existing exclusion rules. Isolated fixture homes create independent preferences directories and remain owned by workspace cleanup in every consuming test target.",
+      "rootCause": "Finder-created .DS_Store files alter first-file selection, dirty counts and before/after status oracles. The fixture workspace is compiled into both unit and UI targets; the isolated-home helper had no unit-target coverage, leaving unused-declaration analysis dependent on the selected compilation context.",
       "sourcePaths": [
         "GitXUITests/GitXUITestFixtureWorkspace.swift",
         "GitXUITests/GitXScreenshotTests.m",
@@ -1950,7 +2009,8 @@
         "ui",
         "debug-test-build",
         "release-test-build",
-        "static"
+        "static",
+        "analyze"
       ],
       "tests": [
         {
@@ -1993,6 +2053,13 @@
           "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testCloneCreationAppliesTheSameFixturePolicy",
           "role": "boundary",
           "oracle": "A clone automatically receives metadata exclusion through the shared creation boundary.",
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXFixtureRepositoryPolicyTests.swift",
+          "identifier": "GitXTests/GitXFixtureRepositoryPolicyTests/testIsolatedHomesCreateIndependentPreferencesAndRemainOwnedByWorkspaceCleanup",
+          "role": "boundary",
+          "oracle": "Create default and explicitly named homes through the actual shared helper; assert preferences directories are initially empty and independent, both homes are tracked, and cleanup removes only the owned homes. Direct unit-target coverage also prevents the shared helper from appearing unused in that compilation context.",
           "check": "correctness"
         }
       ]

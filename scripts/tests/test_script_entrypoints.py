@@ -4,11 +4,14 @@ import json
 import os
 import pathlib
 import plistlib
+import re
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
+import threading
 import time
 import unittest
 
@@ -108,6 +111,64 @@ class ScriptEntrypointTests(unittest.TestCase):
         test_build = next(value for value in invocations if "\nbuild-for-testing\n" in value)
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
+
+    def test_native_startup_reaches_innermost_preset_and_raw_watchdogs(self) -> None:
+        script = self.install_script('xcodebuild.sh')
+        # Keep the production wrapper shape and shorten only the copied fixture's
+        # backstop so a disconnected inner watchdog fails promptly.
+        script.write_text(script.read_text().replace('--startup-timeout 120', '--startup-timeout 2'))
+        self.install_mock_xcodebuild(self.root / 'Products')
+        mock = self.developer_directory / 'usr/bin/xcodebuild'
+        mock.write_text(mock.read_text() + r'''
+if [[ " $* " == *" test-without-building "* && " $* " == *" -testPlan GitX "* ]]; then
+python3 <<'PYTHON'
+import os, pathlib
+native = pathlib.Path(os.environ['TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY'])
+fd = os.open(native / f'GitX-{os.getpid()}.stderr.log', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.write(fd, b"Test Suite 'Selected tests' started\n")
+os.close(fd)
+gate = os.open(os.environ['GITX_TEST_NATIVE_STARTUP_GATE'], os.O_RDONLY)
+os.read(gate, 1)
+os.close(gate)
+PYTHON
+fi
+''')
+        for name, arguments, diagnostic in (
+                ('preset', ['test', 'correctness', '-only-testing:GitXTests/ExampleTests'], 'GitX'),
+                ('raw', ['raw', '--', 'test', '-testPlan', 'GitX', '-only-testing:GitXTests/ExampleTests'], 'raw-tests')):
+            with self.subTest(entrypoint=name):
+                run_id = 'inner-native-' + name
+                run = self.root / 'artifacts/verification' / run_id
+                gate_path = self.root / ('native-startup-gate-' + name)
+                os.mkfifo(gate_path)
+                gate = os.open(gate_path, os.O_RDWR | os.O_NONBLOCK)
+                environment = dict(self.environment, GITX_TEST_NATIVE_STARTUP_GATE=str(gate_path))
+                process = subprocess.Popen([script, '--run-id', run_id, *arguments], env=environment,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                manifest = run / 'Diagnostics' / diagnostic / 'diagnostic-owner.json'
+                released = False
+                deadline = time.monotonic() + 20
+                wake = threading.Event()
+                try:
+                    while process.poll() is None and time.monotonic() < deadline:
+                        if manifest.exists():
+                            state = json.loads(manifest.read_text())
+                            if state.get('hostStartup', {}).get('source') == 'native-stderr' and not released:
+                                os.write(gate, b'1')
+                                released = True
+                        wake.wait(.01)
+                    self.assertIsNotNone(process.poll(), 'The canonical wrapper must finish within its backstop')
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                    stdout, stderr = process.communicate(timeout=10)
+                    os.close(gate)
+                self.assertEqual(process.returncode, 0, (stdout + stderr).decode(errors='replace'))
+                self.assertTrue(released, 'The innermost watchdog must acknowledge native startup before release')
+                state = json.loads(manifest.read_text())
+                self.assertEqual(state['hostStartup']['source'], 'native-stderr')
+                self.assertTrue(state['outputCapture']['captureComplete'])
+                self.assertEqual(self.receipt(run_id)['status'], 'passed')
 
     def test_xcodebuild_captures_complete_output_before_console_forwarding(self) -> None:
         script = self.install_script('xcodebuild.sh')
@@ -1093,13 +1154,30 @@ python3 - "$@" <<'PY'
 import json, os, pathlib, sys
 arguments = sys.argv[1:]
 record = {"plan": arguments[arguments.index("-testPlan") + 1],
-          "root": os.environ.get("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT")}
+          "root": os.environ.get("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT"),
+          "diagnostics": os.environ.get("TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY")}
 with pathlib.Path(os.environ["CAPTURED_FORGE_ENVIRONMENT"]).open("a") as output:
     output.write(json.dumps(record) + "\\n")
 PY
 fi
 ''')
         return captured
+
+    def test_native_verification_keeps_app_stderr_in_each_runs_log_directory(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.capture_forge_test_environment()
+        for name, arguments in (("preset", ["test", "correctness", "-only-testing:GitXTests/ExampleTests"]),
+                                ("raw", ["raw", "--", "test", "-testPlan", "GitX"])):
+            with self.subTest(entrypoint=name):
+                result = subprocess.run([script, "--run-id", f"native-stderr-{name}", *arguments],
+                                        capture_output=True, text=True, env=self.environment)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line) for line in captured.read_text().splitlines()]
+        self.assertEqual(len(records), 4)
+        for record, name in zip(records, ("preset", "preset", "raw", "raw")):
+            expected = self.root / "artifacts/verification" / f"native-stderr-{name}" / "Logs/Native"
+            self.assertEqual(record["diagnostics"], str(expected))
+            self.assertTrue(expected.is_dir())
 
     def test_native_verification_preserves_explicit_forwarded_forge_store(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -2203,6 +2281,58 @@ fi
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=2)
+
+
+class VerificationWorkflowTests(unittest.TestCase):
+    @staticmethod
+    def jobs():
+        workflow = (ROOT / '.github/workflows/Verify.yml').read_text().split('\njobs:\n', 1)[1]
+        markers = list(re.finditer(r'^  ([a-z][a-z0-9-]+):[ \t]*$', workflow, re.MULTILINE))
+        return {marker.group(1): workflow[marker.end():markers[index + 1].start()
+                                        if index + 1 < len(markers) else len(workflow)]
+                for index, marker in enumerate(markers)}
+
+    def test_native_ci_keeps_complete_check_commands_and_budgets(self):
+        commands = [
+            'scripts/xcodebuild.sh --run-id "verify-correctness-${{ github.run_id }}-${{ github.run_attempt }}" test correctness',
+            'scripts/xcodebuild.sh --run-id "verify-analyze-${{ github.run_id }}-${{ github.run_attempt }}" analyze',
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                matching = [body for body in self.jobs().values() if command in body]
+                self.assertEqual(len(matching), 1)
+                self.assertIn('runs-on: macos-26', matching[0])
+                self.assertIn('timeout-minutes: 75', matching[0])
+                self.assertIn('xcode-version: "26.6"', matching[0])
+
+    def test_native_ci_checks_have_independent_jobs_and_a_required_gate(self):
+        jobs = self.jobs()
+        tests = next(name for name, body in jobs.items() if '"verify-correctness-' in body)
+        analyzer = next(name for name, body in jobs.items() if '"verify-analyze-' in body)
+        self.assertNotEqual(tests, analyzer, 'Independent checks must not consume the same job budget')
+        self.assertIn('needs: [toolchain-smoke, worktree-contracts]', jobs[tests])
+        self.assertIn('needs: toolchain-smoke', jobs[analyzer])
+        gate = jobs['unit-and-analyze']
+        self.assertIn('name: unit tests and analyzer', gate)
+        self.assertIn(f'needs: [{tests}, {analyzer}]', gate)
+        self.assertIn('if: ${{ always() }}', gate)
+        self.assertIn("UNIT_RESULT: ${{ needs['unit-tests'].result }}", gate)
+        self.assertIn('ANALYSIS_RESULT: ${{ needs.analyzer.result }}', gate)
+
+    def test_required_native_ci_gate_only_accepts_two_successes(self):
+        gate = self.jobs()['unit-and-analyze']
+        marker = '- name: Require both native verification jobs'
+        self.assertIn(marker, gate)
+        script = textwrap.dedent(gate.split(marker, 1)[1].split('run: |', 1)[1])
+        for tests in ['success', 'failure', 'cancelled', 'skipped', '']:
+            for analyzer in ['success', 'failure', 'cancelled', 'skipped', '']:
+                with self.subTest(tests=tests, analyzer=analyzer):
+                    result = subprocess.run(
+                        ['/bin/bash', '--noprofile', '--norc', '-e', '-c', script],
+                        env={'PATH': os.defpath, 'UNIT_RESULT': tests, 'ANALYSIS_RESULT': analyzer},
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode == 0, tests == analyzer == 'success')
 
 
 if __name__ == "__main__":

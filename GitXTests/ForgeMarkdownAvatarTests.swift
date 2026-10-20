@@ -992,6 +992,16 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         #endif
     }
 
+    #if DEBUG
+        func testAppFactsReplacementRemovesPreviousRowsAndDistinguishesUnavailableBadges() {
+            XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.factsReplacementProof(), 0b11)
+        }
+
+        func testAppReadPresentationsPreserveLoadingAndRefreshFailureState() {
+            XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.readPresentationProof(), 0b111)
+        }
+    #endif
+
     private func cell(_ text: String) -> ForgeMarkdownTableCell {
         ForgeMarkdownTableCell(columnSpan: 1, rowSpan: 1, content: [.text(text)])
     }

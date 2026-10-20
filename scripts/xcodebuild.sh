@@ -542,6 +542,10 @@ configure_test_forge_storage() {
 	mkdir -p "$forge_test_root" || return $?
 	export TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT="$forge_test_root"
 	printf 'Test Forge storage: %s\n' "$forge_test_root"
+	# The Debug app captures its stderr before fixture work. XCTest activity
+	# collection must not hold up native log producers; retain all bytes in Logs.
+	mkdir -p "$logs/Native" || return $?
+	export TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY="$logs/Native"
 }
 
 xcode_test() {
@@ -585,7 +589,7 @@ xcode_test() {
 			${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
-		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" -- \
+		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" --output-log "$logs/$plan-console.log" -- \
 		"$xcodebuild" "${common[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
 		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@"
 	local test_status=$?
@@ -902,7 +906,7 @@ case "$command" in
 				"$xcodebuild" test-without-building "${probe_arguments[@]}" -testPlan GitXHostPreflight \
 				-only-testing:GitXTests/GitXHostStartTests/testHostStarts -resultBundlePath "$results/raw-host.xcresult" || exit $?
 			run_step raw "$logs/raw.log" "$result_path" \
-				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw" -- \
+				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw-tests" --output-log "$logs/raw-console.log" -- \
 				"$xcodebuild" test-without-building "${suite_arguments[@]}"
 			raw_status=$?
 			run_step evidence "$logs/raw-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"

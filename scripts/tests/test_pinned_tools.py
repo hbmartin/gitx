@@ -50,7 +50,7 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertNotIn("26.2", build_workflow + verify_workflow)
         self.assertEqual(build_workflow.count("xcode: 26.6"), 1)
         self.assertEqual(build_workflow.count('xcode-version: "26.6"'), 1)
-        self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 9)
+        self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 10)
         self.assertIn("Xcode 26.6 or newer is required", readme)
         self.assertEqual(configuration['minimumXcodeVersion'], '26.6')
 
@@ -71,14 +71,15 @@ class PinnedToolsTests(unittest.TestCase):
 
     def test_verify_workflow_allows_cold_analyzer_and_full_ui_to_finish(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
-        unit_and_analyze = verify_workflow.split("  unit-and-analyze:\n", maxsplit=1)[1].split(
-            "  ui:\n", maxsplit=1
-        )[0]
+        for job, following_job in (("unit-tests", "analyzer"), ("analyzer", "ui")):
+            job_text = verify_workflow.split(f"\n  {job}:\n", maxsplit=1)[1].split(
+                f"\n  {following_job}:\n", maxsplit=1
+            )[0]
+            self.assertIn("timeout-minutes: 75", job_text)
         ui = verify_workflow.split("  ui:\n", maxsplit=1)[1].split(
             "  sanitizers:\n", maxsplit=1
         )[0]
 
-        self.assertIn("timeout-minutes: 75", unit_and_analyze)
         self.assertIn("timeout-minutes: 60", ui)
 
     def test_build_workflow_archives_unsigned_when_signing_secrets_are_unavailable(self) -> None:
@@ -114,15 +115,15 @@ class PinnedToolsTests(unittest.TestCase):
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         pinned_actions = {
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 9,
-            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 9,
-            "actions/cache@caa296126883cff596d87d8935842f9db880ef25": 3,
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 8,
+            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 10,
+            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 10,
+            "actions/cache@caa296126883cff596d87d8935842f9db880ef25": 4,
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 9,
         }
 
         for action, expected_count in pinned_actions.items():
             self.assertEqual(verify_workflow.count(action), expected_count)
-        self.assertEqual(verify_workflow.count("persist-credentials: false"), 9)
+        self.assertEqual(verify_workflow.count("persist-credentials: false"), 10)
         for mutable_tag in [
             "actions/checkout@v7",
             "maxim-lobanov/setup-xcode@v1",
@@ -162,11 +163,12 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", performance_job)
         self.assertIn("fetch-tags: true", performance_job)
 
-        unit_job = verify_workflow.split(
-            "\n  unit-and-analyze:\n", maxsplit=1
-        )[1].split("\n  ui:\n", maxsplit=1)[0]
-        self.assertIn("fetch-depth: 0", unit_job)
-        self.assertIn("fetch-tags: true", unit_job)
+        for job, following_job in (("unit-tests", "analyzer"), ("analyzer", "ui")):
+            job_text = verify_workflow.split(f"\n  {job}:\n", maxsplit=1)[1].split(
+                f"\n  {following_job}:\n", maxsplit=1
+            )[0]
+            self.assertIn("fetch-depth: 0", job_text)
+            self.assertIn("fetch-tags: true", job_text)
 
         build_job = build_workflow.split(
             "\n  build-gitx:\n", maxsplit=1
@@ -204,7 +206,7 @@ class PinnedToolsTests(unittest.TestCase):
 
         self.assertIn("\n  toolchain-smoke:\n", verify_workflow)
         self.assertIn("\n  toolchain-smoke:\n", build_workflow)
-        self.assertEqual(verify_workflow.count("needs: toolchain-smoke"), 6)
+        self.assertEqual(verify_workflow.count("needs: toolchain-smoke"), 7)
         self.assertIn("needs: toolchain-smoke", build_workflow)
         self.assertIn("artifacts/verification", verify_workflow + build_workflow)
 
@@ -212,7 +214,7 @@ class PinnedToolsTests(unittest.TestCase):
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         static_job = verify_workflow.split(
             "\n  static:\n", maxsplit=1
-        )[1].split("\n  unit-and-analyze:\n", maxsplit=1)[0]
+        )[1].split("\n  worktree-contracts:\n", maxsplit=1)[0]
 
         self.assertIn(
             "https://github.com/apollographql/apollo-ios/releases/download/"
