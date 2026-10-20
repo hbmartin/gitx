@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 
 final class GitXTestGitFixtureTests: XCTestCase {
@@ -101,6 +102,64 @@ final class GitXTestGitFixtureTests: XCTestCase {
             ["unsupported": Date()], prefix: "startup", directory: directory.path
         ))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+    }
+
+    func testProgressPublicationPreservesSystemOperationAndErrno() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        for operation in ["write-record", "publish-record"] {
+            XCTAssertThrowsError(try GitXTestProgressRecords.write(
+                ["event": "bundle-start"], prefix: "startup", directory: directory.path,
+                writeBytes: { descriptor, bytes, count in
+                    if operation == "write-record" { errno = ENOSPC; return -1 }
+                    return Darwin.write(descriptor, bytes, count)
+                },
+                publish: { _, _, _ in errno = EACCES; return -1 }
+            )) { error in
+                let failure = error as? GitXTestProgressRecords.PublicationError
+                XCTAssertEqual(failure?.operation, operation)
+                XCTAssertEqual(failure?.category, "system")
+                XCTAssertEqual(failure?.posixCode, operation == "write-record" ? ENOSPC : EACCES)
+            }
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+        }
+    }
+
+    func testProgressExclusiveRenamePreservesCollisionAndRetriesInterruptedPartialWrites() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let identity = UUID().uuidString
+        let destination = directory.appendingPathComponent("startup-\(getpid())-\(identity).json")
+        let original = Data("existing-record".utf8)
+        try original.write(to: destination)
+        XCTAssertThrowsError(try GitXTestProgressRecords.write(
+            ["event": "bundle-start"], prefix: "startup", directory: directory.path, identity: identity
+        )) { error in
+            XCTAssertEqual((error as? GitXTestProgressRecords.PublicationError)?.posixCode, EEXIST)
+        }
+        XCTAssertEqual(try Data(contentsOf: destination), original)
+        var attempts = 0
+        let published = try GitXTestProgressRecords.write(
+            ["event": "bundle-start"], prefix: "startup", directory: directory.path,
+            writeBytes: { descriptor, bytes, count in
+                attempts += 1
+                if attempts == 1 { errno = EINTR; return -1 }
+                return Darwin.write(descriptor, bytes, min(count, 3))
+            }
+        )
+        XCTAssertGreaterThan(attempts, 2)
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: published)) as? [String: String])
+        XCTAssertEqual(record["event"], "bundle-start")
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasPrefix(".pending-") })
+    }
+
+    func testManagedStartupFailureIsTakenBeforeRecursiveIssueDelivery() {
+        var state = GitXManagedTestObserver.StartupState()
+        state.failure = .init(operation: "publish-record", category: "system", posixCode: ENOSPC)
+        XCTAssertEqual(state.takeFailure()?.posixCode, ENOSPC)
+        XCTAssertNil(state.takeFailure())
     }
 
     func testEmptyDiagnosticRequestsAreRemovedAndProgressSurvivesEmptyLaunchEnvironment() {

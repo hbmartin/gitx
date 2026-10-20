@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 import XCTest
 
 /// This class belongs only to test bundles, including their Release configuration.
@@ -10,6 +11,20 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     private static let shared = GitXManagedTestObserver()
     private static let registration: Void = XCTestObservationCenter.shared.addTestObserver(shared)
 
+    struct StartupState: Sendable {
+        var failure: GitXTestProgressRecords.PublicationError?
+        var delivered = false
+        var lease: GitXTestInvocationLease?
+
+        mutating func takeFailure() -> GitXTestProgressRecords.PublicationError? {
+            guard !delivered, let failure else { return nil }
+            delivered = true
+            return failure
+        }
+    }
+
+    private let startup = Mutex(StartupState())
+
     @objc static func install() {
         _ = registration
     }
@@ -19,11 +34,26 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
         guard let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"], !directory.isEmpty,
               let invocation = environment["GITX_TEST_INVOCATION_ID"], !invocation.isEmpty,
               let session = environment["GITX_VERIFICATION_SESSION"], !session.isEmpty else { return }
-        try? GitXTestProgressRecords.write([
-            "schemaVersion": 1, "event": "bundle-start", "invocationID": invocation,
-            "verificationSession": session, "bundleID": testBundle.bundleIdentifier ?? "",
-            "pid": ProcessInfo.processInfo.processIdentifier,
-        ], prefix: "startup", directory: directory)
+        do {
+            try GitXTestProgressRecords.write([
+                "schemaVersion": 1, "event": "bundle-start", "invocationID": invocation,
+                "verificationSession": session, "bundleID": testBundle.bundleIdentifier ?? "",
+                "pid": ProcessInfo.processInfo.processIdentifier,
+            ], prefix: "startup", directory: directory)
+        } catch let error as GitXTestProgressRecords.PublicationError {
+            startup.withLock { $0.failure = error }
+        } catch {
+            startup.withLock {
+                $0.failure = .init(operation: "publish-record", category: "unexpected", posixCode: nil)
+            }
+        }
+    }
+
+    func testCaseWillStart(_ testCase: XCTestCase) {
+        // Take before recording: XCTest synchronously calls observers for the issue.
+        if let failure = startup.withLock({ $0.takeFailure() }) {
+            testCase.record(XCTIssue(type: .system, compactDescription: failure.description))
+        }
     }
 
     func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) {

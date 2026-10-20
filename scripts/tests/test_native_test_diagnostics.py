@@ -81,7 +81,7 @@ let bytes = Array("raw-stderr-".utf8) + [0, 255] + Array("-end\nAddressSanitizer
 _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
 checkpoint("after-raw-write")
 ''')
-        subprocess.run(["xcrun", "swiftc", "-D", "DEBUG", "-D", "GITX_APP_TARGET",
+        subprocess.run(["xcrun", "swiftc", "-warnings-as-errors", "-D", "DEBUG", "-D", "GITX_APP_TARGET",
                         str(ROOT / "GitXTests/GitXTestGitEnvironment.swift"), str(main),
                         "-o", str(cls.executable)], check=True, capture_output=True, text=True)
 

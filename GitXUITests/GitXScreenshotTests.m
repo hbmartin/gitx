@@ -96,6 +96,15 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 
 // MARK: - Helpers
 
+- (void)testManagedLaunchEnvironmentForwardsCompleteOwnership
+{
+	NSDictionary<NSString *, NSString *> *environment = [self launchEnvironmentForRepository:@"/fixture/repository"];
+	for (NSString *key in @[ @"GITX_VERIFICATION_SESSION", @"GITX_TEST_STDERR_DIRECTORY", @"GITX_TEST_PROGRESS_DIRECTORY", @"GITX_TEST_INVOCATION_ID" ]) {
+		NSString *expected = NSProcessInfo.processInfo.environment[key];
+		XCTAssertEqualObjects(environment[key], expected.length ? expected : nil);
+	}
+}
+
 - (NSDictionary<NSString *, NSString *> *)launchEnvironmentForRepository:(NSString *)repositoryPath
 {
 	NSString *isolatedHome = [GitXUIFixtureRoot stringByAppendingPathComponent:
@@ -115,7 +124,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 		@"GITX_UITEST_FORGE_STORAGE_ROOT" :
 			[isolatedHome stringByAppendingPathComponent:@"Library/Application Support/GitX/Forge"],
 	}];
-	for (NSString *key in @[@"GITX_TEST_STDERR_DIRECTORY", @"GITX_TEST_PROGRESS_DIRECTORY", @"GITX_TEST_INVOCATION_ID"]) {
+	for (NSString *key in @[ @"GITX_VERIFICATION_SESSION", @"GITX_TEST_STDERR_DIRECTORY", @"GITX_TEST_PROGRESS_DIRECTORY", @"GITX_TEST_INVOCATION_ID" ]) {
 		NSString *value = NSProcessInfo.processInfo.environment[key];
 		if (value.length)
 			environment[key] = value;
