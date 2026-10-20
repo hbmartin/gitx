@@ -6,12 +6,6 @@ public enum WorktreePrunePresentation: Equatable, Sendable {
     case confirmation(String)
 }
 
-public enum WorktreeRepairPresentation: Equatable, Sendable {
-    case perform
-    case reclaim
-    case renewed
-}
-
 public enum WorktreeRepairOfferPresentation: Equatable, Sendable {
     case manualGuidance
     case none
@@ -48,16 +42,31 @@ public struct WorktreeInventoryPresentation: Equatable, Sendable {
     }
 }
 
+/// Background reads retain the last settled visual and accessibility presentation.
+public struct WorktreeInventoryHeaderState: Sendable {
+    private var settled: WorktreeInventoryPresentation?
+
+    public init() {}
+
+    public mutating func presentation(rawStatus: Int, hasSnapshot: Bool, capabilityExplanation: String) -> WorktreeInventoryPresentation {
+        let status = WorktreeInventoryStatus(rawValue: rawStatus) ?? .stale
+        if status == .updating, hasSnapshot {
+            return settled ?? WorktreeInventoryPresentation(status: .fresh, hasSnapshot: true, capabilityExplanation: capabilityExplanation)
+        }
+        let current = WorktreeInventoryPresentation(status: status, hasSnapshot: hasSnapshot, capabilityExplanation: capabilityExplanation)
+        if status != .updating, status != .checkingCapability {
+            settled = current
+        }
+        return current
+    }
+}
+
 public enum WorktreePresentationPolicy {
     public static func consentUpdateMessage(action: String, previouslyConfirmed: Bool, updated: Bool) -> String {
         if previouslyConfirmed {
             return "The worktree state changed. Review this updated list and choose \(action) again.\n\n"
         }
         return updated ? "The worktree state changed. Review this updated list before continuing.\n\n" : ""
-    }
-
-    public static func freshnessWarning(hasSnapshot: Bool, isStale: Bool) -> String? {
-        hasSnapshot && isStale ? "Worktree list may be out of date. Choose Refresh Worktrees to try again." : nil
     }
 
     public static func canPresent(isApplicationActive: Bool, isWindowVisible: Bool, isWindowKey: Bool,
@@ -76,21 +85,6 @@ public enum WorktreePresentationPolicy {
         }
         let report = report.trimmingCharacters(in: .whitespacesAndNewlines)
         return report.isEmpty ? .empty : .confirmation(report)
-    }
-
-    public static func repair(requiresReclaim: Bool, changed: Bool) -> WorktreeRepairPresentation {
-        if requiresReclaim {
-            return .reclaim
-        }
-        return changed ? .renewed : .perform
-    }
-
-    /// An already-approved proven plan needs no further sheet. New consent always does.
-    public static func canDeliverRepair(_ presentation: WorktreeRepairPresentation, hasAttachedSheet: Bool) -> Bool {
-        switch presentation {
-        case .perform: true
-        case .reclaim, .renewed: !hasAttachedSheet
-        }
     }
 
     public static func repairOffer(hasManualRepairPaths: Bool, hasBrokenLinks: Bool) -> WorktreeRepairOfferPresentation {

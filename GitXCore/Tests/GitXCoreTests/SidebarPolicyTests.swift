@@ -37,6 +37,34 @@ final class SidebarPolicyTests: XCTestCase {
         }
     }
 
+    func testBackgroundInventoryReadsRetainSettledWarningsAndAccessibilityUntilRecovery() {
+        var state = WorktreeInventoryHeaderState()
+        let explanation = "Choose a supported Git in Git Preferences."
+        let loading = state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: false, capabilityExplanation: explanation)
+        XCTAssertEqual(loading.message, "Loading worktrees…")
+        let fresh = state.presentation(rawStatus: WorktreeInventoryStatus.fresh.rawValue, hasSnapshot: true, capabilityExplanation: explanation)
+        for _ in 0 ..< 5 {
+            XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, capabilityExplanation: explanation), fresh)
+        }
+        let stale = state.presentation(rawStatus: WorktreeInventoryStatus.stale.rawValue, hasSnapshot: true, capabilityExplanation: explanation)
+        XCTAssertTrue(stale.warns)
+        XCTAssertTrue(stale.message?.contains("Refresh Worktrees") == true)
+        XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, capabilityExplanation: explanation), stale)
+        XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.fresh.rawValue, hasSnapshot: true, capabilityExplanation: explanation), fresh)
+        let unsupported = state.presentation(rawStatus: WorktreeInventoryStatus.unsupported.rawValue, hasSnapshot: true, capabilityExplanation: explanation)
+        XCTAssertTrue(unsupported.warns)
+        XCTAssertEqual(unsupported.message, explanation)
+        XCTAssertEqual(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, capabilityExplanation: explanation), unsupported)
+        XCTAssertNil(state.presentation(rawStatus: WorktreeInventoryStatus.closed.rawValue, hasSnapshot: true, capabilityExplanation: explanation).message)
+    }
+
+    func testNewHeaderStateHandlesBackgroundReadsAndUnknownCapabilityWithoutPriorRendering() {
+        var state = WorktreeInventoryHeaderState()
+        XCTAssertNil(state.presentation(rawStatus: WorktreeInventoryStatus.updating.rawValue, hasSnapshot: true, capabilityExplanation: "Git Preferences").message)
+        XCTAssertTrue(state.presentation(rawStatus: Int.max, hasSnapshot: true, capabilityExplanation: "Git Preferences").warns)
+        XCTAssertTrue(state.presentation(rawStatus: WorktreeInventoryStatus.checkingCapability.rawValue, hasSnapshot: true, capabilityExplanation: "Git Preferences").message?.contains("Checking") == true)
+    }
+
     func testDeferredPresentationRequiresTheActiveVisibleKeyOwnerWithoutAnotherSheet() {
         for mask in 0 ..< 32 {
             let active = mask & 1 != 0
@@ -49,11 +77,7 @@ final class SidebarPolicyTests: XCTestCase {
         }
     }
 
-    func testFreshnessWarningsRequireAPublishedStaleSnapshotAndConsentWordingTracksPreviousClicks() {
-        XCTAssertNil(WorktreePresentationPolicy.freshnessWarning(hasSnapshot: false, isStale: true))
-        XCTAssertNil(WorktreePresentationPolicy.freshnessWarning(hasSnapshot: true, isStale: false))
-        XCTAssertNil(WorktreePresentationPolicy.freshnessWarning(hasSnapshot: false, isStale: false))
-        XCTAssertTrue(WorktreePresentationPolicy.freshnessWarning(hasSnapshot: true, isStale: true)?.contains("Refresh Worktrees") == true)
+    func testConsentWordingTracksPreviousClicks() {
         XCTAssertEqual(WorktreePresentationPolicy.consentUpdateMessage(action: "Reclaim", previouslyConfirmed: false, updated: false), "")
         XCTAssertFalse(WorktreePresentationPolicy.consentUpdateMessage(action: "Reclaim", previouslyConfirmed: false, updated: true).contains("again"))
         XCTAssertTrue(WorktreePresentationPolicy.consentUpdateMessage(action: "Reclaim", previouslyConfirmed: true, updated: true).contains("Reclaim again"))
@@ -73,32 +97,6 @@ final class SidebarPolicyTests: XCTestCase {
         ]
         for (report, moved, expected) in cases {
             XCTAssertEqual(WorktreePresentationPolicy.prune(report: report, hasMovedWorktrees: moved), expected)
-        }
-    }
-
-    func testRepairPresentationRequiresExplicitConsentForEveryReclaimAndRenewedPlan() {
-        let cases: [(Bool, Bool, WorktreeRepairPresentation)] = [
-            (false, false, .perform),
-            (false, true, .renewed),
-            (true, false, .reclaim),
-            (true, true, .reclaim),
-        ]
-        for (reclaim, changed, expected) in cases {
-            XCTAssertEqual(WorktreePresentationPolicy.repair(requiresReclaim: reclaim, changed: changed), expected)
-        }
-    }
-
-    func testOnlyAnInitiallyApprovedProvenRepairCanProceedBehindAnotherSheet() {
-        let cases: [(WorktreeRepairPresentation, Bool, Bool)] = [
-            (.perform, false, true),
-            (.perform, true, true),
-            (.reclaim, false, true),
-            (.reclaim, true, false),
-            (.renewed, false, true),
-            (.renewed, true, false),
-        ]
-        for (presentation, occupied, expected) in cases {
-            XCTAssertEqual(WorktreePresentationPolicy.canDeliverRepair(presentation, hasAttachedSheet: occupied), expected)
         }
     }
 
