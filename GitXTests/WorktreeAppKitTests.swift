@@ -17,6 +17,58 @@ func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt 
 
 @MainActor
 final class WorktreeAppKitTests: XCTestCase {
+    func testFreshRepositoryWindowMountsHistoryWithoutSelectionNavigation() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        defer { service.cancel() }
+        await ready(service)
+        XCTAssertNil(repository.currentBranch)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        await showForegroundWindow(controller)
+        defer { controller.close() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        XCTAssertNotNil(repository.currentBranch, "Initial sidebar lookup publishes the branch synchronously")
+        XCTAssertEqual(controller.sidebarViewController?.selectedItem()?.revSpecifier?.simpleRef(), repository.currentBranch?.simpleRef())
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        try attachScreenshot(of: window, named: "Worktrees-Initial-History-Without-Selection-Click")
+    }
+
+    func testClosedSidebarRejectsDirectNavigationCheckoutAndRowRemoval() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["branch", "other"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        defer { service.cancel() }
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        _ = sidebar.view
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+        let other = try XCTUnwrap(branches.sortedChildren.first { $0.revSpecifier?.simpleRef() == "refs/heads/other" })
+        outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: other)), byExtendingSelection: false)
+        let originalRows = branches.sortedChildren
+        let originalRevision = repository.currentBranch
+        let head = try fixture.git(["symbolic-ref", "HEAD"])
+        sidebar.closeView()
+        try SidebarLifecycleTestSupport.assertClosedNavigationIsInert(sidebar)
+        sidebar.doubleClicked(sidebar)
+        _ = sidebar.perform(NSSelectorFromString("removeRevSpec:"), with: other.revSpecifier)
+        _ = sidebar.perform(NSSelectorFromString("showForgeAttention:"), with: nil)
+        sidebar.toggleBranchSort(sidebar)
+        sidebar.fetchPullPushAction(nil)
+        XCTAssertTrue(sidebar.menu(forRow: outline.selectedRow).items.isEmpty)
+        XCTAssertEqual(branches.sortedChildren.count, originalRows.count)
+        XCTAssertEqual(branches.sortedChildren.map(ObjectIdentifier.init), originalRows.map(ObjectIdentifier.init))
+        XCTAssertTrue(repository.currentBranch === originalRevision)
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"]), head)
+    }
+
     func testLiveSidebarDirectRemovalUpdatesOnlyItsPresentation() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

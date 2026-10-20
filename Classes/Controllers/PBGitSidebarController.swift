@@ -17,6 +17,18 @@ private struct WorktreeHistorySelectionOrigin {
     }
 }
 
+/// Matching a revision value preserves a checkout row; only the captured revision
+/// object grants passive History authority across reference refreshes.
+private struct WorktreeSidebarSelectionPolicy {
+    let preservesCheckout: Bool
+    let preservesViewedRevision: Bool
+
+    init(selected: PBSourceViewGitWorktreeItem?, viewedRevision: PBGitRevSpecifier?, origin: WorktreeHistorySelectionOrigin?) {
+        preservesViewedRevision = origin?.matches(identity: selected?.identity, revision: viewedRevision) == true
+        preservesCheckout = selected != nil && (selected?.revSpecifier?.isEqual(viewedRevision) == true || preservesViewedRevision)
+    }
+}
+
 private enum RepositoryForgeSidebarDestination: Equatable {
     case surface(ForgeCollaborationSurface)
     case chooseBinding
@@ -231,11 +243,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
                     let selected = sidebar.selectedItem() as? PBSourceViewGitWorktreeItem
                     let revision = sidebar.repository?.currentBranch
                     sidebar.sourceView?.reloadData()
-                    let preservesCheckout = selected.map {
-                        $0.revSpecifier?.isEqual(revision) == true
-                            || sidebar.worktreeHistoryOrigin?.matches(identity: $0.identity, revision: revision) == true
-                    } ?? false
-                    if !preservesCheckout || !sidebar.restoreWorktreeSelection(selected?.identity) {
+                    let policy = WorktreeSidebarSelectionPolicy(selected: selected, viewedRevision: revision, origin: sidebar.worktreeHistoryOrigin)
+                    if !policy.preservesCheckout || !sidebar.restoreWorktreeSelection(selected?.identity) {
                         sidebar.selectCurrentBranch()
                     }
                 }
@@ -367,13 +376,12 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
 
         dispatchPrecondition(condition: .onQueue(.main))
-        if let selectedWorktree = selectedItem() as? PBSourceViewGitWorktreeItem,
-           selectedWorktree.revSpecifier?.isEqual(revision) == true
-           || worktreeHistoryOrigin?.matches(identity: selectedWorktree.identity, revision: revision) == true
-        {
+        let selectedWorktree = selectedItem() as? PBSourceViewGitWorktreeItem
+        let policy = WorktreeSidebarSelectionPolicy(selected: selectedWorktree, viewedRevision: revision, origin: worktreeHistoryOrigin)
+        if policy.preservesCheckout {
             // Different detached checkouts can share a revision. Keep the
             // clicked checkout rather than selecting the first matching row.
-            Self.logger.info("Preserved selected worktree at \(selectedWorktree.worktree.path, privacy: .public)")
+            Self.logger.debug("Preserved selected checkout: count=1 category=revision")
             return
         }
         worktreeHistoryOrigin = nil
@@ -390,6 +398,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     /// Explicit History adopts the selected checkout's latest published
     /// revision; passive restoration retains the revision already being viewed.
     func browseSelectedWorktreeHistory() -> Bool {
+        guard !hasClosed else { return false }
         beginSelectionControlsRefresh()
         defer { finishSelectionControlsRefresh() }
         guard let repository, let selected = selectedItem() as? PBSourceViewGitWorktreeItem else { return false }
@@ -428,6 +437,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @objc(addRevSpec:)
     dynamic func add(revision: PBGitRevSpecifier) -> PBSourceViewItem? { // swiftlint:disable:this cyclomatic_complexity
+        guard !hasClosed else { return nil }
         if let ref = revision.simpleRef(),
            let item = worktreesGroup?.sortedChildren.compactMap({ $0 as? PBSourceViewGitWorktreeItem }).first(where: { $0.worktree.value.branchIdentity == Data(ref.utf8) })
         {
@@ -489,7 +499,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
         var viewedRevision = repository.currentBranch
         let newHead = repository.headRef()
-        let preservesWorktreeHistory = worktreeHistoryOrigin?.matches(identity: selectedWorktree, revision: viewedRevision) == true
+        let policy = WorktreeSidebarSelectionPolicy(selected: selectedItem() as? PBSourceViewGitWorktreeItem, viewedRevision: viewedRevision, origin: worktreeHistoryOrigin)
+        let preservesWorktreeHistory = policy.preservesViewedRevision
         let followHead = !preservesWorktreeHistory && HistoryRefreshSelectionPolicy.shouldFollowCheckedOutBranch(
             stageSelected: false,
             viewedRef: viewedRevision?.simpleRef(),
@@ -550,6 +561,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     @objc(removeRevSpec:)
     // swiftlint:disable:next unused_declaration -- Objective-C compatibility selector exercised by app-hosted tests.
     dynamic func remove(revision: PBGitRevSpecifier) {
+        guard !hasClosed else { return }
         guard let item = item(for: revision) else { return }
         item.parent?.removeChild(item)
         sourceView?.reloadData()
@@ -557,16 +569,19 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @objc(openSubmoduleFromMenuItem:)
     dynamic func openSubmodule(from menuItem: NSMenuItem) {
+        guard !hasClosed else { return }
         guard let url = menuItem.representedObject as? URL else { return }
         openSubmodule(at: url)
     }
 
     @objc(openSubmoduleAtURL:)
     dynamic func openSubmodule(at url: URL) {
+        guard !hasClosed else { return }
         RepositoryOpenCoordinator.shared.open(
             urls: [url],
             sourceWindow: windowController?.window
-        ) { _, errors in
+        ) { [weak self] _, errors in
+            guard let self, !self.hasClosed else { return }
             for error in errors {
                 self.windowController?.showErrorSheet(error)
             }
@@ -574,10 +589,12 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     private func expandItemAndParents(_ item: PBSourceViewItem) {
+        guard !hasClosed else { return }
         sourceView?.pbExpandItem(item, expandParents: true)
     }
 
     private func select(_ item: PBSourceViewItem) {
+        guard !hasClosed else { return }
         beginSelectionControlsRefresh()
         defer { finishSelectionControlsRefresh() }
         guard let sourceView else { return }
@@ -589,6 +606,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @discardableResult
     private func restoreWorktreeSelection(_ identity: Data?) -> Bool {
+        guard !hasClosed else { return false }
         guard let identity,
               let item = worktreesGroup?.sortedChildren.compactMap({ $0 as? PBSourceViewGitWorktreeItem }).first(where: { $0.identity == identity }) else { return false }
         let previousRestoring = restoringSelection
@@ -608,6 +626,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @discardableResult
     private func restoreForgeSelection(_ surface: ForgeCollaborationSurface?) -> Bool {
+        guard !hasClosed else { return false }
         guard let surface, let item = forgeSurfaceItems[surface] else { return false }
         expandItemAndParents(item)
         select(item)
@@ -681,6 +700,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     private func showForgeSurface(_ surface: ForgeCollaborationSurface) {
+        guard !hasClosed else { return }
         guard let collaborationController else { return }
         collaborationController.show(surface)
         windowController?.changeContentController(collaborationController)
@@ -693,6 +713,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     @discardableResult
     @inline(never)
     func openForgeDestination(_ destination: ForgeDestination) -> Bool {
+        guard !hasClosed else { return false }
         #if DEBUG
             let opened: Bool
             if let productProofForgeDestinationOpening {
@@ -890,6 +911,7 @@ public extension PBGitSidebarController {
     }
 
     @objc internal dynamic func doubleClicked(_ sender: Any?) {
+        guard !hasClosed else { return }
         guard let item = selectedItem() else { return }
         if let worktree = item as? PBSourceViewGitWorktreeItem {
             windowController?.open(worktree: worktree.worktree)
@@ -1052,6 +1074,7 @@ public extension PBGitSidebarController {
     }
 
     @objc internal dynamic func toggleBranchSort(_ sender: Any?) {
+        guard !hasClosed else { return }
         branchPresentation?.toggleSorting()
         Self.logger.info("Toggled branch sidebar sort mode")
         NotificationCenter.default.post(name: .branchSidebarSettingsDidChange, object: nil)
@@ -1075,6 +1098,7 @@ public extension PBGitSidebarController {
 
     @objc(expandCollapseItem:)
     internal dynamic func expandCollapseItem(_ notification: Notification) {
+        guard !hasClosed else { return }
         guard let child = notification.userInfo?["NSObject"] as? PBSourceViewItem else { return }
         child.isExpanded = notification.name == NSOutlineView.itemWillExpandNotification
     }
@@ -1142,6 +1166,7 @@ extension PBGitSidebarController {
     }
 
     @objc dynamic func updateActionMenu() {
+        guard !hasClosed else { return }
         let item = selectedItem()
         actionButton?.isEnabled = item?.ref() != nil || item is PBSourceViewGitSubmoduleItem || item is PBSourceViewGitWorktreeItem || (item != nil && item === worktreesGroup)
     }
@@ -1194,6 +1219,7 @@ extension PBGitSidebarController {
 
     @objc(menuForRow:)
     public dynamic func menu(forRow row: Int) -> NSMenu {
+        guard !hasClosed else { return NSMenu() }
         let menu = NSMenu()
         menu.autoenablesItems = false
         guard let viewItem = sourceView?.item(atRow: row) as? PBSourceViewItem else { return menu }
@@ -1206,6 +1232,7 @@ extension PBGitSidebarController {
     }
 
     public func menuNeedsUpdate(_ menu: NSMenu) {
+        guard !hasClosed else { return }
         menu.removeAllItems()
         if menu === actionButton?.menu {
             menu.addItem(actionIconItem())
@@ -1221,6 +1248,7 @@ extension PBGitSidebarController {
 
 extension PBGitSidebarController {
     @objc dynamic func updateRemoteControls() {
+        guard !hasClosed else { return }
         var hasRemote = false
         if let ref = selectedItem()?.ref() {
             let tracking: PBGitRef?
@@ -1237,6 +1265,7 @@ extension PBGitSidebarController {
     }
 
     @IBAction open dynamic func fetchPullPushAction(_ sender: Any?) {
+        guard !hasClosed else { return }
         let selectedSegment = (sender as? NSSegmentedControl)?.selectedSegment ?? RemoteSegment.add.rawValue
         if selectedSegment == RemoteSegment.add.rawValue {
             tryToPerform(NSSelectorFromString("addRemote:"), with: self)
