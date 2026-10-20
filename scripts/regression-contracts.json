@@ -1442,7 +1442,7 @@
           "identifier": "GitXTests/HistoryControllerTests/testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "Hold a real pre-commit hook outside the checkout while remotes change; retry the captured choice, observe newer index publication, reconciliation and writer state, then assert exact preference/push count, an otherwise clean checkout and only the intended committed path. Control files never enter the index."
+          "oracle": "Hold a real pre-commit hook outside the checkout while remotes change; retry the captured choice, observe newer index publication, reconciliation and writer state, then assert exact preference/push count, an otherwise clean checkout and only the intended committed path. Control files never enter the index. The preexisting hook path, including embedded newline and trailing space, round-trips literally after both choices."
         }
       ]
     },

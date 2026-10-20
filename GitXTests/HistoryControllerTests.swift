@@ -2580,8 +2580,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 defaults.removeObject(forKey: "PBRepositoryUISettings")
             }
         }
+        let retainedHooksPath = fixture.path + ".retained hooks\nliteral "
+        try fixture.git(["config", "core.hooksPath", retainedHooksPath])
         for choice in [true, false] {
             try await verifyPushChoiceDuringFailedSubmission(choice)
+            XCTAssertEqual(try fixture.git(["config", "--null", "--get", "core.hooksPath"]), retainedHooksPath + "\0")
         }
     }
 
@@ -2599,7 +2602,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         // checkout so the following choice cannot stage or render them.
         let hookDirectory = URL(fileURLWithPath: fixture.path).appendingPathExtension("recovery-hooks-\(choice)")
         try FileManager.default.createDirectory(at: hookDirectory, withIntermediateDirectories: true)
-        let originalHooksPath = try? fixture.git(["config", "--get", "core.hooksPath"])
+        // Remove only Git's delimiter; whitespace belongs to the path.
+        let originalHooksPath = (try? fixture.git(["config", "--null", "--get", "core.hooksPath"]))
+            .map { String($0.dropLast()) }
         defer {
             if let originalHooksPath {
                 _ = try? fixture.git(["config", "core.hooksPath", originalHooksPath])
