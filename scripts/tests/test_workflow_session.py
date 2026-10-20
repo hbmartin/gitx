@@ -621,26 +621,44 @@ class WorkflowSessionTests(unittest.TestCase):
             session.stop_detached(owned)
             kill.assert_not_called()
 
-    def test_native_progress_requires_a_fresh_regular_file_and_complete_marker(self):
+    def test_generic_console_startup_recognizes_xctest_spellings_and_requires_complete_marker(self):
+        for marker in (b"Test Suite selected started", b"Test Case '-[Suite test]' started", b"Test case 'test' started"):
+            with self.subTest(marker=marker):
+                self.assertTrue(session.test_output_started(marker))
+        self.assertFalse(session.test_output_started(b"Test Sui"))
+        self.assertFalse(session.test_output_started(b"application launched without tests"))
+
+    @staticmethod
+    def startup_record(invocation='invocation-1', verification_session='session-1', **changes):
+        return {'schemaVersion': 1, 'event': 'bundle-start', 'invocationID': invocation,
+                'verificationSession': verification_session, 'bundleID': 'net.phere.GitXTests',
+                'pid': 42} | changes
+
+    def test_native_progress_requires_matching_complete_owned_xctest_records(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            native = root / 'Native'
-            native.mkdir()
-            (native / 'GitX-1.stderr.log').write_bytes(b'Test Suite old probe started')
-            foreign = root / 'foreign'
-            foreign.write_bytes(b'Test Suite foreign source started')
-            progress = session.NativeTestProgress(native)
+            progress = session.NativeTestProgress(root, 'invocation-1', 'session-1', ['net.phere.GitXTests'])
             try:
-                (native / 'unrelated.log').write_bytes(b'Test Suite wrong filename started')
-                (native / 'GitX-2.stderr.log').symlink_to(foreign)
-                os.mkfifo(native / 'GitX-3.stderr.log')
-                self.assertFalse(progress.observed())
-                current = native / 'GitX-4.stderr.log'
-                current.write_bytes(b'Test Sui')
+                foreign = root / 'foreign'
+                foreign.write_text(json.dumps(self.startup_record()))
+                (root / 'startup-42-a.json').symlink_to(foreign)
+                os.mkfifo(root / 'startup-42-b.json')
+                (root / 'GitX-42-c.stderr.log').write_text("Test Suite selected started\n")
+                for index, changes in enumerate(({'invocationID': 'old'}, {'verificationSession': 'foreign'},
+                                                 {'bundleID': 'net.phere.GitXUITests'}, {'event': 'capture'},
+                                                 {'schemaVersion': True}, {'pid': '42'})):
+                    (root / f'startup-42-{index}.json').write_text(json.dumps(self.startup_record(**changes)))
+                (root / 'capture-42-c.json').write_text(json.dumps(self.startup_record(event='capture', state='captured')))
+                self.assertFalse(progress.observed(), 'A valid capture record is not a bundle-start event')
+                current = root / 'startup-42-c.json'
+                data = json.dumps(self.startup_record()).encode()
+                current.write_bytes(data[:20])
                 self.assertFalse(progress.observed())
                 with current.open('ab') as stream:
-                    stream.write(b'te current tests started')
+                    stream.write(data[20:])
                 self.assertTrue(progress.observed())
+                with mock.patch.object(session.os, 'getuid', return_value=os.getuid() + 1):
+                    self.assertFalse(progress.observed(), 'Foreign-owned records never establish startup')
             finally:
                 progress.close()
 
@@ -648,37 +666,34 @@ class WorkflowSessionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory).resolve()
             _, output, diagnostics = self.capture_fixture(root)
-            native = output.parent / 'Native'
-            native.mkdir()
+            native = root / 'cache/Native'
             manifest = diagnostics / 'diagnostic-owner.json'
             reader, writer = os.pipe()
-            clock = [0.0]
-            emitted = []
+            clock, emitted = [0.0], []
             real_selector = session.selectors.DefaultSelector
             event_read = session.selectors.EVENT_READ
+            test = self
 
             class ControlledSelector:
                 def __init__(self):
                     self.base = real_selector()
                     self.did_emit = False
-
-                def register(self, *arguments):
-                    return self.base.register(*arguments)
-
-                def unregister(self, *arguments):
-                    return self.base.unregister(*arguments)
-
+                def register(self, *args):
+                    return self.base.register(*args)
+                def unregister(self, *args):
+                    return self.base.unregister(*args)
                 def get_map(self):
                     return self.base.get_map()
-
                 def close(self):
                     self.base.close()
-
                 def select(self, timeout):
                     if not self.did_emit:
                         self.did_emit = True
+                        state = json.loads(manifest.read_text())
+                        native_state = state['nativeDiagnostics']
                         clock[0] = .9
-                        (native / 'GitX-999.stderr.log').write_bytes(b'Test Suite selected tests started\n')
+                        record = test.startup_record(native_state['invocationID'], state['runId'])
+                        (pathlib.Path(native_state['progressDirectory']) / 'startup-42-a.json').write_text(json.dumps(record))
                         emitted.append(clock[0])
                         clock[0] = 1.1
                         return []
@@ -686,30 +701,26 @@ class WorkflowSessionTests(unittest.TestCase):
 
             def release_after_acknowledgment():
                 deadline = time.monotonic() + 4
-                wake = threading.Event()
                 while time.monotonic() < deadline:
                     if manifest.exists():
                         state = json.loads(manifest.read_text())
-                        if state.get('hostStartup', {}).get('source') == 'native-stderr':
+                        if state.get('hostStartup', {}).get('source') == 'xctest-observer':
                             os.write(writer, b'1')
                             return
                         if state.get('status') == 'failed':
                             return
-                    wake.wait(.01)
+                    threading.Event().wait(.01)
 
             observer = threading.Thread(target=release_after_acknowledgment)
             observer.start()
             child = f'import os,select,sys; ready=select.select([{reader}],[],[],5)[0]; sys.exit(71) if not ready else os.read({reader},1)'
-            environment = dict(os.environ, TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY=str(native))
             controlled_time = SimpleNamespace(monotonic=lambda: clock[0], sleep=time.sleep, time=time.time)
-            controlled_selectors = SimpleNamespace(DefaultSelector=ControlledSelector, EVENT_READ=event_read)
             try:
-                with mock.patch.object(session, 'ROOT', root), \
-                        mock.patch.object(session, 'time', controlled_time), \
-                        mock.patch.object(session, 'selectors', controlled_selectors):
+                with mock.patch.object(session, 'ROOT', root), mock.patch.object(session, 'time', controlled_time), \
+                        mock.patch.object(session, 'selectors', SimpleNamespace(DefaultSelector=ControlledSelector, EVENT_READ=event_read)):
                     status = session.supervise([sys.executable, '-c', child], startup_timeout=1, timeout=10,
-                                               directory=diagnostics, output_log=output, env=environment,
-                                               pass_fds=(reader,))
+                                               directory=diagnostics, native_test_root=native,
+                                               native_artifact_directory=output.parent / 'Native', pass_fds=(reader,))
             finally:
                 observer.join(timeout=6)
                 os.close(reader)
@@ -717,57 +728,70 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertFalse(observer.is_alive())
             self.assertEqual(emitted, [.9])
             self.assertEqual(clock[0], 1.1)
-            self.assertEqual(status, 0, 'A startup marker emitted before the deadline must survive selector scheduling')
-            self.assertEqual(json.loads(manifest.read_text())['hostStartup']['source'], 'native-stderr')
+            self.assertEqual(status, 0)
+            state = json.loads(manifest.read_text())
+            self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
+            self.assertNotIn('outputCapture', state, 'Structured startup must work without a console capture')
 
     def native_startup_probe(self, mode):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             entry, output, diagnostics = self.capture_fixture(root)
-            native = output.parent / 'Native'
-            native.mkdir()
-            selected = root / 'ForeignNative' if mode == 'foreign' else native
-            selected.mkdir(exist_ok=True)
-            if mode == 'prior':
-                (native / 'GitX-123.stderr.log').write_bytes(b'Test Suite previous host started\n')
-            sentinel = root / 'sentinel'
-            sentinel.write_bytes(b'Test Suite foreign source started\n')
             fifo = root / 'release'
             os.mkfifo(fifo)
             gate = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
             command = r'''
-import os, pathlib, sys
-native, mode, fifo, sentinel = map(str, sys.argv[1:])
-path = pathlib.Path(native) / ('GitX-123.stderr.log' if mode == 'prior' else f'GitX-{os.getpid()}.stderr.log')
+import json, os, pathlib, sys
+mode, fifo = sys.argv[1:]
+progress = pathlib.Path(os.environ['GITX_TEST_PROGRESS_DIRECTORY'])
+record = {'schemaVersion': 1, 'event': 'bundle-start', 'pid': os.getpid(),
+          'bundleID': 'net.phere.GitXTests', 'invocationID': os.environ['GITX_TEST_INVOCATION_ID'],
+          'verificationSession': os.environ['GITX_VERIFICATION_SESSION']}
+path = progress / f'startup-{os.getpid()}-a.json'
+if mode == 'prior': record['invocationID'] = 'old-invocation'
+if mode == 'foreign': record['verificationSession'] = 'foreign-session'
+if mode == 'wrong-bundle': record['bundleID'] = 'net.phere.GitXUITests'
+if mode == 'capture':
+    record['event'] = 'capture'
+    record['state'] = 'captured'
+    path = progress / f'capture-{os.getpid()}-a.json'
 if mode == 'symlink':
-    path.symlink_to(sentinel)
+    source = progress / 'foreign'
+    source.write_text(json.dumps(record))
+    path.symlink_to(source)
+elif mode == 'quiet':
+    native = pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY'])
+    (native / f'GitX-{os.getpid()}-a.stderr.log').write_bytes(b'Test Suite fake started\n')
+    print('Test Suite fake console started', flush=True)
 else:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    os.write(fd, b'Test Sui' if mode == 'split' else b'app launched without XCTest\n' if mode == 'quiet' else b'Test Suite selected tests started\n')
+    encoded = json.dumps(record)
+    path.write_text(encoded[:20] if mode == 'split' else encoded)
 reader = os.open(fifo, os.O_RDONLY)
 if mode == 'split':
     os.read(reader, 1)
-    os.write(fd, b'te selected tests started\n')
+    with path.open('a') as stream: stream.write(encoded[20:])
 os.read(reader, 1)
 print('completed', flush=True)
 '''
-            environment = dict(os.environ, TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY=str(selected))
             process = subprocess.Popen([sys.executable, str(entry), 'run', '--timeout', '10',
                                         '--startup-timeout', '2', '--diagnostics', str(diagnostics),
-                                        '--output-log', str(output), '--', sys.executable, '-c', command,
-                                        str(selected), mode, str(fifo), str(sentinel)],
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+                                        '--native-test-root', str(root / 'cache/Native'),
+                                        '--native-artifact-directory', str(output.parent / 'Native'),
+                                        '--native-test-bundle', 'net.phere.GitXTests', '--capture-native-stderr',
+                                        '--', sys.executable, '-c', command, mode, str(fifo)],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             manifest = diagnostics / 'diagnostic-owner.json'
             split_released = released = False
             deadline = time.monotonic() + 15
             try:
                 while process.poll() is None and time.monotonic() < deadline:
-                    if mode == 'split' and not split_released and any(
-                            p.read_bytes() == b'Test Sui' for p in native.glob('*.log')):
-                        os.write(gate, b'1')
-                        split_released = True
                     if manifest.exists():
                         state = json.loads(manifest.read_text())
+                        if mode == 'split' and not split_released and state.get('nativeDiagnostics'):
+                            progress = pathlib.Path(state['nativeDiagnostics']['progressDirectory'])
+                            if list(progress.glob('startup-*.json')):
+                                os.write(gate, b'1')
+                                split_released = True
                         if state.get('hostStartup') and not released:
                             os.write(gate, b'2')
                             released = True
@@ -787,18 +811,158 @@ print('completed', flush=True)
             with self.subTest(mode=mode):
                 status, state, blocker, stdout, stderr = self.native_startup_probe(mode)
                 self.assertEqual(status, 0, stderr)
-                self.assertEqual(state['hostStartup']['source'], 'native-stderr')
+                self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
                 self.assertIsNone(blocker)
                 self.assertIn(b'completed', stdout)
 
     def test_prior_native_host_and_foreign_logs_cannot_hide_missing_startup(self):
-        for mode in ('prior', 'foreign', 'quiet', 'symlink'):
+        for mode in ('prior', 'foreign', 'wrong-bundle', 'capture', 'quiet', 'symlink'):
             with self.subTest(mode=mode):
                 status, state, blocker, stdout, stderr = self.native_startup_probe(mode)
                 self.assertEqual(status, 124, stderr)
                 self.assertNotIn('hostStartup', state)
                 self.assertEqual(blocker['category'], 'unknown-host-startup-timeout')
                 self.assertNotIn(b'completed', stdout)
+
+    def test_optional_native_capture_failures_and_collection_do_not_replace_child_status(self):
+        for exit_code in (0, 9):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, diagnostics = self.capture_fixture(root)
+                command = r'''
+import json, os, pathlib, sys
+record = {'schemaVersion': 1, 'event': 'capture', 'pid': os.getpid(), 'state': 'unavailable', 'category': 'open',
+          'invocationID': os.environ['GITX_TEST_INVOCATION_ID'], 'verificationSession': os.environ['GITX_VERIFICATION_SESSION']}
+progress = pathlib.Path(os.environ['GITX_TEST_PROGRESS_DIRECTORY'])
+(progress / f'capture-{os.getpid()}-a.json').write_text(json.dumps(record))
+print('original stderr retained', file=sys.stderr)
+sys.exit(int(sys.argv[1]))
+'''
+                with mock.patch.object(session, 'ROOT', root):
+                    status = session.supervise([sys.executable, '-c', command, str(exit_code)], directory=diagnostics,
+                                               output_log=output, native_test_root=root / 'cache/Native',
+                                               native_artifact_directory=output.parent / 'Native', capture_native_stderr=True)
+                self.assertEqual(status, exit_code)
+                state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+                self.assertIn('capture-unavailable', state['nativeDiagnostics']['warnings'])
+                self.assertIn('original stderr retained', output.read_text())
+
+    def test_native_raw_binary_files_are_archived_even_if_console_or_collection_is_incomplete(self):
+        for degraded in (False, True):
+            with self.subTest(degraded=degraded), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    raw = b'raw\x00\xff\nAddressSanitizer: fixture\ncrash-output: fixture\n'
+                    source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                    source.write_bytes(raw)
+                    native.poll()
+                    if degraded:
+                        native.mirror.error = 'fixture-console-error'
+                    result = native.close()
+                self.assertEqual((pathlib.Path(result['artifactDirectory']) / source.name).read_bytes(), raw)
+                self.assertTrue(result['collectionComplete'])
+                if degraded:
+                    self.assertIn('console-incomplete', result['warnings'])
+                    self.assertFalse(result['consoleComplete'])
+
+    def test_unavailable_native_cache_keeps_independent_startup_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            blocked = root / 'not-a-directory'
+            blocked.write_text('keep-existing')
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(blocked, output.parent / 'Native', 'session-1', ['net.phere.GitXTests'], True)
+                self.addCleanup(shutil.rmtree, native.root)
+                environment = {}
+                native.configure(environment)
+                self.assertEqual(environment['GITX_TEST_STDERR_DIRECTORY'], '')
+                record = self.startup_record(native.invocation)
+                (native.progress_directory / 'startup-42-a.json').write_text(json.dumps(record))
+                self.assertTrue(native.poll())
+                result = native.close()
+            self.assertIn('cache-directory', result['warnings'])
+            self.assertEqual(blocked.read_text(), 'keep-existing')
+
+    def test_partial_native_collection_warns_without_failing_the_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, diagnostics = self.capture_fixture(root)
+            child = "import os,pathlib; p=pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY']); (p/f'GitX-{os.getpid()}-a.stderr.log').write_bytes(b'keep-native-evidence')"
+            with mock.patch.object(session, 'ROOT', root), mock.patch.object(session.shutil, 'copyfileobj', side_effect=OSError('fixture disk failure')):
+                status = session.supervise([sys.executable, '-c', child], directory=diagnostics,
+                                           native_test_root=root / 'cache', native_artifact_directory=output.parent / 'Native',
+                                           capture_native_stderr=True)
+            self.assertEqual(status, 0)
+            state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+            native = state['nativeDiagnostics']
+            self.assertEqual(state['status'], 'passed')
+            self.assertFalse(native['collectionComplete'])
+            self.assertIn('collection-incomplete', native['warnings'])
+            self.assertEqual(next((pathlib.Path(native['sourceDirectory']) / 'Stderr').glob('*.log')).read_bytes(), b'keep-native-evidence')
+
+    def test_native_console_backpressure_cannot_hold_child_completion_or_raw_archival(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            entry, output, diagnostics = self.capture_fixture(root)
+            raw = b'native-diagnostic\x00\xff' * 32768
+            child = "import os,pathlib; p=pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY']); (p/f'GitX-{os.getpid()}-a.stderr.log').write_bytes(b'native-diagnostic\\x00\\xff'*32768)"
+            process = subprocess.Popen([sys.executable, str(entry), 'run', '--diagnostics', str(diagnostics),
+                                        '--native-test-root', str(root / 'cache'), '--native-artifact-directory', str(output.parent / 'Native'),
+                                        '--capture-native-stderr', '--', sys.executable, '-c', child],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                self.assertEqual(process.wait(timeout=5), 0)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=5)
+            native = json.loads((diagnostics / 'diagnostic-owner.json').read_text())['nativeDiagnostics']
+            self.assertFalse(native['consoleComplete'])
+            self.assertTrue(native['collectionComplete'])
+            self.assertEqual(next(pathlib.Path(native['artifactDirectory']).glob('*.stderr.log')).read_bytes(), raw)
+
+    def test_native_interruption_retains_final_bytes_and_original_interruption_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            entry, output, diagnostics = self.capture_fixture(root)
+            ready = root / 'ready'
+            child = r'''
+import os, pathlib, signal, sys
+native = pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY'])
+fd = os.open(native / f'GitX-{os.getpid()}-a.stderr.log', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.write(fd, b'before-cancel\n')
+def finish(*_):
+    os.write(fd, b'final-before-exit\n')
+    os.close(fd)
+    sys.exit(0)
+signal.signal(signal.SIGTERM, finish)
+pathlib.Path(sys.argv[1]).write_text('ready')
+signal.pause()
+'''
+            process = subprocess.Popen([sys.executable, str(entry), 'run', '--diagnostics', str(diagnostics),
+                                        '--native-test-root', str(root / 'cache'), '--native-artifact-directory', str(output.parent / 'Native'),
+                                        '--capture-native-stderr', '--', sys.executable, '-c', child, str(ready)],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                    threading.Event().wait(.01)
+                self.assertTrue(ready.exists())
+                process.terminate()
+                process.communicate(timeout=15)
+                self.assertEqual(process.returncode, 130)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=5)
+            state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+            self.assertEqual(state['category'], 'interrupted')
+            native = state['nativeDiagnostics']
+            self.assertEqual(next(pathlib.Path(native['artifactDirectory']).glob('*.stderr.log')).read_bytes(),
+                             b'before-cancel\nfinal-before-exit\n')
 
     def test_watchdog_preserves_failure_and_bounds_startup(self):
         with tempfile.TemporaryDirectory() as directory:

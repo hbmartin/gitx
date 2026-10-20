@@ -122,11 +122,12 @@ class ScriptEntrypointTests(unittest.TestCase):
         mock.write_text(mock.read_text() + r'''
 if [[ " $* " == *" test-without-building "* && " $* " == *" -testPlan GitX "* ]]; then
 python3 <<'PYTHON'
-import os, pathlib
-native = pathlib.Path(os.environ['TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY'])
-fd = os.open(native / f'GitX-{os.getpid()}.stderr.log', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-os.write(fd, b"Test Suite 'Selected tests' started\n")
-os.close(fd)
+import json, os, pathlib
+progress = pathlib.Path(os.environ['TEST_RUNNER_GITX_TEST_PROGRESS_DIRECTORY'])
+record = {'schemaVersion': 1, 'event': 'bundle-start', 'pid': os.getpid(), 'bundleID': 'net.phere.GitXTests',
+          'verificationSession': os.environ['TEST_RUNNER_GITX_VERIFICATION_SESSION'],
+          'invocationID': os.environ['TEST_RUNNER_GITX_TEST_INVOCATION_ID']}
+(progress / f'startup-{os.getpid()}-a.json').write_text(json.dumps(record))
 gate = os.open(os.environ['GITX_TEST_NATIVE_STARTUP_GATE'], os.O_RDONLY)
 os.read(gate, 1)
 os.close(gate)
@@ -153,7 +154,7 @@ fi
                     while process.poll() is None and time.monotonic() < deadline:
                         if manifest.exists():
                             state = json.loads(manifest.read_text())
-                            if state.get('hostStartup', {}).get('source') == 'native-stderr' and not released:
+                            if state.get('hostStartup', {}).get('source') == 'xctest-observer' and not released:
                                 os.write(gate, b'1')
                                 released = True
                         wake.wait(.01)
@@ -166,8 +167,10 @@ fi
                 self.assertEqual(process.returncode, 0, (stdout + stderr).decode(errors='replace'))
                 self.assertTrue(released, 'The innermost watchdog must acknowledge native startup before release')
                 state = json.loads(manifest.read_text())
-                self.assertEqual(state['hostStartup']['source'], 'native-stderr')
-                self.assertTrue(state['outputCapture']['captureComplete'])
+                self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
+                self.assertNotIn('outputCapture', state, 'The inner watchdog must not duplicate the console capture')
+                self.assertTrue(list((run / 'Logs/Native').glob('*/native-diagnostics.json')))
+                self.assertFalse(list((run / 'Logs').glob('*-console.log')))
                 self.assertEqual(self.receipt(run_id)['status'], 'passed')
 
     def test_xcodebuild_captures_complete_output_before_console_forwarding(self) -> None:
@@ -492,6 +495,22 @@ fi
             "  exit \"$MOCK_XCODEBUILD_EXIT_STATUS\"\n"
             "fi\n"
         )
+        mock.write_text(mock.read_text() + r'''
+if [[ " $* " == *" test-without-building "* ]]; then
+python3 - "$@" <<'PYTHON'
+import json, os, pathlib, sys
+arguments = sys.argv[1:]
+plan = arguments[arguments.index('-testPlan') + 1] if '-testPlan' in arguments else 'GitX'
+if not (os.environ.get('GITX_TEST_NATIVE_STARTUP_GATE') and plan == 'GitX'):
+    progress = pathlib.Path(os.environ['TEST_RUNNER_GITX_TEST_PROGRESS_DIRECTORY'])
+    record = {'schemaVersion': 1, 'event': 'bundle-start', 'pid': os.getpid(),
+              'bundleID': 'net.phere.GitXUITests' if plan in ('GitXUI', 'GitXUIPreflight') else 'net.phere.GitXTests',
+              'verificationSession': os.environ['TEST_RUNNER_GITX_VERIFICATION_SESSION'],
+              'invocationID': os.environ['TEST_RUNNER_GITX_TEST_INVOCATION_ID']}
+    (progress / f'startup-{os.getpid()}-a.json').write_text(json.dumps(record))
+PYTHON
+fi
+''')
         mock.chmod(0o755)
         xcrun = self.bin / "xcrun"
         if not xcrun.exists():
@@ -1155,7 +1174,9 @@ import json, os, pathlib, sys
 arguments = sys.argv[1:]
 record = {"plan": arguments[arguments.index("-testPlan") + 1],
           "root": os.environ.get("TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT"),
-          "diagnostics": os.environ.get("TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY")}
+          "diagnostics": os.environ.get("TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY"),
+          "progress": os.environ.get("TEST_RUNNER_GITX_TEST_PROGRESS_DIRECTORY"),
+          "invocation": os.environ.get("TEST_RUNNER_GITX_TEST_INVOCATION_ID")}
 with pathlib.Path(os.environ["CAPTURED_FORGE_ENVIRONMENT"]).open("a") as output:
     output.write(json.dumps(record) + "\\n")
 PY
@@ -1163,7 +1184,7 @@ fi
 ''')
         return captured
 
-    def test_native_verification_keeps_app_stderr_in_each_runs_log_directory(self) -> None:
+    def test_native_verification_uses_cache_capture_and_archives_each_invocation(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.capture_forge_test_environment()
         for name, arguments in (("preset", ["test", "correctness", "-only-testing:GitXTests/ExampleTests"]),
@@ -1174,10 +1195,25 @@ fi
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         records = [json.loads(line) for line in captured.read_text().splitlines()]
         self.assertEqual(len(records), 4)
+        self.assertEqual(len({record["invocation"] for record in records}), 4)
         for record, name in zip(records, ("preset", "preset", "raw", "raw")):
-            expected = self.root / "artifacts/verification" / f"native-stderr-{name}" / "Logs/Native"
-            self.assertEqual(record["diagnostics"], str(expected))
-            self.assertTrue(expected.is_dir())
+            native = pathlib.Path(record["diagnostics"])
+            self.assertTrue(native.is_relative_to(self.root / "build/Fixtures"))
+            self.assertFalse(native.is_relative_to(self.root / "artifacts/verification"))
+            self.assertTrue(pathlib.Path(record["progress"]).is_dir())
+            archive = self.root / "artifacts/verification" / f"native-stderr-{name}" / "Logs/Native" / record["invocation"]
+            self.assertTrue((archive / 'native-diagnostics.json').is_file())
+            self.assertFalse(list(archive.parent.parent.glob('*-console.log')))
+
+    def test_release_native_verification_has_progress_without_requesting_app_capture(self):
+        script = self.install_script("xcodebuild.sh")
+        captured = self.capture_forge_test_environment()
+        result = subprocess.run([script, "--configuration", "Release", "--run-id", "release-native-progress",
+                                 "test", "performance"], capture_output=True, text=True, env=self.environment)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line) for line in captured.read_text().splitlines()]
+        self.assertTrue(records)
+        self.assertTrue(all(not record['diagnostics'] and record['progress'] and record['invocation'] for record in records))
 
     def test_native_verification_preserves_explicit_forwarded_forge_store(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -2316,7 +2352,10 @@ class VerificationWorkflowTests(unittest.TestCase):
         gate = jobs['unit-and-analyze']
         self.assertIn('name: unit tests and analyzer', gate)
         self.assertIn(f'needs: [{tests}, {analyzer}, worktree-contracts]', gate)
-        self.assertIn('if: ${{ always() }}', gate)
+        self.assertIn('if: ${{ !cancelled() }}', gate)
+        self.assertNotIn('if: ${{ always() }}', gate)
+        self.assertIn('timeout-minutes: 5', gate)
+        self.assertIn('needs: toolchain-smoke', jobs['worktree-contracts'])
         self.assertIn("UNIT_RESULT: ${{ needs['unit-tests'].result }}", gate)
         self.assertIn('ANALYSIS_RESULT: ${{ needs.analyzer.result }}', gate)
         self.assertIn("WORKTREE_RESULT: ${{ needs['worktree-contracts'].result }}", gate)

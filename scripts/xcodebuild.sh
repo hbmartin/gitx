@@ -542,10 +542,10 @@ configure_test_forge_storage() {
 	mkdir -p "$forge_test_root" || return $?
 	export TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT="$forge_test_root"
 	printf 'Test Forge storage: %s\n' "$forge_test_root"
-	# The Debug app captures its stderr before fixture work. XCTest activity
-	# collection must not hold up native log producers; retain all bytes in Logs.
-	mkdir -p "$logs/Native" || return $?
-	export TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY="$logs/Native"
+	# Apps write to the configured cache; the supervisor archives files into Logs.
+	native_test_root="${derived_data%/*}/Fixtures/$run_id/Native"
+	native_capture_arguments=()
+	[[ "$configuration" != Debug ]] || native_capture_arguments+=(--capture-native-stderr)
 }
 
 xcode_test() {
@@ -554,6 +554,8 @@ xcode_test() {
 	local result="$results/$plan.xcresult"
 	shift 2
 	configure_test_forge_storage || return $?
+	local native_test_bundle=net.phere.GitXTests
+	[[ "$test_preset" != ui && "$test_preset" != ui-preflight ]] || native_test_bundle=net.phere.GitXUITests
 	if [[ "$test_preset" != "ui-preflight" && "$test_preset" != "ui" ]]; then
 		local probe_arguments=() index=0
 		local arguments=("$@")
@@ -582,14 +584,16 @@ xcode_test() {
 	python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || return $?
 	if [[ "$test_preset" != "ui-preflight" && "$test_preset" != "ui" ]]; then
 		run_step host-preflight "$logs/$plan-host.log" "$results/$plan-host.xcresult" \
-			python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" -- \
+			python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" \
+				--native-test-root "$native_test_root" --native-artifact-directory "$logs/Native" --native-test-bundle net.phere.GitXTests ${native_capture_arguments[@]+"${native_capture_arguments[@]}"} -- \
 			"$xcodebuild" "${common[@]}" test-without-building -testPlan GitXHostPreflight \
 			-only-testing:GitXTests/GitXHostStartTests/testHostStarts \
 			-resultBundlePath "$results/$plan-host.xcresult" CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
 			${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
-		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" --output-log "$logs/$plan-console.log" -- \
+		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" \
+			--native-test-root "$native_test_root" --native-artifact-directory "$logs/Native" --native-test-bundle "$native_test_bundle" ${native_capture_arguments[@]+"${native_capture_arguments[@]}"} -- \
 		"$xcodebuild" "${common[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
 		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@"
 	local test_status=$?
@@ -890,6 +894,17 @@ case "$command" in
 					*) probe_arguments+=("$argument") ;;
 				esac
 			done
+			raw_configuration="$configuration"
+			for ((index=0; index < ${#raw_arguments[@]}; index++)); do
+				case "${raw_arguments[$index]}" in
+					-configuration) raw_configuration=${raw_arguments[$((index + 1))]} ;;
+					-configuration=*) raw_configuration=${raw_arguments[$index]#*=} ;;
+				esac
+			done
+			native_capture_arguments=()
+			[[ "$raw_configuration" != Debug ]] || native_capture_arguments+=(--capture-native-stderr)
+			native_test_bundle=net.phere.GitXTests
+			[[ "$raw_plan" != GitXUI && "$raw_plan" != GitXUIPreflight ]] || native_test_bundle=net.phere.GitXUITests
 			case "$raw_plan" in
 				GitX) ensure_probe_option -enableCodeCoverage YES ;;
 				GitXAddressUndefined) ensure_probe_option -enableAddressSanitizer YES; ensure_probe_option -enableUndefinedBehaviorSanitizer YES ;;
@@ -902,11 +917,13 @@ case "$command" in
 			snapshot="$results/raw-inputs.json"
 			python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || exit $?
 			run_step host-preflight "$logs/raw-host.log" "$results/raw-host.xcresult" \
-				python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" -- \
+				python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" \
+				--native-test-root "$native_test_root" --native-artifact-directory "$logs/Native" --native-test-bundle net.phere.GitXTests ${native_capture_arguments[@]+"${native_capture_arguments[@]}"} -- \
 				"$xcodebuild" test-without-building "${probe_arguments[@]}" -testPlan GitXHostPreflight \
 				-only-testing:GitXTests/GitXHostStartTests/testHostStarts -resultBundlePath "$results/raw-host.xcresult" || exit $?
 			run_step raw "$logs/raw.log" "$result_path" \
-				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw-tests" --output-log "$logs/raw-console.log" -- \
+				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw-tests" \
+				--native-test-root "$native_test_root" --native-artifact-directory "$logs/Native" --native-test-bundle "$native_test_bundle" ${native_capture_arguments[@]+"${native_capture_arguments[@]}"} -- \
 				"$xcodebuild" test-without-building "${suite_arguments[@]}"
 			raw_status=$?
 			run_step evidence "$logs/raw-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"

@@ -12,6 +12,33 @@ final class GitXInteropContractTests: XCTestCase {
         XCTAssertNotNil(class_getInstanceMethod(PBTaskDiagnosticCapture.self, NSSelectorFromString("seal")))
     }
 
+    func testManagedObserverRegistersBeforeTheBundleInEveryConfiguration() throws {
+        XCTAssertNotNil(NSClassFromString("GitXManagedTestObserver"))
+        let environment = ProcessInfo.processInfo.environment
+        guard let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"],
+              let invocation = environment["GITX_TEST_INVOCATION_ID"] else { return }
+        let files = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: directory), includingPropertiesForKeys: nil)
+        let records = try files.filter { $0.lastPathComponent.hasPrefix("startup-") }
+            .compactMap { try JSONSerialization.jsonObject(with: Data(contentsOf: $0)) as? [String: Any] }
+        XCTAssertTrue(records.contains {
+            $0["event"] as? String == "bundle-start" && $0["invocationID"] as? String == invocation
+                && $0["bundleID"] as? String == "net.phere.GitXTests"
+                && $0["verificationSession"] as? String == environment["GITX_VERIFICATION_SESSION"]
+        }, "Registration must precede XCTest bundle startup, including the focused Release contracts")
+    }
+
+    func testNativeCaptureBootstrapIsDebugOnly() {
+        let bootstrap = NSClassFromString("PBGitXTestProcessDiagnostics")
+        #if DEBUG
+            XCTAssertNotNil(bootstrap)
+            if let bootstrap {
+                XCTAssertNotNil(class_getClassMethod(bootstrap, NSSelectorFromString("installAtApplicationStartup")))
+            }
+        #else
+            XCTAssertNil(bootstrap)
+        #endif
+    }
+
     func testConfigurationDependentRuntimeSurface() {
         #if DEBUG
             XCTAssertNotNil(NSClassFromString("PBTaskDiagnosticCaptureLifetimeProbe"))

@@ -1174,6 +1174,19 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     private final class GitFixture {
         let path: String
         let remotePath: String
+        private var auxiliaryDirectories: [URL] = []
+
+        func makeAuxiliaryDirectory(suffix: String) throws -> URL {
+            let directory = URL(fileURLWithPath: path).appendingPathExtension("\(suffix)-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            auxiliaryDirectories.append(directory)
+            return directory
+        }
+
+        func removeAuxiliaryDirectory(_ directory: URL) throws {
+            try FileManager.default.removeItem(at: directory)
+            auxiliaryDirectories.removeAll { $0 == directory }
+        }
 
         init() throws {
             let root = FileManager.default.temporaryDirectory
@@ -1229,6 +1242,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
 
         deinit {
+            for directory in auxiliaryDirectories {
+                try? FileManager.default.removeItem(at: directory)
+            }
             try? FileManager.default.removeItem(atPath: path)
             try? FileManager.default.removeItem(atPath: remotePath)
         }
@@ -2588,6 +2604,26 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testFixtureOwnsAuxiliaryDirectoriesThroughNormalAndThrowingScopes() throws {
+        enum FixtureFailure: Error { case expected }
+        var owner: GitFixture? = try GitFixture()
+        let normal = try XCTUnwrap(owner).makeAuxiliaryDirectory(suffix: "normal")
+        XCTAssertFalse(normal.path.hasPrefix(try XCTUnwrap(owner).path + "/"))
+        try XCTUnwrap(owner).removeAuxiliaryDirectory(normal)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: normal.path))
+        var retained: URL?
+        do {
+            retained = try XCTUnwrap(owner).makeAuxiliaryDirectory(suffix: "throwing")
+            throw FixtureFailure.expected
+        } catch FixtureFailure.expected {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(retained).path))
+        }
+        weak var releasedOwner = owner
+        owner = nil
+        XCTAssertNil(releasedOwner)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(retained).path))
+    }
+
     private func verifyPushChoiceDuringFailedSubmission(_ choice: Bool) async throws {
         let settings = PBRepositoryUISettings(repository: repository)
         settings.pushAfterCommit = !choice
@@ -2600,8 +2636,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         // Hook controls are not user changes. Keep them outside the watched
         // checkout so the following choice cannot stage or render them.
-        let hookDirectory = URL(fileURLWithPath: fixture.path).appendingPathExtension("recovery-hooks-\(choice)")
-        try FileManager.default.createDirectory(at: hookDirectory, withIntermediateDirectories: true)
+        let hookDirectory = try fixture.makeAuxiliaryDirectory(suffix: "recovery-hooks-\(choice)")
         // Remove only Git's delimiter; whitespace belongs to the path.
         let originalHooksPath = (try? fixture.git(["config", "--null", "--get", "core.hooksPath"]))
             .map { String($0.dropLast()) }
@@ -2611,7 +2646,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             } else {
                 _ = try? fixture.git(["config", "--unset", "core.hooksPath"])
             }
-            try? FileManager.default.removeItem(at: hookDirectory)
+            try? fixture.removeAuxiliaryDirectory(hookDirectory)
         }
         let gate = hookDirectory.appendingPathComponent("release")
         let ready = hookDirectory.appendingPathComponent("ready")
@@ -2740,7 +2775,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                                          file: StaticString = #filePath, line: UInt = #line) async
     {
         let index = repository.index
-        let writer = IndexRepositoryCommandRunner(repository: repository)
+        let writer = HistoryIndexWriterObservation(repository: repository)
         let state = IndexPublicationWaitState()
         let published = expectation(description: "Index publication and reconciliation finish with no queued writer")
         let check: @MainActor @Sendable () -> Void = {
@@ -2759,13 +2794,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             index.observe(\.mutationReconciliationPending, options: []) { _, _ in changed() },
             index.observe(\.submissionActive, options: []) { _, _ in changed() },
         ]
-        let writerObservation = PBIndexMutationCoordinator(
-            repository: repository, service: PBIndexMutationService(repository: repository, runner: writer), stateHandler: { _ in changed() }
-        )
+        writer.observe { changed() }
         defer {
             state.active = false
             observations.forEach { $0.invalidate() }
-            writerObservation.close()
+            writer.close()
         }
         check()
         await fulfillment(of: [published], timeout: timeout)

@@ -8,10 +8,20 @@
 
 #import <Cocoa/Cocoa.h>
 
+#if DEBUG
+// Narrow declaration for the Debug-only Swift bootstrap; production Release has no hook.
+@interface PBGitXTestProcessDiagnostics : NSObject
++ (void)installAtApplicationStartup;
+@end
+#endif
+
 int main(int argc, const char **argv)
 {
 	int result;
 	@autoreleasepool {
+#if DEBUG
+		[PBGitXTestProcessDiagnostics installAtApplicationStartup];
+#endif
 		result = NSApplicationMain(argc, argv);
 	}
 	return result;

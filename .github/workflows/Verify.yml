@@ -210,7 +210,7 @@ jobs:
 
   unit-and-analyze:
     name: unit tests and analyzer
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs: [unit-tests, analyzer, worktree-contracts]
     runs-on: ubuntu-latest
     timeout-minutes: 5
