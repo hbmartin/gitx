@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
@@ -2303,6 +2304,35 @@ class VerificationWorkflowTests(unittest.TestCase):
                 self.assertIn('runs-on: macos-26', matching[0])
                 self.assertIn('timeout-minutes: 75', matching[0])
                 self.assertIn('xcode-version: "26.6"', matching[0])
+
+    def test_native_ci_checks_have_independent_jobs_and_a_required_gate(self):
+        jobs = self.jobs()
+        tests = next(name for name, body in jobs.items() if '"verify-correctness-' in body)
+        analyzer = next(name for name, body in jobs.items() if '"verify-analyze-' in body)
+        self.assertNotEqual(tests, analyzer, 'Independent checks must not consume the same job budget')
+        self.assertIn('needs: [toolchain-smoke, worktree-contracts]', jobs[tests])
+        self.assertIn('needs: toolchain-smoke', jobs[analyzer])
+        gate = jobs['unit-and-analyze']
+        self.assertIn('name: unit tests and analyzer', gate)
+        self.assertIn(f'needs: [{tests}, {analyzer}]', gate)
+        self.assertIn('if: ${{ always() }}', gate)
+        self.assertIn("UNIT_RESULT: ${{ needs['unit-tests'].result }}", gate)
+        self.assertIn('ANALYSIS_RESULT: ${{ needs.analyzer.result }}', gate)
+
+    def test_required_native_ci_gate_only_accepts_two_successes(self):
+        gate = self.jobs()['unit-and-analyze']
+        marker = '- name: Require both native verification jobs'
+        self.assertIn(marker, gate)
+        script = textwrap.dedent(gate.split(marker, 1)[1].split('run: |', 1)[1])
+        for tests in ['success', 'failure', 'cancelled', 'skipped', '']:
+            for analyzer in ['success', 'failure', 'cancelled', 'skipped', '']:
+                with self.subTest(tests=tests, analyzer=analyzer):
+                    result = subprocess.run(
+                        ['/bin/bash', '--noprofile', '--norc', '-e', '-c', script],
+                        env={'PATH': os.defpath, 'UNIT_RESULT': tests, 'ANALYSIS_RESULT': analyzer},
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode == 0, tests == analyzer == 'success')
 
 
 if __name__ == "__main__":
