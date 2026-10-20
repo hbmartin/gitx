@@ -11,7 +11,7 @@ import time
 import unittest
 from unittest import mock
 
-from support import ROOT, load_script
+from support import ROOT, fixture_git_environment, load_script
 import dev_workflow as workflow
 import workflow_cleanup as cleanup
 import workflow_session as session
@@ -499,6 +499,7 @@ class CleanupTests(unittest.TestCase):
         self.root = self.base / 'repo'
         self.root.mkdir()
         self.git('init', '-q')
+        (self.root / '.git/hooks').mkdir(exist_ok=True)
         self.git('config', 'user.name', 'Fixture')
         self.git('config', 'user.email', 'fixture@example.invalid')
         self.git('config', 'commit.gpgsign', 'false')
@@ -535,7 +536,10 @@ class CleanupTests(unittest.TestCase):
                 'sourcePackages': str(base / 'SourcePackages'), 'toolchain': 'fixture'}
 
     def git(self, *args):
-        return subprocess.run(['git', '-C', str(self.root), *args], check=True, capture_output=True, text=True)
+        # Fingerprint fixtures must stay quiescent after Git returns, without detached housekeeping.
+        return subprocess.run(['git', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0',
+                               '-C', str(self.root), *args], env=fixture_git_environment(),
+                              check=True, capture_output=True, text=True)
 
     def stamp(self, path, age):
         when = self.now - age * 86400
@@ -1551,6 +1555,28 @@ class CleanupTests(unittest.TestCase):
                 cleanup.fingerprint(directory)
         self.assertEqual(failure.exception.filename, 'maintenance.lock')
         self.assertEqual(unrelated.read_text(), 'preserve')
+
+    def test_fixture_git_commits_do_not_start_background_housekeeping(self):
+        self.git('config', 'maintenance.auto', 'true')
+        self.git('config', 'gc.auto', '1')
+        trace = self.base / 'fixture-git-events.jsonl'
+        run = subprocess.run
+
+        def traced(command, *args, **kwargs):
+            kwargs['env'] = dict(kwargs.get('env', os.environ)) | {'GIT_TRACE2_EVENT': str(trace)}
+            return run(command, *args, **kwargs)
+
+        with mock.patch.object(subprocess, 'run', side_effect=traced):
+            self.git('commit', '--allow-empty', '-qm', 'housekeeping fixture')
+        events = [json.loads(line) for line in trace.read_text().splitlines()]
+        self.assertTrue(any(event.get('event') == 'start' and 'commit' in event.get('argv', [])
+                            for event in events))
+        automatic = [event for event in events if event.get('event') == 'child_start'
+                     and '--auto' in event.get('argv', [])
+                     and any(name in event.get('argv', []) for name in ['maintenance', 'gc'])]
+        self.assertEqual(automatic, [], 'Fixture Git must not leave a writer racing read-only fingerprints')
+        self.assertEqual(self.git('log', '-1', '--format=%s').stdout.strip(), 'housekeeping fixture')
+        self.assertEqual(self.git('status', '--porcelain').stdout, '')
 
     def test_cli_preview_does_not_create_bytecode_or_cleanup_state(self):
         self.run_directory('old')

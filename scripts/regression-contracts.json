@@ -1836,8 +1836,8 @@
     {
       "id": "ENV-001",
       "family": "Deterministic Git fixtures",
-      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input. Presentation fixtures retain files through cancellation and main-actor worker acknowledgement, restore the original Git preference once, then remove only drained fixtures. Explicit presentation-fixture opens establish the existing host as active and its visible owner window or sheet as key before queue actions; later production resumption remains focus-preserving.",
-      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state. Preference notifications during teardown can restart services, while premature fixture deletion races late workers.",
+      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input. Presentation fixtures retain files through cancellation and main-actor worker acknowledgement, restore the original Git preference once, then remove only drained fixtures. Explicit presentation-fixture opens establish the existing host as active and its visible owner window or sheet as key before queue actions; later production resumption remains focus-preserving. Cleanup Git fixtures suppress automatic maintenance and GC under isolated configuration so detached writers cannot race read-only snapshot assertions. Fingerprinting still rejects entries removed after enumeration.",
+      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state. Preference notifications during teardown can restart services, while premature fixture deletion races late workers. Detached Git auto-maintenance can change a fixture after its commit has returned.",
       "sourcePaths": [
         "GitXTests/GitXTestGitEnvironment.swift",
         "GitXTests/GitXTestGitFixture.swift",
@@ -1846,7 +1846,9 @@
         "scripts/workflow_session.py",
         "scripts/workflow_records.py",
         "scripts/regression_guardrails.py",
-        "GitXTests/WorktreePresentationTests.swift"
+        "GitXTests/WorktreePresentationTests.swift",
+        "scripts/tests/test_workflow_cleanup.py",
+        "scripts/tests/support.py"
       ],
       "requiredChecks": [
         "correctness",
