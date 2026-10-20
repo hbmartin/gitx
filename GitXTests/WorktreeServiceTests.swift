@@ -2975,7 +2975,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             XCTAssertEqual(publications, 0)
             let completed = expectation(description: "new repair uses the newly accepted administrative identity")
             let selected = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
-            enqueue { service.prepareAndConfirmRepair(worktree: selected, movedTo: selected.path, approval: .repair(paths: [selected.path])) { error in
+            enqueue { service.prepareAndConfirmRepair(worktree: selected, movedTo: selected.path, approval: .repair(paths: [fixture.linked.path])) { error in
                 XCTAssertNil(error); completed.fulfill()
             } }
             await fulfillment(of: [completed], timeout: 10)
@@ -3118,7 +3118,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let fresh = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
             cleanup.repairRequests += 1
             cleanup.successfulCompletionRequired = true
-            enqueue { service.prepareAndConfirmRepair(worktree: fresh, movedTo: fresh.path, approval: .repair(paths: [fresh.path])) { error in
+            enqueue { service.prepareAndConfirmRepair(worktree: fresh, movedTo: fresh.path, approval: .repair(paths: [fixture.linked.path])) { error in
                 defer { repairResults.advance() }
                 cleanup.completedSuccessfully = error == nil
                 XCTAssertNil(error); freshDone.fulfill()
@@ -5287,7 +5287,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         enqueue { service.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in XCTAssertNil(error); firstDone.fulfill() } }
         await fulfillment(of: [launched], timeout: 5)
         let repairDone = expectation(description: "valid queued repair completed")
-        enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path, approval: .repair(paths: [selected.path])) { error in XCTAssertNil(error); repairDone.fulfill() } }
+        enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path, approval: .repair(paths: [fixture.linked.path])) { error in XCTAssertNil(error); repairDone.fulfill() } }
         blocked.finish(Data())
         await fulfillment(of: [firstDone, repairDone], timeout: 10)
         let registered = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
