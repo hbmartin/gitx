@@ -38,9 +38,8 @@
                 view.apply(initial)
                 let originalValue = descendants(in: view).compactMap { $0 as? NSTextField }
                     .first { $0.stringValue == "Original value" }
-                let originalRow = originalValue?.superview
                 view.apply(RepositoryFactsPresenter.present(.loading(previous: nil)))
-                let cleared = originalRow != nil && originalRow?.superview == nil
+                let cleared = originalValue != nil && originalValue?.isDescendant(of: view) == false
                     && !descendants(in: view).contains { ($0 as? NSTextField)?.stringValue == "Original value" }
                     && view.accessibilityLabel() == "Repository Facts; loading"
                 view.apply(initial)
