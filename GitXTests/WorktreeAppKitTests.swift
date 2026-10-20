@@ -1408,6 +1408,39 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertNil(content.view.window, "An explicit branch selection still navigates to History")
     }
 
+    func testClosedSidebarRejectsQueuedRepositoryRestoration() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        defer { service.cancel() }
+        // Load only the sidebar so off-main KVO does not notify unrelated
+        // legacy History observers. No repository values change off-main.
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        _ = sidebar.view
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let originalItems = sidebar.items.compactMap { $0 as? PBSourceViewItem }
+        XCTAssertFalse(originalItems.isEmpty)
+        let revision = try XCTUnwrap(repository.currentBranch)
+
+        // MainActor remains occupied until all observation callbacks have
+        // queued their main-actor deliveries, then teardown revokes them.
+        XCTAssertTrue(Self.queueRepositoryObservationsOffMain(repository))
+        sidebar.closeView()
+        outline.deselectAll(nil)
+        sidebar.reloadSidebarAfterReferencesChange()
+        sidebar.reloadSidebarPresentation()
+        let drained = expectation(description: "queued sidebar observations delivered after close")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 10)
+
+        XCTAssertEqual(outline.selectedRow, -1, "A retired current-branch callback must not restore selection")
+        let finalItems = sidebar.items.compactMap { $0 as? PBSourceViewItem }
+        XCTAssertEqual(finalItems.map(ObjectIdentifier.init), originalItems.map(ObjectIdentifier.init), "Retired reference and settings callbacks must not rebuild the sidebar")
+        XCTAssertTrue(repository.currentBranch === revision, "Closing one sidebar must not change the shared browsed revision")
+    }
+
     func testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -2913,6 +2946,20 @@ final class WorktreeAppKitTests: XCTestCase {
         let drained = expectation(description: "prune callback boundary drained")
         DispatchQueue.main.async { drained.fulfill() }
         await fulfillment(of: [drained], timeout: 10)
+    }
+
+    private nonisolated static func queueRepositoryObservationsOffMain(_ repository: PBGitRepository) -> Bool {
+        // A synchronous dispatch may borrow the calling main thread. Explicit
+        // async delivery ensures KVO queues MainActor work before closeView.
+        let delivery = DispatchWorkItem {
+            dispatchPrecondition(condition: .notOnQueue(.main))
+            for key in ["currentBranch", "refs", "branches", "stashes"] {
+                repository.willChangeValue(forKey: key)
+                repository.didChangeValue(forKey: key)
+            }
+        }
+        DispatchQueue.global().async(execute: delivery)
+        return delivery.wait(timeout: .now() + 10) == .success
     }
 
     private enum PruneClosePhase: CaseIterable, Equatable {

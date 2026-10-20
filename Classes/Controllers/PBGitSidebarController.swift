@@ -220,7 +220,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     private func installRepositoryObservations(_ repository: PBGitRepository) {
         currentBranchObservation = repository.observe(\.currentBranch, options: []) { [weak self] _, _ in
             Self.performRepositoryObservationOnMain { [weak self] in
-                guard let self else { return }
+                guard let self, !self.hasClosed else { return }
                 self.beginSelectionControlsRefresh()
                 defer { self.finishSelectionControlsRefresh() }
                 self.preservingMountedContent {
@@ -262,7 +262,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     private func reloadStashes() {
-        guard let stashes, let repository else { return }
+        guard !hasClosed, let stashes, let repository else { return }
         for item in stashes.sortedChildren {
             stashes.removeChild(item)
         }
@@ -463,6 +463,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc dynamic func reloadSidebarAfterReferencesChange() {
+        guard !hasClosed else { return }
         beginSelectionControlsRefresh()
         defer { finishSelectionControlsRefresh() }
         preservingMountedContent { restoreSidebarAfterReferencesChange() }
