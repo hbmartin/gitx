@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 from support import ROOT
 import workflow_session as session
@@ -642,6 +643,82 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertTrue(progress.observed())
             finally:
                 progress.close()
+
+    def test_native_startup_written_before_deadline_survives_a_late_selector_wakeup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            _, output, diagnostics = self.capture_fixture(root)
+            native = output.parent / 'Native'
+            native.mkdir()
+            manifest = diagnostics / 'diagnostic-owner.json'
+            reader, writer = os.pipe()
+            clock = [0.0]
+            emitted = []
+            real_selector = session.selectors.DefaultSelector
+            event_read = session.selectors.EVENT_READ
+
+            class ControlledSelector:
+                def __init__(self):
+                    self.base = real_selector()
+                    self.did_emit = False
+
+                def register(self, *arguments):
+                    return self.base.register(*arguments)
+
+                def unregister(self, *arguments):
+                    return self.base.unregister(*arguments)
+
+                def get_map(self):
+                    return self.base.get_map()
+
+                def close(self):
+                    self.base.close()
+
+                def select(self, timeout):
+                    if not self.did_emit:
+                        self.did_emit = True
+                        clock[0] = .9
+                        (native / 'GitX-999.stderr.log').write_bytes(b'Test Suite selected tests started\n')
+                        emitted.append(clock[0])
+                        clock[0] = 1.1
+                        return []
+                    return self.base.select(timeout)
+
+            def release_after_acknowledgment():
+                deadline = time.monotonic() + 4
+                wake = threading.Event()
+                while time.monotonic() < deadline:
+                    if manifest.exists():
+                        state = json.loads(manifest.read_text())
+                        if state.get('hostStartup', {}).get('source') == 'native-stderr':
+                            os.write(writer, b'1')
+                            return
+                        if state.get('status') == 'failed':
+                            return
+                    wake.wait(.01)
+
+            observer = threading.Thread(target=release_after_acknowledgment)
+            observer.start()
+            child = f'import os,select,sys; ready=select.select([{reader}],[],[],5)[0]; sys.exit(71) if not ready else os.read({reader},1)'
+            environment = dict(os.environ, TEST_RUNNER_GITX_TEST_STDERR_DIRECTORY=str(native))
+            controlled_time = SimpleNamespace(monotonic=lambda: clock[0], sleep=time.sleep, time=time.time)
+            controlled_selectors = SimpleNamespace(DefaultSelector=ControlledSelector, EVENT_READ=event_read)
+            try:
+                with mock.patch.object(session, 'ROOT', root), \
+                        mock.patch.object(session, 'time', controlled_time), \
+                        mock.patch.object(session, 'selectors', controlled_selectors):
+                    status = session.supervise([sys.executable, '-c', child], startup_timeout=1, timeout=10,
+                                               directory=diagnostics, output_log=output, env=environment,
+                                               pass_fds=(reader,))
+            finally:
+                observer.join(timeout=6)
+                os.close(reader)
+                os.close(writer)
+            self.assertFalse(observer.is_alive())
+            self.assertEqual(emitted, [.9])
+            self.assertEqual(clock[0], 1.1)
+            self.assertEqual(status, 0, 'A startup marker emitted before the deadline must survive selector scheduling')
+            self.assertEqual(json.loads(manifest.read_text())['hostStartup']['source'], 'native-stderr')
 
     def native_startup_probe(self, mode):
         with tempfile.TemporaryDirectory() as directory:

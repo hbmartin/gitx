@@ -974,12 +974,12 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             if elapsed > timeout:
                 category = "command-timeout"
                 break
-            if startup_timeout and not host_started and elapsed > startup_timeout:
-                category = "unknown-host-startup-timeout"
-                break
             if not host_started and native_progress and native_progress.observed():
                 host_started = True
                 host_startup("native-stderr")
+            if startup_timeout and not host_started and elapsed > startup_timeout:
+                category = "unknown-host-startup-timeout"
+                break
             for key, _ in selector.select(.2):
                 data = os.read(key.fd, 65536)
                 if not data:
