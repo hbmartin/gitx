@@ -55,9 +55,48 @@ final class GitXTestGitFixtureTests: XCTestCase {
         }, "The loading shim must register before the bundle-start callback, in Debug and Release")
     }
 
+    func testFailureAttachmentsKeepOnlyRegularNativeFilesAndPreserveOriginalBytes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let native = directory.appendingPathComponent("GitX-42-fixture.stderr.log")
+        let bytes = Data(repeating: 255, count: 70000)
+        try bytes.write(to: native)
+        try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("alias.stderr.log"), withDestinationURL: native)
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("folder.stderr.log"), withIntermediateDirectories: true)
+        let attachments = GitXManagedTestObserver.failureAttachments(in: directory.path)
+        XCTAssertEqual(attachments.count, 1)
+        let attachment = try XCTUnwrap(attachments.first)
+        XCTAssertEqual(attachment.name, "Native stderr excerpt: GitX-42-fixture.stderr.log")
+        XCTAssertEqual(attachment.lifetime, .keepAlways)
+        XCTAssertEqual(try Data(contentsOf: native), bytes)
+        XCTAssertTrue(GitXManagedTestObserver.failureAttachments(in: nil).isEmpty)
+        XCTAssertTrue(GitXManagedTestObserver.failureAttachments(in: "").isEmpty)
+    }
+
+    func testProgressPublicationLeavesOnlyCompleteDistinctRecordsAndPreservesEvidence() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let sentinel = directory.appendingPathComponent("startup-existing.json")
+        try Data("keep-existing".utf8).write(to: sentinel)
+        let record: [String: Any] = ["schemaVersion": 1, "event": "bundle-start", "invocationID": "fixture"]
+        let first = try GitXTestProgressRecords.write(record, prefix: "startup", directory: directory.path)
+        let second = try GitXTestProgressRecords.write(record, prefix: "startup", directory: directory.path)
+        XCTAssertNotEqual(first, second)
+        for file in [first, second] {
+            let published = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+            XCTAssertEqual(published["event"] as? String, "bundle-start")
+            XCTAssertEqual(published["invocationID"] as? String, "fixture")
+        }
+        XCTAssertEqual(try Data(contentsOf: sentinel), Data("keep-existing".utf8))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasPrefix(".pending-") })
+    }
+
     func testEmptyDiagnosticRequestsAreRemovedAndProgressSurvivesEmptyLaunchEnvironment() {
         let empty = GitXTestGitEnvironment.isolated(
-            ["GITX_TEST_STDERR_DIRECTORY": ""], nativeDiagnosticDirectory: "", progressDirectory: "", invocationID: ""
+            ["GITX_TEST_STDERR_DIRECTORY": "/previous", "GITX_TEST_PROGRESS_DIRECTORY": "/previous", "GITX_TEST_INVOCATION_ID": "old"],
+            nativeDiagnosticDirectory: "", progressDirectory: "", invocationID: ""
         )
         XCTAssertNil(empty["GITX_TEST_STDERR_DIRECTORY"])
         XCTAssertNil(empty["GITX_TEST_PROGRESS_DIRECTORY"])

@@ -1047,10 +1047,12 @@ class NativeTestDiagnostics:
         if self.warnings:
             warning = self.root / 'warnings.log'
             try:
-                warning.write_text('Native diagnostics warning: ' + ', '.join(sorted(self.warnings)) + '\n')
+                with warning.open('x') as stream:
+                    stream.write('Native diagnostics warning: ' + ', '.join(sorted(self.warnings)) + '\n')
                 self.mirror.add(warning)
                 if archive_ready:
-                    (self.archive / 'warnings.log').write_bytes(warning.read_bytes())
+                    with (self.archive / 'warnings.log').open('xb') as stream:
+                        stream.write(warning.read_bytes())
             except OSError:
                 self.warnings.add('warning-retention')
         metrics = self.mirror.close()

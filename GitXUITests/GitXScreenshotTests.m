@@ -119,7 +119,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 		NSString *value = NSProcessInfo.processInfo.environment[key];
 		if (value.length)
 			environment[key] = value;
-		else if ([environment[key] length] == 0)
+		else
 			[environment removeObjectForKey:key];
 	}
 	return environment;

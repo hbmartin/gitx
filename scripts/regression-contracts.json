@@ -1815,6 +1815,18 @@
           "identifier": "GitXTests/HistoryIndexWriterObservationTests/testObservationWaitsForTheExistingWriterToBecomeQuiescent",
           "role": "boundary",
           "oracle": "Hold the real shared writer, observe busy state, explicitly release it, and require quiescence without creating a mutation service."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testFailureAttachmentsKeepOnlyRegularNativeFilesAndPreserveOriginalBytes",
+          "role": "failure",
+          "oracle": "Use the production observer attachment factory with a binary native file, a symlink and a directory. Require one retained diagnostic attachment, preserve original binary contents, and handle absent capture without deliberately failing a case."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testProgressPublicationLeavesOnlyCompleteDistinctRecordsAndPreservesEvidence",
+          "role": "boundary",
+          "oracle": "Publish two actual atomic records, decode both complete payloads, require distinct names and no pending files, and preserve preexisting evidence byte-for-byte."
         }
       ]
     },

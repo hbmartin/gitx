@@ -31,7 +31,7 @@
             ] {
                 if let selected, !selected.isEmpty {
                     environment[key] = selected
-                } else if environment[key]?.isEmpty == true {
+                } else {
                     environment.removeValue(forKey: key)
                 }
             }
@@ -136,7 +136,7 @@
             guard descriptor >= 0 else { return Outcome(state: "unavailable", category: "open", filename: nil) }
             defer { Darwin.close(descriptor) }
             var info = stat()
-            guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_uid == geteuid() else {
+            guard fstat(descriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == geteuid() else {
                 return Outcome(state: "unavailable", category: "open", filename: nil)
             }
             guard redirect(descriptor) >= 0 else {

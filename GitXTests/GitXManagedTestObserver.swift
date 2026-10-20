@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 
@@ -26,19 +27,32 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     }
 
     func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) {
-        // A bounded diagnostic attachment supplements the complete supervisor-owned raw files.
-        guard let directory = ProcessInfo.processInfo.environment["GITX_TEST_STDERR_DIRECTORY"], !directory.isEmpty,
-              let files = try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: directory), includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { return }
-        for file in files where file.lastPathComponent.hasSuffix(".stderr.log") {
-            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
-                  values.isRegularFile == true, values.isSymbolicLink == false,
-                  let handle = try? FileHandle(forReadingFrom: file) else { continue }
+        for attachment in Self.failureAttachments(in: ProcessInfo.processInfo.environment["GITX_TEST_STDERR_DIRECTORY"]) {
+            testCase.add(attachment)
+        }
+    }
+
+    static func failureAttachments(in directory: String?) -> [XCTAttachment] {
+        // Bounded failure diagnostics supplement the complete supervisor-owned raw files.
+        guard let directory, !directory.isEmpty,
+              let files = try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: directory), includingPropertiesForKeys: nil) else { return [] }
+        return files.compactMap { file in
+            guard file.lastPathComponent.hasSuffix(".stderr.log") else { return nil }
+            let descriptor = file.path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) }
+            guard descriptor >= 0 else { return nil }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  info.st_uid == geteuid() else {
+                Darwin.close(descriptor)
+                return nil
+            }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
             defer { try? handle.close() }
-            guard let data = try? handle.read(upToCount: 65536) else { continue }
+            guard let data = try? handle.read(upToCount: 65536) else { return nil }
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.data")
             attachment.name = "Native stderr excerpt: \(file.lastPathComponent)"
             attachment.lifetime = .keepAlways
-            testCase.add(attachment)
+            return attachment
         }
     }
 }

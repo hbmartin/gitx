@@ -648,7 +648,8 @@ class WorkflowSessionTests(unittest.TestCase):
                                                  {'bundleID': 'net.phere.GitXUITests'}, {'event': 'capture'},
                                                  {'schemaVersion': True}, {'pid': '42'})):
                     (root / f'startup-42-{index}.json').write_text(json.dumps(self.startup_record(**changes)))
-                self.assertFalse(progress.observed())
+                (root / 'capture-42-c.json').write_text(json.dumps(self.startup_record(event='capture', state='captured')))
+                self.assertFalse(progress.observed(), 'A valid capture record is not a bundle-start event')
                 current = root / 'startup-42-c.json'
                 data = json.dumps(self.startup_record()).encode()
                 current.write_bytes(data[:20])
@@ -750,7 +751,10 @@ path = progress / f'startup-{os.getpid()}-a.json'
 if mode == 'prior': record['invocationID'] = 'old-invocation'
 if mode == 'foreign': record['verificationSession'] = 'foreign-session'
 if mode == 'wrong-bundle': record['bundleID'] = 'net.phere.GitXUITests'
-if mode == 'capture': record['event'] = 'capture'
+if mode == 'capture':
+    record['event'] = 'capture'
+    record['state'] = 'captured'
+    path = progress / f'capture-{os.getpid()}-a.json'
 if mode == 'symlink':
     source = progress / 'foreign'
     source.write_text(json.dumps(record))
