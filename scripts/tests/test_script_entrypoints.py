@@ -112,11 +112,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
 
-    def test_native_startup_reaches_innermost_preset_and_raw_watchdogs(self) -> None:
+    def test_native_startup_and_capture_share_preset_and_raw_supervisor(self) -> None:
         script = self.install_script('xcodebuild.sh')
         # Keep the production wrapper shape and shorten only the copied fixture's
         # backstop so a disconnected inner watchdog fails promptly.
-        script.write_text(script.read_text().replace('--startup-timeout 120', '--startup-timeout 2'))
+        script.write_text(script.read_text().replace('7200}\" 120', '7200}\" 2'))
         self.install_mock_xcodebuild(self.root / 'Products')
         mock = self.developer_directory / 'usr/bin/xcodebuild'
         mock.write_text(mock.read_text() + r'''
@@ -168,7 +168,7 @@ fi
                 self.assertTrue(released, 'The innermost watchdog must acknowledge native startup before release')
                 state = json.loads(manifest.read_text())
                 self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
-                self.assertNotIn('outputCapture', state, 'The inner watchdog must not duplicate the console capture')
+                self.assertIn('outputCapture', state, 'Startup and the authoritative capture share one supervisor')
                 self.assertTrue(list((run / 'Logs/Native').glob('*/native-diagnostics.json')))
                 self.assertFalse(list((run / 'Logs').glob('*-console.log')))
                 self.assertEqual(self.receipt(run_id)['status'], 'passed')

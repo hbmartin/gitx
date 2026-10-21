@@ -35,6 +35,8 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
               let invocation = environment["GITX_TEST_INVOCATION_ID"], !invocation.isEmpty,
               let session = environment["GITX_VERIFICATION_SESSION"], !session.isEmpty else { return }
         do {
+            let lease = try GitXTestInvocationLease(progressDirectory: directory)
+            startup.withLock { $0.lease = lease }
             try GitXTestProgressRecords.write([
                 "schemaVersion": 1, "event": "bundle-start", "invocationID": invocation,
                 "verificationSession": session, "bundleID": testBundle.bundleIdentifier ?? "",
@@ -52,7 +54,9 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     func testCaseWillStart(_ testCase: XCTestCase) {
         // Take before recording: XCTest synchronously calls observers for the issue.
         if let failure = startup.withLock({ $0.takeFailure() }) {
-            testCase.record(XCTIssue(type: .system, compactDescription: failure.description))
+            let invocation = ProcessInfo.processInfo.environment["GITX_TEST_INVOCATION_ID"] ?? "unconfigured"
+            let message = "GitXNativeStartupFailure invocation=\(invocation) operation=\(failure.operation) category=\(failure.category) errno=\(failure.posixCode.map(String.init) ?? "none")"
+            testCase.record(XCTIssue(type: .system, compactDescription: message))
         }
     }
 
