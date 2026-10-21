@@ -68,11 +68,44 @@ final class GitXTestGitFixtureTests: XCTestCase {
         let attachments = GitXManagedTestObserver.failureAttachments(in: directory.path)
         XCTAssertEqual(attachments.count, 1)
         let attachment = try XCTUnwrap(attachments.first)
-        XCTAssertEqual(attachment.name, "Native stderr excerpt: GitX-42-fixture.stderr.log")
+        XCTAssertEqual(attachment.name, "Native stderr tail: GitX-42-fixture.stderr.log [4464..<70000]")
         XCTAssertEqual(attachment.lifetime, .keepAlways)
         XCTAssertEqual(try Data(contentsOf: native), bytes)
         XCTAssertTrue(GitXManagedTestObserver.failureAttachments(in: nil).isEmpty)
         XCTAssertTrue(GitXManagedTestObserver.failureAttachments(in: "").isEmpty)
+    }
+
+    func testNativeFailureAttachmentsRetainNewTailBytesOnceWithinCaseBudget() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let source = directory.appendingPathComponent("GitX-42-a.stderr.log")
+        let prefix = Data(repeating: 65, count: 70000)
+        let sentinel = Data([0, 255]) + Data("AddressSanitizer: tail\ncrash-output: tail\n".utf8)
+        let original = prefix + sentinel
+        try original.write(to: source)
+        var state = GitXManagedTestObserver.AttachmentState()
+        let first = try XCTUnwrap(state.take(in: directory.path).first)
+        XCTAssertEqual(first.data, original.suffix(65536))
+        XCTAssertEqual(first.end, Int64(original.count))
+        XCTAssertTrue(state.take(in: directory.path).isEmpty)
+        let handle = try FileHandle(forWritingTo: source)
+        _ = try handle.seekToEnd()
+        try handle.write(contentsOf: Data("next-issue".utf8))
+        try handle.close()
+        let next = try XCTUnwrap(state.take(in: directory.path).first)
+        XCTAssertEqual(next.start, Int64(original.count))
+        XCTAssertEqual(next.data, Data("next-issue".utf8))
+        for pid in 43 ... 50 {
+            try Data(repeating: UInt8(pid), count: 70000).write(to: directory.appendingPathComponent("GitX-\(pid)-a.stderr.log"))
+        }
+        let remaining = state.take(in: directory.path)
+        XCTAssertTrue(remaining.allSatisfy { $0.data.count <= 65536 })
+        XCTAssertEqual(state.retainedBytes, 262144)
+        XCTAssertTrue(state.take(in: directory.path).isEmpty)
+        XCTAssertEqual(try Data(contentsOf: source), original + Data("next-issue".utf8))
+        var independentCase = GitXManagedTestObserver.AttachmentState()
+        XCTAssertFalse(independentCase.take(in: directory.path).isEmpty)
     }
 
     func testProgressPublicationLeavesOnlyCompleteDistinctRecordsAndPreservesEvidence() throws {
