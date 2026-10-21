@@ -984,19 +984,21 @@
                         at: root.appendingPathComponent("unbound", isDirectory: true),
                         destinationRepository: identity
                     )
-                    let windowController = PBGitWindowController()
-                    windowController.repository = repository
-                    guard let repositoryWindow = windowController.window else { return 0 }
-                    defer { windowController.close() }
+                    let boundWindowController = PBGitWindowController()
+                    boundWindowController.repository = repository
                     let boundCollaborationProof = await exerciseBoundCollaboration(
                         repository: repository,
-                        windowController: windowController,
+                        windowController: boundWindowController,
                         identity: identity,
                         account: account,
                         alternateAccount: alternateAccount,
                         services: madeServices,
                         binding: binding
                     )
+                    let windowController = PBGitWindowController()
+                    windowController.repository = repository
+                    guard let repositoryWindow = windowController.window else { return 0 }
+                    defer { windowController.close() }
                     guard let madeSidebar = windowController.sidebarViewController else {
                         return 0
                     }
