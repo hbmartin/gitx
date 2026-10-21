@@ -984,21 +984,22 @@
                         at: root.appendingPathComponent("unbound", isDirectory: true),
                         destinationRepository: identity
                     )
-                    let windowController = PBGitWindowController()
-                    windowController.repository = repository
+                    let boundWindowController = PBGitWindowController()
+                    boundWindowController.repository = repository
                     let boundCollaborationProof = await exerciseBoundCollaboration(
                         repository: repository,
-                        windowController: windowController,
+                        windowController: boundWindowController,
                         identity: identity,
                         account: account,
                         alternateAccount: alternateAccount,
                         services: madeServices,
                         binding: binding
                     )
-                    guard let madeSidebar = PBGitSidebarController(
-                        repository: repository,
-                        superController: windowController
-                    ) else {
+                    let windowController = PBGitWindowController()
+                    windowController.repository = repository
+                    guard let repositoryWindow = windowController.window else { return 0 }
+                    defer { windowController.close() }
+                    guard let madeSidebar = windowController.sidebarViewController else {
                         return 0
                     }
                     sidebar = madeSidebar
@@ -1055,6 +1056,9 @@
                     let collaborationController = windowController.value(
                         forKey: "contentController"
                     ) as? RepositoryForgeCollaborationController
+                    let liveAttentionMounted = collaborationController?.view.window === repositoryWindow
+                        && madeSidebar.selectedItem() === attention
+                        && collaborationController.map { descendant(identifier: "ForgeAttentionTable", in: $0.view) != nil } == true
                     let publicButton = collaborationController.flatMap {
                         descendant(
                             identifier: "ForgeCollaborationContinuePublicly",
@@ -1066,6 +1070,20 @@
                         && sidebarItem(titled: "Attention", in: madeSidebar.items.compactMap {
                             $0 as? PBSourceViewItem
                         }) == nil
+                    guard let alternate = PBViewController(repository: repository, superController: windowController) else { return 0 }
+                    alternate.view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+                    windowController.changeContentController(alternate)
+                    let selectedBeforeClose = madeSidebar.selectedItem()
+                    let revisionBeforeClose = repository.currentBranch
+                    let rootsBeforeClose = madeSidebar.items.compactMap { $0 as? PBSourceViewItem }
+                    madeSidebar.closeView()
+                    madeSidebar.showForgeAttention(nil)
+                    let closedAttentionInert = (windowController.value(forKey: "contentController") as AnyObject?) === alternate
+                        && alternate.view.window === repositoryWindow
+                        && madeSidebar.selectedItem() === selectedBeforeClose
+                        && repository.currentBranch === revisionBeforeClose
+                        && madeSidebar.items.compactMap { $0 as? PBSourceViewItem }.map(ObjectIdentifier.init)
+                        == rootsBeforeClose.map(ObjectIdentifier.init)
                     let conditions = [
                         authenticated,
                         attention.icon != nil,
@@ -1085,6 +1103,7 @@
                             && publicFallbackSelected
                             && settingsPersistenceProof
                             && githubReadFactoryProof,
+                        liveAttentionMounted && closedAttentionInert,
                     ]
                     return conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
                         if condition.element {

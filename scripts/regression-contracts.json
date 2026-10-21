@@ -301,7 +301,7 @@
           "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testUnchangedQueuedLocateRepairsTheExactBidirectionalLinks",
           "role": "valid",
-          "oracle": "An unchanged folder admitted after a held writer gains the exact administrative backlink and Git directory, while its actual HEAD remains unchanged."
+          "oracle": "Explicitly approve the moved destination, rather than its stale registration path. After a held writer, require exactly one repair command, exact administrative backlink and Git directory, and unchanged actual HEAD."
         },
         {
           "source": "GitXTests/WorktreeServiceTests.swift",
@@ -626,6 +626,13 @@
           "check": "correctness",
           "role": "failure",
           "oracle": "Supply independently chosen wrong ordinary or Reclaim approvals through the actual convenience helper; test-approval errors remain distinct from service errors, no repair command launches, and metadata and damaged-link presence remain unchanged."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testLocateFixtureApprovalRejectsTheOriginalPathBeforeAnyRepairWrite",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Move the checkout, supply only the old registration path as fixture approval, require the exact fixture-scope rejection and zero repair commands, and preserve administrative metadata, moved gitfile bytes and HEAD. Pair with the successful destination-approved queued Locate test."
         }
       ]
     },
@@ -1310,7 +1317,7 @@
           "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged."
+          "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged. PR #103 follow-up: in the loaded authenticated repository window, require Attention selection and its actual table mounted in the window. Mount alternate content, retain selection/revision/rows, close the real sidebar and invoke Attention again; content and selection must remain unchanged. All preexisting proof bits remain required."
         },
         {
           "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
@@ -1390,7 +1397,7 @@
           "identifier": "GitXTests/WorktreeAppKitTests/testClosedSidebarRejectsDirectNavigationCheckoutAndRowRemoval",
           "check": "correctness",
           "role": "failure",
-          "oracle": "Retain a closed sidebar with another branch selected, invoke direct checkout, removal, sort and remote actions, then retain a selected checkout and invoke Swift History and Forge navigation. Closed rendering and selection remain inert; a newly configured remote cannot rebuild rows. Require identical retained rows, revision object and Git HEAD with no Forge opening attempt."
+          "oracle": "Retain a closed sidebar with another branch selected, invoke direct checkout and row removal, then retain a selected checkout and invoke Swift History and Forge destination navigation. Closed rendering and selection remain inert; a newly configured remote cannot rebuild rows. Require identical retained rows, revision object and Git HEAD with no Forge opening attempt. Sort, remote responder routing and authenticated Attention have separate effect-specific live/closed oracles."
         },
         {
           "source": "GitXTests/WorktreeAppKitTests.swift",
@@ -1419,6 +1426,20 @@
           "check": "core",
           "role": "boundary",
           "oracle": "Exercise unsupported, capability checking, supported read, freshness and closure with and without retained rows; only initial work shows progress, and supported reads cannot revive unsupported guidance."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testLiveSidebarSortAndRemoteRoutingHaveObservableEffects",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "A live sidebar changes the observed sorting mode, persists the preference, emits exactly one sort notification and sends addRemote: through an effective test-only responder recorder. Restore the exact original preference at teardown."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Use the same effective live fixture after close; sorting and its persisted setting stay unchanged, no sort notification is posted and no addRemote: request reaches the recorder."
         }
       ]
     },
@@ -1689,7 +1710,7 @@
     {
       "id": "TASK-001",
       "family": "Drainage and process lifetime",
-      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe. Managed Debug apps install optional stderr capture before NSApplicationMain, using invocation-owned cache storage and unique PID/UUID files. Unavailable capture preserves original stderr and emits finite warning metadata without crashing the app or changing an otherwise successful command status. Complete records use exclusive same-directory rename without replacing evidence; publication failures retain their finite operation and original errno. Required progress initialization is transactional and precedes command launch and reporting workers; a missing authenticated bundle-start record cannot pass even when the child exits zero. XCTest observers in both test bundles emit invocation/session/bundle-specific startup records independently of capture; ordinary application, Git or console text cannot establish managed native startup. Release production apps contain no capture hook. One managed supervisor owns startup, incremental native archival and the canonical console capture; one bounded worker writes the console. Native source discovery is fair and bounded, and accepted startup is cached. Fully archived unchanged scratch retires only after root and inherited writer leases release; incomplete, live or redirected sources stay registered and protected, and interrupted retirement remains recoverable; incomplete native collection remains explicit and optional. Native logging-only characterization contains no raw stderr write after pipe saturation and does not assume platform-dependent logging must block. Preset and raw entrypoints retain one authoritative xcodebuild console log and configure the same supervisor for native deadlines and console capture. Queued native startup evidence is observed before the startup-deadline verdict, matching command-output event handling when a selector wakeup crosses the boundary. Full native correctness and fresh analysis run in independent CI jobs with unchanged 75-minute limits. Correctness, analysis and worktree contracts depend only on toolchain smoke. The existing required unit tests and analyzer check runs after all three jobs and accepts only three successful dependency results including cancelled runs, rejecting failure, cancellation and skipped or missing dependency results. Only the small required aggregate and its result step use always(); expensive work remains cancellable; artifact uploads retain always(). Independent full UI, native regression and performance steps remain eligible after focused failures unless cancelled; failures remain blocking and artifact upload always runs. Distribution cleanup validates inventory structure and all mountpoints, then validates detach identities only for the exact owned image. Identified unrelated file or RAM images cannot block cleanup through irrelevant device metadata. Missing identity, malformed mountpoints, foreign occupancy and ambiguous owned devices remain unknown and retain staging; failed attachment cleanup and publication rollback remain protected by the required static script suite. Independent follow-on plans require successful prerequisite setup, including when an earlier verification step fails; failed, skipped or missing readiness cannot launch them. Workflow guards describe source and predicate coverage, not hosted execution evidence.",
+      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe. Managed Debug apps install optional stderr capture before NSApplicationMain, using invocation-owned cache storage and unique PID/UUID files. Unavailable capture preserves original stderr and emits finite warning metadata without crashing the app or changing an otherwise successful command status. Complete records use exclusive same-directory rename without replacing evidence; publication failures retain their finite operation and original errno. Required progress initialization is transactional and precedes command launch and reporting workers; a missing authenticated bundle-start record cannot pass even when the child exits zero. XCTest observers in both test bundles emit invocation/session/bundle-specific startup records independently of capture; ordinary application, Git or console text cannot establish managed native startup. Release production apps contain no capture hook. One managed supervisor owns startup, incremental native archival and the canonical console capture; one bounded worker writes the console. Native source discovery is fair and bounded, and accepted startup is cached. Fully archived unchanged scratch retires only after root and inherited writer leases release; incomplete, live or redirected sources stay registered and protected, and interrupted retirement remains recoverable; incomplete native collection remains explicit and optional. Native logging-only characterization contains no raw stderr write after pipe saturation and does not assume platform-dependent logging must block. Preset and raw entrypoints retain one authoritative xcodebuild console log and configure the same supervisor for native deadlines and console capture. Queued native startup evidence is observed before the startup-deadline verdict, matching command-output event handling when a selector wakeup crosses the boundary. Full native correctness and fresh analysis run in independent CI jobs with unchanged 75-minute limits. Correctness, analysis and worktree contracts depend only on toolchain smoke. The existing required unit tests and analyzer check runs after all three jobs and accepts only three successful dependency results including cancelled runs, rejecting failure, cancellation and skipped or missing dependency results. Only the small required aggregate and its result step use always(); expensive work remains cancellable; artifact uploads retain always(). Independent full UI, native regression and performance steps remain eligible after focused failures unless cancelled; failures remain blocking and artifact upload always runs. Distribution cleanup validates inventory structure and all mountpoints, then validates detach identities only for the exact owned image. Identified unrelated file or RAM images cannot block cleanup through irrelevant device metadata. Missing identity, malformed mountpoints, foreign occupancy and ambiguous owned devices remain unknown and retain staging; failed attachment cleanup and publication rollback remain protected by the required static script suite. Independent follow-on plans require successful prerequisite setup, including when an earlier verification step fails; failed, skipped or missing readiness cannot launch them. Workflow guards describe source and predicate coverage, not hosted execution evidence. Invocation leases validate the owned parent before a nonblocking regular-file open; rejected leases preserve exact failure causes and release all descriptors. Native infrastructure status is selected from child state observed before supervisor termination, never a positive exit induced by stopping the child. Exclusive rename has one syscall implementation with explicit parent-sync policy. Deferred native retirement keeps cleanup partial and its queue pending, including registration-storage failure; only a later authorized eligible cleanup retries it.",
       "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output. Treating a presentation cancellation as writer cancellation can terminate Git mid-write; shared discovery cancellation can also erase a completed write's reconciliation and release the queue too early. Serial independent native checks can exhaust a shared job limit before fresh analysis finishes. Validating irrelevant device metadata before establishing image ownership can strand packaging; ignoring unknown identity or mountpoint conflicts can instead authorize unsafe cleanup.",
       "sourcePaths": [
         "Classes/Util/PBTask*",
@@ -1875,7 +1896,7 @@
           "source": "GitXTests/GitXTestGitFixtureTests.swift",
           "identifier": "GitXTests/GitXTestGitFixtureTests/testNativeDiagnosticsReachAnEmptyUILaunchEnvironment",
           "role": "boundary",
-          "oracle": "Carry optional capture and complete startup ownership into empty launch environments. Required static fixtures enforce warnings-as-errors probe compilation, exact structured startup identities, no child launch or reporting worker on required setup failure, fail-closed early success without startup, and unchanged genuine failure/interruption status. Actual preset/raw shell fixtures use one supervisor and canonical console capture. Native fixtures cover binary checkpoints before close, fair bounded reads, a single console writer, inherited writer leases, identity conflicts, incomplete archives and resumable quarantine retirement. The actual aggregate shell accepts only all-success across all 125 terminal-result combinations, while source guards require always() on both the small aggregate and result step. Existing independent setup/cancellation predicates and packaging fixtures remain required. These authored checks do not establish hosted scheduling or execution evidence."
+          "oracle": "Carry optional capture and complete startup ownership into empty launch environments. Required static fixtures enforce warnings-as-errors probe compilation, exact structured startup identities, no child launch or reporting worker on required setup failure, fail-closed early success without startup, and unchanged genuine failure/interruption status. Actual preset/raw shell fixtures use one supervisor and canonical console capture. Native fixtures cover binary checkpoints before close, fair bounded reads, a single console writer, inherited writer leases, identity conflicts, incomplete archives and resumable quarantine retirement. The actual aggregate shell accepts only all-success across all 125 terminal-result combinations, while source guards require always() on both the small aggregate and result step. Existing independent setup/cancellation predicates and packaging fixtures remain required. These authored checks do not establish hosted scheduling or execution evidence. PR #103 follow-up fixtures distinguish running children that exit positive, zero or by signal during termination from preexisting positive failures, for both native failure categories, and preserve cancellation with before/after child metadata. Shared rename fixtures cover both callers, collisions, platform unavailability, exact syscall errno, requested parent syncing and descriptor closure after sync failure. Actual cleanup fixtures retain the pending token and persist partial reports for held native leases, incomplete/protected archives and retirement/storage failures; after release a later eligible cleanup retires only the proven duplicate and can complete, while a newer pending token survives. Historical unmarked artifacts remain outside native adoption."
         },
         {
           "source": "GitXTests/HistoryIndexWriterObservation.swift",
@@ -1929,6 +1950,27 @@
           "role": "boundary",
           "oracle": "Assert exact binary crash/sanitizer tail bytes, no duplicate range, newly appended bytes, independent case state and 64 KiB per-excerpt/256 KiB per-case budgets without modifying original logs.",
           "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testInvocationLeaseProtectsTheRootUntilItsOwnerIsReleased",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "Hold the real shared invocation lease, require exclusive acquisition to fail, release its owner and acquire exclusively."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testInvocationLeaseFailuresPreserveCauseAndCloseEveryAcquiredDescriptor",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Inject parent/lease inspection and ownership failures, open exhaustion and lock contention; assert typed operation/category/errno, closed descriptors, nonblocking flags and unchanged evidence. Actual native subprocess fixtures additionally reject FIFO, symlink, directory and absent leases within a bounded backstop; authored protection is not execution evidence."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testInvocationLeaseMissingRootPreservesTheOpenFailure",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "A missing invocation root retains the open-lease-directory operation and ENOENT."
         }
       ]
     },

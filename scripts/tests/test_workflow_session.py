@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import errno
 import fcntl
 import os
 import pathlib
@@ -18,10 +19,150 @@ from types import SimpleNamespace
 
 from support import ROOT
 import workflow_session as session
+import workflow_cleanup as cleanup
 import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_native_failure_status_uses_the_child_state_before_termination(self):
+        outcomes = [('running-positive', 7, False), ('running-zero', 0, False),
+                    ('running-signal', None, False), ('already-failed', 9, True)]
+        for category in ('native-progress-unavailable', 'native-startup-publication-failed', 'interrupted'):
+            for label, exit_code, already_exited in outcomes:
+                if category == 'interrupted' and already_exited:
+                    continue
+                with self.subTest(category=category, outcome=label), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory)
+                    _, output, diagnostics = self.capture_fixture(root)
+                    reader, writer = os.pipe()
+                    child = None
+                    spawn, poll = session.subprocess.Popen, session.NativeTestDiagnostics.poll
+                    observed_ready = False
+
+                    def remember(*arguments, **keywords):
+                        nonlocal child
+                        process = spawn(*arguments, **keywords)
+                        if keywords.get('start_new_session'):
+                            child = process
+                        return process
+
+                    def ready_then_poll(native):
+                        nonlocal observed_ready
+                        if not observed_ready:
+                            self.assertTrue(select.select([reader], [], [], 5)[0], 'child installed its termination policy')
+                            self.assertEqual(os.read(reader, 1), b'R')
+                            observed_ready = True
+                            if already_exited:
+                                child.wait(timeout=5)
+                            if category == 'native-progress-unavailable':
+                                raise session.NativeProgressSetupError('read-progress', OSError(errno.EIO, 'fixture'))
+                            if category == 'interrupted':
+                                os.kill(os.getpid(), signal.SIGTERM)
+                        return poll(native)
+
+                    command = '''
+import os, signal, sys
+code = sys.argv[2]
+if code != 'signal':
+    signal.signal(signal.SIGTERM, lambda *_: os._exit(int(code)))
+os.write(int(sys.argv[1]), b'R')
+if sys.argv[3] == 'native-startup-publication-failed':
+    print('GitXNativeStartupFailure invocation=' + os.environ['GITX_TEST_INVOCATION_ID'] +
+          ' operation=publish-record category=system errno=28', flush=True)
+if sys.argv[4] == 'exited':
+    sys.exit(int(code))
+while True:
+    signal.pause()
+'''
+                    try:
+                        with mock.patch.object(session, 'ROOT', root), \
+                                mock.patch.object(session.subprocess, 'Popen', side_effect=remember), \
+                                mock.patch.object(session.NativeTestDiagnostics, 'poll', ready_then_poll), \
+                                mock.patch.object(session, 'diagnostics'):
+                            status = session.supervise(
+                                [sys.executable, '-c', command, str(writer), str(exit_code) if exit_code is not None else 'signal',
+                                 category, 'exited' if already_exited else 'running'],
+                                directory=diagnostics, output_log=output, native_test_root=root / 'cache', pass_fds=(writer,))
+                        state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+                        self.assertEqual(status, 130 if category == 'interrupted' else 9 if already_exited else 2)
+                        self.assertEqual(state['category'], category)
+                        self.assertEqual(state['childExitCodeBeforeStop'], 9 if already_exited else None)
+                        self.assertEqual(state['childExitCode'], -signal.SIGTERM if exit_code is None else exit_code)
+                        self.assertNotIn('hostStartup', state)
+                    finally:
+                        if child is not None and child.poll() is None:
+                            child.kill()
+                            child.wait(timeout=5)
+                        os.close(reader)
+                        os.close(writer)
+
+    def test_exclusive_rename_callers_preserve_collisions_and_parent_sync_policy(self):
+        for caller in ('native', 'native-durable', 'cleanup'):
+            with self.subTest(caller=caller), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                source, destination = root / 'source', root / 'destination'
+                source.write_bytes(b'new')
+                destination.write_bytes(b'keep-existing')
+                rename = cleanup.rename_exclusive if caller == 'cleanup' else session.exclusive_native_rename
+                options = {'sync_parent': True} if caller == 'native-durable' else {}
+                with mock.patch.object(session.os, 'fsync', wraps=os.fsync) as sync:
+                    with self.assertRaises(FileExistsError) as raised:
+                        rename(source, destination, **options)
+                    self.assertEqual(raised.exception.filename, str(destination))
+                    sync.assert_not_called()
+                    self.assertEqual(source.read_bytes(), b'new')
+                    self.assertEqual(destination.read_bytes(), b'keep-existing')
+                    destination.unlink()
+                    rename(source, destination, **options)
+                    self.assertEqual(sync.call_count, 0 if caller == 'native' else 1)
+                self.assertFalse(source.exists())
+                self.assertEqual(destination.read_bytes(), b'new')
+
+    def test_exclusive_rename_preserves_syscall_errno_and_closes_parent_on_sync_failure(self):
+        for use_cleanup in (False, True):
+            with self.subTest(cleanup=use_cleanup), tempfile.TemporaryDirectory() as directory:
+                source, destination = pathlib.Path(directory) / 'source', pathlib.Path(directory) / 'destination'
+                source.write_bytes(b'keep')
+                rename = cleanup.rename_exclusive if use_cleanup else session.exclusive_native_rename
+                syscall = mock.Mock(return_value=-1)
+                library = SimpleNamespace(renamex_np=syscall)
+                with mock.patch.object(session.sys, 'platform', 'darwin'), \
+                        mock.patch.object(session.ctypes, 'CDLL', return_value=library), \
+                        mock.patch.object(session.ctypes, 'get_errno', return_value=errno.ENOTSUP):
+                    with self.assertRaises(OSError) as raised:
+                        rename(source, destination)
+                self.assertEqual(raised.exception.errno, errno.ENOTSUP)
+                self.assertEqual(raised.exception.filename, str(destination))
+                self.assertEqual(source.read_bytes(), b'keep')
+                inspected = []
+                def fail_sync(descriptor):
+                    inspected.append(descriptor)
+                    self.assertTrue(pathlib.Path(directory).stat().st_ino == os.fstat(descriptor).st_ino)
+                    raise OSError(errno.EIO, 'fixture-sync')
+                with mock.patch.object(session.os, 'fsync', side_effect=fail_sync):
+                    with self.assertRaises(OSError) as raised:
+                        if use_cleanup:
+                            rename(source, destination)
+                        else:
+                            rename(source, destination, sync_parent=True)
+                self.assertEqual(raised.exception.errno, errno.EIO)
+                self.assertEqual(len(inspected), 1)
+                with self.assertRaises(OSError) as closed:
+                    os.fstat(inspected[0])
+                self.assertEqual(closed.exception.errno, errno.EBADF)
+                self.assertEqual(destination.read_bytes(), b'keep')
+                self.assertFalse(source.exists())
+
+    def test_exclusive_rename_unavailable_platform_retains_each_callers_error_contract(self):
+        with mock.patch.object(session.sys, 'platform', 'fixture-unsupported'), \
+                mock.patch.object(session.ctypes, 'CDLL', return_value=SimpleNamespace()):
+            with self.assertRaises(session.ExclusiveRenameUnavailable) as raised:
+                session.exclusive_native_rename('source', 'destination')
+            self.assertEqual(raised.exception.errno, errno.ENOTSUP)
+            with self.assertRaisesRegex(ValueError, 'exclusive quarantine rename') as raised:
+                cleanup.rename_exclusive('source', 'destination')
+            self.assertIsInstance(raised.exception.__cause__, session.ExclusiveRenameUnavailable)
+
     @staticmethod
     def startup_child():
         return """

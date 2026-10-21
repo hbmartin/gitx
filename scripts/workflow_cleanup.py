@@ -6,7 +6,7 @@ rewritten; their referenced evidence and recovery sources are protected together
 """
 from __future__ import annotations
 
-import ctypes
+import contextlib
 import datetime as dt
 import fcntl
 import hashlib
@@ -1086,26 +1086,10 @@ def persist_journal(path, value):
 
 def rename_exclusive(original, quarantine):
     """The destination must remain absent throughout the atomic rename."""
-    library = ctypes.CDLL(None, use_errno=True)
-    if sys.platform == "darwin":
-        rename = library.renamex_np
-        rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
-        arguments = (os.fsencode(original), os.fsencode(quarantine), 0x00000004)  # RENAME_EXCL
-    elif hasattr(library, "renameat2"):
-        rename = library.renameat2
-        rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
-        arguments = (-100, os.fsencode(original), -100, os.fsencode(quarantine), 1)  # AT_FDCWD, RENAME_NOREPLACE
-    else:
-        raise ValueError("This platform cannot guarantee an exclusive quarantine rename")
-    rename.restype = ctypes.c_int
-    if rename(*arguments) != 0:
-        error = ctypes.get_errno()
-        raise OSError(error, os.strerror(error), str(quarantine))
-    descriptor = os.open(pathlib.Path(original).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        session.exclusive_native_rename(original, quarantine, sync_parent=True)
+    except session.ExclusiveRenameUnavailable as error:
+        raise ValueError("This platform cannot guarantee an exclusive quarantine rename") from error
 
 
 def prepare_journal(path, snapshot, root, receipt, pending, protection):
@@ -1401,6 +1385,10 @@ def run_cleanup(root, receipt, inherited=None):
                     session.atomic_json(item["registration"], native_owner)
                     report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason})
             except (OSError, ValueError, KeyError, session.ResourceBusy):
+                native_owner.update(retirementState="deferred", retirementReason="native retirement unproven")
+                # Retain the queue even if registration storage itself is unavailable.
+                with contextlib.suppress(OSError, ValueError, KeyError):
+                    session.atomic_json(item["registration"], native_owner)
                 report["nativeRetirement"].append({"paths": item["paths"], "state": "deferred", "reason": "native retirement unproven"})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
@@ -1409,10 +1397,13 @@ def run_cleanup(root, receipt, inherited=None):
             with session.Leases(proof, owner, inherited=authenticated):
                 _, changed = eligibility(root, receipt)
                 changed = changed or removed_original_problem()
+                native_deferred = any(item["state"] != "retired" for item in report["nativeRetirement"])
                 report["status"] = "partial" if (report["skipped"] or report["failed"] or report["discoveryErrors"] or
-                                                 report["entryErrors"] or changed) else "complete"
+                                                 report["entryErrors"] or native_deferred or changed) else "complete"
                 if changed:
                     report["reason"] = changed
+                elif native_deferred:
+                    report["reason"] = "native retirement deferred"
                 if report["status"] == "complete" and read_json(pending_path(root)) != pending:
                     report.update(status="partial", reason="newer commit queued")
                 report["finishedAt"] = records.now()

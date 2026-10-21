@@ -33,6 +33,15 @@ if mode == "environment" {
     checkpoint(GitXTestGitEnvironment.isolated([:])["GITX_TEST_STDERR_DIRECTORY"] ?? "unowned")
     exit(0)
 }
+if mode == "lease" {
+    do {
+        let lease = try GitXTestInvocationLease(progressDirectory: environment["GITX_TEST_PROGRESS_DIRECTORY"]!)
+        withExtendedLifetime(lease) { checkpoint("lease-acquired") }
+    } catch let failure as GitXTestProgressRecords.PublicationError {
+        checkpoint(failure.description)
+    }
+    exit(0)
+}
 if mode == "seams" {
     let root = directory!
     let install = GitXTestProcessDiagnostics.install
@@ -213,6 +222,35 @@ checkpoint("after-raw-write")
                                     capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0)
             self.assertIn((selected or "unowned").encode(), result.stdout)
+
+    def test_invocation_lease_rejects_fifo_symlink_directory_and_missing_file_without_blocking(self):
+        for kind in ('regular', 'fifo', 'symlink', 'directory', 'missing'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                progress = root / 'Progress'
+                progress.mkdir()
+                lease = root / 'invocation.lease'
+                sentinel = root / 'sentinel'
+                sentinel.write_bytes(b'keep-original')
+                if kind == 'regular':
+                    lease.write_bytes(b'')
+                elif kind == 'fifo':
+                    os.mkfifo(lease)
+                elif kind == 'symlink':
+                    lease.symlink_to(sentinel)
+                elif kind == 'directory':
+                    lease.mkdir()
+                result = subprocess.run([self.executable, 'lease'], env=self.environment(progress=progress),
+                                        capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if kind == 'regular':
+                    self.assertIn(b'lease-acquired', result.stdout)
+                else:
+                    operation = 'validate-lease' if kind in ('fifo', 'directory') else 'open-lease'
+                    category = 'ownership' if kind in ('fifo', 'directory') else 'system'
+                    self.assertIn(f'operation={operation} category={category}'.encode(), result.stdout)
+                    self.assertNotIn(b'lease-acquired', result.stdout)
+                self.assertEqual(sentinel.read_bytes(), b'keep-original')
 
 
 if __name__ == "__main__":

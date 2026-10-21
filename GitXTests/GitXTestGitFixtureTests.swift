@@ -11,6 +11,88 @@ final class GitXTestGitFixtureTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testInvocationLeaseProtectsTheRootUntilItsOwnerIsReleased() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let progress = root.appendingPathComponent("Progress")
+        try FileManager.default.createDirectory(at: progress, withIntermediateDirectories: true)
+        directories.append(root)
+        let path = root.appendingPathComponent("invocation.lease").path
+        XCTAssertTrue(FileManager.default.createFile(atPath: path, contents: Data(), attributes: [.posixPermissions: 0o600]))
+        let probe = path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
+        XCTAssertGreaterThanOrEqual(probe, 0)
+        guard probe >= 0 else { return }
+        defer { Darwin.close(probe) }
+
+        var lease: GitXTestInvocationLease? = try GitXTestInvocationLease(progressDirectory: progress.path)
+        XCTAssertNotNil(lease)
+        XCTAssertEqual(flock(probe, LOCK_EX | LOCK_NB), -1)
+        XCTAssertEqual(errno, EWOULDBLOCK)
+        lease = nil
+        XCTAssertEqual(flock(probe, LOCK_EX | LOCK_NB), 0)
+        XCTAssertEqual(flock(probe, LOCK_UN), 0)
+    }
+
+    func testInvocationLeaseFailuresPreserveCauseAndCloseEveryAcquiredDescriptor() throws {
+        let failures: [(operation: String, category: String, code: Int32?)] = [
+            ("inspect-lease-directory", "system", EIO), ("validate-lease-directory", "ownership", nil),
+            ("open-lease", "system", EMFILE), ("inspect-lease", "system", EIO),
+            ("validate-lease", "ownership", nil), ("lock-lease", "system", EWOULDBLOCK),
+        ]
+        for failure in failures {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let progress = root.appendingPathComponent("Progress")
+            try FileManager.default.createDirectory(at: progress, withIntermediateDirectories: true)
+            directories.append(root)
+            let evidence = Data("keep-lease-evidence".utf8)
+            try evidence.write(to: root.appendingPathComponent("invocation.lease"))
+            var descriptors: [Int32] = []
+            var inspections = 0
+            XCTAssertThrowsError(try GitXTestInvocationLease(
+                progressDirectory: progress.path,
+                inspectDescriptor: { descriptor, info in
+                    descriptors.append(descriptor)
+                    inspections += 1
+                    let phase = inspections == 1 ? "lease-directory" : "lease"
+                    if failure.operation == "inspect-" + phase { errno = EIO; return -1 }
+                    let result = fstat(descriptor, info)
+                    if failure.operation == "validate-" + phase { info.pointee.st_uid = geteuid() ^ 1 }
+                    return result
+                },
+                openLease: { parent, flags in
+                    XCTAssertNotEqual(flags & O_NONBLOCK, 0)
+                    if failure.operation == "open-lease" { errno = EMFILE; return -1 }
+                    return openat(parent, "invocation.lease", flags)
+                },
+                lockLease: { descriptor, flags in
+                    XCTAssertEqual(flags, LOCK_SH | LOCK_NB)
+                    if failure.operation == "lock-lease" { errno = EWOULDBLOCK; return -1 }
+                    return flock(descriptor, flags)
+                }
+            )) { error in
+                let actual = error as? GitXTestProgressRecords.PublicationError
+                XCTAssertEqual(actual?.operation, failure.operation)
+                XCTAssertEqual(actual?.category, failure.category)
+                XCTAssertEqual(actual?.posixCode, failure.code)
+            }
+            XCTAssertEqual(inspections, failure.operation.hasSuffix("directory") || failure.operation == "open-lease" ? 1 : 2)
+            for descriptor in descriptors {
+                XCTAssertEqual(fcntl(descriptor, F_GETFD), -1, failure.operation)
+                XCTAssertEqual(errno, EBADF)
+            }
+            XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("invocation.lease")), evidence)
+        }
+    }
+
+    func testInvocationLeaseMissingRootPreservesTheOpenFailure() {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("Progress")
+        XCTAssertThrowsError(try GitXTestInvocationLease(progressDirectory: missing.path)) { error in
+            let failure = error as? GitXTestProgressRecords.PublicationError
+            XCTAssertEqual(failure?.operation, "open-lease-directory")
+            XCTAssertEqual(failure?.category, "system")
+            XCTAssertEqual(failure?.posixCode, ENOENT)
+        }
+    }
+
     func testSharedEnvironmentMatchesExistingFixturePolicyAndKeepsNonGitInputs() {
         let inherited = ["PATH": "/fixture/tools", "DEVELOPER_DIR": "/fixture/Xcode", "GIT_DIR": "/wrong", "GIT_CONFIG_PARAMETERS": "hostile"]
         let shared = GitXTestGitEnvironment.isolated(inherited)
