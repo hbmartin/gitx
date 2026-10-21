@@ -111,27 +111,40 @@
     nonisolated final class GitXTestInvocationLease: Sendable {
         private let descriptor: Int32
 
-        init(progressDirectory: String) throws {
+        init(
+            progressDirectory: String,
+            inspectDescriptor: (Int32, UnsafeMutablePointer<stat>) -> Int32 = { fstat($0, $1) },
+            openLease: (Int32, Int32) -> Int32 = { openat($0, "invocation.lease", $1) },
+            lockLease: (Int32, Int32) -> Int32 = { flock($0, $1) }
+        ) throws {
             let root = URL(fileURLWithPath: progressDirectory).deletingLastPathComponent().path
             let parent = root.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
             guard parent >= 0 else { throw GitXTestProgressRecords.PublicationError.system("open-lease-directory") }
             defer { Darwin.close(parent) }
-            let descriptor = openat(parent, "invocation.lease", O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+            var parentInfo = stat()
+            guard inspectDescriptor(parent, &parentInfo) == 0 else {
+                throw GitXTestProgressRecords.PublicationError.system("inspect-lease-directory")
+            }
+            guard parentInfo.st_uid == geteuid() else {
+                throw GitXTestProgressRecords.PublicationError(operation: "validate-lease-directory", category: "ownership", posixCode: nil)
+            }
+            // A substituted FIFO must reach the type check without waiting for a writer.
+            let descriptor = openLease(parent, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
             guard descriptor >= 0 else { throw GitXTestProgressRecords.PublicationError.system("open-lease") }
-            var info = stat()
-            guard fstat(descriptor, &info) == 0 else {
-                let code = errno
+            do {
+                var info = stat()
+                guard inspectDescriptor(descriptor, &info) == 0 else {
+                    throw GitXTestProgressRecords.PublicationError.system("inspect-lease")
+                }
+                guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == geteuid() else {
+                    throw GitXTestProgressRecords.PublicationError(operation: "validate-lease", category: "ownership", posixCode: nil)
+                }
+                guard lockLease(descriptor, LOCK_SH | LOCK_NB) == 0 else {
+                    throw GitXTestProgressRecords.PublicationError.system("lock-lease")
+                }
+            } catch {
                 Darwin.close(descriptor)
-                throw GitXTestProgressRecords.PublicationError.system("inspect-lease", code: code)
-            }
-            guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == geteuid() else {
-                Darwin.close(descriptor)
-                throw GitXTestProgressRecords.PublicationError(operation: "validate-lease", category: "ownership", posixCode: nil)
-            }
-            guard flock(descriptor, LOCK_SH | LOCK_NB) == 0 else {
-                let code = errno
-                Darwin.close(descriptor)
-                throw GitXTestProgressRecords.PublicationError.system("lock-lease", code: code)
+                throw error
             }
             self.descriptor = descriptor
         }
