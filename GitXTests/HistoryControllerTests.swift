@@ -2618,7 +2618,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         } catch FixtureFailure.expected {
             XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(retained).path))
         }
-        weak var releasedOwner = owner
+        weak let releasedOwner = owner
         owner = nil
         XCTAssertNil(releasedOwner)
         XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(retained).path))

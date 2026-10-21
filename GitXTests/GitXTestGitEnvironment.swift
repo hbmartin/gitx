@@ -21,10 +21,8 @@
                 "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "/usr/bin/false", "GIT_TERMINAL_PROMPT": "0",
                 "LC_ALL": "C",
             ]) { _, value in value }
-            if let verificationSession {
-                environment["GITX_VERIFICATION_SESSION"] = verificationSession
-            }
             for (key, selected) in [
+                ("GITX_VERIFICATION_SESSION", verificationSession),
                 ("GITX_TEST_STDERR_DIRECTORY", nativeDiagnosticDirectory),
                 ("GITX_TEST_PROGRESS_DIRECTORY", progressDirectory),
                 ("GITX_TEST_INVOCATION_ID", invocationID),
@@ -41,39 +39,106 @@
 
     /// Publish complete records atomically without replacing any previous evidence.
     nonisolated enum GitXTestProgressRecords {
+        struct PublicationError: Error, Sendable, CustomStringConvertible {
+            let operation: String
+            let category: String
+            let posixCode: Int32?
+
+            var description: String {
+                "Native progress publication failed: operation=\(operation) category=\(category) errno=\(posixCode.map(String.init) ?? "none")"
+            }
+
+            static func system(_ operation: String, code: Int32 = errno) -> Self {
+                Self(operation: operation, category: "system", posixCode: code)
+            }
+        }
+
         @discardableResult
-        static func write(_ record: [String: Any], prefix: String, directory: String) throws -> URL {
+        static func write(
+            _ record: [String: Any], prefix: String, directory: String,
+            identity: String = UUID().uuidString,
+            writeBytes: (Int32, UnsafeRawPointer?, Int) -> Int = { Darwin.write($0, $1, $2) },
+            publish: (Int32, String, String) -> Int32 = { parent, source, destination in
+                source.withCString { temporary in
+                    destination.withCString { renameatx_np(parent, temporary, parent, $0, UInt32(RENAME_EXCL)) }
+                }
+            }
+        ) throws -> URL {
+            guard ["startup", "capture"].contains(prefix), UUID(uuidString: identity) != nil else {
+                throw PublicationError(operation: "validate-record", category: "configuration", posixCode: nil)
+            }
             let parent = directory.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
-            guard parent >= 0 else { throw POSIXError(.EIO) }
+            guard parent >= 0 else { throw PublicationError.system("open-directory") }
             defer { Darwin.close(parent) }
             var parentInfo = stat()
-            guard fstat(parent, &parentInfo) == 0, parentInfo.st_uid == geteuid() else { throw POSIXError(.EIO) }
-            let identity = UUID().uuidString
+            guard fstat(parent, &parentInfo) == 0 else { throw PublicationError.system("inspect-directory") }
+            guard parentInfo.st_uid == geteuid() else {
+                throw PublicationError(operation: "validate-directory", category: "ownership", posixCode: nil)
+            }
             let temporary = ".pending-\(identity)"
             let filename = "\(prefix)-\(getpid())-\(identity).json"
             let descriptor = temporary.withCString { openat(parent, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600) }
-            guard descriptor >= 0 else { throw POSIXError(.EIO) }
+            guard descriptor >= 0 else { throw PublicationError.system("create-record") }
             defer {
                 Darwin.close(descriptor)
                 _ = temporary.withCString { unlinkat(parent, $0, 0) }
             }
-            let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+            let data: Data
+            guard JSONSerialization.isValidJSONObject(record) else {
+                throw PublicationError(operation: "encode-record", category: "serialization", posixCode: nil)
+            }
+            do {
+                data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+            } catch {
+                throw PublicationError(operation: "encode-record", category: "serialization", posixCode: nil)
+            }
             try data.withUnsafeBytes { bytes in
                 var offset = 0
                 while offset < bytes.count {
-                    let count = Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                    let count = writeBytes(descriptor, bytes.baseAddress?.advanced(by: offset), bytes.count - offset)
                     if count < 0, errno == EINTR { continue }
-                    guard count > 0 else { throw POSIXError(.EIO) }
+                    guard count > 0 else { throw PublicationError.system("write-record", code: count == 0 ? EIO : errno) }
                     offset += count
                 }
             }
-            let linked = temporary.withCString { temporaryName in
-                filename.withCString { linkat(parent, temporaryName, parent, $0, 0) }
-            }
-            guard linked == 0 else { throw POSIXError(.EIO) }
+            guard fsync(descriptor) == 0 else { throw PublicationError.system("flush-record") }
+            guard publish(parent, temporary, filename) == 0 else { throw PublicationError.system("publish-record") }
             return URL(fileURLWithPath: directory).appendingPathComponent(filename)
         }
     }
+
+    /// The supervisor creates this lease; observers hold it for their process lifetime.
+    nonisolated final class GitXTestInvocationLease: Sendable {
+        private let descriptor: Int32
+
+        init(progressDirectory: String) throws {
+            let root = URL(fileURLWithPath: progressDirectory).deletingLastPathComponent().path
+            let parent = root.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+            guard parent >= 0 else { throw GitXTestProgressRecords.PublicationError.system("open-lease-directory") }
+            defer { Darwin.close(parent) }
+            let descriptor = openat(parent, "invocation.lease", O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+            guard descriptor >= 0 else { throw GitXTestProgressRecords.PublicationError.system("open-lease") }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0 else {
+                let code = errno
+                Darwin.close(descriptor)
+                throw GitXTestProgressRecords.PublicationError.system("inspect-lease", code: code)
+            }
+            guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == geteuid() else {
+                Darwin.close(descriptor)
+                throw GitXTestProgressRecords.PublicationError(operation: "validate-lease", category: "ownership", posixCode: nil)
+            }
+            guard flock(descriptor, LOCK_SH | LOCK_NB) == 0 else {
+                let code = errno
+                Darwin.close(descriptor)
+                throw GitXTestProgressRecords.PublicationError.system("lock-lease", code: code)
+            }
+            self.descriptor = descriptor
+        }
+
+        deinit { Darwin.close(descriptor) }
+    }
+
 #endif
 
 #if GITX_APP_TARGET && DEBUG
@@ -88,9 +153,20 @@
             let filename: String?
         }
 
-        private static let installation: Outcome = {
+        struct Installation: Sendable {
+            let outcome: Outcome
+            let lease: GitXTestInvocationLease?
+            let publicationFailure: GitXTestProgressRecords.PublicationError?
+        }
+
+        private static let installation: Installation = {
             let environment = ProcessInfo.processInfo.environment
             let launchID = UUID().uuidString
+            var lease: GitXTestInvocationLease?
+            if let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"], !directory.isEmpty {
+                // Capture remains optional; the test observer owns required startup reporting.
+                lease = try? GitXTestInvocationLease(progressDirectory: directory)
+            }
             let outcome = install(directory: environment["GITX_TEST_STDERR_DIRECTORY"], launchID: launchID)
             if let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"], directory.hasPrefix("/"),
                let invocation = environment["GITX_TEST_INVOCATION_ID"], !invocation.isEmpty {
@@ -101,9 +177,17 @@
                 ]
                 record["category"] = outcome.category
                 record["filename"] = outcome.filename
-                try? GitXTestProgressRecords.write(record, prefix: "capture", directory: directory)
+                do {
+                    try GitXTestProgressRecords.write(record, prefix: "capture", directory: directory)
+                } catch let error as GitXTestProgressRecords.PublicationError {
+                    return Installation(outcome: outcome, lease: lease, publicationFailure: error)
+                } catch {
+                    return Installation(outcome: outcome, lease: lease, publicationFailure: .init(
+                        operation: "publish-record", category: "unexpected", posixCode: nil
+                    ))
+                }
             }
-            return outcome
+            return Installation(outcome: outcome, lease: lease, publicationFailure: nil)
         }()
 
         @objc static func installAtApplicationStartup() {
@@ -138,6 +222,10 @@
             var info = stat()
             guard fstat(descriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == geteuid() else {
                 return Outcome(state: "unavailable", category: "open", filename: nil)
+            }
+            // flock follows the open file description through dup2 and inherited stderr.
+            guard flock(descriptor, LOCK_SH | LOCK_NB) == 0 else {
+                return Outcome(state: "unavailable", category: "lease", filename: filename)
             }
             guard redirect(descriptor) >= 0 else {
                 return Outcome(state: "unavailable", category: "redirect", filename: filename)

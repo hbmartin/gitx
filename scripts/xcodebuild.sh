@@ -430,11 +430,11 @@ run_step() {
 	result_path=$3
 	shift 3
 	started=$(python3 -c 'import time; print(time.time())')
-	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" ]]; then
-		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" -- "$@" 2>&1 | xcbeautify --disable-logging
+	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" && -z "${native_supervisor_arguments[*]:-}" ]]; then
+		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${native_supervisor_arguments[@]+"${native_supervisor_arguments[@]}"} -- "$@" 2>&1 | xcbeautify --disable-logging
 		step_status=${PIPESTATUS[0]}
 	else
-		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" -- "$@"
+		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${native_supervisor_arguments[@]+"${native_supervisor_arguments[@]}"} -- "$@"
 		step_status=$?
 	fi
 	duration=$(elapsed_seconds "$started")
@@ -447,6 +447,16 @@ run_step() {
 	receipt_step_status=$?
 	if (( step_status == 0 && receipt_step_status != 0 )); then step_status=$receipt_step_status; fi
 	return "$step_status"
+}
+
+# Native steps have one supervisor and one canonical console capture.
+run_native_step() {
+	local native_supervisor_arguments=(--timeout "$1" --desktop --native-test-root "$native_test_root"
+		--native-artifact-directory "$logs/Native" --native-test-bundle "$3"
+		--diagnostics "$run_dir/Diagnostics/$4" ${native_capture_arguments[@]+"${native_capture_arguments[@]}"})
+	[[ -z "$2" ]] || native_supervisor_arguments+=(--startup-timeout "$2")
+	shift 4
+	run_step "$@"
 }
 
 doctor_mode=build
@@ -583,17 +593,13 @@ xcode_test() {
 	local snapshot="$results/$plan-inputs.json"
 	python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || return $?
 	if [[ "$test_preset" != "ui-preflight" && "$test_preset" != "ui" ]]; then
-		run_step host-preflight "$logs/$plan-host.log" "$results/$plan-host.xcresult" \
-			python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" \
-				--native-test-root "$native_test_root" --native-artifact-directory "$logs/Native" --native-test-bundle net.phere.GitXTests ${native_capture_arguments[@]+"${native_capture_arguments[@]}"} -- \
+		run_native_step 120 "" net.phere.GitXTests host host-preflight "$logs/$plan-host.log" "$results/$plan-host.xcresult" \
 			"$xcodebuild" "${common[@]}" test-without-building -testPlan GitXHostPreflight \
 			-only-testing:GitXTests/GitXHostStartTests/testHostStarts \
 			-resultBundlePath "$results/$plan-host.xcresult" CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
 			${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
-	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
-		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" \
-			--native-test-root "$native_test_root" --native-artifact-directory "$logs/Native" --native-test-bundle "$native_test_bundle" ${native_capture_arguments[@]+"${native_capture_arguments[@]}"} -- \
+	run_native_step "${GITX_COMMAND_TIMEOUT:-7200}" 120 "$native_test_bundle" "$plan" "test:$test_preset" "$logs/$plan.log" "$result" \
 		"$xcodebuild" "${common[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
 		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@"
 	local test_status=$?
@@ -916,14 +922,10 @@ case "$command" in
 			run_step signatures "$logs/raw-signatures.log" "" python3 "$root/scripts/workflow_session.py" signatures "$derived_data" || exit $?
 			snapshot="$results/raw-inputs.json"
 			python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || exit $?
-			run_step host-preflight "$logs/raw-host.log" "$results/raw-host.xcresult" \
-				python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" \
-				--native-test-root "$native_test_root" --native-artifact-directory "$logs/Native" --native-test-bundle net.phere.GitXTests ${native_capture_arguments[@]+"${native_capture_arguments[@]}"} -- \
+			run_native_step 120 "" net.phere.GitXTests host host-preflight "$logs/raw-host.log" "$results/raw-host.xcresult" \
 				"$xcodebuild" test-without-building "${probe_arguments[@]}" -testPlan GitXHostPreflight \
 				-only-testing:GitXTests/GitXHostStartTests/testHostStarts -resultBundlePath "$results/raw-host.xcresult" || exit $?
-			run_step raw "$logs/raw.log" "$result_path" \
-				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw-tests" \
-				--native-test-root "$native_test_root" --native-artifact-directory "$logs/Native" --native-test-bundle "$native_test_bundle" ${native_capture_arguments[@]+"${native_capture_arguments[@]}"} -- \
+			run_native_step "${GITX_COMMAND_TIMEOUT:-7200}" 120 "$native_test_bundle" raw-tests raw "$logs/raw.log" "$result_path" \
 				"$xcodebuild" test-without-building "${suite_arguments[@]}"
 			raw_status=$?
 			run_step evidence "$logs/raw-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"

@@ -112,11 +112,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
 
-    def test_native_startup_reaches_innermost_preset_and_raw_watchdogs(self) -> None:
+    def test_native_startup_and_capture_share_preset_and_raw_supervisor(self) -> None:
         script = self.install_script('xcodebuild.sh')
         # Keep the production wrapper shape and shorten only the copied fixture's
-        # backstop so a disconnected inner watchdog fails promptly.
-        script.write_text(script.read_text().replace('--startup-timeout 120', '--startup-timeout 2'))
+        # backstop so disconnected startup evidence fails promptly.
+        script.write_text(script.read_text().replace('7200}\" 120', '7200}\" 2'))
         self.install_mock_xcodebuild(self.root / 'Products')
         mock = self.developer_directory / 'usr/bin/xcodebuild'
         mock.write_text(mock.read_text() + r'''
@@ -165,10 +165,10 @@ fi
                     stdout, stderr = process.communicate(timeout=10)
                     os.close(gate)
                 self.assertEqual(process.returncode, 0, (stdout + stderr).decode(errors='replace'))
-                self.assertTrue(released, 'The innermost watchdog must acknowledge native startup before release')
+                self.assertTrue(released, 'The canonical supervisor must acknowledge native startup before release')
                 state = json.loads(manifest.read_text())
                 self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
-                self.assertNotIn('outputCapture', state, 'The inner watchdog must not duplicate the console capture')
+                self.assertIn('outputCapture', state, 'Startup and the authoritative capture share one supervisor')
                 self.assertTrue(list((run / 'Logs/Native').glob('*/native-diagnostics.json')))
                 self.assertFalse(list((run / 'Logs').glob('*-console.log')))
                 self.assertEqual(self.receipt(run_id)['status'], 'passed')
@@ -1200,7 +1200,7 @@ fi
             native = pathlib.Path(record["diagnostics"])
             self.assertTrue(native.is_relative_to(self.root / "build/Fixtures"))
             self.assertFalse(native.is_relative_to(self.root / "artifacts/verification"))
-            self.assertTrue(pathlib.Path(record["progress"]).is_dir())
+            self.assertFalse(pathlib.Path(record["progress"]).exists(), 'Fully archived inactive scratch is retired')
             archive = self.root / "artifacts/verification" / f"native-stderr-{name}" / "Logs/Native" / record["invocation"]
             self.assertTrue((archive / 'native-diagnostics.json').is_file())
             self.assertFalse(list(archive.parent.parent.glob('*-console.log')))
@@ -2352,8 +2352,8 @@ class VerificationWorkflowTests(unittest.TestCase):
         gate = jobs['unit-and-analyze']
         self.assertIn('name: unit tests and analyzer', gate)
         self.assertIn(f'needs: [{tests}, {analyzer}, worktree-contracts]', gate)
-        self.assertIn('if: ${{ !cancelled() }}', gate)
-        self.assertNotIn('if: ${{ always() }}', gate)
+        self.assertEqual(gate.count('if: ${{ always() }}'), 2, 'Both the small gate and its result step must survive cancellation')
+        self.assertNotIn('!cancelled()', gate)
         self.assertIn('timeout-minutes: 5', gate)
         self.assertIn('needs: toolchain-smoke', jobs['worktree-contracts'])
         self.assertIn("UNIT_RESULT: ${{ needs['unit-tests'].result }}", gate)
@@ -2377,6 +2377,57 @@ class VerificationWorkflowTests(unittest.TestCase):
                         )
                         self.assertEqual(result.returncode == 0, tests == analyzer == worktrees == 'success')
 
+    def test_only_small_required_gate_overrides_workflow_cancellation(self):
+        # Source protection for scheduling intent; this does not execute GitHub's scheduler.
+        jobs = self.jobs()
+        for name in ('unit-tests', 'analyzer', 'worktree-contracts', 'ui'):
+            prefix = jobs[name].split('steps:', 1)[0]
+            self.assertNotIn('always()', prefix)
+        gate = jobs['unit-and-analyze']
+        step = gate.split('- name: Require all native verification jobs', 1)[1]
+        self.assertIn('if: ${{ always() }}', step.split('run: |', 1)[0])
+        self.assertNotIn('continue-on-error', gate)
+
+    def test_native_setup_marker_follows_all_prerequisites_and_keeps_default_success_condition(self):
+        for job in ['worktree-contracts', 'ui']:
+            with self.subTest(job=job):
+                body = self.jobs()[job]
+                marker = '- name: Record successful native setup'
+                setup = body.split(marker, 1)[1].split('- name:', 1)[0]
+                self.assertIn('id: native_setup_ready', setup)
+                self.assertIn("run: 'true'", setup)
+                self.assertNotIn('if:', setup, 'A failed prerequisite must skip the readiness marker')
+                self.assertLess(body.index('- name: Prepare ObjectiveGit'), body.index(marker))
+                if job == 'worktree-contracts':
+                    self.assertLess(body.index('- name: Install pinned Swift tools'), body.index(marker))
+                    first_test = '- name: Execute Release service and runtime contracts'
+                else:
+                    first_test = '- name: Repeat Locate consent and stabilized UI regressions five times'
+                self.assertLess(body.index(marker), body.index(first_test))
+
+    def test_follow_on_predicates_reject_unready_setup_but_preserve_independent_failure_collection(self):
+        # This evaluates only the two supported atoms extracted from the workflow,
+        # not GitHub's runner or its prerequisite/default-condition implementation.
+        steps = [
+            ('worktree-contracts', 'Repeat the stabilized native CI regressions five times'),
+            ('worktree-contracts', 'Measure Release worktree safety and header update costs'),
+            ('ui', 'Run UI plan'),
+        ]
+        for job, name in steps:
+            step = self.jobs()[job].split('- name: ' + name, 1)[1].split('- name:', 1)[0]
+            condition = step.split('if: ${{ ', 1)[1].split(' }}', 1)[0]
+            self.assertEqual(condition, "!cancelled() && steps.native_setup_ready.outcome == 'success'")
+            for setup in ['success', 'failure', 'cancelled', 'skipped', '']:
+                for earlier_test in ['success', 'failure', 'cancelled', 'skipped', '']:
+                    for cancelled in [False, True]:
+                        with self.subTest(job=job, step=name, setup=setup, earlier_test=earlier_test, cancelled=cancelled):
+                            atoms = {
+                                '!cancelled()': not cancelled,
+                                "steps.native_setup_ready.outcome == 'success'": setup == 'success',
+                            }
+                            actual = all(atoms[atom] for atom in condition.split(' && '))
+                            self.assertEqual(actual, setup == 'success' and not cancelled)
+
     def test_focused_failures_keep_independent_plans_and_artifact_uploads_enabled(self):
         jobs = self.jobs()
         for job, name in [
@@ -2386,7 +2437,7 @@ class VerificationWorkflowTests(unittest.TestCase):
         ]:
             with self.subTest(job=job, step=name):
                 step = jobs[job].split('- name: ' + name, 1)[1].split('- name:', 1)[0]
-                self.assertIn('if: ${{ !cancelled() }}', step)
+                self.assertIn("if: ${{ !cancelled() && steps.native_setup_ready.outcome == 'success' }}", step)
                 self.assertNotIn('continue-on-error', jobs[job])
         for job, upload in [('worktree-contracts', 'Upload worktree verification results'),
                             ('ui', 'Upload UI result'), ('unit-tests', 'Upload correctness results')]:

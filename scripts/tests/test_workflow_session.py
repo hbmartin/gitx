@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import pathlib
 import select
@@ -21,6 +22,105 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    @staticmethod
+    def startup_child():
+        return """
+import json, os, pathlib
+record = {'schemaVersion': 1, 'event': 'bundle-start', 'pid': os.getpid(), 'bundleID': 'net.phere.GitXTests',
+          'invocationID': os.environ['GITX_TEST_INVOCATION_ID'], 'verificationSession': os.environ['GITX_VERIFICATION_SESSION']}
+progress = pathlib.Path(os.environ['GITX_TEST_PROGRESS_DIRECTORY'])
+(progress / f'startup-{os.getpid()}-a.json').write_text(json.dumps(record))
+"""
+
+    def test_managed_success_requires_startup_even_before_deadline_but_preserves_real_failure(self):
+        for child_status in (0, 9):
+            with self.subTest(child_status=child_status), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, diagnostics = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    status = session.supervise([sys.executable, '-c', f'raise SystemExit({child_status})'],
+                                               directory=diagnostics, native_test_root=root / 'cache',
+                                               native_artifact_directory=output.parent / 'Native', startup_timeout=120)
+                self.assertEqual(status, 2 if child_status == 0 else child_status)
+                state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+                self.assertEqual(state['childExitCode'], child_status)
+                self.assertEqual(state['status'], 'failed')
+                if child_status == 0:
+                    self.assertEqual(state['category'], 'native-startup-unconfirmed')
+
+    def test_progress_setup_failure_launches_no_child_and_starts_no_reporting_thread(self):
+        for operation in ('probe-publication', 'open-progress'):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, diagnostics = self.capture_fixture(root)
+                target = 'exclusive_native_rename' if operation == 'probe-publication' else 'NativeTestProgress'
+                with mock.patch.object(session, 'ROOT', root), mock.patch.object(session, target, side_effect=OSError(28, 'fixture-full')), \
+                        mock.patch.object(session.pathlib.Path, 'home', return_value=root), \
+                        mock.patch.object(session, 'producer_identity', return_value={'pid': 42}), \
+                        mock.patch.object(session.subprocess, 'Popen') as launch, \
+                        mock.patch.object(session.threading, 'Thread') as worker:
+                    status = session.supervise(['must-not-launch'], directory=diagnostics,
+                                               native_test_root=root / 'cache', native_artifact_directory=output.parent / 'Native')
+                self.assertEqual(status, 2)
+                launch.assert_not_called()
+                worker.assert_not_called()
+                state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+                self.assertEqual(state['category'], 'native-progress-setup-failed')
+                self.assertEqual(state['infrastructureError'], {'operation': operation, 'errno': 28})
+
+    def test_progress_stops_rescanning_after_accepted_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            record = self.startup_record()
+            (root / 'startup-42-a.json').write_text(json.dumps(record))
+            progress = session.NativeTestProgress(root, 'invocation-1', 'session-1', ['net.phere.GitXTests'])
+            self.addCleanup(progress.close)
+            self.assertTrue(progress.observed())
+            with mock.patch.object(session.os, 'listdir', side_effect=AssertionError('Startup was already accepted')):
+                self.assertTrue(progress.observed())
+
+    def test_matching_publication_failure_is_an_infrastructure_error_and_never_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, diagnostics = self.capture_fixture(root)
+            reader, writer = os.pipe()
+            self.addCleanup(os.close, reader)
+            self.addCleanup(os.close, writer)
+            command = """
+import os, sys
+print('GitXNativeStartupFailure invocation=' + os.environ['GITX_TEST_INVOCATION_ID'] +
+      ' operation=publish-record category=system errno=28', flush=True)
+os.read(int(sys.argv[1]), 1)
+"""
+            with mock.patch.object(session, 'ROOT', root):
+                status = session.supervise([sys.executable, '-c', command, str(reader)], directory=diagnostics,
+                                           output_log=output, native_test_root=root / 'cache', startup_timeout=120,
+                                           pass_fds=(reader,))
+            state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+            self.assertEqual(status, 2)
+            self.assertEqual(state['category'], 'native-startup-publication-failed')
+            self.assertEqual(state['infrastructureError']['errno'], 28)
+            self.assertNotIn('hostStartup', state)
+
+    def test_native_record_requires_filename_pid_and_owned_invocation_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            self.addCleanup(os.close, descriptor)
+            record = {'schemaVersion': 1, 'event': 'bundle-start', 'pid': 42,
+                      'bundleID': 'bundle', 'invocationID': 'invocation', 'verificationSession': 'session'}
+            source = root / 'startup-42-a.json'
+            source.write_text(json.dumps(record))
+            self.assertEqual(session.read_native_record(descriptor, source.name, 'invocation', 'session'), record)
+            for name, invocation, verification in [('startup-43-a.json', 'invocation', 'session'),
+                                                    (source.name, 'other', 'session'),
+                                                    (source.name, 'invocation', 'other')]:
+                with self.subTest(name=name, invocation=invocation, verification=verification):
+                    if name != source.name:
+                        (root / name).write_bytes(source.read_bytes())
+                    self.assertIsNone(session.read_native_record(descriptor, name, invocation, verification))
+            self.assertEqual(json.loads(source.read_text()), record)
+
     def capture_fixture(self, root):
         scripts = root / 'scripts'
         scripts.mkdir()
@@ -731,7 +831,7 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(status, 0)
             state = json.loads(manifest.read_text())
             self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
-            self.assertNotIn('outputCapture', state, 'Structured startup must work without a console capture')
+            self.assertIn('outputCapture', state, 'Managed startup and reporting share one canonical capture')
 
     def native_startup_probe(self, mode):
         with tempfile.TemporaryDirectory() as directory:
@@ -835,6 +935,8 @@ record = {'schemaVersion': 1, 'event': 'capture', 'pid': os.getpid(), 'state': '
           'invocationID': os.environ['GITX_TEST_INVOCATION_ID'], 'verificationSession': os.environ['GITX_VERIFICATION_SESSION']}
 progress = pathlib.Path(os.environ['GITX_TEST_PROGRESS_DIRECTORY'])
 (progress / f'capture-{os.getpid()}-a.json').write_text(json.dumps(record))
+record.update(event='bundle-start', bundleID='net.phere.GitXTests')
+(progress / f'startup-{os.getpid()}-b.json').write_text(json.dumps(record))
 print('original stderr retained', file=sys.stderr)
 sys.exit(int(sys.argv[1]))
 '''
@@ -846,6 +948,152 @@ sys.exit(int(sys.argv[1]))
                 state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
                 self.assertIn('capture-unavailable', state['nativeDiagnostics']['warnings'])
                 self.assertIn('original stderr retained', output.read_text())
+
+    def test_native_checkpoint_precedes_close_and_inherited_writer_lease_defers_retirement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'custom-cache', output.parent / 'Native', 'session', ['bundle'], True)
+                source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                writer = os.open(source, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                fcntl.flock(writer, fcntl.LOCK_SH)
+                reader, release = os.pipe()
+                child = subprocess.Popen([sys.executable, '-c', f'import os; os.read({reader},1)'], pass_fds=(reader, writer))
+                os.close(reader)
+                try:
+                    os.write(writer, b'checkpoint-before-supervisor-exit\x00\xff')
+                    native.poll()
+                    archived = native.archive / source.name
+                    self.assertEqual(archived.read_bytes(), source.read_bytes())
+                    os.write(writer, b'\nlast-bytes')
+                    os.close(writer)
+                    writer = None
+                    result = native.close()
+                    self.assertEqual(result['retirementState'], 'deferred')
+                    self.assertEqual(result['retirementReason'], 'producer-lease-held')
+                    self.assertTrue(native.root.exists())
+                    self.assertEqual(archived.read_bytes(), source.read_bytes())
+                    os.write(release, b'1')
+                    child.wait(timeout=5)
+
+                    owner = json.loads(native.registration.read_text())
+                    state, reason = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                    self.assertEqual((state, reason), ('retired', None))
+                    self.assertFalse(native.root.exists())
+                    self.assertTrue(archived.read_bytes().endswith(b'last-bytes'))
+                finally:
+                    if writer is not None:
+                        os.close(writer)
+                    os.close(release)
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=5)
+
+    def test_native_poll_rotates_launches_and_bounds_each_source_chunk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                for pid in range(1, 21):
+                    (native.stderr_directory / f'GitX-{pid}-a.stderr.log').write_bytes(b'x' * 131072)
+                native.poll()
+                self.assertEqual(sum(state['mirrored'] for state in native.sources.values()), 16 * 65536)
+                self.assertTrue(all(state['mirrored'] <= 65536 for state in native.sources.values()))
+                native.poll()
+                self.assertTrue(all(state['mirrored'] > 0 for state in native.sources.values()))
+                native.close()
+
+    def test_command_and_native_bytes_have_one_console_writer_and_complete_raw_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, diagnostics = self.capture_fixture(root)
+            command = self.startup_child() + """
+import sys
+native = pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY'])
+(native / f'GitX-{os.getpid()}-b.stderr.log').write_bytes(b'native-sentinel\\x00\\xff' * 8192)
+sys.stdout.buffer.write(b'command-sentinel' * 8192)
+"""
+            writers = set()
+            write = session.os.write
+            def observe_write(descriptor, data):
+                if descriptor == sys.stdout.fileno():
+                    writers.add(threading.current_thread().name)
+                    return len(data)
+                return write(descriptor, data)
+            with mock.patch.object(session, 'ROOT', root), mock.patch.object(session.os, 'write', side_effect=observe_write):
+                status = session.supervise([sys.executable, '-c', command], output_log=output, directory=diagnostics,
+                                           native_test_root=root / 'cache', native_artifact_directory=output.parent / 'Native',
+                                           capture_native_stderr=True)
+            self.assertEqual(status, 0)
+            self.assertEqual(writers, {'verification-console'})
+            data = output.read_bytes()
+            self.assertEqual(data.count(b'command-sentinel'), 8192)
+            self.assertEqual(data.count(b'native-sentinel\x00\xff'), 8192)
+
+    def test_native_retirement_refuses_replaced_sources_archives_and_unknown_content(self):
+        for replacement in ('source', 'archive', 'unexpected'):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                    source.write_bytes(b'original-evidence')
+                    lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+                    fcntl.flock(lease, fcntl.LOCK_SH)
+                    result = native.close()
+                    os.close(lease)
+                    self.assertTrue(result['collectionComplete'])
+                    if replacement == 'unexpected':
+                        (native.root / 'unrelated-user-file').write_bytes(b'preserve')
+                    else:
+                        target = source if replacement == 'source' else native.archive / source.name
+                        target.unlink()
+                        target.write_bytes(b'replacement-data')
+                    owner = json.loads(native.registration.read_text())
+                    state, _ = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                    self.assertEqual(state, 'deferred')
+                    self.assertTrue(native.root.exists())
+
+    def test_native_retirement_resumes_registered_quarantine_after_interrupted_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                (native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'retained')
+                with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError('interrupted-removal')):
+                    native.close()
+                owner = json.loads(native.registration.read_text())
+                self.assertTrue(pathlib.Path(owner['retirementPath']).exists())
+                state, _ = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                self.assertEqual(state, 'retired')
+                self.assertFalse(pathlib.Path(owner['retirementPath']).exists())
+
+    def test_native_retirement_rechecks_source_after_registered_rename_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                source.write_bytes(b'archived-original')
+                lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+                fcntl.flock(lease, fcntl.LOCK_SH)
+                native.close()
+                os.close(lease)
+                owner = json.loads(native.registration.read_text())
+                def replace_after_validation(value):
+                    session.atomic_json(native.registration, value)
+                    source.unlink()
+                    source.write_bytes(b'preserve-new-source')
+                state, reason = session.retire_native_sources(owner, persist=replace_after_validation)
+                self.assertEqual((state, reason), ('deferred', 'source-changed-during-retirement'))
+                retained = pathlib.Path(owner['retirementPath']) / 'Stderr' / source.name
+                self.assertEqual(retained.read_bytes(), b'preserve-new-source')
+                self.assertEqual((native.archive / source.name).read_bytes(), b'archived-original')
 
     def test_native_raw_binary_files_are_archived_even_if_console_or_collection_is_incomplete(self):
         for degraded in (False, True):
@@ -859,13 +1107,12 @@ sys.exit(int(sys.argv[1]))
                     source.write_bytes(raw)
                     native.poll()
                     if degraded:
-                        native.mirror.error = 'fixture-console-error'
+                        native.warnings.add('capture-unconfirmed')
                     result = native.close()
                 self.assertEqual((pathlib.Path(result['artifactDirectory']) / source.name).read_bytes(), raw)
                 self.assertTrue(result['collectionComplete'])
                 if degraded:
-                    self.assertIn('console-incomplete', result['warnings'])
-                    self.assertFalse(result['consoleComplete'])
+                    self.assertIn('capture-unconfirmed', result['warnings'])
 
     def test_unavailable_native_cache_keeps_independent_startup_available(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -873,9 +1120,9 @@ sys.exit(int(sys.argv[1]))
             _, output, _ = self.capture_fixture(root)
             blocked = root / 'not-a-directory'
             blocked.write_text('keep-existing')
-            with mock.patch.object(session, 'ROOT', root):
+            with mock.patch.object(session, 'ROOT', root), mock.patch.object(session.pathlib.Path, 'home', return_value=root):
                 native = session.NativeTestDiagnostics(blocked, output.parent / 'Native', 'session-1', ['net.phere.GitXTests'], True)
-                self.addCleanup(shutil.rmtree, native.root)
+                self.addCleanup(shutil.rmtree, native.root, ignore_errors=True)
                 environment = {}
                 native.configure(environment)
                 self.assertEqual(environment['GITX_TEST_STDERR_DIRECTORY'], '')
@@ -890,8 +1137,8 @@ sys.exit(int(sys.argv[1]))
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             _, output, diagnostics = self.capture_fixture(root)
-            child = "import os,pathlib; p=pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY']); (p/f'GitX-{os.getpid()}-a.stderr.log').write_bytes(b'keep-native-evidence')"
-            with mock.patch.object(session, 'ROOT', root), mock.patch.object(session.shutil, 'copyfileobj', side_effect=OSError('fixture disk failure')):
+            child = self.startup_child() + "\np=pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY']); (p/f'GitX-{os.getpid()}-a.stderr.log').write_bytes(b'keep-native-evidence')"
+            with mock.patch.object(session, 'ROOT', root), mock.patch.object(session.NativeTestDiagnostics, '_archive_chunk', return_value=None):
                 status = session.supervise([sys.executable, '-c', child], directory=diagnostics,
                                            native_test_root=root / 'cache', native_artifact_directory=output.parent / 'Native',
                                            capture_native_stderr=True)
@@ -908,7 +1155,7 @@ sys.exit(int(sys.argv[1]))
             root = pathlib.Path(directory)
             entry, output, diagnostics = self.capture_fixture(root)
             raw = b'native-diagnostic\x00\xff' * 32768
-            child = "import os,pathlib; p=pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY']); (p/f'GitX-{os.getpid()}-a.stderr.log').write_bytes(b'native-diagnostic\\x00\\xff'*32768)"
+            child = self.startup_child() + "\np=pathlib.Path(os.environ['GITX_TEST_STDERR_DIRECTORY']); (p/f'GitX-{os.getpid()}-a.stderr.log').write_bytes(b'native-diagnostic\\x00\\xff'*32768)"
             process = subprocess.Popen([sys.executable, str(entry), 'run', '--diagnostics', str(diagnostics),
                                         '--native-test-root', str(root / 'cache'), '--native-artifact-directory', str(output.parent / 'Native'),
                                         '--capture-native-stderr', '--', sys.executable, '-c', child],

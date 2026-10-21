@@ -425,6 +425,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             object: nil
         )
         refreshPreferenceDidChange(nil)
+        // Initial navigation belongs to the window. Passive sidebar restoration
+        // must never acquire navigation authority, even before content mounts.
+        if contentController == nil, let history = _historyViewController {
+            changeContentController(history)
+            NSLog("Mounted initial repository History")
+        }
         #if DEBUG
             milestone2UITestHarness = Milestone2UITestHarness.installIfRequested(for: self)
             milestone3UITestHarness = Milestone3UITestHarness.installIfRequested(for: self)

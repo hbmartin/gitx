@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 
 final class GitXTestGitFixtureTests: XCTestCase {
@@ -67,11 +68,44 @@ final class GitXTestGitFixtureTests: XCTestCase {
         let attachments = GitXManagedTestObserver.failureAttachments(in: directory.path)
         XCTAssertEqual(attachments.count, 1)
         let attachment = try XCTUnwrap(attachments.first)
-        XCTAssertEqual(attachment.name, "Native stderr excerpt: GitX-42-fixture.stderr.log")
+        XCTAssertEqual(attachment.name, "Native stderr tail: GitX-42-fixture.stderr.log [4464..<70000]")
         XCTAssertEqual(attachment.lifetime, .keepAlways)
         XCTAssertEqual(try Data(contentsOf: native), bytes)
         XCTAssertTrue(GitXManagedTestObserver.failureAttachments(in: nil).isEmpty)
         XCTAssertTrue(GitXManagedTestObserver.failureAttachments(in: "").isEmpty)
+    }
+
+    func testNativeFailureAttachmentsRetainNewTailBytesOnceWithinCaseBudget() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let source = directory.appendingPathComponent("GitX-42-a.stderr.log")
+        let prefix = Data(repeating: 65, count: 70000)
+        let sentinel = Data([0, 255]) + Data("AddressSanitizer: tail\ncrash-output: tail\n".utf8)
+        let original = prefix + sentinel
+        try original.write(to: source)
+        var state = GitXManagedTestObserver.AttachmentState()
+        let first = try XCTUnwrap(state.take(in: directory.path).first)
+        XCTAssertEqual(first.data, original.suffix(65536))
+        XCTAssertEqual(first.end, Int64(original.count))
+        XCTAssertTrue(state.take(in: directory.path).isEmpty)
+        let handle = try FileHandle(forWritingTo: source)
+        _ = try handle.seekToEnd()
+        try handle.write(contentsOf: Data("next-issue".utf8))
+        try handle.close()
+        let next = try XCTUnwrap(state.take(in: directory.path).first)
+        XCTAssertEqual(next.start, Int64(original.count))
+        XCTAssertEqual(next.data, Data("next-issue".utf8))
+        for pid in 43 ... 50 {
+            try Data(repeating: UInt8(pid), count: 70000).write(to: directory.appendingPathComponent("GitX-\(pid)-a.stderr.log"))
+        }
+        let remaining = state.take(in: directory.path)
+        XCTAssertTrue(remaining.allSatisfy { $0.data.count <= 65536 })
+        XCTAssertEqual(state.retainedBytes, 262144)
+        XCTAssertTrue(state.take(in: directory.path).isEmpty)
+        XCTAssertEqual(try Data(contentsOf: source), original + Data("next-issue".utf8))
+        var independentCase = GitXManagedTestObserver.AttachmentState()
+        XCTAssertFalse(independentCase.take(in: directory.path).isEmpty)
     }
 
     func testProgressPublicationLeavesOnlyCompleteDistinctRecordsAndPreservesEvidence() throws {
@@ -93,11 +127,90 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasPrefix(".pending-") })
     }
 
+    func testProgressSerializationFailureLeavesNoPartialEvidence() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        XCTAssertThrowsError(try GitXTestProgressRecords.write(
+            ["unsupported": Date()], prefix: "startup", directory: directory.path
+        ))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+    }
+
+    func testProgressPublicationPreservesSystemOperationAndErrno() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        for operation in ["write-record", "publish-record"] {
+            XCTAssertThrowsError(try GitXTestProgressRecords.write(
+                ["event": "bundle-start"], prefix: "startup", directory: directory.path,
+                writeBytes: { descriptor, bytes, count in
+                    if operation == "write-record" {
+                        errno = ENOSPC
+                        return -1
+                    }
+                    return Darwin.write(descriptor, bytes, count)
+                },
+                publish: { _, _, _ in
+                    errno = EACCES
+                    return -1
+                }
+            )) { error in
+                let failure = error as? GitXTestProgressRecords.PublicationError
+                XCTAssertEqual(failure?.operation, operation)
+                XCTAssertEqual(failure?.category, "system")
+                XCTAssertEqual(failure?.posixCode, operation == "write-record" ? ENOSPC : EACCES)
+            }
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+        }
+    }
+
+    func testProgressExclusiveRenamePreservesCollisionAndRetriesInterruptedPartialWrites() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let identity = UUID().uuidString
+        let destination = directory.appendingPathComponent("startup-\(getpid())-\(identity).json")
+        let original = Data("existing-record".utf8)
+        try original.write(to: destination)
+        XCTAssertThrowsError(try GitXTestProgressRecords.write(
+            ["event": "bundle-start"], prefix: "startup", directory: directory.path, identity: identity
+        )) { error in
+            XCTAssertEqual((error as? GitXTestProgressRecords.PublicationError)?.posixCode, EEXIST)
+        }
+        XCTAssertEqual(try Data(contentsOf: destination), original)
+        var attempts = 0
+        let published = try GitXTestProgressRecords.write(
+            ["event": "bundle-start"], prefix: "startup", directory: directory.path,
+            writeBytes: { descriptor, bytes, count in
+                attempts += 1
+                if attempts == 1 {
+                    errno = EINTR
+                    return -1
+                }
+                return Darwin.write(descriptor, bytes, min(count, 3))
+            }
+        )
+        XCTAssertGreaterThan(attempts, 2)
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: published)) as? [String: String])
+        XCTAssertEqual(record["event"], "bundle-start")
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasPrefix(".pending-") })
+    }
+
+    func testManagedStartupFailureIsTakenBeforeRecursiveIssueDelivery() {
+        var state = GitXManagedTestObserver.StartupState()
+        state.failure = .init(operation: "publish-record", category: "system", posixCode: ENOSPC)
+        XCTAssertEqual(state.takeFailure()?.posixCode, ENOSPC)
+        XCTAssertNil(state.takeFailure())
+    }
+
     func testEmptyDiagnosticRequestsAreRemovedAndProgressSurvivesEmptyLaunchEnvironment() {
         let empty = GitXTestGitEnvironment.isolated(
-            ["GITX_TEST_STDERR_DIRECTORY": "/previous", "GITX_TEST_PROGRESS_DIRECTORY": "/previous", "GITX_TEST_INVOCATION_ID": "old"],
-            nativeDiagnosticDirectory: "", progressDirectory: "", invocationID: ""
+            ["GITX_VERIFICATION_SESSION": "old", "GITX_TEST_STDERR_DIRECTORY": "/previous",
+             "GITX_TEST_PROGRESS_DIRECTORY": "/previous", "GITX_TEST_INVOCATION_ID": "old"],
+            verificationSession: "", nativeDiagnosticDirectory: "", progressDirectory: "", invocationID: ""
         )
+        XCTAssertNil(empty["GITX_VERIFICATION_SESSION"])
         XCTAssertNil(empty["GITX_TEST_STDERR_DIRECTORY"])
         XCTAssertNil(empty["GITX_TEST_PROGRESS_DIRECTORY"])
         XCTAssertNil(empty["GITX_TEST_INVOCATION_ID"])

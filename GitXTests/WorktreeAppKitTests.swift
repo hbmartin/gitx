@@ -17,6 +17,94 @@ func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt 
 
 @MainActor
 final class WorktreeAppKitTests: XCTestCase {
+    func testFreshRepositoryWindowMountsHistoryWithoutSelectionNavigation() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        defer { service.cancel() }
+        await ready(service)
+        XCTAssertNil(repository.currentBranch)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        await showForegroundWindow(controller)
+        defer { controller.close() }
+        let window = try XCTUnwrap(controller.window)
+        await waitUntil { controller.historyViewController?.view.window === window }
+        XCTAssertNotNil(repository.currentBranch, "Initial sidebar lookup publishes the branch synchronously")
+        XCTAssertEqual(controller.sidebarViewController?.selectedItem()?.revSpecifier?.simpleRef(), repository.currentBranch?.simpleRef())
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        try attachScreenshot(of: window, named: "Worktrees-Initial-History-Without-Selection-Click")
+    }
+
+    func testClosedSidebarRejectsDirectNavigationCheckoutAndRowRemoval() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        _ = try fixture.git(["branch", "other"])
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        defer { service.cancel() }
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        _ = sidebar.view
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+        let other = try XCTUnwrap(branches.sortedChildren.first { $0.revSpecifier?.simpleRef() == "refs/heads/other" })
+        outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: other)), byExtendingSelection: false)
+        let originalRows = branches.sortedChildren
+        let originalRevision = repository.currentBranch
+        let head = try fixture.git(["symbolic-ref", "HEAD"])
+        sidebar.closeView()
+        try SidebarLifecycleTestSupport.assertClosedNavigationIsInert(sidebar)
+        sidebar.doubleClicked(sidebar)
+        _ = sidebar.perform(NSSelectorFromString("removeRevSpec:"), with: other.revSpecifier)
+        _ = sidebar.perform(NSSelectorFromString("showForgeAttention:"), with: nil)
+        sidebar.toggleBranchSort(sidebar)
+        sidebar.fetchPullPushAction(nil)
+        let checkoutRow = try XCTUnwrap((0 ..< outline.numberOfRows).first {
+            (outline.item(atRow: $0) as? PBSourceViewGitWorktreeItem)?.worktree.path == WorktreePaths.canonical(fixture.linked.path)
+        })
+        // Retain a stale clicked checkout after owner revocation without sending
+        // another navigation notification through the closed outline delegate.
+        outline.delegate = nil
+        outline.selectRowIndexes(IndexSet(integer: checkoutRow), byExtendingSelection: false)
+        try SidebarLifecycleTestSupport.assertClosedNavigationIsInert(sidebar)
+        let remotes = try XCTUnwrap(sidebar.remotes)
+        let remoteRows = remotes.sortedChildren
+        _ = try fixture.git(["remote", "add", "after-close", "https://example.invalid/closed.git"])
+        sidebar.synchronizeConfiguredRemotes()
+        XCTAssertEqual(remotes.sortedChildren.map(ObjectIdentifier.init), remoteRows.map(ObjectIdentifier.init))
+        XCTAssertTrue(sidebar.menu(forRow: outline.selectedRow).items.isEmpty)
+        XCTAssertEqual(branches.sortedChildren.count, originalRows.count)
+        XCTAssertEqual(branches.sortedChildren.map(ObjectIdentifier.init), originalRows.map(ObjectIdentifier.init))
+        XCTAssertTrue(repository.currentBranch === originalRevision)
+        XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"]), head)
+    }
+
+    func testLiveSidebarDirectRemovalUpdatesOnlyItsPresentation() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        defer { service.cancel() }
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        _ = sidebar.view
+        defer { sidebar.closeView() }
+        let revision = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/presentation-only"))
+        let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+        let item = PBSourceViewItem(title: "presentation-only", revSpecifier: revision)
+        branches.addChild(item)
+        let viewed = repository.currentBranch
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        _ = sidebar.perform(NSSelectorFromString("removeRevSpec:"), with: revision)
+        XCTAssertFalse(branches.sortedChildren.contains { $0 === item })
+        XCTAssertTrue(repository.currentBranch === viewed)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+    }
+
     func testRepairOfferThroughObjectiveCImportedSubclassKeepsWindowState() {
         let controller = RepairWindowControllerFixture(window: nil)
         let initiallyLoaded = controller.isWindowLoaded
@@ -1523,6 +1611,62 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertTrue(repository.currentBranch === revision, "Closing one sidebar must not change the shared browsed revision")
     }
 
+    func testInitialInventorySpinnerSurvivesCellReuseAndStopsAfterPublication() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        repository.worktreeService.cancel()
+        let version = DeferredPruneReportTask()
+        let inventory = DeferredPruneReportTask()
+        let service = PBRepositoryWorktreeService(repository: repository) { arguments in
+            if arguments == ["--version"] { return version }
+            if arguments == ["worktree", "list", "--porcelain", "-z"] { return inventory }
+            let task = PBTask(launchPath: "/usr/bin/git", arguments: ["-C", fixture.main.path] + arguments, inDirectory: fixture.main.path)
+            GitXTestGitFixture.prepare(task)
+            return task
+        }
+        repository.setValue(service, forKey: "worktreeService")
+        service.start()
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        await showForegroundWindow(controller)
+        defer {
+            controller.close(); service.cancel()
+            version.finish(nil, error: CancellationError())
+            inventory.finish(nil, error: CancellationError())
+        }
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        func header() throws -> NSTableCellView {
+            let row = try XCTUnwrap((0 ..< outline.numberOfRows).first { (outline.item(atRow: $0) as? PBSourceViewItem)?.title == "WORKTREES" })
+            return try XCTUnwrap(outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)
+        }
+        await waitUntil { version.isPending }
+        let checking = try header()
+        XCTAssertEqual(checking.textField?.stringValue, "WORKTREES")
+        XCTAssertTrue((checking.accessibilityValue() as? String)?.contains("Checking") == true)
+        XCTAssertEqual(checking.subviews.compactMap { $0 as? NSProgressIndicator }.filter { !$0.isHidden }.count, 1)
+        version.finish(Data("git version 2.50.1\n".utf8))
+        await waitUntil { inventory.isPending }
+        for _ in 0 ..< 3 {
+            let row = outline.row(forItem: sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "WORKTREES" })
+            outline.reloadItem(outline.item(atRow: row))
+            let loading = try header()
+            XCTAssertEqual(loading.textField?.stringValue, "WORKTREES")
+            XCTAssertEqual(loading.accessibilityValue() as? String, "Loading worktrees…")
+            XCTAssertEqual(loading.subviews.compactMap { $0 as? NSProgressIndicator }.count, 1)
+            XCTAssertFalse(try XCTUnwrap(loading.subviews.compactMap { $0 as? NSProgressIndicator }.first).isHidden)
+        }
+        try attachScreenshot(of: XCTUnwrap(controller.window), named: "Worktrees-Initial-Inventory-Header-Spinner")
+        inventory.finish(Data(try fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
+        await waitUntil { service.inventoryStatus == WorktreeInventoryStatus.fresh.rawValue }
+        let settled = try header()
+        XCTAssertEqual(settled.accessibilityValue() as? String, "Up to date")
+        XCTAssertTrue(settled.subviews.compactMap { $0 as? NSProgressIndicator }.allSatisfy(\.isHidden))
+        controller.close()
+        XCTAssertTrue(settled.subviews.compactMap { $0 as? NSProgressIndicator }.allSatisfy(\.isHidden))
+    }
+
     func testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -1734,10 +1878,12 @@ final class WorktreeAppKitTests: XCTestCase {
         let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
         let link = foreign.linked.appendingPathComponent(".git")
         let original = try Data(contentsOf: link)
-        do {
-            try await service.prepareAndConfirmRepair(worktree: tree, movedTo: foreign.linked.path)
-            XCTFail("Wrong folder was accepted")
-        } catch {}
+        let rejected = expectation(description: "foreign folder rejected during read-only preparation")
+        service.prepareRepairForTest(worktree: tree, movedTo: foreign.linked.path) { preview, error in
+            service.assertRejectedRepairPreparation(preview, error: error, cause: .invalidRepair(""))
+            rejected.fulfill()
+        }
+        await fulfillment(of: [rejected], timeout: 10)
         XCTAssertEqual(try Data(contentsOf: link), original)
         XCTAssertNotNil(service.worktree(forBranch: "refs/heads/topic"))
     }
@@ -1933,7 +2079,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
         let moved = fixture.root.appendingPathComponent("relocated")
         try FileManager.default.moveItem(at: fixture.linked, to: moved)
-        try await service.prepareAndConfirmRepair(worktree: tree, movedTo: moved.path)
+        try await service.prepareAndConfirmRepair(worktree: tree, movedTo: moved.path, approval: .repair(paths: [moved.path]))
         XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.path, WorktreePaths.canonical(moved.path))
         XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"], in: moved), "refs/heads/topic\n")
         let copy = fixture.root.appendingPathComponent("copy")
@@ -1943,7 +2089,12 @@ final class WorktreeAppKitTests: XCTestCase {
         defer { copiedService.cancel() }
         await ready(copiedService)
         let original = try Data(contentsOf: moved.appendingPathComponent(".git"))
-        do { try await copiedService.prepareAndConfirmRepairLinks(relativePaths: true); XCTFail("Copy changed foreign links") } catch {}
+        let rejected = expectation(description: "copied registration cannot authorize foreign repair")
+        copiedService.prepareRepairForTest(relativePaths: true) { preview, error in
+            copiedService.assertRejectedRepairPreparation(preview, error: error)
+            rejected.fulfill()
+        }
+        await fulfillment(of: [rejected], timeout: 10)
         XCTAssertEqual(try Data(contentsOf: moved.appendingPathComponent(".git")), original)
         XCTAssertEqual(service.worktree(forBranch: "refs/heads/topic")?.path, WorktreePaths.canonical(moved.path))
     }
@@ -1958,10 +2109,23 @@ final class WorktreeAppKitTests: XCTestCase {
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
         }
         let repository = try RepositoryTestGitRepository(url: fixture.main)
-        let service = try XCTUnwrap(repository.worktreeService)
+        repository.worktreeService.cancel()
+        let recovery = DeferredPruneReportTask()
+        var holdsRecovery = false
+        let service = PBRepositoryWorktreeService(repository: repository) { arguments in
+            if holdsRecovery, arguments == ["worktree", "list", "--porcelain", "-z"] {
+                holdsRecovery = false
+                return recovery
+            }
+            let task = PBTask(launchPath: defaults.string(forKey: "gitExecutable") ?? "/usr/bin/git", arguments: ["-C", fixture.main.path] + arguments, inDirectory: fixture.main.path)
+            GitXTestGitFixture.prepare(task)
+            return task
+        }
+        repository.setValue(service, forKey: "worktreeService")
+        service.start()
         await ready(service)
         let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
-        defer { controller.close(); service.cancel() }
+        defer { controller.close(); service.cancel(); recovery.finish(nil, error: CancellationError()) }
         let oldGit = fixture.root.appendingPathComponent("old-git")
         try "#!/bin/sh\nfor arg in \"$@\"; do\nif [ \"$arg\" = --version ]; then echo 'git version 2.47.9'; exit 0; fi\ndone\nexec /usr/bin/git \"$@\"\n".write(to: oldGit, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: oldGit.path)
@@ -1975,9 +2139,19 @@ final class WorktreeAppKitTests: XCTestCase {
         defaults.set(fixture.root.appendingPathComponent("missing-git").path, forKey: "gitExecutable")
         NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
         await waitUntil { service.gitVersion == nil && !service.isSupported }
+        holdsRecovery = true
         defaults.set("/usr/bin/git", forKey: "gitExecutable")
         NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-        await waitUntil { service.isSupported }
+        await waitUntil { service.isSupported && recovery.isPending }
+        let outline = try XCTUnwrap(controller.sidebarViewController?.sourceView)
+        let row = try XCTUnwrap((0 ..< outline.numberOfRows).first { (outline.item(atRow: $0) as? PBSourceViewItem)?.title == "WORKTREES" })
+        let header = try XCTUnwrap(outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)
+        XCTAssertFalse(header.toolTip?.contains("Git Preferences") == true)
+        XCTAssertTrue(header.toolTip?.contains("Refresh Worktrees") == true)
+        XCTAssertFalse(header.subviews.compactMap { $0 as? NSProgressIndicator }.contains { !$0.isHidden })
+        try attachScreenshot(of: XCTUnwrap(controller.window), named: "Worktrees-Supported-Git-Recovery-Read")
+        recovery.finish(Data(try fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
+        await waitUntil { service.inventoryStatus == WorktreeInventoryStatus.fresh.rawValue }
         XCTAssertEqual(service.worktrees.count, 1)
         XCTAssertTrue(PBHistoryMenuBuilder(repository: repository).menuItemsForWorktreeGroup()[0].isEnabled)
     }
