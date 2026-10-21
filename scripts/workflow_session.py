@@ -939,25 +939,141 @@ class NativeProgressSetupError(OSError):
         super().__init__(getattr(cause, 'errno', None) or errno.EIO, 'Required native progress setup failed')
 
 
+def native_directory_identity(path):
+    info = pathlib.Path(path).lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise OSError(errno.EPERM, 'Invalid native directory identity')
+    return [info.st_dev, info.st_ino]
+
+
+def descriptor_digest(descriptor):
+    hasher = hashlib.sha256()
+    offset = 0
+    while data := os.pread(descriptor, 1024 * 1024, offset):
+        hasher.update(data)
+        offset += len(data)
+    return hasher.hexdigest()
+
+
+def retire_native_sources(owner, *, checkout=None, persist=None):
+    """Remove only an invocation's complete, unchanged, unlocked archive duplicates."""
+    descriptors = []
+    try:
+        checkout = ROOT if checkout is None else pathlib.Path(checkout)
+        original = pathlib.Path(owner['sourceDirectory'])
+        root = original
+        prepared = pathlib.Path(owner.get('retirementPath', str(original)))
+        if not original.exists() and prepared != original:
+            if prepared.parent != original.parent or not re.fullmatch(r'\.gitx-native-retired-[0-9a-f]{32}', prepared.name):
+                return 'deferred', 'invalid-retirement-path'
+            root = prepared
+        archive = pathlib.Path(owner['artifactDirectory'])
+        if (owner.get('kind') != 'gitx-native-invocation' or owner.get('schemaVersion') != 1 or
+                owner.get('checkout') != str(checkout.resolve()) or not owner.get('collectionComplete') or
+                root.is_symlink() or root.resolve() != root or archive.is_symlink() or
+                not archive.resolve().is_relative_to(verification_artifact_root(checkout).resolve()) or
+                native_directory_identity(root) != owner['directoryIdentity']):
+            return 'deferred', 'identity-or-incomplete-archive'
+        lease, _ = open_owned_regular(root / 'invocation.lease')
+        descriptors.append(lease)
+        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        manifest, _ = open_owned_regular(root / 'native-owner.json', maximum=1024 * 1024)
+        descriptors.append(manifest)
+        current = json.loads(os.read(manifest, 1024 * 1024))
+        if any(current.get(key) != owner.get(key) for key in ('invocationID', 'checkout', 'directoryIdentity', 'files', 'collectionComplete')):
+            return 'deferred', 'owner-changed'
+        expected = {'native-owner.json', 'invocation.lease'}
+        directory_identities = {}
+        for folder in ('Progress', 'Stderr'):
+            path = root / folder
+            if path.exists() or path.is_symlink():
+                directory_identities[folder] = native_directory_identity(path)
+        for item in owner['files']:
+            folder, name = item['folder'], item['name']
+            if folder not in ('Progress', 'Stderr') or not (NATIVE_RECORD_NAME.fullmatch(name) or NATIVE_STDERR_NAME.fullmatch(name)):
+                return 'deferred', 'invalid-file-manifest'
+            relative = folder + '/' + name
+            expected.add(relative)
+            source, info = open_owned_regular(root / relative, identity=tuple(item['identity']))
+            descriptors.append(source)
+            fcntl.flock(source, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            copied, copied_info = open_owned_regular(archive / name, identity=tuple(item['archiveIdentity']))
+            descriptors.append(copied)
+            if (info.st_size != item['bytes'] or copied_info.st_size != item['bytes'] or
+                    descriptor_digest(source) != item['sha256'] or descriptor_digest(copied) != item['sha256']):
+                return 'deferred', 'source-or-archive-changed'
+        actual = set()
+        for child in root.iterdir():
+            if child.name in directory_identities:
+                if native_directory_identity(child) != directory_identities[child.name]:
+                    return 'deferred', 'directory-changed'
+                actual.update(child.name + '/' + entry.name for entry in child.iterdir())
+            else:
+                actual.add(child.name)
+        if actual != expected or native_directory_identity(root) != owner['directoryIdentity']:
+            return 'deferred', 'unexpected-source-content'
+        quarantine = root if root != original else root.with_name('.gitx-native-retired-' + uuid.uuid4().hex)
+        parent_identity = native_directory_identity(root.parent)
+        if root == original:
+            if persist is None:
+                return 'deferred', 'retirement-registration-required'
+            owner.update(retirementPath=str(quarantine), retirementState='prepared')
+            persist(owner)
+            exclusive_native_rename(root, quarantine)
+        if native_directory_identity(quarantine) != owner['directoryIdentity'] or native_directory_identity(root.parent) != parent_identity:
+            return 'deferred', 'retirement-identity-changed'
+        shutil.rmtree(quarantine)
+        return 'retired', None
+    except BlockingIOError:
+        return 'deferred', 'producer-lease-held'
+    except (OSError, ValueError, TypeError, KeyError):
+        return 'deferred', 'retirement-unproven'
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+
+
+def registered_native_sources(root=ROOT):
+    """Discover only explicit registrations; never adopt historical fixture directories."""
+    directory = verification_artifact_root(root) / 'NativeSources'
+    if directory.is_symlink() or not directory.exists():
+        return []
+    result = []
+    for path in directory.glob('*.json'):
+        try:
+            descriptor, _ = open_owned_regular(path, maximum=1024 * 1024)
+            with os.fdopen(descriptor, 'rb') as stream:
+                owner = json.load(stream)
+            if (owner.get('kind') != 'gitx-native-invocation' or owner.get('schemaVersion') != 1 or
+                    owner.get('checkout') != str(pathlib.Path(root).resolve()) or
+                    path.stem != owner.get('invocationID') or owner.get('retirementState') == 'retired'):
+                continue
+            result.append((path, owner))
+        except (OSError, ValueError, AttributeError):
+            continue
+    return result
+
+
 class NativeTestDiagnostics:
-    """Own one invocation; native output uses the canonical console's single writer."""
+    """Own cache sources, incremental archives and one canonical console sink."""
 
     def __init__(self, root, artifact_directory, session, bundles, capture_stderr):
         self.invocation, self.session = uuid.uuid4().hex, session
         self.requested = capture_stderr
         self.warnings = set()
         self.archive = pathlib.Path(artifact_directory) / self.invocation
+        self.registration = verification_artifact_root(ROOT) / 'NativeSources' / (self.invocation + '.json')
         self.output = lambda data: None
-        self.sources = {}
+        self.sources, self.cursor = {}, 0
+        self.archive_identity = None
         self.emitted_bytes = 0
-        self.root = None
-        self.lease = None
-        self.progress = None
-        self.closed = False
+        self.root = self.lease = self.progress = None
+        self.closed, self.archive_ready = False, False
+        self.next_discovery = 0
         self.owner = {'schemaVersion': 1, 'kind': 'gitx-native-invocation', 'checkout': str(ROOT.resolve()),
                       'invocationID': self.invocation, 'verificationSession': session, 'status': 'running',
                       'producer': producer_identity(), 'startedAt': dt.datetime.now(dt.timezone.utc).isoformat(),
-                      'artifactDirectory': str(self.archive)}
+                      'artifactDirectory': str(self.archive), 'collectionComplete': False, 'retirementState': 'pending'}
         fallback = pathlib.Path.home() / 'Library/Caches/GitX/Verification' / digest(str(ROOT.resolve()).encode())[:16] / 'NativeFallback'
         operation = 'create-directory'
         for index, selected in enumerate((pathlib.Path(root), fallback)):
@@ -981,6 +1097,7 @@ class NativeTestDiagnostics:
                 fcntl.flock(self.lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
                 operation = 'open-progress'
                 self.progress = NativeTestProgress(self.progress_directory, self.invocation, session, bundles)
+                self.owner.update(sourceDirectory=str(self.root), directoryIdentity=native_directory_identity(self.root))
                 operation = 'publish-owner'
                 atomic_json(self.root / 'native-owner.json', self.owner)
                 break
@@ -1008,6 +1125,34 @@ class NativeTestDiagnostics:
             except OSError:
                 self.capture_enabled = False
                 self.warnings.add('capture-directory')
+        try:
+            if (self.archive.parent.is_symlink() or
+                    not self.archive.resolve().is_relative_to(verification_artifact_root(ROOT).resolve())):
+                raise ValueError('Invalid native artifact directory')
+            self.archive.mkdir(parents=True, mode=0o700)
+            self.archive_identity = native_directory_identity(self.archive)
+            self.archive_ready = True
+        except (OSError, ValueError):
+            self.warnings.add('collection-incomplete')
+        self._checkpoint()
+
+    def _checkpoint(self):
+        for path in (self.root / 'native-owner.json', self.registration):
+            try:
+                if path == self.root / 'native-owner.json' and native_directory_identity(self.root) != self.owner['directoryIdentity']:
+                    raise OSError(errno.EPERM, 'Native source root changed')
+                if path.parent.is_symlink():
+                    raise OSError(errno.EPERM, 'Native metadata directory changed')
+                atomic_json(path, self.owner)
+            except OSError:
+                self.warnings.add('metadata-retention')
+        if self.archive_ready:
+            try:
+                if native_directory_identity(self.archive) != self.archive_identity:
+                    raise OSError(errno.EPERM, 'Native archive changed')
+                atomic_json(self.archive / 'native-diagnostics.json', self.owner | {'warnings': sorted(self.warnings)})
+            except OSError:
+                self.warnings.add('metadata-retention')
 
     def configure(self, environment):
         values = {'GITX_TEST_PROGRESS_DIRECTORY': str(self.progress_directory),
@@ -1017,30 +1162,82 @@ class NativeTestDiagnostics:
             environment[key] = value
             environment['TEST_RUNNER_' + key] = value
 
-    def poll(self):
-        if self.capture_enabled:
+    def _discover(self):
+        for folder in ('Progress', 'Stderr'):
+            directory = self.root / folder
+            if folder == 'Stderr' and not self.capture_enabled:
+                continue
             try:
-                for path in self.stderr_directory.iterdir():
-                    if NATIVE_STDERR_NAME.fullmatch(path.name) and path.name not in self.sources:
-                        descriptor, info = open_owned_regular(path)
-                        os.close(descriptor)
-                        self.sources[path.name] = {'identity': (info.st_dev, info.st_ino), 'offset': 0}
+                native_directory_identity(directory)
+                for source in directory.iterdir():
+                    pattern = NATIVE_RECORD_NAME if folder == 'Progress' else NATIVE_STDERR_NAME
+                    if not pattern.fullmatch(source.name) or (folder, source.name) in self.sources:
+                        continue
+                    descriptor, info = open_owned_regular(source)
+                    os.close(descriptor)
+                    self.sources[(folder, source.name)] = {'identity': (info.st_dev, info.st_ino), 'archived': 0,
+                                                          'mirrored': 0, 'output': None, 'archiveIdentity': None}
             except OSError:
-                self.warnings.add('capture-read')
-            # A bounded chunk per source and per pass keeps deadlines and command output responsive.
-            for name, state in list(self.sources.items())[:16]:
-                try:
-                    descriptor, _ = open_owned_regular(self.stderr_directory / name, identity=state['identity'])
-                    with os.fdopen(descriptor, 'rb') as stream:
-                        stream.seek(state['offset'])
-                        data = stream.read(65536)
-                except OSError:
-                    self.warnings.add('capture-read')
-                    continue
-                if data:
-                    self.output(data)  # Canonical output failures remain blocking, outside optional-read handling.
-                    state['offset'] += len(data)
-                    self.emitted_bytes += len(data)
+                self.warnings.add('capture-read' if folder == 'Stderr' else 'progress-read')
+
+    def _archive_chunk(self, source, state, limit):
+        if not self.archive_ready:
+            return
+        try:
+            if native_directory_identity(self.archive) != self.archive_identity:
+                raise OSError(errno.EPERM, 'Native archive changed')
+            if state['output'] is None:
+                descriptor = os.open(self.archive / source.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+                state['output'] = descriptor
+                info = os.fstat(descriptor)
+                state['archiveIdentity'] = (info.st_dev, info.st_ino)
+            descriptor, info = open_owned_regular(source, identity=state['identity'])
+            with os.fdopen(descriptor, 'rb') as stream:
+                if info.st_size < state['archived']:
+                    raise OSError(errno.EIO, 'Native source was truncated')
+                stream.seek(state['archived'])
+                data = stream.read(limit)
+            remaining = memoryview(data)
+            while remaining:
+                count = os.write(state['output'], remaining)
+                if count <= 0:
+                    raise OSError(errno.EIO, 'Native archive write made no progress')
+                state['archived'] += count
+                remaining = remaining[count:]
+        except OSError:
+            self.warnings.add('collection-incomplete')
+
+    def _mirror_chunk(self, source, state, limit):
+        try:
+            descriptor, info = open_owned_regular(source, identity=state['identity'])
+            with os.fdopen(descriptor, 'rb') as stream:
+                if info.st_size < state['mirrored']:
+                    raise OSError(errno.EIO, 'Native source was truncated')
+                stream.seek(state['mirrored'])
+                data = stream.read(limit)
+        except OSError:
+            self.warnings.add('capture-read')
+            return
+        if data:
+            self.output(data)
+            state['mirrored'] += len(data)
+            self.emitted_bytes += len(data)
+
+    def poll(self):
+        now = time.monotonic()
+        if now >= self.next_discovery:
+            self._discover()
+            self.next_discovery = now + .2
+        items = list(self.sources.items())
+        if items:
+            # Rotate rather than repeatedly favoring the first launches.
+            for index in range(min(16, len(items))):
+                (folder, name), state = items[(self.cursor + index) % len(items)]
+                source = self.root / folder / name
+                self._archive_chunk(source, state, 65536)
+                if folder == 'Stderr':
+                    self._mirror_chunk(source, state, 65536)
+            self.cursor = (self.cursor + 16) % len(items)
         try:
             return self.progress.observed()
         except OSError as error:
@@ -1049,66 +1246,93 @@ class NativeTestDiagnostics:
     def close(self):
         if self.closed:
             return self.result
+        self.result = {'invocationID': self.invocation, 'sourceDirectory': str(self.root),
+                       'artifactDirectory': str(self.archive), 'captureRequested': self.requested,
+                       'captures': [], 'files': [], 'warnings': [], 'collectionComplete': False}
         try:
-            return self._finish()
+            self._finish()
         finally:
-            self.progress.close()
-            os.close(self.lease)
+            for state in self.sources.values():
+                if state['output'] is not None:
+                    try:
+                        os.close(state['output'])
+                    except OSError:
+                        self.warnings.add('collection-close')
+            try:
+                self.progress.close()
+            finally:
+                os.close(self.lease)
             self.closed = True
+            self.owner.update(status='passed' if self.result['collectionComplete'] else 'failed',
+                              files=self.result['files'], collectionComplete=self.result['collectionComplete'],
+                              finishedAt=dt.datetime.now(dt.timezone.utc).isoformat())
+            self._checkpoint()
+            state, reason = retire_native_sources(self.owner, persist=lambda value: atomic_json(self.registration, value))
+            self.owner.update(retirementState=state, retirementReason=reason)
+            self.result.update(retirementState=state, retirementReason=reason, warnings=sorted(self.warnings))
+            if state != 'retired':
+                self._checkpoint()
+            else:
+                with contextlib.suppress(OSError):
+                    atomic_json(self.registration, self.owner)
+            if self.archive_ready:
+                with contextlib.suppress(OSError):
+                    atomic_json(self.archive / 'native-diagnostics.json', self.result)
+        return self.result
 
     def _finish(self):
-        self.poll()
-        captures = [record for record in self.progress.records() if record.get('event') == 'capture']
+        self._discover()
+        try:
+            captures = [record for record in self.progress.records() if record.get('event') == 'capture']
+        except OSError:
+            captures = []
+            self.warnings.add('progress-read')
         if self.requested:
             if not captures:
                 self.warnings.add('capture-unconfirmed')
             if any(record.get('state') == 'unavailable' for record in captures):
                 self.warnings.add('capture-unavailable')
-        collected, archive_ready = [], False
-        try:
-            if self.archive.parent.is_symlink() or not self.archive.resolve().is_relative_to(verification_artifact_root(ROOT).resolve()):
-                raise ValueError('Invalid native artifact directory')
-            self.archive.mkdir(parents=True, mode=0o700)
-            archive_ready = True
-            for directory in (self.progress_directory, self.stderr_directory):
-                if not directory.is_dir():
-                    continue
-                for source in directory.iterdir():
-                    if not (NATIVE_STDERR_NAME.fullmatch(source.name) or NATIVE_RECORD_NAME.fullmatch(source.name)):
-                        continue
-                    try:
-                        descriptor, _ = open_owned_regular(source)
-                        with os.fdopen(descriptor, 'rb') as stream:
-                            destination = self.archive / source.name
-                            with destination.open('xb') as output:
-                                shutil.copyfileobj(stream, output)
-                            destination.chmod(0o600)
-                            if destination.stat().st_size != os.fstat(stream.fileno()).st_size:
-                                self.warnings.add('collection-incomplete')
-                            collected.append({'name': source.name, 'bytes': destination.stat().st_size})
-                    except OSError:
-                        self.warnings.add('collection-incomplete')
-        except (OSError, ValueError):
+        collected, complete, forwarded = [], self.archive_ready, True
+        for (folder, name), state in self.sources.items():
+            source = self.root / folder / name
+            try:
+                descriptor, info = open_owned_regular(source, identity=state['identity'])
+                with os.fdopen(descriptor, 'rb') as stream:
+                    target = info.st_size  # Final drainage cannot chase a live writer indefinitely.
+                    while state['archived'] < target:
+                        previous = state['archived']
+                        self._archive_chunk(source, state, min(65536, target - previous))
+                        if state['archived'] == previous:
+                            break
+                    if folder == 'Stderr':
+                        while state['mirrored'] < target:
+                            previous = state['mirrored']
+                            self._mirror_chunk(source, state, min(65536, target - previous))
+                            if state['mirrored'] == previous:
+                                break
+                        forwarded &= state['mirrored'] == target
+                    if state['output'] is not None:
+                        os.fsync(state['output'])
+                    digest_value = descriptor_digest(stream.fileno())
+                    complete &= state['archived'] == target and os.fstat(stream.fileno()).st_size == target
+                    collected.append({'folder': folder, 'name': name, 'identity': list(state['identity']),
+                                      'archiveIdentity': list(state['archiveIdentity']) if state['archiveIdentity'] else [],
+                                      'bytes': target, 'sha256': digest_value})
+            except OSError:
+                complete = False
+                self.warnings.add('collection-incomplete')
+        complete &= not self.warnings.intersection({'capture-read', 'progress-read', 'metadata-retention'})
+        self.result.update(captures=captures, files=collected, collectionComplete=bool(complete),
+                           collectionScope='observed-files-at-command-completion', nativeForwardComplete=forwarded,
+                           mirroredBytes=self.emitted_bytes)
+        if not complete:
             self.warnings.add('collection-incomplete')
         if self.warnings:
             message = ('Native diagnostics warning: ' + ', '.join(sorted(self.warnings)) + '\n').encode()
             self.output(message)
-            if archive_ready:
+            if self.archive_ready:
                 with contextlib.suppress(OSError):
                     (self.archive / 'warnings.log').write_bytes(message)
-        self.result = {'invocationID': self.invocation, 'sourceDirectory': str(self.root),
-                       'artifactDirectory': str(self.archive), 'captureRequested': self.requested,
-                       'captures': captures, 'warnings': sorted(self.warnings), 'files': collected,
-                       'collectionScope': 'observed-files-at-command-completion',
-                       'collectionComplete': not self.warnings.intersection({'collection-incomplete', 'capture-read'}),
-                       'mirroredBytes': self.emitted_bytes}
-        self.owner.update(status='failed' if self.warnings else 'passed', finishedAt=dt.datetime.now(dt.timezone.utc).isoformat())
-        with contextlib.suppress(OSError):
-            atomic_json(self.root / 'native-owner.json', self.owner)
-        if archive_ready:
-            with contextlib.suppress(OSError):
-                atomic_json(self.archive / 'native-diagnostics.json', self.result)
-        return self.result
 
 
 def supervise(command, timeout=7200, startup_timeout=None, desktop=False, directory=None, env=None, pass_fds=(), merge_stderr=True, cwd=None, output_log=None, native_test_root=None, native_artifact_directory=None,
@@ -1296,12 +1520,16 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                 try:
                     ownership['nativeDiagnostics'] = native_diagnostics.close()
                 except OSError:
+                    ownership['nativeDiagnostics'] = native_diagnostics.result
+                    category = category or 'output-capture-failed'
                     if status in (None, 0):
-                        category, status = 'output-capture-failed', 74
+                        status = 74
             if capture:
                 metrics = capture.close()
                 if (metrics['flushError'] or metrics['closeError']) and not category:
-                    category, status = 'output-capture-failed', 74
+                    category = 'output-capture-failed'
+                    if status in (None, 0):
+                        status = 74
                 metrics['captureComplete'] = category is None
                 # This sidecar is uploaded with Logs. Never synchronously write
                 # a truncation notice to stderr: run_step merges it with the
@@ -1312,7 +1540,9 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     metrics['metadataError'] = type(error).__name__
                     metrics['captureComplete'] = False
                     if not category:
-                        category, status = 'output-capture-failed', 74
+                        category = 'output-capture-failed'
+                        if status in (None, 0):
+                            status = 74
                 ownership['outputCapture'] = metrics
         finally:
             ownership['childExitCode'] = child.returncode
@@ -1325,7 +1555,8 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             child.stdout.close()
             if native_diagnostics and 'files' in ownership.get('nativeDiagnostics', {}):
                 result = ownership['nativeDiagnostics']
-                result['consoleComplete'] = ownership.get('outputCapture', {}).get('consoleComplete', False)
+                result['consoleComplete'] = (ownership.get('outputCapture', {}).get('consoleComplete', False) and
+                                             result.get('nativeForwardComplete', False))
                 if not result['consoleComplete']:
                     result['warnings'] = sorted(set(result['warnings']) | {'console-incomplete'})
                 with contextlib.suppress(OSError, ValueError):

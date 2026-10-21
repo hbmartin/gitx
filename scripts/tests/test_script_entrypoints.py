@@ -1200,7 +1200,7 @@ fi
             native = pathlib.Path(record["diagnostics"])
             self.assertTrue(native.is_relative_to(self.root / "build/Fixtures"))
             self.assertFalse(native.is_relative_to(self.root / "artifacts/verification"))
-            self.assertTrue(pathlib.Path(record["progress"]).is_dir())
+            self.assertFalse(pathlib.Path(record["progress"]).exists(), 'Fully archived inactive scratch is retired')
             archive = self.root / "artifacts/verification" / f"native-stderr-{name}" / "Logs/Native" / record["invocation"]
             self.assertTrue((archive / 'native-diagnostics.json').is_file())
             self.assertFalse(list(archive.parent.parent.glob('*-console.log')))

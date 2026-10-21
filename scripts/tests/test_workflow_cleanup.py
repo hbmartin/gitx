@@ -18,6 +18,39 @@ import workflow_session as session
 
 
 class CleanupTests(unittest.TestCase):
+    def test_native_scratch_registration_respects_incomplete_and_live_writer_evidence(self):
+        logs = self.root / 'artifacts/verification/native-fixture/Logs/Native'
+        native = session.NativeTestDiagnostics(self.base / 'custom-native-cache', logs, 'session', ['bundle'], True)
+        source = native.stderr_directory / 'GitX-42-a.stderr.log'
+        source.write_bytes(b'preserve-native')
+        lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+        import fcntl
+        fcntl.flock(lease, fcntl.LOCK_SH)
+        try:
+            result = native.close()
+            self.assertEqual(result['retirementState'], 'deferred')
+            discovered = session.registered_native_sources(self.root)
+            self.assertEqual([path for path, _ in discovered], [native.registration])
+            report = cleanup.inventory(self.root)
+            self.assertTrue(any(item['paths'] == [str(native.root)] for item in report['nativeSources']))
+            owner = discovered[0][1]
+            owner['collectionComplete'] = False
+            state, _ = session.retire_native_sources(owner, checkout=self.root)
+            self.assertEqual(state, 'deferred')
+            self.assertEqual(source.read_bytes(), b'preserve-native')
+        finally:
+            os.close(lease)
+
+    def test_native_cleanup_does_not_adopt_unmarked_historical_fixtures(self):
+        legacy = self.root / 'build/Fixtures/old/Native/invocation-legacy'
+        legacy.mkdir(parents=True)
+        sentinel = legacy / 'GitX-42-a.stderr.log'
+        sentinel.write_bytes(b'historical-diagnostics')
+        self.assertEqual(session.registered_native_sources(self.root), [])
+        report = cleanup.inventory(self.root)
+        self.assertEqual(report['nativeSources'], [])
+        self.assertEqual(sentinel.read_bytes(), b'historical-diagnostics')
+
     def test_inline_citations_retain_old_runs_during_actual_cleanup(self):
         cited = self.run_directory('cited')
         double = self.run_directory('double')

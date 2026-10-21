@@ -116,12 +116,19 @@
             let descriptor = openat(parent, "invocation.lease", O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
             guard descriptor >= 0 else { throw GitXTestProgressRecords.PublicationError.system("open-lease") }
             var info = stat()
-            guard fstat(descriptor, &info) == 0,
-                  (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == geteuid(),
-                  flock(descriptor, LOCK_SH | LOCK_NB) == 0 else {
+            guard fstat(descriptor, &info) == 0 else {
                 let code = errno
                 Darwin.close(descriptor)
-                throw GitXTestProgressRecords.PublicationError(operation: "validate-lease", category: "ownership", posixCode: code)
+                throw GitXTestProgressRecords.PublicationError.system("inspect-lease", code: code)
+            }
+            guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == geteuid() else {
+                Darwin.close(descriptor)
+                throw GitXTestProgressRecords.PublicationError(operation: "validate-lease", category: "ownership", posixCode: nil)
+            }
+            guard flock(descriptor, LOCK_SH | LOCK_NB) == 0 else {
+                let code = errno
+                Darwin.close(descriptor)
+                throw GitXTestProgressRecords.PublicationError.system("lock-lease", code: code)
             }
             self.descriptor = descriptor
         }

@@ -583,7 +583,7 @@ def inventory(root, receipt=None, now=None):
     top = children(artifact)
     print(f"Cleanup inventory: inspecting verification output in {artifact}", file=sys.stderr, flush=True)
     for path in top:
-        if path.name in {"Coordination", "diagnostics", "Diagnostics"} or not path.is_dir():
+        if path.name in {"Coordination", "diagnostics", "Diagnostics", "NativeSources"} or not path.is_dir():
             continue
         if path.is_symlink() or path.name.startswith(".gitx-cleanup-trash-"):
             unknown.append({"paths": [str(path)], "reason": "symlink or quarantined directory"})
@@ -898,6 +898,9 @@ def inventory(root, receipt=None, now=None):
             "protectedDiagnosticBytes": max(0, protected_bytes), "diagnosticBytesComplete": not (errors or entry_errors or accounting_errors),
             "reclaimableDiagnosticBytes": sum(c["bytes"] for c in selected if c["kind"] == "diagnostics"),
             "projectedDiagnosticBytes": remaining, "protectedExcessBytes": max(0, remaining - policy["diagnosticBudgetBytes"]),
+            "nativeSources": [{"registration": str(path), "paths": [owner["sourceDirectory"]],
+                               "reason": "complete archived duplicate" if owner.get("collectionComplete") else "protected incomplete native archive",
+                               "owner": owner} for path, owner in session.registered_native_sources(root)],
             "candidates": selected, "retained": retained, "discoveryErrors": errors, "entryErrors": entry_errors,
             "accountingErrors": accounting_errors, "protectionToken": token, "protectionReferrers": referrers,
             "protectedPaths": [str(p) for p in protected],
@@ -1377,6 +1380,28 @@ def run_cleanup(root, receipt, inherited=None):
                         if not failed["paths"]:
                             failed["paths"] = [error.journal]
                     report["failed"].append(failed)
+        report["nativeRetirement"] = []
+        for item in report.get("nativeSources", []):
+            native_owner = item["owner"]
+            try:
+                with session.Leases(proof, owner, inherited=authenticated):
+                    reason = gate()
+                    source = pathlib.Path(native_owner["sourceDirectory"])
+                    if any(overlap(source, path) for path in report["protectedPaths"]):
+                        reason = reason or "protected native source"
+                    if native_owner.get("status") == "running" and session.producer_state(native_owner.get("producer")) != "abandoned":
+                        reason = reason or "live native producer"
+                    if reason:
+                        state = "deferred"
+                    else:
+                        state, reason = session.retire_native_sources(
+                            native_owner, checkout=root,
+                            persist=lambda value: session.atomic_json(item["registration"], value))
+                    native_owner.update(retirementState=state, retirementReason=reason)
+                    session.atomic_json(item["registration"], native_owner)
+                    report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason})
+            except (OSError, ValueError, KeyError, session.ResourceBusy):
+                report["nativeRetirement"].append({"paths": item["paths"], "state": "deferred", "reason": "native retirement unproven"})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
         saved = False
