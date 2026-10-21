@@ -977,7 +977,7 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
             XCTAssertEqual(loaderProof, 0b1111_1111_1111_1111)
 
             let sidebarAttentionProof = await PBForgeMarkdownAvatarProductHarness.sidebarAttentionProof()
-            XCTAssertEqual(sidebarAttentionProof, 0b111_1111_1111_1111)
+            XCTAssertEqual(sidebarAttentionProof, 0b1111_1111_1111_1111, "Authenticated Attention mounts while live; closed sidebar leaves alternate content and selection intact")
 
             let windowRecoveryProof = await PBForgeMarkdownAvatarProductHarness.windowRecoveryProof()
             XCTAssertEqual(windowRecoveryProof, 0b1111111)

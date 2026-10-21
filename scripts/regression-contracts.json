@@ -301,7 +301,7 @@
           "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testUnchangedQueuedLocateRepairsTheExactBidirectionalLinks",
           "role": "valid",
-          "oracle": "An unchanged folder admitted after a held writer gains the exact administrative backlink and Git directory, while its actual HEAD remains unchanged."
+          "oracle": "Explicitly approve the moved destination, rather than its stale registration path. After a held writer, require exactly one repair command, exact administrative backlink and Git directory, and unchanged actual HEAD."
         },
         {
           "source": "GitXTests/WorktreeServiceTests.swift",
@@ -626,6 +626,13 @@
           "check": "correctness",
           "role": "failure",
           "oracle": "Supply independently chosen wrong ordinary or Reclaim approvals through the actual convenience helper; test-approval errors remain distinct from service errors, no repair command launches, and metadata and damaged-link presence remain unchanged."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testLocateFixtureApprovalRejectsTheOriginalPathBeforeAnyRepairWrite",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Move the checkout, supply only the old registration path as fixture approval, require the exact fixture-scope rejection and zero repair commands, and preserve administrative metadata, moved gitfile bytes and HEAD. Pair with the successful destination-approved queued Locate test."
         }
       ]
     },
@@ -1310,7 +1317,7 @@
           "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged."
+          "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged. PR #103 follow-up: in the loaded authenticated repository window, require Attention selection and its actual table mounted in the window. Mount alternate content, retain selection/revision/rows, close the real sidebar and invoke Attention again; content and selection must remain unchanged. All preexisting proof bits remain required."
         },
         {
           "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
@@ -1390,7 +1397,7 @@
           "identifier": "GitXTests/WorktreeAppKitTests/testClosedSidebarRejectsDirectNavigationCheckoutAndRowRemoval",
           "check": "correctness",
           "role": "failure",
-          "oracle": "Retain a closed sidebar with another branch selected, invoke direct checkout, removal, sort and remote actions, then retain a selected checkout and invoke Swift History and Forge navigation. Closed rendering and selection remain inert; a newly configured remote cannot rebuild rows. Require identical retained rows, revision object and Git HEAD with no Forge opening attempt."
+          "oracle": "Retain a closed sidebar with another branch selected, invoke direct checkout and row removal, then retain a selected checkout and invoke Swift History and Forge destination navigation. Closed rendering and selection remain inert; a newly configured remote cannot rebuild rows. Require identical retained rows, revision object and Git HEAD with no Forge opening attempt. Sort, remote responder routing and authenticated Attention have separate effect-specific live/closed oracles."
         },
         {
           "source": "GitXTests/WorktreeAppKitTests.swift",
@@ -1419,6 +1426,20 @@
           "check": "core",
           "role": "boundary",
           "oracle": "Exercise unsupported, capability checking, supported read, freshness and closure with and without retained rows; only initial work shows progress, and supported reads cannot revive unsupported guidance."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testLiveSidebarSortAndRemoteRoutingHaveObservableEffects",
+          "check": "correctness",
+          "role": "valid",
+          "oracle": "A live sidebar changes the observed sorting mode, persists the preference, emits exactly one sort notification and sends addRemote: through an effective test-only responder recorder. Restore the exact original preference at teardown."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting",
+          "check": "correctness",
+          "role": "failure",
+          "oracle": "Use the same effective live fixture after close; sorting and its persisted setting stay unchanged, no sort notification is posted and no addRemote: request reaches the recorder."
         }
       ]
     },

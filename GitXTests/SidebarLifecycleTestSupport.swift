@@ -19,11 +19,16 @@ private final class RemoteRoutingSidebar: GitX.PBGitSidebarController {
 enum SidebarLifecycleTestSupport {
     static func assertSortAndRemoteRouting(repository: NSObject, afterClose: Bool) throws {
         let repository = try XCTUnwrap(repository as? GitX.PBGitRepository)
-        let defaults = UserDefaults.standard
-        let original = defaults.object(forKey: "PBBranchSortMode")
+        let originalComposition = GitX.ApplicationComposition.shared
+        let suite = "GitXTests.SidebarActions.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        GitX.ApplicationComposition.setSharedComposition(GitX.ApplicationComposition(
+            userDefaults: defaults, automaticallyStartsForgeServices: false
+        ))
         defer {
-            if let original { defaults.set(original, forKey: "PBBranchSortMode") }
-            else { defaults.removeObject(forKey: "PBBranchSortMode") }
+            GitX.ApplicationComposition.setSharedComposition(originalComposition)
+            defaults.removePersistentDomain(forName: suite)
         }
         GitX.ApplicationSettings.branchSort = .alphabetical
         let sidebar = try XCTUnwrap(RemoteRoutingSidebar(repository: repository, superController: nil))
@@ -40,6 +45,7 @@ enum SidebarLifecycleTestSupport {
         let presentation = try XCTUnwrap(sidebar.value(forKey: "branchPresentation") as? GitX.BranchSidebarPresentation)
         XCTAssertEqual(presentation.usesRecentSorting, !afterClose)
         XCTAssertEqual(GitX.ApplicationSettings.branchSort, afterClose ? .alphabetical : .recentCommit)
+        XCTAssertEqual(defaults.integer(forKey: "PBBranchSortMode"), GitX.ApplicationSettings.branchSort.rawValue)
         XCTAssertEqual(notifications.withLock { $0 }, afterClose ? 0 : 1)
         sidebar.fetchPullPushAction(nil)
         XCTAssertEqual(sidebar.addRemoteRequests, afterClose ? 0 : 1)

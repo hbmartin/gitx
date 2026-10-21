@@ -27,6 +27,16 @@ final class WorktreeAppKitTests: XCTestCase {
         try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(repository: repository, afterClose: false)
     }
 
+    func testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        defer { service.cancel() }
+        await ready(service)
+        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(repository: repository, afterClose: true)
+    }
+
     func testFreshRepositoryWindowMountsHistoryWithoutSelectionNavigation() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -70,9 +80,6 @@ final class WorktreeAppKitTests: XCTestCase {
         try SidebarLifecycleTestSupport.assertClosedNavigationIsInert(sidebar)
         sidebar.doubleClicked(sidebar)
         _ = sidebar.perform(NSSelectorFromString("removeRevSpec:"), with: other.revSpecifier)
-        _ = sidebar.perform(NSSelectorFromString("showForgeAttention:"), with: nil)
-        sidebar.toggleBranchSort(sidebar)
-        sidebar.fetchPullPushAction(nil)
         let checkoutRow = try XCTUnwrap((0 ..< outline.numberOfRows).first {
             (outline.item(atRow: $0) as? PBSourceViewGitWorktreeItem)?.worktree.path == WorktreePaths.canonical(fixture.linked.path)
         })

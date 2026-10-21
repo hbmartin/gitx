@@ -5270,13 +5270,47 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: selected.appendingPathComponent(".git")), link)
     }
 
+    func testLocateFixtureApprovalRejectsTheOriginalPathBeforeAnyRepairWrite() async throws {
+        let fixture = try RepairFixture(label: "locate-approval-scope")
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        var repairCommands = 0
+        let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+            if arguments.contains("repair") { repairCommands += 1 }
+            return nil
+        })
+        defer { service.cancel() }
+        try await ready(service)
+        let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+        let selected = fixture.root.appendingPathComponent("selected")
+        let head = try fixture.git(["rev-parse", "HEAD"], in: fixture.linked)
+        try FileManager.default.moveItem(at: fixture.linked, to: selected)
+        let before = try metadata(in: fixture)
+        let gitfile = try Data(contentsOf: selected.appendingPathComponent(".git"))
+        let rejected = expectation(description: "the fixture declines approval of the old registration path")
+        service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path, approval: .repair(paths: [fixture.linked.path])) { error in
+            XCTAssertEqual(error?.domain, "GitXRepairTestApproval")
+            XCTAssertEqual(error?.code, 3)
+            rejected.fulfill()
+        }
+        await fulfillment(of: [rejected], timeout: 10)
+        XCTAssertEqual(repairCommands, 0)
+        XCTAssertEqual(try metadata(in: fixture), before)
+        XCTAssertEqual(try Data(contentsOf: selected.appendingPathComponent(".git")), gitfile)
+        XCTAssertEqual(try fixture.git(["--git-dir", fixture.main.appendingPathComponent(".git/worktrees/linked").path, "rev-parse", "HEAD"]), head)
+    }
+
     func testUnchangedQueuedLocateRepairsTheExactBidirectionalLinks() async throws {
         let fixture = try RepairFixture(label: "valid")
         defer { fixture.cleanup() }
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let blocked = ControlledWorktreeTask()
         let launched = expectation(description: "first writer holds admission")
-        let service = makeService(repository: repository, fixture: fixture, blocked: blocked, launched: launched)
+        var repairCommands = 0
+        let service = makeService(repository: repository, fixture: fixture, blocked: blocked, launched: launched, taskOverride: { arguments in
+            if arguments.contains("repair") { repairCommands += 1 }
+            return nil
+        })
         defer { service.cancel(); blocked.finish(nil, error: CancellationError()) }
         try await ready(service)
         let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
@@ -5287,9 +5321,10 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         enqueue { service.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in XCTAssertNil(error); firstDone.fulfill() } }
         await fulfillment(of: [launched], timeout: 5)
         let repairDone = expectation(description: "valid queued repair completed")
-        enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path, approval: .repair(paths: [fixture.linked.path])) { error in XCTAssertNil(error); repairDone.fulfill() } }
+        enqueue { service.prepareAndConfirmRepair(worktree: tree, movedTo: selected.path, approval: .repair(paths: [selected.path])) { error in XCTAssertNil(error); repairDone.fulfill() } }
         blocked.finish(Data())
         await fulfillment(of: [firstDone, repairDone], timeout: 10)
+        XCTAssertEqual(repairCommands, 1)
         let registered = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
         let selectedCanonical = try fixture.git(["rev-parse", "--show-toplevel"], in: selected).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(registered.path, selectedCanonical)
