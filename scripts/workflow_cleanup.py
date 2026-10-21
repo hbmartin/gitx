@@ -6,7 +6,6 @@ rewritten; their referenced evidence and recovery sources are protected together
 """
 from __future__ import annotations
 
-import ctypes
 import datetime as dt
 import fcntl
 import hashlib
@@ -1086,26 +1085,10 @@ def persist_journal(path, value):
 
 def rename_exclusive(original, quarantine):
     """The destination must remain absent throughout the atomic rename."""
-    library = ctypes.CDLL(None, use_errno=True)
-    if sys.platform == "darwin":
-        rename = library.renamex_np
-        rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
-        arguments = (os.fsencode(original), os.fsencode(quarantine), 0x00000004)  # RENAME_EXCL
-    elif hasattr(library, "renameat2"):
-        rename = library.renameat2
-        rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
-        arguments = (-100, os.fsencode(original), -100, os.fsencode(quarantine), 1)  # AT_FDCWD, RENAME_NOREPLACE
-    else:
-        raise ValueError("This platform cannot guarantee an exclusive quarantine rename")
-    rename.restype = ctypes.c_int
-    if rename(*arguments) != 0:
-        error = ctypes.get_errno()
-        raise OSError(error, os.strerror(error), str(quarantine))
-    descriptor = os.open(pathlib.Path(original).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        session.exclusive_native_rename(original, quarantine, sync_parent=True)
+    except session.ExclusiveRenameUnavailable as error:
+        raise ValueError("This platform cannot guarantee an exclusive quarantine rename") from error
 
 
 def prepare_journal(path, snapshot, root, receipt, pending, protection):

@@ -861,7 +861,11 @@ def open_owned_regular(path, *, directory=None, maximum=None, identity=None, fla
         raise
 
 
-def exclusive_native_rename(source, destination):
+class ExclusiveRenameUnavailable(OSError):
+    """The platform provides no exclusive rename syscall."""
+
+
+def exclusive_native_rename(source, destination, *, sync_parent=False):
     library = ctypes.CDLL(None, use_errno=True)
     if sys.platform == 'darwin':
         rename = library.renamex_np
@@ -872,11 +876,17 @@ def exclusive_native_rename(source, destination):
         rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
         arguments = (-100, os.fsencode(source), -100, os.fsencode(destination), 1)
     else:
-        raise OSError(errno.ENOTSUP, 'Exclusive native publication is unavailable')
+        raise ExclusiveRenameUnavailable(errno.ENOTSUP, 'Exclusive native publication is unavailable')
     rename.restype = ctypes.c_int
     if rename(*arguments) != 0:
         code = ctypes.get_errno()
-        raise OSError(code, os.strerror(code))
+        raise OSError(code, os.strerror(code), str(destination))
+    if sync_parent:
+        descriptor = os.open(pathlib.Path(source).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def read_native_record(directory, name, invocation, session):
@@ -1490,6 +1500,8 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             if category:
                 break
         if category:
+            exited_before_stop = child.poll()
+            ownership['childExitCodeBeforeStop'] = exited_before_stop
             detached = detached_owned_processes(tag, existing) if desktop else []
             # Every nested supervisor starts its own process group. A group
             # signal alone would orphan its compiler and release the outer
@@ -1523,8 +1535,9 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                 stop_detached(descendants + detached, signal.SIGKILL)
             status = (130 if interrupted else 74 if category == "output-capture-failed" else
                       2 if category in {'native-progress-unavailable', 'native-startup-publication-failed'} else 124)
-            if category in {'native-progress-unavailable', 'native-startup-publication-failed'} and child.returncode > 0:
-                status = child.returncode
+            if (category in {'native-progress-unavailable', 'native-startup-publication-failed'} and
+                    exited_before_stop is not None and exited_before_stop > 0):
+                status = exited_before_stop
         else:
             status = child.wait()
             if native_diagnostics:
