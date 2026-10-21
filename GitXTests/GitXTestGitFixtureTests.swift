@@ -145,10 +145,16 @@ final class GitXTestGitFixtureTests: XCTestCase {
             XCTAssertThrowsError(try GitXTestProgressRecords.write(
                 ["event": "bundle-start"], prefix: "startup", directory: directory.path,
                 writeBytes: { descriptor, bytes, count in
-                    if operation == "write-record" { errno = ENOSPC; return -1 }
+                    if operation == "write-record" {
+                        errno = ENOSPC
+                        return -1
+                    }
                     return Darwin.write(descriptor, bytes, count)
                 },
-                publish: { _, _, _ in errno = EACCES; return -1 }
+                publish: { _, _, _ in
+                    errno = EACCES
+                    return -1
+                }
             )) { error in
                 let failure = error as? GitXTestProgressRecords.PublicationError
                 XCTAssertEqual(failure?.operation, operation)
@@ -178,7 +184,10 @@ final class GitXTestGitFixtureTests: XCTestCase {
             ["event": "bundle-start"], prefix: "startup", directory: directory.path,
             writeBytes: { descriptor, bytes, count in
                 attempts += 1
-                if attempts == 1 { errno = EINTR; return -1 }
+                if attempts == 1 {
+                    errno = EINTR
+                    return -1
+                }
                 return Darwin.write(descriptor, bytes, min(count, 3))
             }
         )
@@ -197,9 +206,11 @@ final class GitXTestGitFixtureTests: XCTestCase {
 
     func testEmptyDiagnosticRequestsAreRemovedAndProgressSurvivesEmptyLaunchEnvironment() {
         let empty = GitXTestGitEnvironment.isolated(
-            ["GITX_TEST_STDERR_DIRECTORY": "/previous", "GITX_TEST_PROGRESS_DIRECTORY": "/previous", "GITX_TEST_INVOCATION_ID": "old"],
-            nativeDiagnosticDirectory: "", progressDirectory: "", invocationID: ""
+            ["GITX_VERIFICATION_SESSION": "old", "GITX_TEST_STDERR_DIRECTORY": "/previous",
+             "GITX_TEST_PROGRESS_DIRECTORY": "/previous", "GITX_TEST_INVOCATION_ID": "old"],
+            verificationSession: "", nativeDiagnosticDirectory: "", progressDirectory: "", invocationID: ""
         )
+        XCTAssertNil(empty["GITX_VERIFICATION_SESSION"])
         XCTAssertNil(empty["GITX_TEST_STDERR_DIRECTORY"])
         XCTAssertNil(empty["GITX_TEST_PROGRESS_DIRECTORY"])
         XCTAssertNil(empty["GITX_TEST_INVOCATION_ID"])

@@ -1072,6 +1072,29 @@ sys.stdout.buffer.write(b'command-sentinel' * 8192)
                 self.assertEqual(state, 'retired')
                 self.assertFalse(pathlib.Path(owner['retirementPath']).exists())
 
+    def test_native_retirement_rechecks_source_after_registered_rename_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                source.write_bytes(b'archived-original')
+                lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+                fcntl.flock(lease, fcntl.LOCK_SH)
+                native.close()
+                os.close(lease)
+                owner = json.loads(native.registration.read_text())
+                def replace_after_validation(value):
+                    session.atomic_json(native.registration, value)
+                    source.unlink()
+                    source.write_bytes(b'preserve-new-source')
+                state, reason = session.retire_native_sources(owner, persist=replace_after_validation)
+                self.assertEqual((state, reason), ('deferred', 'source-changed-during-retirement'))
+                retained = pathlib.Path(owner['retirementPath']) / 'Stderr' / source.name
+                self.assertEqual(retained.read_bytes(), b'preserve-new-source')
+                self.assertEqual((native.archive / source.name).read_bytes(), b'archived-original')
+
     def test_native_raw_binary_files_are_archived_even_if_console_or_collection_is_incomplete(self):
         for degraded in (False, True):
             with self.subTest(degraded=degraded), tempfile.TemporaryDirectory() as directory:

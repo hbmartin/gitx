@@ -984,6 +984,7 @@ def retire_native_sources(owner, *, checkout=None, persist=None):
             return 'deferred', 'owner-changed'
         expected = {'native-owner.json', 'invocation.lease'}
         directory_identities = {}
+        source_snapshots, archive_snapshots = {}, {}
         for folder in ('Progress', 'Stderr'):
             path = root / folder
             if path.exists() or path.is_symlink():
@@ -1002,6 +1003,8 @@ def retire_native_sources(owner, *, checkout=None, persist=None):
             if (info.st_size != item['bytes'] or copied_info.st_size != item['bytes'] or
                     descriptor_digest(source) != item['sha256'] or descriptor_digest(copied) != item['sha256']):
                 return 'deferred', 'source-or-archive-changed'
+            source_snapshots[relative] = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+            archive_snapshots[name] = (copied_info.st_dev, copied_info.st_ino, copied_info.st_size, copied_info.st_mtime_ns)
         actual = set()
         for child in root.iterdir():
             if child.name in directory_identities:
@@ -1022,6 +1025,24 @@ def retire_native_sources(owner, *, checkout=None, persist=None):
             exclusive_native_rename(root, quarantine)
         if native_directory_identity(quarantine) != owner['directoryIdentity'] or native_directory_identity(root.parent) != parent_identity:
             return 'deferred', 'retirement-identity-changed'
+        actual_after = set()
+        for child in quarantine.iterdir():
+            if child.name in directory_identities:
+                if native_directory_identity(child) != directory_identities[child.name]:
+                    return 'deferred', 'directory-changed'
+                actual_after.update(child.name + '/' + entry.name for entry in child.iterdir())
+            else:
+                actual_after.add(child.name)
+        if actual_after != expected:
+            return 'deferred', 'source-changed-during-retirement'
+        for relative, snapshot in source_snapshots.items():
+            info = (quarantine / relative).lstat()
+            if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != snapshot:
+                return 'deferred', 'source-changed-during-retirement'
+        for name, snapshot in archive_snapshots.items():
+            info = (archive / name).lstat()
+            if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != snapshot:
+                return 'deferred', 'archive-changed-during-retirement'
         shutil.rmtree(quarantine)
         return 'retired', None
     except BlockingIOError:
@@ -1299,6 +1320,8 @@ class NativeTestDiagnostics:
                 descriptor, info = open_owned_regular(source, identity=state['identity'])
                 with os.fdopen(descriptor, 'rb') as stream:
                     target = info.st_size  # Final drainage cannot chase a live writer indefinitely.
+                    if state['output'] is None:
+                        self._archive_chunk(source, state, 0)
                     while state['archived'] < target:
                         previous = state['archived']
                         self._archive_chunk(source, state, min(65536, target - previous))
@@ -1315,6 +1338,9 @@ class NativeTestDiagnostics:
                         os.fsync(state['output'])
                     digest_value = descriptor_digest(stream.fileno())
                     complete &= state['archived'] == target and os.fstat(stream.fileno()).st_size == target
+                    copied, copied_info = open_owned_regular(self.archive / name, identity=state['archiveIdentity'])
+                    with os.fdopen(copied, 'rb') as copy:
+                        complete &= copied_info.st_size == target and descriptor_digest(copy.fileno()) == digest_value
                     collected.append({'folder': folder, 'name': name, 'identity': list(state['identity']),
                                       'archiveIdentity': list(state['archiveIdentity']) if state['archiveIdentity'] else [],
                                       'bytes': target, 'sha256': digest_value})
