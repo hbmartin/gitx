@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import pathlib
@@ -18,6 +20,108 @@ import workflow_session as session
 
 
 class CleanupTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def native_archive_waiting_for_retirement(self):
+        logs = self.root / 'artifacts/verification/native-fixture/Logs/Native'
+        native = session.NativeTestDiagnostics(self.base / 'custom-native-cache', logs, 'session', ['bundle'], True)
+        source = native.stderr_directory / 'GitX-42-a.stderr.log'
+        source.write_bytes(b'archived-native-\x00\xff')
+        descriptor = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
+        def release():
+            nonlocal descriptor
+            if descriptor is not None:
+                os.close(descriptor)
+                descriptor = None
+        try:
+            result = native.close()
+            self.assertTrue(result['collectionComplete'])
+            self.assertEqual(result['retirementState'], 'deferred')
+            yield native, source, release
+        finally:
+            release()
+
+    def test_deferred_native_retirement_keeps_cleanup_pending_until_the_lease_releases(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            original = source.read_bytes()
+            cleanup.queue_commit(self.root)
+            pending = cleanup.read_json(cleanup.pending_path(self.root))
+            receipt = self.valid_receipt()
+            report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertEqual(report['reason'], 'native retirement deferred')
+            self.assertEqual(report['nativeRetirement'][0]['state'], 'deferred')
+            self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root)), pending)
+            self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'deferred')
+            self.assertEqual(cleanup.read_json(report['report'])['nativeRetirement'], report['nativeRetirement'])
+            self.assertEqual(source.read_bytes(), original)
+            release()
+            finished = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(finished['status'], 'complete')
+            self.assertEqual(finished['nativeRetirement'][0]['state'], 'retired')
+            self.assertFalse(native.root.exists())
+            self.assertFalse(cleanup.pending_path(self.root).exists())
+            self.assertEqual((native.archive / source.name).read_bytes(), original)
+            # Completed registrations do not keep subsequent cleanup pending.
+            cleanup.queue_commit(self.root)
+            later = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(later['status'], 'complete')
+            self.assertEqual(later['nativeRetirement'], [])
+
+    def test_native_retirement_incomplete_protected_and_exception_paths_remain_pending(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            original_inventory = cleanup.inventory
+            for condition in ('incomplete', 'protected', 'exception', 'registration-storage'):
+                with self.subTest(condition=condition):
+                    def selected_inventory(*args, **kwargs):
+                        report = original_inventory(*args, **kwargs)
+                        if condition == 'incomplete':
+                            report['nativeSources'][0]['owner']['collectionComplete'] = False
+                        elif condition == 'protected':
+                            report['protectedPaths'].append(str(native.root))
+                        return report
+                    original_owner = cleanup.read_json(native.registration)
+                    publish = session.atomic_json
+                    def selected_publish(path, value):
+                        if condition == 'registration-storage' and pathlib.Path(path) == native.registration:
+                            raise PermissionError('fixture-registration-storage')
+                        return publish(path, value)
+                    with mock.patch.object(cleanup, 'inventory', side_effect=selected_inventory), \
+                            mock.patch.object(session, 'atomic_json', side_effect=selected_publish), \
+                            mock.patch.object(session, 'retire_native_sources',
+                                              side_effect=OSError('fixture') if condition == 'exception' else session.retire_native_sources):
+                        report = cleanup.run_cleanup(self.root, receipt)
+                    self.assertEqual(report['status'], 'partial')
+                    self.assertEqual(report['nativeRetirement'][0]['state'], 'deferred')
+                    self.assertTrue(cleanup.pending_path(self.root).exists())
+                    self.assertTrue(source.exists())
+                    self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+                    self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'deferred')
+                    session.atomic_json(native.registration, original_owner)
+
+    def test_native_retirement_does_not_clear_a_newer_pending_token(self):
+        with self.native_archive_waiting_for_retirement() as (_, source, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            retire = session.retire_native_sources
+            newer = None
+            def queue_during_retirement(*args, **kwargs):
+                nonlocal newer
+                outcome = retire(*args, **kwargs)
+                cleanup.queue_commit(self.root)
+                newer = cleanup.read_json(cleanup.pending_path(self.root))
+                return outcome
+            with mock.patch.object(session, 'retire_native_sources', side_effect=queue_during_retirement):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertEqual(report['reason'], 'newer commit queued')
+            self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root)), newer)
+            self.assertFalse(source.exists())
+
     def test_native_scratch_registration_respects_incomplete_and_live_writer_evidence(self):
         logs = self.root / 'artifacts/verification/native-fixture/Logs/Native'
         native = session.NativeTestDiagnostics(self.base / 'custom-native-cache', logs, 'session', ['bundle'], True)

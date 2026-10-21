@@ -6,6 +6,7 @@ rewritten; their referenced evidence and recovery sources are protected together
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import fcntl
 import hashlib
@@ -1384,6 +1385,10 @@ def run_cleanup(root, receipt, inherited=None):
                     session.atomic_json(item["registration"], native_owner)
                     report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason})
             except (OSError, ValueError, KeyError, session.ResourceBusy):
+                native_owner.update(retirementState="deferred", retirementReason="native retirement unproven")
+                # Retain the queue even if registration storage itself is unavailable.
+                with contextlib.suppress(OSError, ValueError, KeyError):
+                    session.atomic_json(item["registration"], native_owner)
                 report["nativeRetirement"].append({"paths": item["paths"], "state": "deferred", "reason": "native retirement unproven"})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
@@ -1392,10 +1397,13 @@ def run_cleanup(root, receipt, inherited=None):
             with session.Leases(proof, owner, inherited=authenticated):
                 _, changed = eligibility(root, receipt)
                 changed = changed or removed_original_problem()
+                native_deferred = any(item["state"] != "retired" for item in report["nativeRetirement"])
                 report["status"] = "partial" if (report["skipped"] or report["failed"] or report["discoveryErrors"] or
-                                                 report["entryErrors"] or changed) else "complete"
+                                                 report["entryErrors"] or native_deferred or changed) else "complete"
                 if changed:
                     report["reason"] = changed
+                elif native_deferred:
+                    report["reason"] = "native retirement deferred"
                 if report["status"] == "complete" and read_json(pending_path(root)) != pending:
                     report.update(status="partial", reason="newer commit queued")
                 report["finishedAt"] = records.now()
