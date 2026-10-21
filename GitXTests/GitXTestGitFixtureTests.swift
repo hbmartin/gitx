@@ -11,6 +11,27 @@ final class GitXTestGitFixtureTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testInvocationLeaseProtectsTheRootUntilItsOwnerIsReleased() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let progress = root.appendingPathComponent("Progress")
+        try FileManager.default.createDirectory(at: progress, withIntermediateDirectories: true)
+        directories.append(root)
+        let path = root.appendingPathComponent("invocation.lease").path
+        XCTAssertTrue(FileManager.default.createFile(atPath: path, contents: Data(), attributes: [.posixPermissions: 0o600]))
+        let probe = path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
+        XCTAssertGreaterThanOrEqual(probe, 0)
+        guard probe >= 0 else { return }
+        defer { Darwin.close(probe) }
+
+        var lease: GitXTestInvocationLease? = try GitXTestInvocationLease(progressDirectory: progress.path)
+        XCTAssertNotNil(lease)
+        XCTAssertEqual(flock(probe, LOCK_EX | LOCK_NB), -1)
+        XCTAssertEqual(errno, EWOULDBLOCK)
+        lease = nil
+        XCTAssertEqual(flock(probe, LOCK_EX | LOCK_NB), 0)
+        XCTAssertEqual(flock(probe, LOCK_UN), 0)
+    }
+
     func testSharedEnvironmentMatchesExistingFixturePolicyAndKeepsNonGitInputs() {
         let inherited = ["PATH": "/fixture/tools", "DEVELOPER_DIR": "/fixture/Xcode", "GIT_DIR": "/wrong", "GIT_CONFIG_PARAMETERS": "hostile"]
         let shared = GitXTestGitEnvironment.isolated(inherited)

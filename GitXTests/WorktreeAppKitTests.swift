@@ -17,6 +17,16 @@ func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt 
 
 @MainActor
 final class WorktreeAppKitTests: XCTestCase {
+    func testLiveSidebarSortAndRemoteRoutingHaveObservableEffects() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        defer { service.cancel() }
+        await ready(service)
+        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(repository: repository, afterClose: false)
+    }
+
     func testFreshRepositoryWindowMountsHistoryWithoutSelectionNavigation() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
