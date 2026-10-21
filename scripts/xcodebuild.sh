@@ -430,7 +430,7 @@ run_step() {
 	result_path=$3
 	shift 3
 	started=$(python3 -c 'import time; print(time.time())')
-	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" ]]; then
+	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" && -z "${native_supervisor_arguments[*]:-}" ]]; then
 		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${native_supervisor_arguments[@]+"${native_supervisor_arguments[@]}"} -- "$@" 2>&1 | xcbeautify --disable-logging
 		step_status=${PIPESTATUS[0]}
 	else

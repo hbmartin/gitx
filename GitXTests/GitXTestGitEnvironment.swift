@@ -84,6 +84,9 @@
                 _ = temporary.withCString { unlinkat(parent, $0, 0) }
             }
             let data: Data
+            guard JSONSerialization.isValidJSONObject(record) else {
+                throw PublicationError(operation: "encode-record", category: "serialization", posixCode: nil)
+            }
             do {
                 data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
             } catch {
