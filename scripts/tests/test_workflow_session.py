@@ -56,6 +56,7 @@ progress = pathlib.Path(os.environ['GITX_TEST_PROGRESS_DIRECTORY'])
                 target = 'exclusive_native_rename' if operation == 'probe-publication' else 'NativeTestProgress'
                 with mock.patch.object(session, 'ROOT', root), mock.patch.object(session, target, side_effect=OSError(28, 'fixture-full')), \
                         mock.patch.object(session.pathlib.Path, 'home', return_value=root), \
+                        mock.patch.object(session, 'producer_identity', return_value={'pid': 42}), \
                         mock.patch.object(session.subprocess, 'Popen') as launch, \
                         mock.patch.object(session.threading, 'Thread') as worker:
                     status = session.supervise(['must-not-launch'], directory=diagnostics,
@@ -82,15 +83,19 @@ progress = pathlib.Path(os.environ['GITX_TEST_PROGRESS_DIRECTORY'])
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             _, output, diagnostics = self.capture_fixture(root)
+            reader, writer = os.pipe()
+            self.addCleanup(os.close, reader)
+            self.addCleanup(os.close, writer)
             command = """
-import os, time
+import os, sys
 print('GitXNativeStartupFailure invocation=' + os.environ['GITX_TEST_INVOCATION_ID'] +
       ' operation=publish-record category=system errno=28', flush=True)
-time.sleep(60)
+os.read(int(sys.argv[1]), 1)
 """
             with mock.patch.object(session, 'ROOT', root):
-                status = session.supervise([sys.executable, '-c', command], directory=diagnostics,
-                                           output_log=output, native_test_root=root / 'cache', startup_timeout=120)
+                status = session.supervise([sys.executable, '-c', command, str(reader)], directory=diagnostics,
+                                           output_log=output, native_test_root=root / 'cache', startup_timeout=120,
+                                           pass_fds=(reader,))
             state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
             self.assertEqual(status, 2)
             self.assertEqual(state['category'], 'native-startup-publication-failed')
@@ -1015,6 +1020,7 @@ sys.stdout.buffer.write(b'command-sentinel' * 8192)
             def observe_write(descriptor, data):
                 if descriptor == sys.stdout.fileno():
                     writers.add(threading.current_thread().name)
+                    return len(data)
                 return write(descriptor, data)
             with mock.patch.object(session, 'ROOT', root), mock.patch.object(session.os, 'write', side_effect=observe_write):
                 status = session.supervise([sys.executable, '-c', command], output_log=output, directory=diagnostics,

@@ -115,7 +115,7 @@ class ScriptEntrypointTests(unittest.TestCase):
     def test_native_startup_and_capture_share_preset_and_raw_supervisor(self) -> None:
         script = self.install_script('xcodebuild.sh')
         # Keep the production wrapper shape and shorten only the copied fixture's
-        # backstop so a disconnected inner watchdog fails promptly.
+        # backstop so disconnected startup evidence fails promptly.
         script.write_text(script.read_text().replace('7200}\" 120', '7200}\" 2'))
         self.install_mock_xcodebuild(self.root / 'Products')
         mock = self.developer_directory / 'usr/bin/xcodebuild'
@@ -165,7 +165,7 @@ fi
                     stdout, stderr = process.communicate(timeout=10)
                     os.close(gate)
                 self.assertEqual(process.returncode, 0, (stdout + stderr).decode(errors='replace'))
-                self.assertTrue(released, 'The innermost watchdog must acknowledge native startup before release')
+                self.assertTrue(released, 'The canonical supervisor must acknowledge native startup before release')
                 state = json.loads(manifest.read_text())
                 self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
                 self.assertIn('outputCapture', state, 'Startup and the authoritative capture share one supervisor')
@@ -2352,8 +2352,8 @@ class VerificationWorkflowTests(unittest.TestCase):
         gate = jobs['unit-and-analyze']
         self.assertIn('name: unit tests and analyzer', gate)
         self.assertIn(f'needs: [{tests}, {analyzer}, worktree-contracts]', gate)
-        self.assertIn('if: ${{ !cancelled() }}', gate)
-        self.assertNotIn('if: ${{ always() }}', gate)
+        self.assertEqual(gate.count('if: ${{ always() }}'), 2, 'Both the small gate and its result step must survive cancellation')
+        self.assertNotIn('!cancelled()', gate)
         self.assertIn('timeout-minutes: 5', gate)
         self.assertIn('needs: toolchain-smoke', jobs['worktree-contracts'])
         self.assertIn("UNIT_RESULT: ${{ needs['unit-tests'].result }}", gate)
@@ -2376,6 +2376,17 @@ class VerificationWorkflowTests(unittest.TestCase):
                             capture_output=True, text=True,
                         )
                         self.assertEqual(result.returncode == 0, tests == analyzer == worktrees == 'success')
+
+    def test_only_small_required_gate_overrides_workflow_cancellation(self):
+        # Source protection for scheduling intent; this does not execute GitHub's scheduler.
+        jobs = self.jobs()
+        for name in ('unit-tests', 'analyzer', 'worktree-contracts', 'ui'):
+            prefix = jobs[name].split('steps:', 1)[0]
+            self.assertNotIn('always()', prefix)
+        gate = jobs['unit-and-analyze']
+        step = gate.split('- name: Require all native verification jobs', 1)[1]
+        self.assertIn('if: ${{ always() }}', step.split('run: |', 1)[0])
+        self.assertNotIn('continue-on-error', gate)
 
     def test_native_setup_marker_follows_all_prerequisites_and_keeps_default_success_condition(self):
         for job in ['worktree-contracts', 'ui']:

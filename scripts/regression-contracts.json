@@ -1689,7 +1689,7 @@
     {
       "id": "TASK-001",
       "family": "Drainage and process lifetime",
-      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe. Managed Debug apps install optional stderr capture before NSApplicationMain, using invocation-owned cache storage and unique PID/UUID files. Unavailable capture preserves original stderr and emits finite warning metadata without crashing the app or changing an otherwise successful command status. Complete records are published atomically without replacing evidence. XCTest observers in both test bundles emit invocation/session/bundle-specific startup records independently of capture; ordinary application, Git or console text cannot establish managed native startup. Release production apps contain no capture hook. The supervisor archives observed native files into uploaded artifacts and mirrors them independently with bounded shutdown; incomplete native collection remains explicit and optional. Native logging-only characterization contains no raw stderr write after pipe saturation and does not assume platform-dependent logging must block. Preset and raw entrypoints retain one authoritative xcodebuild console log and explicitly configure the innermost native watchdog. Queued native startup evidence is observed before the startup-deadline verdict, matching command-output event handling when a selector wakeup crosses the boundary. Full native correctness and fresh analysis run in independent CI jobs with unchanged 75-minute limits. Correctness, analysis and worktree contracts depend only on toolchain smoke. The existing required unit tests and analyzer check runs after all three jobs and accepts only three successful dependency results on noncancelled runs, rejecting failure, cancellation and skipped or missing dependency results. The aggregate respects workflow cancellation; artifact uploads retain always(). Independent full UI, native regression and performance steps remain eligible after focused failures unless cancelled; failures remain blocking and artifact upload always runs. Distribution cleanup validates inventory structure and all mountpoints, then validates detach identities only for the exact owned image. Identified unrelated file or RAM images cannot block cleanup through irrelevant device metadata. Missing identity, malformed mountpoints, foreign occupancy and ambiguous owned devices remain unknown and retain staging; failed attachment cleanup and publication rollback remain protected by the required static script suite. Independent follow-on plans require successful prerequisite setup, including when an earlier verification step fails; failed, skipped or missing readiness cannot launch them. Workflow guards describe source and predicate coverage, not hosted execution evidence.",
+      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit. Checked worktree writers retain their service, repository, task, canonical execution context and FIFO admission through terminal reconciliation. Closure and preference changes cancel queued work and reads while admitted writes and their operation-owned reconciliation finish; completion and admission release occur exactly once, including late callbacks and reconciliation failures. Native verification captures every output byte before independently mirroring it to the console; console backpressure cannot stall child completion or watchdogs. Log destinations stay inside configured verification artifacts, and capture/write/flush failures preserve the child status in diagnostics while failing verification. Console completeness is retained beside the raw log without writing synchronously to the merged console pipe. Managed Debug apps install optional stderr capture before NSApplicationMain, using invocation-owned cache storage and unique PID/UUID files. Unavailable capture preserves original stderr and emits finite warning metadata without crashing the app or changing an otherwise successful command status. Complete records use exclusive same-directory rename without replacing evidence; publication failures retain their finite operation and original errno. Required progress initialization is transactional and precedes command launch and reporting workers; a missing authenticated bundle-start record cannot pass even when the child exits zero. XCTest observers in both test bundles emit invocation/session/bundle-specific startup records independently of capture; ordinary application, Git or console text cannot establish managed native startup. Release production apps contain no capture hook. One managed supervisor owns startup, incremental native archival and the canonical console capture; one bounded worker writes the console. Native source discovery is fair and bounded, and accepted startup is cached. Fully archived unchanged scratch retires only after root and inherited writer leases release; incomplete, live or redirected sources stay registered and protected, and interrupted retirement remains recoverable; incomplete native collection remains explicit and optional. Native logging-only characterization contains no raw stderr write after pipe saturation and does not assume platform-dependent logging must block. Preset and raw entrypoints retain one authoritative xcodebuild console log and configure the same supervisor for native deadlines and console capture. Queued native startup evidence is observed before the startup-deadline verdict, matching command-output event handling when a selector wakeup crosses the boundary. Full native correctness and fresh analysis run in independent CI jobs with unchanged 75-minute limits. Correctness, analysis and worktree contracts depend only on toolchain smoke. The existing required unit tests and analyzer check runs after all three jobs and accepts only three successful dependency results including cancelled runs, rejecting failure, cancellation and skipped or missing dependency results. Only the small required aggregate and its result step use always(); expensive work remains cancellable; artifact uploads retain always(). Independent full UI, native regression and performance steps remain eligible after focused failures unless cancelled; failures remain blocking and artifact upload always runs. Distribution cleanup validates inventory structure and all mountpoints, then validates detach identities only for the exact owned image. Identified unrelated file or RAM images cannot block cleanup through irrelevant device metadata. Missing identity, malformed mountpoints, foreign occupancy and ambiguous owned devices remain unknown and retain staging; failed attachment cleanup and publication rollback remain protected by the required static script suite. Independent follow-on plans require successful prerequisite setup, including when an earlier verification step fails; failed, skipped or missing readiness cannot launch them. Workflow guards describe source and predicate coverage, not hosted execution evidence.",
       "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output. Treating a presentation cancellation as writer cancellation can terminate Git mid-write; shared discovery cancellation can also erase a completed write's reconciliation and release the queue too early. Serial independent native checks can exhaust a shared job limit before fresh analysis finishes. Validating irrelevant device metadata before establishing image ownership can strand packaging; ignoring unknown identity or mountpoint conflicts can instead authorize unsafe cleanup.",
       "sourcePaths": [
         "Classes/Util/PBTask*",
@@ -1713,7 +1713,9 @@
         "Classes/main.m",
         "GitXTests/GitXManagedTestObserver.swift",
         "GitXTests/GitXManagedTestBootstrap.m",
-        "GitXTests/HistoryIndexWriterObservation.swift"
+        "GitXTests/HistoryIndexWriterObservation.swift",
+        "scripts/workflow_cleanup.py",
+        "scripts/tests/test_workflow_cleanup.py"
       ],
       "requiredChecks": [
         "correctness",
@@ -1873,7 +1875,7 @@
           "source": "GitXTests/GitXTestGitFixtureTests.swift",
           "identifier": "GitXTests/GitXTestGitFixtureTests/testNativeDiagnosticsReachAnEmptyUILaunchEnvironment",
           "role": "boundary",
-          "oracle": "Forward nonempty native capture configuration to an empty UI launch environment. The required static script suite separates logging-only characterization from raw-pipe capture, checks warning-only fallback, UUID isolation, binary retention, descriptor failures and existing evidence. Supervisor fixtures require matching complete structured XCTest records, reject text, old/foreign invocations, wrong bundles, malformed files and symlinks, and preserve deadline-crossing evidence at 0.9/1.1 seconds. Actual preset/raw shell fixtures hold the child until the inner observer acknowledgment, without a second console capture; cache-backed native artifacts are retained on success, failure, interruption and degraded console/collection paths. Existing canonical capture failures remain blocking. The actual aggregate shell accepts only all-success across 125 terminal-result combinations; job scheduling respects cancellation and independent plans retain their commands and uploads. Workflow source guards require a default-success setup marker after prerequisites and combine its successful outcome with !cancelled() for follow-on plans. The authored atom matrix covers setup/test/cancellation combinations and the existing actual aggregate-shell matrix remains all 125 combinations. These source/predicate guards do not establish hosted runner behavior or execution evidence. Consolidated actual packaging-shell fixtures include valid, empty and nonstring optional devices for unrelated file and RAM images."
+          "oracle": "Carry optional capture and complete startup ownership into empty launch environments. Required static fixtures enforce warnings-as-errors probe compilation, exact structured startup identities, no child launch or reporting worker on required setup failure, fail-closed early success without startup, and unchanged genuine failure/interruption status. Actual preset/raw shell fixtures use one supervisor and canonical console capture. Native fixtures cover binary checkpoints before close, fair bounded reads, a single console writer, inherited writer leases, identity conflicts, incomplete archives and resumable quarantine retirement. The actual aggregate shell accepts only all-success across all 125 terminal-result combinations, while source guards require always() on both the small aggregate and result step. Existing independent setup/cancellation predicates and packaging fixtures remain required. These authored checks do not establish hosted scheduling or execution evidence."
         },
         {
           "source": "GitXTests/HistoryIndexWriterObservation.swift",
@@ -1885,13 +1887,48 @@
           "source": "GitXTests/GitXTestGitFixtureTests.swift",
           "identifier": "GitXTests/GitXTestGitFixtureTests/testFailureAttachmentsKeepOnlyRegularNativeFilesAndPreserveOriginalBytes",
           "role": "failure",
-          "oracle": "Use the production observer attachment factory with a binary native file, a symlink and a directory. Require one retained diagnostic attachment, preserve original binary contents, and handle absent capture without deliberately failing a case."
+          "oracle": "Use the production observer attachment factory with binary input, symlink and nonregular candidates; require a bounded tail attachment, preserve source bytes and handle absent capture."
         },
         {
           "source": "GitXTests/GitXTestGitFixtureTests.swift",
           "identifier": "GitXTests/GitXTestGitFixtureTests/testProgressPublicationLeavesOnlyCompleteDistinctRecordsAndPreservesEvidence",
           "role": "boundary",
           "oracle": "Publish two actual atomic records, decode both complete payloads, require distinct names and no pending files, and preserve preexisting evidence byte-for-byte."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testProgressSerializationFailureLeavesNoPartialEvidence",
+          "role": "failure",
+          "oracle": "Unsupported JSON cannot leave pending or complete evidence.",
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testProgressPublicationPreservesSystemOperationAndErrno",
+          "role": "failure",
+          "oracle": "Inject ENOSPC during writing and EACCES during publication; preserve the exact finite operation and errno and remove incomplete records.",
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testProgressExclusiveRenamePreservesCollisionAndRetriesInterruptedPartialWrites",
+          "role": "boundary",
+          "oracle": "Preserve an existing final record on EEXIST, retry EINTR and partial writes, decode the complete new record and remove pending files.",
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testManagedStartupFailureIsTakenBeforeRecursiveIssueDelivery",
+          "role": "failure",
+          "oracle": "Take retained startup publication failure once before recursive observer delivery; preserve errno.",
+          "check": "correctness"
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testNativeFailureAttachmentsRetainNewTailBytesOnceWithinCaseBudget",
+          "role": "boundary",
+          "oracle": "Assert exact binary crash/sanitizer tail bytes, no duplicate range, newly appended bytes, independent case state and 64 KiB per-excerpt/256 KiB per-case budgets without modifying original logs.",
+          "check": "correctness"
         }
       ]
     },
@@ -2201,7 +2238,7 @@
     {
       "id": "ENV-002",
       "family": "UI fixture isolation and Finder metadata",
-      "invariant": "UI fixture repositories ignore untracked Finder metadata while preserving real untracked files, explicitly tracked metadata and existing exclusion rules. Isolated fixture homes create independent preferences directories and remain owned by workspace cleanup in every consuming test target. Shared diagnostic environment forwarding normalizes empty values and carries independent startup ownership. App-specific capture declarations compile only in the Debug app target; test-bundle startup observers belong to both test targets in both configurations.",
+      "invariant": "UI fixture repositories ignore untracked Finder metadata while preserving real untracked files, explicitly tracked metadata and existing exclusion rules. Isolated fixture homes create independent preferences directories and remain owned by workspace cleanup in every consuming test target. Shared diagnostic environment forwarding normalizes empty values and carries independent startup ownership. App-specific capture declarations compile only in the Debug app target; test-bundle startup observers belong to both test targets in both configurations. Objective-C screenshot launches explicitly forward the same verification session, invocation and progress/capture values as Swift launches, removing empty requests. Observer publication failures become exactly-once XCTest system issues rather than discarded optional results.",
       "rootCause": "Finder-created .DS_Store files alter first-file selection, dirty counts and before/after status oracles. The fixture workspace is compiled into both unit and UI targets; the isolated-home helper had no unit-target coverage, leaving unused-declaration analysis dependent on the selected compilation context.",
       "sourcePaths": [
         "GitXUITests/GitXUITestFixtureWorkspace.swift",
@@ -2281,6 +2318,13 @@
           "identifier": "GitXUITests/GitXUIActivationPreflightTests/testManagedObserverRegistersBeforeUIBundleStartup",
           "role": "compatibility",
           "oracle": "Inspect the actual UI bundle startup record with the current invocation ID; the activation preflight also executes this assertion before app launch.",
+          "check": "ui"
+        },
+        {
+          "source": "GitXUITests/GitXScreenshotTests.m",
+          "identifier": "GitXUITests/GitXScreenshotTests/testManagedLaunchEnvironmentForwardsCompleteOwnership",
+          "role": "boundary",
+          "oracle": "Invoke the actual screenshot launch-environment builder; require literal forwarding of all four managed identity/capture keys or removal when absent/empty.",
           "check": "ui"
         }
       ]

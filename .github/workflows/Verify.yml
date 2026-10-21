@@ -213,12 +213,13 @@ jobs:
 
   unit-and-analyze:
     name: unit tests and analyzer
-    if: ${{ !cancelled() }}
+    if: ${{ always() }}
     needs: [unit-tests, analyzer, worktree-contracts]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require all native verification jobs
+        if: ${{ always() }}
         env:
           UNIT_RESULT: ${{ needs['unit-tests'].result }}
           ANALYSIS_RESULT: ${{ needs.analyzer.result }}
