@@ -666,6 +666,7 @@ final class WorktreeServiceTests: XCTestCase {
                     await fulfillment(of: [failed, recoveryStarted], timeout: 5)
                     let recovered = expectation(description: "ordinary recovery publishes its terminal status")
                     let status = installed.service.observe(\.inventoryStatus) { service, _ in
+                        // swift6-safety-justification: The service publishes inventory status on the main queue.
                         MainActor.assumeIsolated {
                             let expected = recoverySucceeds ? WorktreeInventoryStatus.fresh : .stale
                             if service.inventoryStatus == expected.rawValue {
