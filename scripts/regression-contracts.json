@@ -407,7 +407,7 @@
           "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedGlobalRepairRequiresFreshLocateApprovalWhenMovedDirectoryAliasChanges",
           "role": "valid",
-          "oracle": "Retarget the directory alias after utility capture while global preparation waits. The read-only preview retains the captured owned checkout; fresh confirmation rejects the foreign alias with the service ownership error and zero repair commands. Preserve both repositories' links and metadata before fresh approval. A positive owned forward link and stale backlink make a subsequent Locate provable; exact approval repairs the owned canonical registration and backlink while foreign metadata, refs, HEAD, content and the retargeted alias remain unchanged."
+          "oracle": "Real discovery infers the moved alias from its missing former Git-directory link. Retarget the alias after utility capture; preparation retains a read-only owned preview, while fresh confirmation renews the now-empty scope without writes. Unprovable Locate must reject with invalidRepair and preserve all link bytes. Only after an explicit external repair supplies a positive owned forward link may a fresh exact Locate approval repair the still-stale backlink. Preserve foreign links, metadata, refs, HEAD, content and the retargeted alias throughout."
         },
         {
           "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
@@ -640,6 +640,13 @@
           "check": "core",
           "role": "boundary",
           "oracle": "A frozen prepared target can produce a read-only preview after its source alias is retargeted. Fresh global scope rejects the foreign registration; explicit Locate can prove only the original owned checkout. All own/foreign link bytes remain unchanged throughout preparation and validation."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testDiscoveredMovedAliasRenewsScopeAndRequiresPositiveLocateOwnership",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "Use the production inspector on an actually moved main directory and linked checkout. Retargeting the inferred alias removes movedPath; the frozen read-only scope survives, fresh global scope requires renewed consent, and Locate refuses without positive ownership. After an external forward-link repair, Locate can prove only the owned folder while validation leaves the stale backlink and foreign bytes unchanged."
         }
       ]
     },

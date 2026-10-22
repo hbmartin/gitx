@@ -1797,6 +1797,17 @@ final class WorktreeAppKitTests: XCTestCase {
     func testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
+        // Drive inventory explicitly: unrelated filesystem/focus refreshes may
+        // legitimately rebuild reference rows and have separate integration tests.
+        let defaults = UserDefaults.standard
+        let oldWatch = defaults.object(forKey: "PBUseRepositoryWatcher")
+        let oldFocus = defaults.object(forKey: "PBRefreshOnApplicationFocus")
+        defaults.set(false, forKey: "PBUseRepositoryWatcher")
+        defaults.set(false, forKey: "PBRefreshOnApplicationFocus")
+        defer {
+            defaults.set(oldWatch, forKey: "PBUseRepositoryWatcher")
+            defaults.set(oldFocus, forKey: "PBRefreshOnApplicationFocus")
+        }
         _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let retired = try XCTUnwrap(repository.worktreeService)
@@ -1824,6 +1835,13 @@ final class WorktreeAppKitTests: XCTestCase {
         await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === controller.window }
+        let historyList = try XCTUnwrap(repository.value(forKey: "revisionList") as? NSObject)
+        await waitUntil {
+            (historyList.value(forKey: "commits") as? [AnyObject])?.count == 1
+                && (historyList.value(forKey: "isUpdating") as? Bool) == false
+                && repository.index.snapshotRevision > 0
+                && !repository.index.mutationReconciliationPending && !repository.index.submissionActive
+        }
         let sidebar = try XCTUnwrap(controller.sidebarViewController)
         let outline = try XCTUnwrap(sidebar.sourceView)
         let initialItems = sidebar.items.map { $0 as AnyObject }

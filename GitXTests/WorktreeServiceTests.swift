@@ -5093,10 +5093,6 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let ownedCheckout = fixture.root.appendingPathComponent("owned-checkout")
             try FileManager.default.moveItem(at: alias, to: ownedCheckout)
             try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: ownedCheckout)
-            // Locate must have a positive ownership link. Keep the administrative
-            // backlink stale so fresh approval still performs a real repair.
-            try Data(("gitdir: " + movedMain.appendingPathComponent(".git/worktrees/linked").path + "\n").utf8)
-                .write(to: ownedCheckout.appendingPathComponent(".git"))
             let repository = try RepositoryTestGitRepository(url: movedMain)
             let blocked = ControlledWorktreeTask()
             let launched = expectation(description: "first writer holds admission")
@@ -5156,21 +5152,41 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             await fulfillment(of: [held, prepared, progressed], timeout: 10)
             XCTAssertEqual(repairCommands, 0, "Preparation never grants write authority")
             let preview = try XCTUnwrap(capturedPreview)
-            let refused = expectation(description: "fresh confirmation rejects the foreign alias")
+            let renewedScope = expectation(description: "fresh confirmation requires approval of the now-empty global scope")
             enqueue { service.repair(confirmedPreview: preview) { renewed, error in
-                XCTAssertNil(renewed)
-                let underlying = (error as NSError?)?.userInfo[NSUnderlyingErrorKey] as? NSError
-                XCTAssertEqual(underlying?.domain, (WorktreeEvidenceError.invalidRepair("") as NSError).domain)
-                XCTAssertEqual(underlying?.code, (WorktreeEvidenceError.invalidRepair("") as NSError).code)
-                refused.fulfill()
+                XCTAssertNil(error)
+                XCTAssertNotNil(renewed)
+                XCTAssertEqual(renewed?.paths, [])
+                if let renewed {
+                    service.discardRepairPreview(renewed)
+                }
+                renewedScope.fulfill()
             } }
-            await fulfillment(of: [refused], timeout: 10)
+            await fulfillment(of: [renewedScope], timeout: 10)
             XCTAssertEqual(repairCommands, 0, "The changed global scope must not repair either checkout")
             XCTAssertEqual(try Data(contentsOf: ownedCheckout.appendingPathComponent(".git")), ownLink)
             XCTAssertEqual(try Data(contentsOf: movedMain.appendingPathComponent(".git/worktrees/linked/gitdir")), ownBacklink)
             XCTAssertEqual(try Data(contentsOf: foreign.linked.appendingPathComponent(".git")), foreignLink)
             XCTAssertEqual(try metadata(in: foreign), foreignMetadata)
-            // The alias changed the globally prepared scope. A new Locate action explicitly approves the owned canonical folder.
+            // Alias inference is gone. Locate must also refuse while the owned
+            // checkout's forward link points to the missing former Git directory.
+            let unproven = expectation(description: "Locate requires positive ownership after alias retargeting")
+            let unprovenTree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
+            enqueue { service.prepareRepairForTest(worktree: unprovenTree, movedTo: ownedCheckout.path) { rejected, error in
+                service.assertRejectedRepairPreparation(rejected, error: error, cause: .invalidRepair(""))
+                unproven.fulfill()
+            } }
+            await fulfillment(of: [unproven], timeout: 10)
+            XCTAssertEqual(repairCommands, 0)
+            XCTAssertEqual(try Data(contentsOf: ownedCheckout.appendingPathComponent(".git")), ownLink)
+            XCTAssertEqual(try Data(contentsOf: movedMain.appendingPathComponent(".git/worktrees/linked/gitdir")), ownBacklink)
+            XCTAssertEqual(try metadata(in: foreign), foreignMetadata)
+
+            // Model an external repair of the forward half, independently of the
+            // alias rejection. Fresh Locate can now prove this exact owned folder
+            // and repair its still-stale backlink after explicit approval.
+            try Data(("gitdir: " + movedMain.appendingPathComponent(".git/worktrees/linked").path + "\n").utf8)
+                .write(to: ownedCheckout.appendingPathComponent(".git"))
             let located = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
             try await service.prepareAndConfirmRepair(worktree: located, movedTo: ownedCheckout.path, approval: .repair(paths: [ownedCheckout.path]))
             XCTAssertEqual(repairCommands, 1)
