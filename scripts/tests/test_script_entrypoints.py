@@ -132,6 +132,10 @@ record = {'schemaVersion': 1, 'event': 'bundle-start', 'pid': os.getpid(), 'bund
 gate = os.open(os.environ['GITX_TEST_NATIVE_STARTUP_GATE'], os.O_RDONLY)
 os.read(gate, 1)
 os.close(gate)
+import sys
+sys.stdout.buffer.write(b'fixture-native-output\n' * 32768)
+sys.stdout.buffer.flush()
+print('native-startup-fixture-output-complete', flush=True)
 PYTHON
 fi
 ''')
@@ -143,31 +147,45 @@ fi
                 run = self.root / 'artifacts/verification' / run_id
                 gate_path = self.root / ('native-startup-gate-' + name)
                 os.mkfifo(gate_path)
-                gate = os.open(gate_path, os.O_RDWR | os.O_NONBLOCK)
                 environment = dict(self.environment, GITX_TEST_NATIVE_STARTUP_GATE=str(gate_path))
                 if name == 'raw':
                     environment['GITX_DERIVED_DATA'] = str(self.root / 'custom native cache/DerivedData')
-                process = subprocess.Popen([script, '--run-id', run_id, *arguments], env=environment,
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 manifest = run / 'Diagnostics' / diagnostic / 'diagnostic-owner.json'
                 released = False
-                deadline = time.monotonic() + 20
-                wake = threading.Event()
-                try:
-                    while process.poll() is None and time.monotonic() < deadline:
-                        if manifest.exists():
-                            state = json.loads(manifest.read_text())
-                            if state.get('hostStartup', {}).get('source') == 'xctest-observer' and not released:
-                                os.write(gate, b'1')
-                                released = True
-                        wake.wait(.01)
-                    self.assertIsNotNone(process.poll(), 'The canonical wrapper must finish within its backstop')
-                finally:
-                    if process.poll() is None:
-                        process.terminate()
-                    stdout, stderr = process.communicate(timeout=10)
-                    os.close(gate)
-                self.assertEqual(process.returncode, 0, (stdout + stderr).decode(errors='replace'))
+                with tempfile.TemporaryFile() as transcript:
+                    gate = os.open(gate_path, os.O_RDWR | os.O_NONBLOCK)
+                    process = None
+                    completed = None
+                    try:
+                        process = subprocess.Popen([script, '--run-id', run_id, *arguments], env=environment,
+                                                   stdout=transcript, stderr=subprocess.STDOUT)
+                        deadline = time.monotonic() + 20
+                        wake = threading.Event()
+                        while process.poll() is None and time.monotonic() < deadline:
+                            if manifest.exists():
+                                state = json.loads(manifest.read_text())
+                                if state.get('hostStartup', {}).get('source') == 'xctest-observer' and not released:
+                                    os.write(gate, b'1')
+                                    released = True
+                            wake.wait(.01)
+                        completed = process.poll()
+                    finally:
+                        try:
+                            if process is not None:
+                                if process.poll() is None:
+                                    process.terminate()
+                                process.communicate(timeout=10)
+                        finally:
+                            os.close(gate)
+                    transcript.seek(0)
+                    output = transcript.read()
+                tail = output[-4096:].decode(errors='replace')
+                self.assertIsNotNone(completed, 'The canonical wrapper must finish within its backstop: ' + tail)
+                self.assertEqual(process.returncode, 0, tail)
+                log = run / ('Logs/GitX.log' if name == 'preset' else 'Logs/raw.log')
+                canonical = log.read_bytes()
+                self.assertEqual(canonical.count(b'fixture-native-output\n'), 32768)
+                self.assertIn(b'native-startup-fixture-output-complete', canonical)
                 self.assertTrue(released, 'The canonical supervisor must acknowledge native startup before release')
                 state = json.loads(manifest.read_text())
                 self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
@@ -184,7 +202,6 @@ fi
                 for command in commands:
                     self.assertIn('GITX_TEST_NATIVE_STORAGE_ROOT=' + str(primary), command)
                     self.assertIn('GITX_TEST_NATIVE_FALLBACK_ROOT=' + str(fallback), command)
-
 
     def test_native_sandbox_path_overrides_are_rejected_before_owned_output(self):
         script = self.install_script('xcodebuild.sh')
