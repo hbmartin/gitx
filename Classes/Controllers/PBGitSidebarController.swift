@@ -216,6 +216,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     override open func closeView() {
         guard !hasClosed else { return }
+        let outline = sourceView
+        let selectedItems = outline?.selectedRowIndexes.compactMap { outline?.item(atRow: $0) as? PBSourceViewItem } ?? []
         hasClosed = true
         sourceView?.delegate = nil
         sourceView?.target = nil
@@ -246,6 +248,22 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         stashesObservation = nil
         NotificationCenter.default.removeObserver(self)
         super.closeView()
+        // Removing the source-list delegate/view can clear AppKit's selection.
+        // Restore retained model identities only after event authority is revoked.
+        if let outline {
+            let rows = selectedItems.compactMap { item -> Int? in
+                var ancestors: [PBSourceViewItem] = []
+                var parent = item.parent
+                while let current = parent {
+                    ancestors.append(current)
+                    parent = current.parent
+                }
+                ancestors.reversed().forEach { outline.expandItem($0) }
+                let row = outline.row(forItem: item)
+                return row >= 0 ? row : nil
+            }
+            outline.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+        }
     }
 
     private func disconnectOwnedControls(in view: NSView) {

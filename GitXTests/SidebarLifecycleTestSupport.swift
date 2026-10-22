@@ -40,11 +40,15 @@ enum SidebarLifecycleTestSupport {
         let outline = try XCTUnwrap(sidebar.sourceView)
         let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
         outline.expandItem(branches)
-        let retainedRows = branches.sortedChildren
-        let selected = try XCTUnwrap(retainedRows.first { $0.revSpecifier?.simpleRef() == alphabeticalReferences.first })
-        let row = outline.row(forItem: selected)
+        let requested = try XCTUnwrap(branches.sortedChildren.first { $0.revSpecifier?.simpleRef() == alphabeticalReferences.first })
+        let row = outline.row(forItem: requested)
         XCTAssertGreaterThanOrEqual(row, 0)
         outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        // Selection publishes the revision and may rebuild the sidebar synchronously.
+        let currentBranches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+        let retainedRows = currentBranches.sortedChildren
+        let selected = try XCTUnwrap(sidebar.selectedItem())
+        XCTAssertEqual(selected.revSpecifier?.simpleRef(), alphabeticalReferences.first)
         let revision = repository.currentBranch
         func displayedReferences() throws -> [String] {
             let currentBranches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
@@ -77,7 +81,7 @@ enum SidebarLifecycleTestSupport {
         XCTAssertTrue(repository.currentBranch === revision)
         XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), selected.revSpecifier?.simpleRef())
         if afterClose {
-            XCTAssertEqual(branches.sortedChildren.map(ObjectIdentifier.init), retainedRows.map(ObjectIdentifier.init))
+            XCTAssertEqual(currentBranches.sortedChildren.map(ObjectIdentifier.init), retainedRows.map(ObjectIdentifier.init))
             XCTAssertTrue(sidebar.selectedItem() === selected)
         }
         sidebar.fetchPullPushAction(nil)
