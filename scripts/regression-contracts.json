@@ -407,7 +407,7 @@
           "source": "GitXTests/WorktreeServiceTests.swift",
           "identifier": "GitXTests/WorktreeRepairSafetyTests/testQueuedGlobalRepairRequiresFreshLocateApprovalWhenMovedDirectoryAliasChanges",
           "role": "valid",
-          "oracle": "Retarget the directory alias after utility capture while global preparation waits; require a service ownership-change rejection, zero repair commands and unchanged owned/foreign links and metadata before any fresh approval. A new Locate explicitly approves only the owned canonical checkout, which becomes the exact published registration and backlink while foreign metadata, refs, HEAD and content remain unchanged."
+          "oracle": "Retarget the directory alias after utility capture while global preparation waits. The read-only preview retains the captured owned checkout; fresh confirmation rejects the foreign alias with the service ownership error and zero repair commands. Preserve both repositories' links and metadata before fresh approval. A positive owned forward link and stale backlink make a subsequent Locate provable; exact approval repairs the owned canonical registration and backlink while foreign metadata, refs, HEAD, content and the retargeted alias remain unchanged."
         },
         {
           "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
@@ -633,6 +633,13 @@
           "check": "correctness",
           "role": "failure",
           "oracle": "Move the checkout, supply only the old registration path as fixture approval, require the exact fixture-scope rejection and zero repair commands, and preserve administrative metadata, moved gitfile bytes and HEAD. Pair with the successful destination-approved queued Locate test."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
+          "identifier": "GitXCoreTests/WorktreeEvidenceTests/testPreparedAliasScopeRemainsReadOnlyUntilFreshOwnershipValidation",
+          "check": "core",
+          "role": "boundary",
+          "oracle": "A frozen prepared target can produce a read-only preview after its source alias is retargeted. Fresh global scope rejects the foreign registration; explicit Locate can prove only the original owned checkout. All own/foreign link bytes remain unchanged throughout preparation and validation."
         }
       ]
     },

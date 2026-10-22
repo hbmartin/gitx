@@ -5093,6 +5093,10 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let ownedCheckout = fixture.root.appendingPathComponent("owned-checkout")
             try FileManager.default.moveItem(at: alias, to: ownedCheckout)
             try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: ownedCheckout)
+            // Locate must have a positive ownership link. Keep the administrative
+            // backlink stale so fresh approval still performs a real repair.
+            try Data(("gitdir: " + movedMain.appendingPathComponent(".git/worktrees/linked").path + "\n").utf8)
+                .write(to: ownedCheckout.appendingPathComponent(".git"))
             let repository = try RepositoryTestGitRepository(url: movedMain)
             let blocked = ControlledWorktreeTask()
             let launched = expectation(description: "first writer holds admission")
@@ -5116,7 +5120,8 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let held = expectation(description: "held writer completed")
             enqueue { service.lockWorktree(path: fixture.linked.path, reason: "held") { _, error in XCTAssertNil(error); held.fulfill() } }
             await fulfillment(of: [launched], timeout: 5)
-            let repaired = expectation(description: "captured checkout repaired")
+            let prepared = expectation(description: "read-only preview retains the captured checkout")
+            var capturedPreview: PBWorktreeRepairPreview?
             let captured = expectation(description: "utility capture freezes the owned checkout before alias retarget")
             let initialCaptureCount = service.repairPreparationCount
             let captureObservation = service.observe(\.repairPreparationCount) { observed, _ in
@@ -5127,7 +5132,13 @@ final class WorktreeRepairSafetyTests: XCTestCase {
                     }
                 }
             }
-            enqueue { service.prepareRepairForTest(relativePaths: false) { preview, error in service.assertRejectedRepairPreparation(preview, error: error, cause: .changed("")); repaired.fulfill() } }
+            enqueue { service.prepareRepairForTest(relativePaths: false) { preview, error in
+                XCTAssertNil(error)
+                XCTAssertEqual(preview?.paths, [WorktreePaths.canonical(ownedCheckout.path)])
+                XCTAssertFalse(preview?.requiresReclaim ?? true)
+                capturedPreview = preview
+                prepared.fulfill()
+            } }
             await fulfillment(of: [captured], timeout: 10)
             captureObservation.invalidate()
             let progressed = expectation(description: "next queued writer completes")
@@ -5142,8 +5153,19 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let ownLink = try Data(contentsOf: ownedCheckout.appendingPathComponent(".git"))
             let ownBacklink = try Data(contentsOf: movedMain.appendingPathComponent(".git/worktrees/linked/gitdir"))
             blocked.finish(Data())
-            await fulfillment(of: [held, repaired, progressed], timeout: 10)
-            XCTAssertEqual(repairCommands, 0, "The global request supplies no authority after alias retargeting")
+            await fulfillment(of: [held, prepared, progressed], timeout: 10)
+            XCTAssertEqual(repairCommands, 0, "Preparation never grants write authority")
+            let preview = try XCTUnwrap(capturedPreview)
+            let refused = expectation(description: "fresh confirmation rejects the foreign alias")
+            enqueue { service.repair(confirmedPreview: preview) { renewed, error in
+                XCTAssertNil(renewed)
+                let underlying = (error as NSError?)?.userInfo[NSUnderlyingErrorKey] as? NSError
+                XCTAssertEqual(underlying?.domain, (WorktreeEvidenceError.invalidRepair("") as NSError).domain)
+                XCTAssertEqual(underlying?.code, (WorktreeEvidenceError.invalidRepair("") as NSError).code)
+                refused.fulfill()
+            } }
+            await fulfillment(of: [refused], timeout: 10)
+            XCTAssertEqual(repairCommands, 0, "The changed global scope must not repair either checkout")
             XCTAssertEqual(try Data(contentsOf: ownedCheckout.appendingPathComponent(".git")), ownLink)
             XCTAssertEqual(try Data(contentsOf: movedMain.appendingPathComponent(".git/worktrees/linked/gitdir")), ownBacklink)
             XCTAssertEqual(try Data(contentsOf: foreign.linked.appendingPathComponent(".git")), foreignLink)
