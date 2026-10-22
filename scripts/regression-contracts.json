@@ -2169,7 +2169,8 @@
         "Classes/git/RepositoryWorktreeService.swift",
         "GitXTests/PBWorktreeCompatibility.h",
         "GitXTests/GitXInteropContractTests.swift",
-        "Resources/en.lproj/MainMenu.xib"
+        "Resources/en.lproj/MainMenu.xib",
+        "GitXTests/PBQLOutlineViewTests.swift"
       ],
       "requiredChecks": [
         "correctness",

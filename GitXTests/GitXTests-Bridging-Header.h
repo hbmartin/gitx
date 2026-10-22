@@ -732,8 +732,8 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 
 @interface PBRecentRepositoryKeyNavigation : NSObject
 + (NSInteger)nextRowFromRow:(NSInteger)currentRow
-                   rowCount:(NSInteger)rowCount
-                 movingDown:(BOOL)movingDown
+				   rowCount:(NSInteger)rowCount
+				 movingDown:(BOOL)movingDown
 	NS_SWIFT_NAME(nextRow(fromRow:rowCount:movingDown:));
 @end
 
@@ -1511,7 +1511,7 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 
 @interface PBCommitMenuPresenter : NSObject
 + (PBCommitMenuPresentation *)presentationForAction:(SEL _Nullable)action
-									   resolvedFiles:(NSArray<PBCommitMenuFile *> *)resolvedFiles
+									  resolvedFiles:(NSArray<PBCommitMenuFile *> *)resolvedFiles
 										allowsTrash:(BOOL)allowsTrash
 								   isContextualMenu:(BOOL)isContextualMenu
 						 singleSelectionIsSubmodule:(BOOL)singleSelectionIsSubmodule
