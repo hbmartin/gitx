@@ -883,11 +883,13 @@ def exclusive_native_rename(source, destination, *, sync_parent=False):
         code = ctypes.get_errno()
         raise OSError(code, os.strerror(code), str(destination))
     if sync_parent:
-        descriptor = os.open(pathlib.Path(source).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        parents = dict.fromkeys((pathlib.Path(source).parent, pathlib.Path(destination).parent))
+        for parent in parents:
+            descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
 
 
 def read_native_record(directory, name, invocation, session):
@@ -1597,8 +1599,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             if category:
                 break
         if category:
-            exited_before_stop = child.poll()
-            ownership['childExitCodeBeforeStop'] = exited_before_stop
+            ownership['childExitCodeAtFailure'] = child.poll()
             detached = detached_owned_processes(tag, existing) if desktop else []
             # Every nested supervisor starts its own process group. A group
             # signal alone would orphan its compiler and release the outer
@@ -1612,6 +1613,10 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     capture.write(message.encode())
             else:
                 print(message, end='', flush=True)
+            # Diagnostic collection can outlast a natural command failure. Sample
+            # again before any owned process receives a termination signal.
+            exited_before_stop = child.poll()
+            ownership['childExitCodeBeforeStop'] = exited_before_stop
             if interrupted:
                 # Give a shell harness its EXIT trap before terminating owned
                 # children; simultaneous termination races PID verification and

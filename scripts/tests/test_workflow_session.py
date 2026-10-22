@@ -24,6 +24,97 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_native_failure_preserves_a_natural_positive_exit_during_diagnostics(self):
+        for category in ('native-progress-unavailable', 'native-startup-publication-failed'):
+            for natural_exit in (65, 0, None):
+                with self.subTest(category=category, exit=natural_exit), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory)
+                    _, output, diagnostics = self.capture_fixture(root)
+                    ready_reader, ready_writer = os.pipe()
+                    release_reader, release_writer = os.pipe()
+                    child = None
+                    spawn, poll = session.subprocess.Popen, session.NativeTestDiagnostics.poll
+                    ready = False
+                    def remember(*arguments, **keywords):
+                        nonlocal child
+                        process = spawn(*arguments, **keywords)
+                        if keywords.get('start_new_session'):
+                            child = process
+                        return process
+                    def check_progress(native):
+                        nonlocal ready
+                        if not ready:
+                            self.assertTrue(select.select([ready_reader], [], [], 5)[0])
+                            self.assertEqual(os.read(ready_reader, 1), b'R')
+                            ready = True
+                            if category == 'native-progress-unavailable':
+                                raise session.NativeProgressSetupError('read-progress', OSError(errno.EIO, 'fixture'))
+                        return poll(native)
+                    def finish_during_diagnostics(*_):
+                        os.write(release_writer, b'X')
+                        child.wait(timeout=5)
+                    command = '''
+import os, signal, sys
+signal.signal(signal.SIGTERM, lambda *_: os._exit(7))
+os.write(int(sys.argv[1]), b'R')
+if sys.argv[4] == 'native-startup-publication-failed':
+    print('GitXNativeStartupFailure invocation=' + os.environ['GITX_TEST_INVOCATION_ID'] +
+          ' operation=publish-record category=system errno=28', flush=True)
+os.read(int(sys.argv[2]), 1)
+if sys.argv[3] == 'signal':
+    os.kill(os.getpid(), signal.SIGUSR1)
+os._exit(int(sys.argv[3]))
+'''
+                    try:
+                        with mock.patch.object(session, 'ROOT', root), \
+                                mock.patch.object(session.subprocess, 'Popen', side_effect=remember), \
+                                mock.patch.object(session.NativeTestDiagnostics, 'poll', check_progress), \
+                                mock.patch.object(session, 'diagnostics', side_effect=finish_during_diagnostics):
+                            status = session.supervise(
+                                [sys.executable, '-c', command, str(ready_writer), str(release_reader),
+                                 str(natural_exit) if natural_exit is not None else 'signal', category],
+                                directory=diagnostics, output_log=output, native_test_root=root / 'cache',
+                                pass_fds=(ready_writer, release_reader))
+                        metadata = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+                        actual_exit = natural_exit if natural_exit is not None else -signal.SIGUSR1
+                        self.assertEqual(status, natural_exit if natural_exit else 2)
+                        self.assertEqual(metadata['category'], category)
+                        self.assertIsNone(metadata['childExitCodeAtFailure'])
+                        self.assertEqual(metadata['childExitCodeBeforeStop'], actual_exit)
+                        self.assertEqual(metadata['childExitCode'], actual_exit)
+                    finally:
+                        if child is not None and child.poll() is None:
+                            child.kill()
+                            child.wait(timeout=5)
+                        for descriptor in (ready_reader, ready_writer, release_reader, release_writer):
+                            os.close(descriptor)
+
+    def test_durable_cross_directory_rename_syncs_both_parents_and_preserves_sync_errno(self):
+        for fail_destination in (False, True):
+            with self.subTest(failure=fail_destination), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                left, right = root / 'left', root / 'right'
+                left.mkdir()
+                right.mkdir()
+                source, destination = left / 'record', right / 'record'
+                source.write_bytes(b'published')
+                observed = []
+                def sync(descriptor):
+                    identity = os.fstat(descriptor).st_ino
+                    observed.append(identity)
+                    if fail_destination and identity == right.stat().st_ino:
+                        raise OSError(errno.EIO, 'fixture-destination-sync')
+                with mock.patch.object(session.os, 'fsync', side_effect=sync):
+                    if fail_destination:
+                        with self.assertRaises(OSError) as raised:
+                            session.exclusive_native_rename(source, destination, sync_parent=True)
+                        self.assertEqual(raised.exception.errno, errno.EIO)
+                    else:
+                        session.exclusive_native_rename(source, destination, sync_parent=True)
+                self.assertEqual(observed, [left.stat().st_ino, right.stat().st_ino])
+                self.assertFalse(source.exists())
+                self.assertEqual(destination.read_bytes(), b'published')
+
     def test_exclusive_rename_without_durability_supports_distinct_parent_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
