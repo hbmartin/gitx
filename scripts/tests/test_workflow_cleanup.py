@@ -174,6 +174,22 @@ class CleanupTests(unittest.TestCase):
                 report = cleanup.run_cleanup(self.root, receipt)
             self.assertEqual(report['status'], 'complete', report.get('nativeRetirement'))
 
+    def test_authorization_lease_contention_has_a_structured_retryable_outcome(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            owner = cleanup.read_json(native.registration)
+            @contextlib.contextmanager
+            def authorize():
+                raise session.ResourceBusy('fixture-proof', {'runId': 'fixture', 'pid': os.getpid()})
+                yield
+            outcome = session.retire_native_sources(owner, checkout=self.root,
+                persist=lambda value: session.persist_native_registration(native.registration, value), authorize=authorize)
+            self.assertEqual(outcome.state, 'deferred')
+            self.assertEqual(outcome.origin, 'authorization')
+            self.assertEqual(outcome.reason, 'retirement-proof-held')
+            self.assertNotIn('retirementPath', owner)
+            self.assertTrue(source.exists())
+
     def test_authorization_exceptions_remain_retryable_without_unused_preparation(self):
         for boundary in (1, 2):
             for cause in (FileNotFoundError(errno.ENOENT, 'inputs disappeared'), ValueError('proof changed')):

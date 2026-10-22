@@ -1109,6 +1109,8 @@ def native_retirement_boundary(origin, operation, *, evidence=False):
         yield
     except NativeRetirementFault:
         raise
+    except ResourceBusy as error:
+        raise NativeRetirementFault(NativeRetirementOutcome('deferred', 'retirement-proof-held', 'authorization', operation)) from error
     except NativeRetirementDeferred as error:
         raise NativeRetirementFault(NativeRetirementOutcome('deferred', str(error), 'authorization', operation)) from error
     except BlockingIOError as error:
@@ -1185,6 +1187,8 @@ def validate_native_deletion(root, original, owner, *, allow_missing):
             not native_path_absent(original)):
         raise ValueError('Invalid deletion proof')
     entries = proof['entries']
+    if not isinstance(entries, dict):
+        raise ValueError('Invalid deletion entry manifest')
     remaining = {}
     for path in root.rglob('*'):
         relative = str(path.relative_to(root))
@@ -1306,6 +1310,8 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None)
             manifest, _ = open_owned_regular(root / 'native-owner.json', maximum=1024 * 1024)
             descriptors.append(manifest)
             current = json.loads(os.read(manifest, 1024 * 1024))
+            if not isinstance(current, dict):
+                raise ValueError('Invalid native owner')
             if any(current.get(key) != owner.get(key) for key in ('invocationID', 'checkout', 'directoryIdentity', 'files', 'collectionComplete')):
                 return NativeRetirementOutcome('retained', 'owner-changed', 'source')
             expected = {'native-owner.json', 'invocation.lease'}
@@ -1385,13 +1391,18 @@ def publish_native_completion(registration, owner):
 
 
 def promote_native_completion(registration):
+    if registration.current.get('status') != 'running':
+        return
     path = native_completion_path(registration.path)
     try:
+        native_directory_identity(path.parent)
         descriptor, _ = open_owned_regular(path, maximum=1024 * 1024)
     except FileNotFoundError:
         return
     with os.fdopen(descriptor, 'rb') as stream:
         completion = json.load(stream)
+    if not isinstance(completion, dict) or not isinstance(completion.get('owner'), dict):
+        raise ValueError('Invalid native finalization envelope')
     final = completion['owner']
     prior = registration.current
     keys = ('kind', 'schemaVersion', 'invocationID', 'checkout', 'sourceDirectory', 'directoryIdentity', 'artifactDirectory')
@@ -1406,6 +1417,8 @@ def promote_native_completion(registration):
     manifest, _ = open_owned_regular(pathlib.Path(final['sourceDirectory']) / 'native-owner.json', maximum=1024 * 1024)
     with os.fdopen(manifest, 'rb') as stream:
         source_owner = json.load(stream)
+    if not isinstance(source_owner, dict):
+        raise ValueError('Invalid native source owner')
     if any(source_owner.get(key) != final.get(key) for key in keys):
         raise ValueError('Native finalization source identity changed')
     if source_owner.get('status') == 'running':
@@ -1420,7 +1433,8 @@ def promote_native_completion(registration):
     for key in ('status', 'files', 'collectionComplete', 'finishedAt', 'archiveDirectoryIdentity'):
         if key in final:
             promoted[key] = final[key]
-    registration.publish(promoted)
+    with native_retirement_boundary('registration', 'promote-completion'):
+        registration.publish(promoted)
 
 
 def retire_registered_native_sources(path, *, checkout=None, authorize=None, retry_retained=False):
@@ -1429,7 +1443,15 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, ret
     try:
         with NativeRegistration(path, retry_retained=retry_retained) as registration:
             if registration.current.get('retirementState') not in {'retired', 'retained'}:
-                promote_native_completion(registration)
+                try:
+                    with native_retirement_boundary('completion', 'validate-completion', evidence=True):
+                        promote_native_completion(registration)
+                except NativeRetirementFault as error:
+                    owner = json.loads(json.dumps(registration.current))
+                    outcome = error.outcome
+                    owner.update(retirementState=outcome.state, retirementReason=outcome.reason, retirementOutcome=outcome.metadata())
+                    registration.publish(owner)
+                    return outcome.state, outcome.reason, owner
             owner = json.loads(json.dumps(registration.current))
             if owner.get('invocationID') != pathlib.Path(path).stem or owner.get('checkout') != str(pathlib.Path(checkout or ROOT).resolve()):
                 raise ValueError('Native registration ownership changed')

@@ -1550,6 +1550,64 @@ native.close()
                     self.assertEqual(state, 'retired', reason)
                     self.assertEqual((native.archive / source.name).read_bytes(), b'archived-\x00\xff')
 
+    def test_finalization_rejects_malformed_or_redirected_evidence_without_deletion(self):
+        for variant in ('envelope', 'source-owner', 'completion-directory'):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                    source.write_bytes(b'protected-finalization')
+                    with session.NativeRegistration(native.registration):
+                        native.close()
+                    completion = session.native_completion_path(native.registration)
+                    if variant == 'envelope':
+                        session.atomic_json(completion, {'schemaVersion': 1, 'kind': 'gitx-native-completion', 'owner': []})
+                    elif variant == 'source-owner':
+                        session.atomic_json(native.root / 'native-owner.json', [])
+                    else:
+                        moved = completion.parent.with_name('saved-completions')
+                        completion.parent.rename(moved)
+                        completion.parent.symlink_to(moved, target_is_directory=True)
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                    self.assertEqual(state, 'retained', reason)
+                    self.assertEqual(owner['retirementOutcome']['origin'], 'completion')
+                    self.assertEqual(source.read_bytes(), b'protected-finalization')
+
+    def test_completed_registration_does_not_depend_on_an_unused_handoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                (native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'complete')
+                lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+                try:
+                    fcntl.flock(lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    native.close()
+                    session.atomic_json(session.native_completion_path(native.registration), [])
+                finally:
+                    os.close(lease)
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired', reason)
+
+    def test_invalid_deletion_proof_shape_is_protected_not_an_uncaught_exception(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                (native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'keep')
+                with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError(errno.EIO, 'partial')):
+                    native.close()
+                owner = json.loads(native.registration.read_text())
+                owner['deletionProof']['entries'] = []
+                session.atomic_json(native.registration, owner)
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retained', reason)
+                self.assertTrue(pathlib.Path(owner['retirementPath']).exists())
+
     def test_finalization_handoff_recovers_a_failed_source_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
