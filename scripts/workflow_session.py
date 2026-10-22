@@ -1226,6 +1226,8 @@ def upgrade_legacy_native_deletion(root, owner, descriptors):
                 raise ValueError('Legacy source identity changed')
         elif relative == 'native-owner.json':
             current = json.loads(os.read(descriptor, 1024 * 1024))
+            if not isinstance(current, dict):
+                raise ValueError('Invalid legacy native owner')
             if any(current.get(key) != owner.get(key) for key in ('invocationID', 'checkout', 'directoryIdentity', 'files', 'collectionComplete')):
                 raise ValueError('Legacy owner changed')
     return native_deletion_proof(root, owner)

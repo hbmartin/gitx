@@ -1550,6 +1550,38 @@ native.close()
                     self.assertEqual(state, 'retired', reason)
                     self.assertEqual((native.archive / source.name).read_bytes(), b'archived-\x00\xff')
 
+    def test_legacy_deletion_rejects_nonobject_owners_and_recovers_valid_evidence(self):
+        for variant in ('valid', 'missing-controls', None, [], 7, 'invalid'):
+            with self.subTest(owner=variant), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                    contents = b'legacy-archive-\x00\xff'
+                    source.write_bytes(contents)
+                    with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError(errno.EIO, 'legacy-partial')):
+                        native.close()
+                    owner = json.loads(native.registration.read_text())
+                    owner.pop('deletionProof')
+                    session.atomic_json(native.registration, owner)
+                    quarantine = pathlib.Path(owner['retirementPath'])
+                    if variant == 'missing-controls':
+                        for name in ('native-owner.json', 'invocation.lease'):
+                            (quarantine / name).unlink()
+                    elif variant != 'valid':
+                        session.atomic_json(quarantine / 'native-owner.json', variant)
+                    state, reason, recovered = session.retire_registered_native_sources(native.registration)
+                    if variant in ('valid', 'missing-controls'):
+                        self.assertEqual(state, 'retired', reason)
+                        self.assertFalse(quarantine.exists())
+                    else:
+                        self.assertEqual((state, reason), ('retained', 'source-invalid'))
+                        self.assertEqual(recovered['retirementOutcome']['operation'], 'upgrade-legacy-deletion-proof')
+                        self.assertEqual((quarantine / 'Stderr' / source.name).read_bytes(), contents)
+                        self.assertEqual(json.loads((quarantine / 'native-owner.json').read_text()), variant)
+                    self.assertEqual((native.archive / source.name).read_bytes(), contents)
+
     def test_finalization_rejects_malformed_or_redirected_evidence_without_deletion(self):
         for variant in ('envelope', 'source-owner', 'completion-directory'):
             with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
