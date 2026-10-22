@@ -29,6 +29,19 @@ func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
 let environment = ProcessInfo.processInfo.environment
 let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
+if mode == "publication" {
+    let record: [String: Any] = ["schemaVersion": 1, "event": "capture", "pid": getpid(),
+                               "invocationID": "probe", "verificationSession": "session", "state": "unavailable"]
+    GitXTestProcessDiagnostics.publishCaptureRecord(record, progressDirectory: directory! + "/missing", fallbackDirectory: directory)
+    var attempts = 0
+    GitXTestProcessDiagnostics.publishCaptureRecord(record, progressDirectory: "/missing", fallbackDirectory: directory) { _, _ in
+        attempts += 1
+        throw GitXTestProgressRecords.PublicationError(operation: "publish-record", category: "system", posixCode: EIO)
+    }
+    precondition(attempts == 2)
+    checkpoint("publication warning retained; app continues")
+    exit(0)
+}
 if mode == "environment" {
     checkpoint(GitXTestGitEnvironment.isolated([:])["GITX_TEST_STDERR_DIRECTORY"] ?? "unowned")
     exit(0)
@@ -119,6 +132,18 @@ checkpoint("after-raw-write")
                 if expected in line:
                     return
         self.fail(f"Missing checkpoint {expected!r}")
+
+    def test_capture_publication_failure_retains_exact_error_in_owned_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'publication'], env=self.environment(directory),
+                                    capture_output=True, timeout=5, check=True)
+            self.assertEqual(result.stderr, b'')
+            self.assertIn(b'app continues', result.stdout)
+            records = [json.loads(path.read_text()) for path in pathlib.Path(directory).glob('capture-*.json')]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]['publicationError'],
+                             {'operation': 'open-directory', 'category': 'system', 'errno': 2})
+            self.assertFalse(list(pathlib.Path(directory).glob('.pending-*')))
 
     def test_logging_only_characterizes_native_behavior_without_raw_write(self):
         process = subprocess.Popen([self.executable, "logging-only"], stdout=subprocess.PIPE,

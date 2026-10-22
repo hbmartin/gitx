@@ -1110,6 +1110,41 @@ print('completed', flush=True)
                 self.assertEqual(blocker['category'], 'unknown-host-startup-timeout')
                 self.assertNotIn(b'completed', stdout)
 
+    def test_fallback_capture_record_reports_publication_error_without_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                record = self.startup_record(native.invocation, 'session', event='capture', state='captured',
+                    publicationError={'operation': 'publish-record', 'category': 'system', 'errno': errno.ENOSPC})
+                filename = 'capture-42-a.json'
+                (native.stderr_directory / filename).write_text(json.dumps(record))
+                emitted = []
+                native.output = emitted.append
+                self.assertFalse(native.poll(), 'Capture fallback is never startup evidence')
+                result = native.close()
+                self.assertEqual(result['captures'], [record])
+                self.assertIn('capture-publication', result['warnings'])
+                self.assertTrue((native.archive / filename).is_file())
+                self.assertNotIn(json.dumps(record).encode(), b''.join(emitted))
+
+    def test_foreign_and_malformed_fallback_records_cannot_establish_capture(self):
+        for changes in ({'invocationID': 'foreign'}, {'verificationSession': 'foreign'},
+                        {'publicationError': {'operation': '/private/path', 'category': 'system', 'errno': 5}},
+                        {'event': 'bundle-start'}):
+            with self.subTest(changes=changes), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    record = self.startup_record(native.invocation, 'session', event='capture', state='captured') | changes
+                    (native.stderr_directory / 'capture-42-a.json').write_text(json.dumps(record))
+                    self.assertFalse(native.poll())
+                    result = native.close()
+                    self.assertEqual(result['captures'], [])
+                    self.assertIn('capture-unconfirmed', result['warnings'])
+
     def test_optional_native_capture_failures_and_collection_do_not_replace_child_status(self):
         for exit_code in (0, 9):
             with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as directory:

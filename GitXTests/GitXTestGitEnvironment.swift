@@ -96,7 +96,9 @@
                 var offset = 0
                 while offset < bytes.count {
                     let count = writeBytes(descriptor, bytes.baseAddress?.advanced(by: offset), bytes.count - offset)
-                    if count < 0, errno == EINTR { continue }
+                    if count < 0, errno == EINTR {
+                        continue
+                    }
                     guard count > 0 else { throw PublicationError.system("write-record", code: count == 0 ? EIO : errno) }
                     offset += count
                 }
@@ -108,7 +110,7 @@
     }
 
     /// The supervisor creates this lease; observers hold it for their process lifetime.
-    nonisolated final class GitXTestInvocationLease: Sendable {
+    final nonisolated class GitXTestInvocationLease: Sendable {
         private let descriptor: Int32
 
         init(
@@ -169,7 +171,6 @@
         struct Installation: Sendable {
             let outcome: Outcome
             let lease: GitXTestInvocationLease?
-            let publicationFailure: GitXTestProgressRecords.PublicationError?
         }
 
         private static let installation: Installation = {
@@ -182,7 +183,8 @@
             }
             let outcome = install(directory: environment["GITX_TEST_STDERR_DIRECTORY"], launchID: launchID)
             if let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"], directory.hasPrefix("/"),
-               let invocation = environment["GITX_TEST_INVOCATION_ID"], !invocation.isEmpty {
+               let invocation = environment["GITX_TEST_INVOCATION_ID"], !invocation.isEmpty
+            {
                 var record: [String: Any] = [
                     "schemaVersion": 1, "event": "capture", "invocationID": invocation,
                     "verificationSession": environment["GITX_VERIFICATION_SESSION"] ?? "",
@@ -190,21 +192,43 @@
                 ]
                 record["category"] = outcome.category
                 record["filename"] = outcome.filename
-                do {
-                    try GitXTestProgressRecords.write(record, prefix: "capture", directory: directory)
-                } catch let error as GitXTestProgressRecords.PublicationError {
-                    return Installation(outcome: outcome, lease: lease, publicationFailure: error)
-                } catch {
-                    return Installation(outcome: outcome, lease: lease, publicationFailure: .init(
-                        operation: "publish-record", category: "unexpected", posixCode: nil
-                    ))
-                }
+                publishCaptureRecord(record, progressDirectory: directory, fallbackDirectory: environment["GITX_TEST_STDERR_DIRECTORY"])
             }
-            return Installation(outcome: outcome, lease: lease, publicationFailure: nil)
+            return Installation(outcome: outcome, lease: lease)
         }()
 
         @objc static func installAtApplicationStartup() {
             _ = installation
+        }
+
+        /// Optional evidence uses a second owned file location, never the original stderr pipe.
+        static func publishCaptureRecord(
+            _ record: [String: Any], progressDirectory: String, fallbackDirectory: String?,
+            writeRecord: ([String: Any], String) throws -> Void = { record, directory in
+                try GitXTestProgressRecords.write(record, prefix: "capture", directory: directory)
+            }
+        ) {
+            let failure: GitXTestProgressRecords.PublicationError
+            do {
+                try writeRecord(record, progressDirectory)
+                return
+            } catch let error as GitXTestProgressRecords.PublicationError {
+                failure = error
+            } catch {
+                failure = .init(operation: "publish-record", category: "unexpected", posixCode: nil)
+            }
+            guard let fallbackDirectory, fallbackDirectory.hasPrefix("/") else { return }
+            var fallback = record
+            fallback["publicationError"] = [
+                "operation": failure.operation, "category": failure.category,
+                "errno": failure.posixCode.map { $0 as Any } ?? NSNull(),
+            ]
+            do {
+                try writeRecord(fallback, fallbackDirectory)
+            } catch {
+                // The supervisor reports unconfirmed capture when neither location is available.
+                return
+            }
         }
 
         /// Injectable descriptor operations allow failure coverage without replacing XCTest's stderr.

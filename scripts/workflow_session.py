@@ -844,6 +844,7 @@ def test_output_started(data):
 
 NATIVE_RECORD_NAME = re.compile(r'(startup|capture)-[0-9]+-[A-Fa-f0-9-]+\.json')
 NATIVE_STDERR_NAME = re.compile(r'GitX-[0-9]+-[A-Fa-f0-9-]+\.stderr\.log')
+NATIVE_CAPTURE_RECORD_NAME = re.compile(r'capture-[0-9]+-[A-Fa-f0-9-]+\.json')
 
 
 def open_owned_regular(path, *, directory=None, maximum=None, identity=None, flags=os.O_RDONLY):
@@ -904,6 +905,14 @@ def read_native_record(directory, name, invocation, session):
         expected_event = 'bundle-start' if name.startswith('startup-') else 'capture'
         if record.get('event') != expected_event or int(name.split('-')[1]) != record['pid']:
             return None
+        failure = record.get('publicationError')
+        if failure is not None:
+            operations = {'validate-record', 'open-directory', 'inspect-directory', 'validate-directory',
+                          'create-record', 'encode-record', 'write-record', 'flush-record', 'publish-record'}
+            if (not isinstance(failure, dict) or failure.get('operation') not in operations or
+                    failure.get('category') not in {'system', 'configuration', 'ownership', 'serialization', 'unexpected'} or
+                    (failure.get('errno') is not None and (type(failure['errno']) is not int or not 0 < failure['errno'] < 65536))):
+                return None
         return record
     except (OSError, ValueError, UnicodeError):
         return None
@@ -1270,8 +1279,9 @@ class NativeTestDiagnostics:
             try:
                 native_directory_identity(directory)
                 for source in directory.iterdir():
-                    pattern = NATIVE_RECORD_NAME if folder == 'Progress' else NATIVE_STDERR_NAME
-                    if not pattern.fullmatch(source.name) or (folder, source.name) in self.sources:
+                    allowed = NATIVE_RECORD_NAME.fullmatch(source.name) if folder == 'Progress' else (
+                        NATIVE_STDERR_NAME.fullmatch(source.name) or NATIVE_CAPTURE_RECORD_NAME.fullmatch(source.name))
+                    if not allowed or (folder, source.name) in self.sources:
                         continue
                     descriptor, info = open_owned_regular(source)
                     os.close(descriptor)
@@ -1335,7 +1345,7 @@ class NativeTestDiagnostics:
                 (folder, name), state = items[(self.cursor + index) % len(items)]
                 source = self.root / folder / name
                 self._archive_chunk(source, state, 65536)
-                if folder == 'Stderr':
+                if folder == 'Stderr' and NATIVE_STDERR_NAME.fullmatch(name):
                     self._mirror_chunk(source, state, 65536)
             self.cursor = (self.cursor + 16) % len(items)
         try:
@@ -1380,15 +1390,33 @@ class NativeTestDiagnostics:
                     atomic_json(self.archive / 'native-diagnostics.json', self.result)
         return self.result
 
+    def _fallback_capture_records(self):
+        if not self.capture_enabled:
+            return []
+        descriptor = os.open(self.stderr_directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            if os.fstat(descriptor).st_uid != os.getuid():
+                raise OSError(errno.EPERM, 'Capture record directory owner changed')
+            return [record for folder, name in self.sources if folder == 'Stderr' and NATIVE_CAPTURE_RECORD_NAME.fullmatch(name)
+                    if (record := read_native_record(descriptor, name, self.invocation, self.session)) is not None
+                    and record.get('event') == 'capture']
+        finally:
+            os.close(descriptor)
+
     def _finish(self):
         self._discover()
         try:
             captures = [record for record in self.progress.records() if record.get('event') == 'capture']
+            captures.extend(self._fallback_capture_records())
         except OSError:
             captures = []
             self.warnings.add('progress-read')
+        if any(record.get('publicationError') for record in captures):
+            self.warnings.add('capture-publication')
         if self.requested:
-            if not captures:
+            represented = {record.get('filename') for record in captures}
+            if not captures or any(folder == 'Stderr' and NATIVE_STDERR_NAME.fullmatch(name) and name not in represented
+                                   for folder, name in self.sources):
                 self.warnings.add('capture-unconfirmed')
             if any(record.get('state') == 'unavailable' for record in captures):
                 self.warnings.add('capture-unavailable')
@@ -1406,7 +1434,7 @@ class NativeTestDiagnostics:
                         self._archive_chunk(source, state, min(65536, target - previous))
                         if state['archived'] == previous:
                             break
-                    if folder == 'Stderr':
+                    if folder == 'Stderr' and NATIVE_STDERR_NAME.fullmatch(name):
                         while state['mirrored'] < target:
                             previous = state['mirrored']
                             self._mirror_chunk(source, state, min(65536, target - previous))
