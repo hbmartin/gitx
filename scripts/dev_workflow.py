@@ -460,7 +460,7 @@ def parser():
     prune = actions.add_parser("run", help="Prune only after valid full post-commit verification")
     prune.add_argument("--receipt", required=True, type=pathlib.Path)
     prune.add_argument("--retry-retained-native", action="store_true",
-                       help="Revalidate explicitly retained native evidence; default cleanup preserves it without retrying")
+                       help="Revalidate retained native evidence; run cleanup queue first after completed cleanup; a current full receipt is required")
     cleaning.set_defaults(handler=clean)
     working = groups.add_parser("work")
     actions = working.add_subparsers(dest="action", required=True)
