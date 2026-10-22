@@ -432,7 +432,7 @@ def clean(args):
     elif args.action == "preview":
         result = cleanup.preview(session.ROOT)
     else:
-        result = cleanup.run_cleanup(session.ROOT, args.receipt)
+        result = cleanup.run_cleanup(session.ROOT, args.receipt, retry_retained_native=getattr(args, 'retry_retained_native', False))
     print(json.dumps(result, indent=2, sort_keys=True))
     return 2 if result.get("status") == "partial" else 0
 
@@ -459,6 +459,8 @@ def parser():
     actions.add_parser("preview", help="Read-only inventory and retention proposal")
     prune = actions.add_parser("run", help="Prune only after valid full post-commit verification")
     prune.add_argument("--receipt", required=True, type=pathlib.Path)
+    prune.add_argument("--retry-retained-native", action="store_true",
+                       help="Revalidate explicitly retained native evidence; default cleanup preserves it without retrying")
     cleaning.set_defaults(handler=clean)
     working = groups.add_parser("work")
     actions = working.add_subparsers(dest="action", required=True)

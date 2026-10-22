@@ -899,7 +899,8 @@ def inventory(root, receipt=None, now=None):
             "reclaimableDiagnosticBytes": sum(c["bytes"] for c in selected if c["kind"] == "diagnostics"),
             "projectedDiagnosticBytes": remaining, "protectedExcessBytes": max(0, remaining - policy["diagnosticBudgetBytes"]),
             "nativeSources": [{"registration": str(path), "paths": [owner["sourceDirectory"]],
-                               "reason": "complete archived duplicate" if owner.get("collectionComplete") else "protected incomplete native archive",
+                               "reason": "retained native evidence" if owner.get("retirementState") == "retained" else
+                                         "complete archive awaiting validation" if owner.get("collectionComplete") else "protected incomplete native archive",
                                "owner": owner} for path, owner in session.registered_native_sources(root)],
             "candidates": selected, "retained": retained, "discoveryErrors": errors, "entryErrors": entry_errors,
             "accountingErrors": accounting_errors, "protectionToken": token, "protectionReferrers": referrers,
@@ -1219,7 +1220,7 @@ def rotate_history(directory, limit, current_report):
                 continue
 
 
-def run_cleanup(root, receipt, inherited=None):
+def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
     root = pathlib.Path(root).resolve()
     _, initial_reason = eligibility(root, receipt)
     if initial_reason:
@@ -1366,30 +1367,23 @@ def run_cleanup(root, receipt, inherited=None):
                     report["failed"].append(failed)
         report["nativeRetirement"] = []
         for item in report.get("nativeSources", []):
-            native_owner = item["owner"]
-            try:
+            @contextlib.contextmanager
+            def authorize_native_retirement():
                 with session.Leases(proof, owner, inherited=authenticated):
                     reason = gate()
-                    source = pathlib.Path(native_owner["sourceDirectory"])
+                    source = pathlib.Path(item["owner"]["sourceDirectory"])
                     if any(overlap(source, path) for path in report["protectedPaths"]):
                         reason = reason or "protected native source"
-                    if native_owner.get("status") == "running" and session.producer_state(native_owner.get("producer")) != "abandoned":
-                        reason = reason or "live native producer"
                     if reason:
-                        state = "deferred"
-                    else:
-                        state, reason = session.retire_native_sources(
-                            native_owner, checkout=root,
-                            persist=lambda value: session.persist_native_registration(item["registration"], value))
-                    native_owner.update(retirementState=state, retirementReason=reason)
-                    session.persist_native_registration(item["registration"], native_owner)
-                    report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason})
-            except (OSError, ValueError, KeyError, session.ResourceBusy):
-                native_owner.update(retirementState="deferred", retirementReason="native retirement unproven")
-                # Retain the queue even if registration storage itself is unavailable.
-                with contextlib.suppress(OSError, ValueError, KeyError):
-                    session.persist_native_registration(item["registration"], native_owner)
-                report["nativeRetirement"].append({"paths": item["paths"], "state": "deferred", "reason": "native retirement unproven"})
+                        raise session.NativeRetirementDeferred(reason)
+                    yield
+            try:
+                state, reason, _ = session.retire_registered_native_sources(
+                    item["registration"], checkout=root, authorize=authorize_native_retirement,
+                    retry_retained=retry_retained_native)
+            except session.ResourceBusy:
+                state, reason = "deferred", "retirement-proof-held"
+            report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
         saved = False
@@ -1399,7 +1393,7 @@ def run_cleanup(root, receipt, inherited=None):
                 if read_json(pending_path(root)) != pending:
                     changed = "newer commit queued"
                 changed = changed or removed_original_problem()
-                native_deferred = any(item["state"] != "retired" for item in report["nativeRetirement"])
+                native_deferred = any(item["state"] not in {"retired", "retained"} for item in report["nativeRetirement"])
                 report["status"] = "partial" if (report["skipped"] or report["failed"] or report["discoveryErrors"] or
                                                  report["entryErrors"] or native_deferred or changed) else "complete"
                 if changed:
