@@ -2,10 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Disposable fixtures must be writable by the sandboxed runner and readable by GitX. -->
+	<!-- Only the sandboxed test runner receives fixture and managed diagnostic-directory write access. -->
 	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
 	<array>
 		<string>/private/tmp/gitx-ui-fixtures/</string>
+		<string>$(GITX_TEST_NATIVE_STORAGE_ROOT)/</string>
+		<string>$(GITX_TEST_NATIVE_FALLBACK_ROOT)/</string>
 	</array>
 </dict>
 </plist>

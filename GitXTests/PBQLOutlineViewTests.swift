@@ -1566,7 +1566,11 @@ final class PBQLOutlineViewTests: XCTestCase {
         if tree.fullPath == path {
             return tree
         }
-        for child in tree.children {
+        for value in tree.children {
+            guard let child = value as? PBGitTree else {
+                XCTFail("Tree children must retain their production type")
+                return nil
+            }
             if let match = findTree(path: path, below: child) {
                 return match
             }

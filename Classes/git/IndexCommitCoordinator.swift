@@ -18,16 +18,19 @@ private final nonisolated class IndexCommitEventDelivery: @unchecked Sendable {
     }
 }
 
-// The repository is never accessed through this box off the main thread; commit runners use their own
-// `unowned` references.
-// swift6-safety-justification: This token keeps the repository alive during a background commit and is handed
-// to the main queue before its final release.
-private final nonisolated class RepositoryLifetimeToken: @unchecked Sendable {
-    let repository: PBGitRepository?
+/// The repository is never accessed through this box off the main thread; commit runners use their own
+/// `unowned` references.
+/// A worker can outlive the queued main delivery. Destruction itself must therefore be isolated.
+@MainActor
+private final class RepositoryLifetimeToken {
+    // swift6-safety-justification: This immutable reference carries ownership only; isolated destruction releases it on main.
+    nonisolated(unsafe) let repository: PBGitRepository?
 
-    init(_ repository: PBGitRepository?) {
+    nonisolated init(_ repository: PBGitRepository?) {
         self.repository = repository
     }
+
+    isolated deinit {}
 }
 
 // swift6-safety-justification: Immutable service ownership and private serial work/event queues confine all coordination.

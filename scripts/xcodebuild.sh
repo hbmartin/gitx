@@ -202,6 +202,10 @@ if (( profile_rules )) && [[ "$command" != "analyze" ]]; then
 fi
 for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
 	case "$argument" in
+		GITX_TEST_NATIVE_STORAGE_ROOT=*|GITX_TEST_NATIVE_FALLBACK_ROOT=*)
+			echo "Native diagnostic sandbox paths are managed by scripts/xcodebuild.sh." >&2
+			exit 2
+			;;
 		COMPILATION_CACHE_ENABLE_CACHING=*|COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=*)
 			echo "Use --compilation-cache to select and record managed compilation cache settings." >&2
 			exit 2
@@ -410,6 +414,14 @@ elapsed_seconds() {
 }
 
 record_step() {
+	local supervisor_count=$1
+	shift
+	local supervisor_options=()
+	while (( supervisor_count > 0 )); do
+		supervisor_options+=("--supervisor-argument=$1")
+		shift
+		supervisor_count=$((supervisor_count - 1))
+	done
 	name=$1
 	status=$2
 	exit_code=$3
@@ -420,21 +432,34 @@ record_step() {
 	python3 "$support" receipt-step \
 		--name "$name" --status "$status" --exit-code "$exit_code" \
 		--duration "$duration" --log "$log_path" --xcresult "$result_path" \
-		"$receipt" \
+		${supervisor_options[@]+"${supervisor_options[@]}"} "$receipt" \
 		-- "$@" >/dev/null
 }
 
 run_step() {
+	run_supervised_step 0 "$@"
+}
+
+run_supervised_step() {
+	local option_count=$1
+	shift
+	local supervisor_arguments=()
+	while (( option_count > 0 )); do
+		supervisor_arguments+=("$1")
+		shift
+		option_count=$((option_count - 1))
+	done
 	step_name=$1
 	log_path=$2
 	result_path=$3
 	shift 3
 	started=$(python3 -c 'import time; print(time.time())')
-	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" && -z "${native_supervisor_arguments[*]:-}" ]]; then
-		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${native_supervisor_arguments[@]+"${native_supervisor_arguments[@]}"} -- "$@" 2>&1 | xcbeautify --disable-logging
+	local supervisor_command=(python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${supervisor_arguments[@]+"${supervisor_arguments[@]}"} -- "$@")
+	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" && ${#supervisor_arguments[@]} -eq 0 ]]; then
+		"${supervisor_command[@]}" 2>&1 | xcbeautify --disable-logging
 		step_status=${PIPESTATUS[0]}
 	else
-		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${native_supervisor_arguments[@]+"${native_supervisor_arguments[@]}"} -- "$@"
+		"${supervisor_command[@]}"
 		step_status=$?
 	fi
 	duration=$(elapsed_seconds "$started")
@@ -443,7 +468,7 @@ run_step() {
 	else
 		step_result=failed
 	fi
-	record_step "$step_name" "$step_result" "$step_status" "$duration" "$log_path" "$result_path" "$@"
+	record_step "${#supervisor_command[@]}" "${supervisor_command[@]}" "$step_name" "$step_result" "$step_status" "$duration" "$log_path" "$result_path" "$@"
 	receipt_step_status=$?
 	if (( step_status == 0 && receipt_step_status != 0 )); then step_status=$receipt_step_status; fi
 	return "$step_status"
@@ -456,7 +481,7 @@ run_native_step() {
 		--diagnostics "$run_dir/Diagnostics/$4" ${native_capture_arguments[@]+"${native_capture_arguments[@]}"})
 	[[ -z "$2" ]] || native_supervisor_arguments+=(--startup-timeout "$2")
 	shift 4
-	run_step "$@"
+	run_supervised_step "${#native_supervisor_arguments[@]}" "${native_supervisor_arguments[@]}" "$@"
 }
 
 doctor_mode=build
@@ -500,7 +525,7 @@ else
 	doctor_result=blocked
 	overall_status=blocked
 fi
-record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --scope "$doctor_scope" --developer-dir "$developer_dir" --destination "$destination"
+record_step 0 doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --scope "$doctor_scope" --developer-dir "$developer_dir" --destination "$destination"
 (( doctor_status == 0 )) || exit "$doctor_status"
 
 workspace=$(config workspace)
@@ -552,8 +577,15 @@ configure_test_forge_storage() {
 	mkdir -p "$forge_test_root" || return $?
 	export TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT="$forge_test_root"
 	printf 'Test Forge storage: %s\n' "$forge_test_root"
+	configure_native_test_storage
+}
+
+configure_native_test_storage() {
 	# Apps write to the configured cache; the supervisor archives files into Logs.
 	native_test_root="${derived_data%/*}/Fixtures/$run_id/Native"
+	local native_fallback
+	native_fallback=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import workflow_session as session; print(session.native_fallback_root())' "$root/scripts") || return $?
+	native_storage_arguments=("GITX_TEST_NATIVE_STORAGE_ROOT=$native_test_root" "GITX_TEST_NATIVE_FALLBACK_ROOT=$native_fallback")
 	native_capture_arguments=()
 	[[ "$configuration" != Debug ]] || native_capture_arguments+=(--capture-native-stderr)
 }
@@ -582,25 +614,25 @@ xcode_test() {
 			thread-sanitizer) ensure_probe_option -enableThreadSanitizer YES ;;
 		esac
 		run_step compile:host-preflight "$logs/$plan-host-build.log" "" \
-			"$xcodebuild" "${common[@]}" build-for-testing -testPlan GitXHostPreflight \
+			"$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" build-for-testing -testPlan GitXHostPreflight \
 			CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO ${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	# Compile before starting host deadlines, preserving suite instrumentation.
 	run_step "compile:$test_preset" "$logs/$plan-build.log" "" \
-		"$xcodebuild" "${common[@]}" build-for-testing -testPlan "$plan" \
+		"$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" build-for-testing -testPlan "$plan" \
 		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@" || return $?
 	run_step signatures "$logs/$plan-signatures.log" "" python3 "$root/scripts/workflow_session.py" signatures "$derived_data" || return $?
 	local snapshot="$results/$plan-inputs.json"
 	python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || return $?
 	if [[ "$test_preset" != "ui-preflight" && "$test_preset" != "ui" ]]; then
 		run_native_step 120 "" net.phere.GitXTests host host-preflight "$logs/$plan-host.log" "$results/$plan-host.xcresult" \
-			"$xcodebuild" "${common[@]}" test-without-building -testPlan GitXHostPreflight \
+			"$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" test-without-building -testPlan GitXHostPreflight \
 			-only-testing:GitXTests/GitXHostStartTests/testHostStarts \
 			-resultBundlePath "$results/$plan-host.xcresult" CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
 			${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	run_native_step "${GITX_COMMAND_TIMEOUT:-7200}" 120 "$native_test_bundle" "$plan" "test:$test_preset" "$logs/$plan.log" "$result" \
-		"$xcodebuild" "${common[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
+		"$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
 		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@"
 	local test_status=$?
 	run_step evidence "$logs/$plan-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"
@@ -654,7 +686,8 @@ stage_built_app() {
 case "$command" in
 	build-tests)
 		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
-		run_step build-tests "$logs/build-tests.log" "" "$xcodebuild" "${common[@]}" build-for-testing \
+		configure_native_test_storage || exit $?
+		run_step build-tests "$logs/build-tests.log" "" "$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" build-for-testing \
 			-testPlan GitX CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
 			${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		;;
@@ -849,7 +882,10 @@ case "$command" in
 		raw_common+=(${cache_arguments[@]+"${cache_arguments[@]}"})
 		# Release Swift packages also need testable interfaces for app-hosted
 		# XCTest imports; ordinary release builds retain their normal settings.
-		(( is_test_build )) && raw_common+=( ENABLE_TESTABILITY=YES )
+		if (( is_test_build )); then
+			configure_native_test_storage || exit $?
+			raw_common+=( ENABLE_TESTABILITY=YES "${native_storage_arguments[@]}" )
+		fi
 		# Local ad hoc test hosts cannot use Release library validation with
 		# third-party signed frameworks. Production build/archive stays intact.
 		if (( is_test_build )) && [[ "$signing_mode" == "ad-hoc" ]]; then

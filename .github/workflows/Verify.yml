@@ -191,7 +191,18 @@ jobs:
             -only-testing:GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation \
             -only-testing:GitXTests/WorktreeAppKitTests/testExplicitBranchSelectionReturnsMountedContentToHistoryWithoutCheckout \
             -only-testing:GitXTests/WorktreeAppKitTests/testHistoryReturnKeepsViewedRevisionWhenTheSelectedRegistrationIsNoLongerPublished \
-            -only-testing:GitXTests/WorktreeAppKitTests/testMissingWorktreeGitFileOffersSameLocationRepairWithoutCheckout
+            -only-testing:GitXTests/WorktreeAppKitTests/testMissingWorktreeGitFileOffersSameLocationRepairWithoutCheckout \
+            -only-testing:GitXTests/WorktreeAppKitTests/testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt \
+            -only-testing:GitXTests/WorktreeAppKitTests/testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting \
+            -only-testing:GitXTests/WorktreeAppKitTests/testClosingSidebarRevokesPreviouslyIssuedMenusAndRetainedItems \
+            -only-testing:GitXTests/WorktreeRepairSafetyTests/testQueuedGlobalRepairRequiresFreshLocateApprovalWhenMovedDirectoryAliasChanges \
+            -only-testing:GitXTests/IndexCommitServiceTests/testCoordinatorReleasesFinalRepositoryOwnershipOnMainThread \
+            -only-testing:GitXTests/HistoryControllerTests/testAutomaticTreeFallbackPreservesRememberedFileUntilUserSelectsAnother \
+            -only-testing:GitXTests/HistoryControllerTests/testGitTreeFileSizeSupportsConcurrentPreviewLoads \
+            -only-testing:GitXTests/HistoryControllerTests/testSelectionReconciliationWorkingStateStatusAndTreeRestoration \
+            -only-testing:GitXTests/HistoryControllerTests/testIndexRefreshRejectsOldMutationGenerationAndClearsPendingAfterFinishNotification \
+            -only-testing:GitXTests/HistoryControllerTests/testPendingIndexReconciliationDisablesMutationAndCommitControlsWithoutClearingSelection \
+            -only-testing:GitXTests/ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage
       - name: Measure Release worktree safety and header update costs
         if: ${{ !cancelled() && steps.native_setup_ready.outcome == 'success' }}
         run: |

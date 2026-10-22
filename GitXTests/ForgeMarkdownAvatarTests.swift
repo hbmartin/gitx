@@ -977,7 +977,10 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
             XCTAssertEqual(loaderProof, 0b1111_1111_1111_1111)
 
             let sidebarAttentionProof = await PBForgeMarkdownAvatarProductHarness.sidebarAttentionProof()
-            XCTAssertEqual(sidebarAttentionProof, 0b1111_1111_1111_1111, "Authenticated Attention mounts while live; closed sidebar leaves alternate content and selection intact")
+            XCTAssertEqual(sidebarAttentionProof & 0x7FFF, 0x7FFF, "Existing authenticated Attention, recovery and account behavior")
+            XCTAssertNotEqual(sidebarAttentionProof & (1 << 15), 0, "Live Attention mounts in the repository window")
+            XCTAssertNotEqual(sidebarAttentionProof & (1 << 16), 0, "Closed sidebar preserves alternate content, selection and revision")
+            XCTAssertEqual(sidebarAttentionProof >> 17, 0, "Attention proof contains only documented bits")
 
             let windowRecoveryProof = await PBForgeMarkdownAvatarProductHarness.windowRecoveryProof()
             XCTAssertEqual(windowRecoveryProof, 0b1111111)

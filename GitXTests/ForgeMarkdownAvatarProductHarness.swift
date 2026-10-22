@@ -985,6 +985,7 @@
                         destinationRepository: identity
                     )
                     let boundWindowController = PBGitWindowController()
+                    defer { boundWindowController.close() }
                     boundWindowController.repository = repository
                     let boundCollaborationProof = await exerciseBoundCollaboration(
                         repository: repository,
@@ -1103,7 +1104,8 @@
                             && publicFallbackSelected
                             && settingsPersistenceProof
                             && githubReadFactoryProof,
-                        liveAttentionMounted && closedAttentionInert,
+                        liveAttentionMounted,
+                        closedAttentionInert,
                     ]
                     return conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
                         if condition.element {

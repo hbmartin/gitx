@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import fcntl
 import json
 import os
 import pathlib
 import plistlib
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -68,55 +71,351 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(later['status'], 'complete')
             self.assertEqual(later['nativeRetirement'], [])
 
-    def test_native_retirement_incomplete_protected_and_exception_paths_remain_pending(self):
+    def test_native_registration_discovery_reads_metadata_without_hashing_archives(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, _):
+            with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('discovery hashed archive bytes')):
+                discovered = session.registered_native_sources(self.root)
+            self.assertEqual([path for path, _ in discovered], [native.registration])
+            self.assertEqual(discovered[0][1]['retirementState'], 'deferred')
+
+    def test_permanently_retained_native_evidence_does_not_poison_later_cleanup(self):
+        for condition in ('incomplete', 'archive-missing', 'source-missing'):
+            with self.subTest(condition=condition), self.native_archive_waiting_for_retirement() as (native, source, release):
+                release()
+                if condition == 'incomplete':
+                    record = cleanup.read_json(native.registration)
+                    record['collectionComplete'] = False
+                    session.atomic_json(native.registration, record)
+                elif condition == 'archive-missing':
+                    shutil.rmtree(native.archive)
+                else:
+                    shutil.rmtree(native.root)
+                cleanup.queue_commit(self.root)
+                receipt = self.valid_receipt()
+                report = cleanup.run_cleanup(self.root, receipt)
+                self.assertEqual(report['status'], 'complete', report.get('nativeRetirement'))
+                self.assertEqual(report['nativeRetirement'][0]['state'], 'retained')
+                self.assertFalse(cleanup.pending_path(self.root).exists())
+                if condition != 'source-missing':
+                    self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+                cleanup.queue_commit(self.root)
+                with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('retained archive rehashed')):
+                    later = cleanup.run_cleanup(self.root, receipt)
+                self.assertEqual(later['status'], 'complete')
+                self.assertEqual(later['nativeRetirement'][0]['state'], 'retained')
+                self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'retained')
+
+    def test_cleanup_does_not_overwrite_retirement_published_after_inventory(self):
         with self.native_archive_waiting_for_retirement() as (native, source, release):
             release()
             cleanup.queue_commit(self.root)
             receipt = self.valid_receipt()
+            inventory = cleanup.inventory
+            completed = None
+            def publish_after_inventory(*args, **kwargs):
+                nonlocal completed
+                report = inventory(*args, **kwargs)
+                record = cleanup.read_json(native.registration)
+                state, reason = session.retire_native_sources(record, checkout=self.root,
+                    persist=lambda value: session.persist_native_registration(native.registration, value))
+                self.assertEqual(state, 'retired', reason)
+                record.update(retirementState=state, retirementReason=reason)
+                session.persist_native_registration(native.registration, record)
+                completed = record.copy()
+                return report
+            with mock.patch.object(cleanup, 'inventory', side_effect=publish_after_inventory):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'complete', report.get('nativeRetirement'))
+            self.assertFalse(source.exists())
+            self.assertEqual(cleanup.read_json(native.registration), completed)
+
+    def test_final_registration_error_cannot_downgrade_an_already_published_retirement(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            publish = session.atomic_json
+            def published_but_sync_failed(path, value):
+                result = publish(path, value)
+                if pathlib.Path(path) == native.registration and value.get('retirementState') == 'retired':
+                    raise OSError(5, 'fixture-after-publication')
+                return result
+            with mock.patch.object(session, 'atomic_json', side_effect=published_but_sync_failed):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertTrue(cleanup.pending_path(self.root).exists())
+            self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'retired')
+            self.assertFalse(source.exists())
+            later = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(later['status'], 'complete')
+
+    def test_native_hashing_does_not_hold_the_global_cleanup_proof_lease(self):
+        with self.native_archive_waiting_for_retirement() as (_, _, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            acquire, digest = session.Leases, session.descriptor_digest
+            proof_depth = 0
+            @contextlib.contextmanager
+            def record_proof(resources, *args, **kwargs):
+                nonlocal proof_depth
+                proof = str(cleanup.pending_path(self.root)) in resources
+                with acquire(resources, *args, **kwargs) as lease:
+                    proof_depth += int(proof)
+                    try:
+                        yield lease
+                    finally:
+                        proof_depth -= int(proof)
+            def hash_outside_proof(descriptor):
+                self.assertEqual(proof_depth, 0, 'archive hashing monopolized shared proof resources')
+                return digest(descriptor)
+            with mock.patch.object(session, 'Leases', side_effect=record_proof), \
+                    mock.patch.object(session, 'descriptor_digest', side_effect=hash_outside_proof):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'complete', report.get('nativeRetirement'))
+
+    def test_native_writer_lease_rejects_retirement_before_archive_hashing(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, _):
+            owner = cleanup.read_json(native.registration)
+            with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('blocked archive rehashed')):
+                state, reason = session.retire_native_sources(owner, checkout=self.root)
+            self.assertEqual((state, reason), ('deferred', 'producer-lease-held'))
+            self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+
+    def test_stale_registration_checkpoints_cannot_resurrect_retired_evidence(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, release):
+            release()
+            stale = cleanup.read_json(native.registration)
+            completed = dict(stale, retirementState='retired', retirementPhase='retired')
+            session.persist_native_registration(native.registration, completed)
+            with self.assertRaises(OSError):
+                session.persist_native_registration(native.registration, stale)
+            self.assertEqual(cleanup.read_json(native.registration), completed)
+
+    def test_retained_native_evidence_requires_explicit_retry_after_repair(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            original = cleanup.read_json(native.registration)
+            session.atomic_json(native.registration, dict(original, collectionComplete=False))
+            cleanup.queue_commit(self.root)
+            report = cleanup.run_cleanup(self.root, self.valid_receipt())
+            self.assertEqual(report['nativeRetirement'][0]['state'], 'retained')
+            repaired = cleanup.read_json(native.registration)
+            repaired['collectionComplete'] = True
+            session.persist_native_registration(native.registration, repaired)
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            ordinary = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(ordinary['nativeRetirement'][0]['state'], 'retained')
+            self.assertTrue(source.exists())
+            self.assertFalse(cleanup.pending_path(self.root).exists())
+            unqueued = cleanup.run_cleanup(self.root, receipt, retry_retained_native=True)
+            self.assertEqual(unqueued, {'status': 'deferred', 'reason': 'no-pending-commit'})
+            self.assertTrue(source.exists(), 'The retry flag cannot bypass queue admission')
+            cleanup.queue_commit(self.root)
+            arguments = workflow.parser().parse_args(['cleanup', 'run', '--receipt', str(receipt), '--retry-retained-native'])
+            self.assertEqual(arguments.handler(arguments), 0)
+            self.assertFalse(source.exists())
+            self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'retired')
+
+    def test_native_registration_competing_publisher_is_nonblocking_and_preserves_evidence(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, _):
+            previous = native.registration.read_bytes()
+            command = '''
+import json, pathlib, sys
+import workflow_session as session
+path = pathlib.Path(sys.argv[1])
+try:
+    session.persist_native_registration(path, json.loads(path.read_text()))
+except BlockingIOError:
+    print('blocked', flush=True)
+else:
+    sys.exit(3)
+'''
+            with session.NativeRegistration(native.registration):
+                result = subprocess.run([sys.executable, '-c', command, str(native.registration)],
+                                        env=dict(os.environ, PYTHONPATH=str(ROOT / 'scripts')),
+                                        capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), 'blocked')
+            self.assertEqual(native.registration.read_bytes(), previous)
+
+    def test_native_registration_compare_and_publish_refuses_a_replaced_record(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, _):
+            with session.NativeRegistration(native.registration) as registration:
+                original = dict(registration.current)
+                newer = dict(original, diagnosticCheckpoint='newer')
+                session.atomic_json(native.registration, newer)
+                with self.assertRaises(session.NativeRegistrationChanged):
+                    registration.publish(original)
+            self.assertEqual(cleanup.read_json(native.registration), newer)
+
+    def test_native_registration_unsafe_locks_preserve_records_and_close_descriptors(self):
+        for variant in ('symlink', 'fifo', 'directory', 'permissions', 'foreign-owner'):
+            with self.subTest(variant=variant), self.native_archive_waiting_for_retirement() as (native, _, _):
+                lock = native.registration.with_name(native.registration.name + '.lock')
+                lock.unlink()
+                sentinel = self.base / 'lock-sentinel'
+                sentinel.write_bytes(b'keep-evidence')
+                if variant == 'symlink':
+                    lock.symlink_to(sentinel)
+                elif variant == 'fifo':
+                    os.mkfifo(lock, 0o600)
+                elif variant == 'directory':
+                    lock.mkdir()
+                else:
+                    lock.write_bytes(b'')
+                    lock.chmod(0o640 if variant == 'permissions' else 0o600)
+                original = native.registration.read_bytes()
+                opened = []
+                actual_open, actual_stat = os.open, os.fstat
+                def record_open(*args, **kwargs):
+                    descriptor = actual_open(*args, **kwargs)
+                    opened.append(descriptor)
+                    return descriptor
+                def inspected(descriptor):
+                    result = actual_stat(descriptor)
+                    if variant == 'foreign-owner' and stat.S_ISREG(result.st_mode):
+                        fields = list(result)
+                        fields[4] = os.getuid() + 1
+                        return os.stat_result(fields)
+                    return result
+                with mock.patch.object(session.os, 'open', side_effect=record_open), \
+                        mock.patch.object(session.os, 'fstat', side_effect=inspected):
+                    with self.assertRaises(OSError):
+                        session.persist_native_registration(native.registration, cleanup.read_json(native.registration))
+                for descriptor in opened:
+                    with self.assertRaises(OSError) as closed:
+                        actual_stat(descriptor)
+                    self.assertEqual(closed.exception.errno, errno.EBADF, variant)
+                self.assertEqual(native.registration.read_bytes(), original)
+                self.assertEqual(sentinel.read_bytes(), b'keep-evidence')
+
+    def test_completed_native_retirement_recovers_after_final_registration_failure(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            publish = session.atomic_json
+            def fail_completed_registration(path, value):
+                if pathlib.Path(path) == native.registration and value.get('retirementState') == 'retired':
+                    raise OSError(28, 'fixture-final-registration-full')
+                return publish(path, value)
+            with mock.patch.object(session, 'atomic_json', side_effect=fail_completed_registration):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertFalse(native.root.exists(), report['nativeRetirement'])
+            self.assertTrue(cleanup.pending_path(self.root).exists())
+            self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
+            recovered = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(recovered['status'], 'complete', recovered.get('nativeRetirement'))
+            self.assertFalse(cleanup.pending_path(self.root).exists())
+            self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'retired')
+
+    def test_missing_native_sources_require_prior_retirement_and_unchanged_archive(self):
+        for variant in ('legacy', 'unprepared', 'incomplete', 'archive-replaced', 'quarantine-symlink'):
+            with self.subTest(variant=variant), self.native_archive_waiting_for_retirement() as (native, source, release):
+                release()
+                owner = cleanup.read_json(native.registration)
+                state, _ = session.retire_native_sources(owner, checkout=self.root,
+                    persist=lambda value: session.persist_native_registration(native.registration, value))
+                self.assertEqual(state, 'retired')
+                durable = cleanup.read_json(native.registration)
+                if variant == 'legacy':
+                    durable.pop('retirementPhase', None)
+                    durable.pop('retirementParentIdentity', None)
+                    durable['retirementState'] = 'prepared'
+                elif variant == 'unprepared':
+                    durable.pop('retirementPath')
+                    durable.pop('retirementPhase', None)
+                    durable['retirementState'] = 'pending'
+                elif variant == 'incomplete':
+                    durable['collectionComplete'] = False
+                elif variant == 'archive-replaced':
+                    (native.archive / source.name).write_bytes(b'changed')
+                else:
+                    pathlib.Path(durable['retirementPath']).symlink_to(native.archive, target_is_directory=True)
+                state, reason = session.retire_native_sources(durable, checkout=self.root,
+                    persist=lambda value: session.persist_native_registration(native.registration, value))
+                self.assertEqual(state, 'retired' if variant == 'legacy' else 'deferred', reason)
+                self.assertTrue(native.archive.exists())
+
+    def test_native_retirement_does_not_delete_before_registration_directory_sync(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            owner = cleanup.read_json(native.registration)
+            sync = session.sync_native_directory
+            def fail_registration_sync(path):
+                if pathlib.Path(path) == native.registration.parent:
+                    raise OSError(5, 'fixture-directory-sync')
+                return sync(path)
+            with mock.patch.object(session, 'sync_native_directory', side_effect=fail_registration_sync):
+                state, _ = session.retire_native_sources(owner, checkout=self.root,
+                    persist=lambda value: session.persist_native_registration(native.registration, value))
+            self.assertEqual(state, 'deferred')
+            self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+
+    def test_native_retirement_incomplete_protected_and_exception_paths_remain_pending(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
             original_inventory = cleanup.inventory
             for condition in ('incomplete', 'protected', 'exception', 'registration-storage'):
                 with self.subTest(condition=condition):
-                    def selected_inventory(*args, **kwargs):
-                        report = original_inventory(*args, **kwargs)
-                        if condition == 'incomplete':
-                            report['nativeSources'][0]['owner']['collectionComplete'] = False
-                        elif condition == 'protected':
-                            report['protectedPaths'].append(str(native.root))
-                        return report
                     original_owner = cleanup.read_json(native.registration)
-                    publish = session.atomic_json
-                    def selected_publish(path, value):
-                        if condition == 'registration-storage' and pathlib.Path(path) == native.registration:
-                            raise PermissionError('fixture-registration-storage')
-                        return publish(path, value)
-                    with mock.patch.object(cleanup, 'inventory', side_effect=selected_inventory), \
-                            mock.patch.object(session, 'atomic_json', side_effect=selected_publish), \
-                            mock.patch.object(session, 'retire_native_sources',
-                                              side_effect=OSError('fixture') if condition == 'exception' else session.retire_native_sources):
-                        report = cleanup.run_cleanup(self.root, receipt)
-                    self.assertEqual(report['status'], 'partial')
-                    self.assertEqual(report['nativeRetirement'][0]['state'], 'deferred')
-                    self.assertTrue(cleanup.pending_path(self.root).exists())
-                    self.assertTrue(source.exists())
-                    self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
-                    self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'deferred')
-                    session.atomic_json(native.registration, original_owner)
+                    try:
+                        if condition == 'incomplete':
+                            session.atomic_json(native.registration, dict(original_owner, collectionComplete=False))
+                        cleanup.queue_commit(self.root)
+                        receipt = self.valid_receipt()
+                        def selected_inventory(*args, **kwargs):
+                            report = original_inventory(*args, **kwargs)
+                            if condition == 'protected':
+                                report['protectedPaths'].append(str(native.root))
+                            return report
+                        publish = session.atomic_json
+                        def selected_publish(path, value):
+                            if condition == 'registration-storage' and pathlib.Path(path) == native.registration:
+                                raise PermissionError('fixture-registration-storage')
+                            return publish(path, value)
+                        with mock.patch.object(cleanup, 'inventory', side_effect=selected_inventory), \
+                                mock.patch.object(session, 'atomic_json', side_effect=selected_publish), \
+                                mock.patch.object(session, 'retire_native_sources',
+                                                  side_effect=OSError('fixture') if condition == 'exception' else session.retire_native_sources):
+                            report = cleanup.run_cleanup(self.root, receipt)
+                        expected = 'retained' if condition == 'incomplete' else 'deferred'
+                        self.assertEqual(report['status'], 'complete' if expected == 'retained' else 'partial')
+                        self.assertEqual(report['nativeRetirement'][0]['state'], expected)
+                        self.assertEqual(cleanup.pending_path(self.root).exists(), expected == 'deferred')
+                        self.assertTrue(source.exists())
+                        self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+                        self.assertEqual(cleanup.read_json(native.registration)['retirementState'], expected)
+                    finally:
+                        # subTest suppresses assertions before the next iteration; restore even on that path.
+                        session.atomic_json(native.registration, original_owner)
 
     def test_native_retirement_does_not_clear_a_newer_pending_token(self):
         with self.native_archive_waiting_for_retirement() as (_, source, release):
             release()
             cleanup.queue_commit(self.root)
+            original_pending = cleanup.read_json(cleanup.pending_path(self.root))
             receipt = self.valid_receipt()
             retire = session.retire_native_sources
             newer = None
-            def queue_during_retirement(*args, **kwargs):
+            def commit_and_queue_during_retirement(*args, **kwargs):
                 nonlocal newer
                 outcome = retire(*args, **kwargs)
+                self.assertEqual(outcome[0], 'retired')
+                self.git('commit', '--allow-empty', '-qm', 'new work during native retirement')
+                # Hashing/retirement no longer owns the broad proof lease. A real
+                # queue writer can enter here before cleanup's final queue check.
                 cleanup.queue_commit(self.root)
                 newer = cleanup.read_json(cleanup.pending_path(self.root))
                 return outcome
-            with mock.patch.object(session, 'retire_native_sources', side_effect=queue_during_retirement):
+            with mock.patch.object(session, 'retire_native_sources', side_effect=commit_and_queue_during_retirement):
                 report = cleanup.run_cleanup(self.root, receipt)
+            self.assertIsNotNone(newer)
+            self.assertNotEqual(newer['head'], original_pending['head'])
+            self.assertNotEqual(newer['token'], original_pending['token'])
             self.assertEqual(report['status'], 'partial')
             self.assertEqual(report['reason'], 'newer commit queued')
             self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root)), newer)

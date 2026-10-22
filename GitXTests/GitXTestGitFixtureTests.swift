@@ -25,8 +25,10 @@ final class GitXTestGitFixtureTests: XCTestCase {
 
         var lease: GitXTestInvocationLease? = try GitXTestInvocationLease(progressDirectory: progress.path)
         XCTAssertNotNil(lease)
-        XCTAssertEqual(flock(probe, LOCK_EX | LOCK_NB), -1)
-        XCTAssertEqual(errno, EWOULDBLOCK)
+        let lockedResult = flock(probe, LOCK_EX | LOCK_NB)
+        let lockedCode = errno
+        XCTAssertEqual(lockedResult, -1, "held invocation lease")
+        XCTAssertEqual(lockedCode, EWOULDBLOCK, "held invocation lease")
         lease = nil
         XCTAssertEqual(flock(probe, LOCK_EX | LOCK_NB), 0)
         XCTAssertEqual(flock(probe, LOCK_UN), 0)
@@ -53,19 +55,27 @@ final class GitXTestGitFixtureTests: XCTestCase {
                     descriptors.append(descriptor)
                     inspections += 1
                     let phase = inspections == 1 ? "lease-directory" : "lease"
-                    if failure.operation == "inspect-" + phase { errno = EIO; return -1 }
+                    if failure.operation == "inspect-" + phase {
+                        errno = EIO; return -1
+                    }
                     let result = fstat(descriptor, info)
-                    if failure.operation == "validate-" + phase { info.pointee.st_uid = geteuid() ^ 1 }
+                    if failure.operation == "validate-" + phase {
+                        info.pointee.st_uid = geteuid() ^ 1
+                    }
                     return result
                 },
                 openLease: { parent, flags in
                     XCTAssertNotEqual(flags & O_NONBLOCK, 0)
-                    if failure.operation == "open-lease" { errno = EMFILE; return -1 }
+                    if failure.operation == "open-lease" {
+                        errno = EMFILE; return -1
+                    }
                     return openat(parent, "invocation.lease", flags)
                 },
                 lockLease: { descriptor, flags in
                     XCTAssertEqual(flags, LOCK_SH | LOCK_NB)
-                    if failure.operation == "lock-lease" { errno = EWOULDBLOCK; return -1 }
+                    if failure.operation == "lock-lease" {
+                        errno = EWOULDBLOCK; return -1
+                    }
                     return flock(descriptor, flags)
                 }
             )) { error in
@@ -76,8 +86,10 @@ final class GitXTestGitFixtureTests: XCTestCase {
             }
             XCTAssertEqual(inspections, failure.operation.hasSuffix("directory") || failure.operation == "open-lease" ? 1 : 2)
             for descriptor in descriptors {
-                XCTAssertEqual(fcntl(descriptor, F_GETFD), -1, failure.operation)
-                XCTAssertEqual(errno, EBADF)
+                let result = fcntl(descriptor, F_GETFD)
+                let code = errno
+                XCTAssertEqual(result, -1, failure.operation)
+                XCTAssertEqual(code, EBADF, failure.operation)
             }
             XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("invocation.lease")), evidence)
         }
@@ -183,11 +195,36 @@ final class GitXTestGitFixtureTests: XCTestCase {
         }
         let remaining = state.take(in: directory.path)
         XCTAssertTrue(remaining.allSatisfy { $0.data.count <= 65536 })
-        XCTAssertEqual(state.retainedBytes, 262144)
+        XCTAssertEqual(state.retainedBytes, 262_144)
         XCTAssertTrue(state.take(in: directory.path).isEmpty)
         XCTAssertEqual(try Data(contentsOf: source), original + Data("next-issue".utf8))
         var independentCase = GitXManagedTestObserver.AttachmentState()
         XCTAssertFalse(independentCase.take(in: directory.path).isEmpty)
+    }
+
+    func testFailureAttachmentsExcludePreCaseLogsAndPrioritizeNewLaunches() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        for pid in 10 ... 15 {
+            try Data(repeating: 65, count: 70000).write(to: directory.appendingPathComponent("GitX-\(pid)-a.stderr.log"))
+        }
+        var state = GitXManagedTestObserver.AttachmentState(in: directory.path)
+        XCTAssertTrue(state.take(in: directory.path).isEmpty, "Earlier launches cannot spend this case's budget")
+        let current = directory.appendingPathComponent("GitX-999-a.stderr.log")
+        let sentinel = Data([0, 255]) + Data("crashing current launch".utf8)
+        try sentinel.write(to: current)
+        let excerpts = state.take(in: directory.path)
+        XCTAssertEqual(excerpts.map(\.filename), [current.lastPathComponent])
+        XCTAssertEqual(excerpts.first?.data, sentinel)
+        XCTAssertTrue(state.take(in: directory.path).isEmpty)
+        let old = directory.appendingPathComponent("GitX-10-a.stderr.log")
+        let handle = try FileHandle(forWritingTo: old)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("new issue".utf8))
+        try handle.close()
+        XCTAssertEqual(state.take(in: directory.path).first?.data, Data("new issue".utf8))
+        XCTAssertEqual(try Data(contentsOf: current), sentinel)
     }
 
     func testProgressPublicationLeavesOnlyCompleteDistinctRecordsAndPreservesEvidence() throws {

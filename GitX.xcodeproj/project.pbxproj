@@ -3209,6 +3209,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = GitXUITests/GitXUITests.entitlements;
+				GITX_TEST_NATIVE_STORAGE_ROOT = "$(PROJECT_TEMP_DIR)/NativeDiagnostics-Unmanaged";
+				GITX_TEST_NATIVE_FALLBACK_ROOT = "$(PROJECT_TEMP_DIR)/NativeDiagnostics-Unmanaged";
 				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
@@ -3227,6 +3229,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = GitXUITests/GitXUITests.entitlements;
+				GITX_TEST_NATIVE_STORAGE_ROOT = "$(PROJECT_TEMP_DIR)/NativeDiagnostics-Unmanaged";
+				GITX_TEST_NATIVE_FALLBACK_ROOT = "$(PROJECT_TEMP_DIR)/NativeDiagnostics-Unmanaged";
 				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;

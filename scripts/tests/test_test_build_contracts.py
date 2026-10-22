@@ -4,12 +4,69 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import sys
 from unittest import mock
 from support import ROOT
 import check_test_build_contracts as contracts
 
 
 class TestBuildContractTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('xcrun'), 'Local Swift runtime required')
+    def test_repository_lifetime_token_main_queue_release_is_valid(self):
+        self.lifetime_token_probe(release_on_worker=False)
+
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('xcrun'), 'Local Swift runtime required')
+    def test_repository_lifetime_token_releases_on_main_when_worker_is_last_owner(self):
+        self.lifetime_token_probe(release_on_worker=True)
+
+    def lifetime_token_probe(self, *, release_on_worker):
+        source = (ROOT / 'Classes/git/IndexCommitCoordinator.swift').read_text()
+        prefix = source.split('// swift6-safety-justification: Immutable service ownership', 1)[0]
+        program = r'''
+typealias IndexCommitEvent = Int
+final nonisolated class PBGitRepository: NSObject {
+    let released: @Sendable () -> Void
+    init(released: @escaping @Sendable () -> Void) { self.released = released }
+    deinit { precondition(Thread.isMainThread, "Repository released off main"); released() }
+}
+func schedule(_ released: @escaping @Sendable () -> Void) {
+    let token = RepositoryLifetimeToken(PBGitRepository(released: released))
+    if __WORKER__ {
+        let delivered = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { [token] in
+            DispatchQueue.main.async { delivered.signal() }
+            precondition(delivered.wait(timeout: .now() + 5) == .success)
+            withExtendedLifetime(token) {}
+        }
+    } else {
+        DispatchQueue.main.async { [token] in withExtendedLifetime(token) {} }
+    }
+}
+var context = CFRunLoopSourceContext()
+context.perform = { _ in }
+let keepAlive = CFRunLoopSourceCreate(nil, 0, &context)!
+CFRunLoopAddSource(CFRunLoopGetMain(), keepAlive, .defaultMode)
+let released = DispatchSemaphore(value: 0)
+schedule { [released] in released.signal(); CFRunLoopStop(CFRunLoopGetMain()) }
+CFRunLoopRunInMode(.defaultMode, 5, false)
+precondition(released.wait(timeout: .now()) == .success, "Repository ownership did not drain")
+CFRunLoopRemoveSource(CFRunLoopGetMain(), keepAlive, .defaultMode)
+print("repository-released-on-main")
+'''.replace('__WORKER__', 'true' if release_on_worker else 'false')
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            main = root / 'main.swift'
+            main.write_text('import CoreFoundation\n' + prefix + program)
+            executable = root / 'lifetime-probe'
+            for configuration, optimization in (('Debug', '-Onone'), ('Release', '-O')):
+                with self.subTest(configuration=configuration):
+                    built = subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-warnings-as-errors', optimization,
+                                            str(main), '-o', str(executable)], capture_output=True, text=True, timeout=30)
+                    self.assertEqual(built.returncode, 0, built.stderr)
+                    completed = subprocess.run([executable], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(completed.returncode, 0, completed.stderr[-4096:])
+                    self.assertEqual(completed.stdout.strip(), 'repository-released-on-main')
+
     def settings(self):
         return [{"target": name, "buildSettings": {"ENABLE_TESTABILITY": "YES",
                 "HEADER_SEARCH_PATHS": "External/objective-git/External/libgit2/include"}}

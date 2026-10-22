@@ -1,4 +1,6 @@
 #import <Quartz/Quartz.h>
+// Import the app bridge explicitly before @testable consumers; compatibility refinements remain categories.
+#import "GitX-Bridging-Header.h"
 #import "GitXRelativeDateFormatter.h"
 #import "PBRepositoryFinder.h"
 #import "PBMacros.h"
@@ -79,7 +81,7 @@ typedef BOOL (NS_SWIFT_UI_ACTOR ^PBWorktreePresentationOwner)(void) NS_SWIFT_SEN
 #endif
 @property (nonatomic, readonly) BOOL isSnapshotStale;
 #if DEBUG
-- (void)drainForTestingWithCompletion:(void(NS_SWIFT_UI_ACTOR ^)(void))completion NS_SWIFT_NAME(drainForTesting(completion:));
+- (void)drainForTestingWithCompletion:(void(NS_SWIFT_UI_ACTOR ^)(void))completion NS_SWIFT_NAME(drainForTesting(completion:)) __attribute__((swift_async(none)));
 #endif
 @end
 
@@ -730,12 +732,12 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 
 @interface PBRecentRepositoryKeyNavigation : NSObject
 + (NSInteger)nextRowFromRow:(NSInteger)currentRow
-                   rowCount:(NSInteger)rowCount
-                 movingDown:(BOOL)movingDown
+				   rowCount:(NSInteger)rowCount
+				 movingDown:(BOOL)movingDown
 	NS_SWIFT_NAME(nextRow(fromRow:rowCount:movingDown:));
 @end
 
-@interface PBTerminalUtil : NSObject
+@interface PBTerminalUtil (GitXTestsCompatibility)
 + (NSString *)shellQuote:(NSString *)string;
 @end
 
@@ -1509,7 +1511,7 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 
 @interface PBCommitMenuPresenter : NSObject
 + (PBCommitMenuPresentation *)presentationForAction:(SEL _Nullable)action
-									   resolvedFiles:(NSArray<PBCommitMenuFile *> *)resolvedFiles
+									  resolvedFiles:(NSArray<PBCommitMenuFile *> *)resolvedFiles
 										allowsTrash:(BOOL)allowsTrash
 								   isContextualMenu:(BOOL)isContextualMenu
 						 singleSelectionIsSubmodule:(BOOL)singleSelectionIsSubmodule
@@ -1519,7 +1521,7 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 	NS_SWIFT_NAME(presentation(action:resolvedFiles:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:));
 @end
 
-@interface PBCommitList : NSTableView
+@interface PBCommitList (GitXTestsCompatibility)
 @property (nonatomic) BOOL useAdjustScroll;
 @property (nonatomic, readonly) NSPoint mouseDownPoint;
 @end
@@ -1533,7 +1535,7 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (void)cleanup;
 @end
 
-@interface PBGitTree : NSObject
+@interface PBGitTree (GitXTestsCompatibility)
 @property (nonatomic, copy) NSString *sha;
 @property (nonatomic, copy) NSString *path;
 @property (nonatomic) BOOL leaf;
@@ -1551,7 +1553,7 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (void)saveToFolder:(NSString *)directory;
 @end
 
-@interface PBWorkingTree : PBGitTree
+@interface PBWorkingTree (GitXTestsCompatibility)
 @property (nonatomic, copy, readonly, nullable) NSData *rawPath;
 + (instancetype)rootForRepository:(PBGitRepository *)repository NS_SWIFT_NAME(root(for:));
 @end

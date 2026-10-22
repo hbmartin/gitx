@@ -16,25 +16,129 @@ func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt 
 }
 
 @MainActor
+private final class SidebarMenuActionRecorder: NSResponder {
+    private(set) var checkoutRequests = 0
+    private(set) var removalRequests = 0
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
+
+    @objc func checkout(_ sender: Any?) {
+        checkoutRequests += 1
+    }
+
+    @objc func removeWorktree(_ sender: Any?) {
+        removalRequests += 1
+    }
+}
+
+@MainActor
 final class WorktreeAppKitTests: XCTestCase {
-    func testLiveSidebarSortAndRemoteRoutingHaveObservableEffects() async throws {
+    func testClosingSidebarRevokesPreviouslyIssuedMenusAndRetainedItems() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
+        _ = try fixture.git(["branch", "other"])
+        _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         defer { service.cancel() }
         await ready(service)
-        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(repository: repository, afterClose: false)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        await showForegroundWindow(controller)
+        defer { controller.close() }
+        let window = try XCTUnwrap(controller.window)
+        let sidebar = try XCTUnwrap(controller.sidebarViewController)
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let worktree = try worktreeItem(in: sidebar, at: fixture.linked.path)
+        try selectWorktree(worktree, in: sidebar)
+        let actionButton = try XCTUnwrap(sidebar.value(forKey: "actionButton") as? NSPopUpButton)
+        let actionMenu = try XCTUnwrap(actionButton.menu)
+        sidebar.menuNeedsUpdate(actionMenu)
+        let publishedWorktree = try worktreeItem(in: sidebar, at: fixture.linked.path)
+        let worktreeRow = outline.row(forItem: publishedWorktree)
+        XCTAssertGreaterThanOrEqual(worktreeRow, 0, "Use the row published after selection-driven rebuilding")
+        let rowMenu = sidebar.menu(forRow: worktreeRow)
+        let branchMenu = NSMenu()
+        let nestedMenu = NSMenu()
+        nestedMenu.addItem(withTitle: "Retained nested checkout", action: #selector(SidebarMenuActionRecorder.checkout(_:)), keyEquivalent: "")
+        let nestedParent = NSMenuItem(title: "Nested actions", action: nil, keyEquivalent: "")
+        nestedParent.submenu = nestedMenu
+        branchMenu.addItem(nestedParent)
+        sidebar.addMenuItems(for: PBGitRef(string: "refs/heads/other"), to: branchMenu)
+        let checkout = try XCTUnwrap(branchMenu.items.first { $0.action == #selector(SidebarMenuActionRecorder.checkout(_:)) })
+        let removal = try XCTUnwrap(rowMenu.items.first { $0.action == #selector(SidebarMenuActionRecorder.removeWorktree(_:)) })
+        let retained = [actionMenu, rowMenu, branchMenu].flatMap(\.items)
+        sidebar.menuNeedsUpdate(branchMenu) // Retained old items must also lose authority on close.
+        let recorder = SidebarMenuActionRecorder()
+        XCTAssertTrue(window.makeFirstResponder(recorder))
+        XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(checkout.action), to: nil, from: checkout))
+        XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(removal.action), to: nil, from: removal))
+        XCTAssertEqual(recorder.checkoutRequests, 1)
+        XCTAssertEqual(recorder.removalRequests, 1)
+        let revision = repository.currentBranch
+        let selectedBeforeClose = try XCTUnwrap(sidebar.selectedItem())
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        try attachScreenshot(of: window, named: "Sidebar-Live-Menu-Authority")
+
+        sidebar.closeView()
+        sidebar.closeView()
+        XCTAssertTrue(sidebar.selectedItem() === selectedBeforeClose)
+        XCTAssertNil(outline.delegate)
+        XCTAssertNil(outline.target)
+        XCTAssertNil(outline.doubleAction)
+        XCTAssertFalse(actionButton.isEnabled)
+        for menu in [actionMenu, rowMenu, branchMenu, nestedMenu] {
+            XCTAssertTrue(menu.items.isEmpty)
+            sidebar.menuNeedsUpdate(menu)
+            XCTAssertTrue(menu.items.isEmpty)
+        }
+        for item in retained {
+            XCTAssertFalse(item.isEnabled)
+            XCTAssertNil(item.action)
+            XCTAssertNil(item.target)
+            if let action = item.action {
+                _ = NSApp.sendAction(action, to: item.target, from: item)
+            }
+        }
+        XCTAssertEqual(recorder.checkoutRequests, 1)
+        XCTAssertEqual(recorder.removalRequests, 1)
+        XCTAssertTrue(repository.currentBranch === revision)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        try attachScreenshot(of: window, named: "Sidebar-Closed-Menu-Authority-Revoked")
+    }
+
+    func testLiveSidebarSortAndRemoteRoutingHaveObservableEffects() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let references = try fixture.makeBranchSortContrast()
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        defer { service.cancel() }
+        await ready(service)
+        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(
+            repository: repository, afterClose: false,
+            alphabeticalReferences: references, recentReferences: Array(references.reversed())
+        )
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
     }
 
     func testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
+        let references = try fixture.makeBranchSortContrast()
+        let head = try fixture.git(["rev-parse", "HEAD"])
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         defer { service.cancel() }
         await ready(service)
-        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(repository: repository, afterClose: true)
+        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(
+            repository: repository, afterClose: true,
+            alphabeticalReferences: references, recentReferences: Array(references.reversed())
+        )
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
     }
 
     func testFreshRepositoryWindowMountsHistoryWithoutSelectionNavigation() async throws {
@@ -1543,8 +1647,10 @@ final class WorktreeAppKitTests: XCTestCase {
             let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
             let inserted = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/aaa-before-main"))
             branches.addChild(PBSourceViewItem(title: "aaa-before-main", revSpecifier: inserted))
-            repository.willChangeValue(forKey: "currentBranch")
-            repository.didChangeValue(forKey: "currentBranch")
+            autoreleasepool {
+                repository.willChangeValue(forKey: "currentBranch")
+                repository.didChangeValue(forKey: "currentBranch")
+            }
             XCTAssertTrue(repository.currentBranch === revision, "A row shift before History exists must not choose the old numerical index")
             XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), revision.simpleRef())
             XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, selectedIdentity)
@@ -1636,8 +1742,12 @@ final class WorktreeAppKitTests: XCTestCase {
         let version = DeferredPruneReportTask()
         let inventory = DeferredPruneReportTask()
         let service = PBRepositoryWorktreeService(repository: repository) { arguments in
-            if arguments == ["--version"] { return version }
-            if arguments == ["worktree", "list", "--porcelain", "-z"] { return inventory }
+            if arguments == ["--version"] {
+                return version
+            }
+            if arguments == ["worktree", "list", "--porcelain", "-z"] {
+                return inventory
+            }
             let task = PBTask(launchPath: "/usr/bin/git", arguments: ["-C", fixture.main.path] + arguments, inDirectory: fixture.main.path)
             GitXTestGitFixture.prepare(task)
             return task
@@ -1675,7 +1785,7 @@ final class WorktreeAppKitTests: XCTestCase {
             XCTAssertFalse(try XCTUnwrap(loading.subviews.compactMap { $0 as? NSProgressIndicator }.first).isHidden)
         }
         try attachScreenshot(of: XCTUnwrap(controller.window), named: "Worktrees-Initial-Inventory-Header-Spinner")
-        inventory.finish(Data(try fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
+        try inventory.finish(Data(fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
         await waitUntil { service.inventoryStatus == WorktreeInventoryStatus.fresh.rawValue }
         let settled = try header()
         XCTAssertEqual(settled.accessibilityValue() as? String, "Up to date")
@@ -1687,6 +1797,17 @@ final class WorktreeAppKitTests: XCTestCase {
     func testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
+        // Drive inventory explicitly: unrelated filesystem/focus refreshes may
+        // legitimately rebuild reference rows and have separate integration tests.
+        let defaults = UserDefaults.standard
+        let oldWatch = defaults.object(forKey: "PBUseRepositoryWatcher")
+        let oldFocus = defaults.object(forKey: "PBRefreshOnApplicationFocus")
+        defaults.set(false, forKey: "PBUseRepositoryWatcher")
+        defaults.set(false, forKey: "PBRefreshOnApplicationFocus")
+        defer {
+            defaults.set(oldWatch, forKey: "PBUseRepositoryWatcher")
+            defaults.set(oldFocus, forKey: "PBRefreshOnApplicationFocus")
+        }
         _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let retired = try XCTUnwrap(repository.worktreeService)
@@ -1714,6 +1835,13 @@ final class WorktreeAppKitTests: XCTestCase {
         await showForegroundWindow(controller)
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === controller.window }
+        let historyList = try XCTUnwrap(repository.value(forKey: "revisionList") as? NSObject)
+        await waitUntil {
+            (historyList.value(forKey: "commits") as? [AnyObject])?.count == 1
+                && (historyList.value(forKey: "isUpdating") as? Bool) == false
+                && repository.index.snapshotRevision > 0
+                && !repository.index.mutationReconciliationPending && !repository.index.submissionActive
+        }
         let sidebar = try XCTUnwrap(controller.sidebarViewController)
         let outline = try XCTUnwrap(sidebar.sourceView)
         let initialItems = sidebar.items.map { $0 as AnyObject }
@@ -1724,7 +1852,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let selection = sidebar.selectedItem()?.revSpecifier?.simpleRef()
         let initialCell = try XCTUnwrap(outline.view(atColumn: 0, row: groupRow, makeIfNecessary: true) as? NSTableCellView)
         let initialAccessibility = initialCell.accessibilityValue() as? String
-        let listing = Data(try fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8)
+        let listing = try Data(fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8)
         for iteration in 0 ..< 3 {
             holdsDiscovery = true
             service.refresh()
@@ -2167,7 +2295,7 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertTrue(header.toolTip?.contains("Refresh Worktrees") == true)
         XCTAssertFalse(header.subviews.compactMap { $0 as? NSProgressIndicator }.contains { !$0.isHidden })
         try attachScreenshot(of: XCTUnwrap(controller.window), named: "Worktrees-Supported-Git-Recovery-Read")
-        recovery.finish(Data(try fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
+        try recovery.finish(Data(fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
         await waitUntil { service.inventoryStatus == WorktreeInventoryStatus.fresh.rawValue }
         XCTAssertEqual(service.worktrees.count, 1)
         XCTAssertTrue(PBHistoryMenuBuilder(repository: repository).menuItemsForWorktreeGroup()[0].isEnabled)
@@ -3431,6 +3559,30 @@ final class WorktreeAppKitTests: XCTestCase {
             let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: (directory ?? main).path)
             GitXTestGitFixture.prepare(task); try task.launch()
             return String(decoding: task.standardOutputData, as: UTF8.self)
+        }
+
+        func makeBranchSortContrast() throws -> [String] {
+            let tree = try git(["rev-parse", "HEAD^{tree}"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let parent = try git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let branches = [("alpha-sort-old", 946_684_800), ("zeta-sort-new", 978_307_200)]
+            return try branches.map { name, timestamp in
+                let commit = """
+                tree \(tree)
+                parent \(parent)
+                author Sort Fixture <sort@gitx.invalid> \(timestamp) +0000
+                committer Sort Fixture <sort@gitx.invalid> \(timestamp) +0000
+
+                Explicit sort fixture \(name)
+
+                """
+                let output = try GitXTestGitFixture.run(
+                    ["hash-object", "-t", "commit", "-w", "--stdin"], in: main, standardInput: Data(commit.utf8)
+                )
+                let oid = output.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+                let reference = "refs/heads/\(name)"
+                _ = try git(["update-ref", reference, oid])
+                return reference
+            }
         }
 
         func cleanup() {

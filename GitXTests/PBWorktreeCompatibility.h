@@ -70,9 +70,9 @@ NS_SWIFT_UI_ACTOR
 - (void)preparePrunePreviewWithCompletion:(void (^)(PBWorktreePrunePreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(preparePrunePreview(completion:));
 - (void)pruneWithConfirmedPreview:(PBWorktreePrunePreview *)preview completion:(void (^)(PBWorktreePrunePreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(prune(confirmedPreview:completion:));
 - (void)discardPrunePreview:(PBWorktreePrunePreview *)preview;
-- (void)prepareRepairWorktree:(PBGitWorktree *)worktree movedTo:(NSString *)path completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(prepareRepair(worktree:movedTo:completion:));
-- (void)prepareRepairLinksWithRelativePaths:(BOOL)relative completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(prepareRepairLinks(relativePaths:completion:));
-- (void)repairWithConfirmedPreview:(PBWorktreeRepairPreview *)preview completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(repair(confirmedPreview:completion:));
+- (void)prepareRepairWorktree:(PBGitWorktree *)worktree movedTo:(NSString *)path completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(prepareRepair(worktree:movedTo:completion:)) __attribute__((swift_async(none)));
+- (void)prepareRepairLinksWithRelativePaths:(BOOL)relative completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(prepareRepairLinks(relativePaths:completion:)) __attribute__((swift_async(none)));
+- (void)repairWithConfirmedPreview:(PBWorktreeRepairPreview *)preview completion:(void (^)(PBWorktreeRepairPreview *_Nullable, NSError *_Nullable))completion NS_SWIFT_NAME(repair(confirmedPreview:completion:)) __attribute__((swift_async(none)));
 - (void)discardRepairPreview:(PBWorktreeRepairPreview *)preview;
 
 @end

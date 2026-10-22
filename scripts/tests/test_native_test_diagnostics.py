@@ -29,6 +29,36 @@ func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
 let environment = ProcessInfo.processInfo.environment
 let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
+if mode == "attachment-baseline" {
+    var state = GitXManagedTestObserver.AttachmentState(in: directory)
+    precondition(state.take(in: directory).isEmpty)
+    let file = URL(fileURLWithPath: directory!).appendingPathComponent("GitX-999-a.stderr.log")
+    try Data([0, 255, 65]).write(to: file)
+    let first = state.take(in: directory)
+    precondition(first.count == 1 && first[0].data == Data([0, 255, 65]))
+    precondition(state.take(in: directory).isEmpty)
+    checkpoint("case baseline preserves current binary tail")
+    exit(0)
+}
+if mode == "attachments" {
+    var state = GitXManagedTestObserver.AttachmentState()
+    let names = state.take(in: directory).map(\.filename)
+    checkpoint(names.joined(separator: ","))
+    exit(0)
+}
+if mode == "publication" {
+    let record: [String: Any] = ["schemaVersion": 1, "event": "capture", "pid": getpid(),
+                               "invocationID": "probe", "verificationSession": "session", "state": "unavailable"]
+    GitXTestProcessDiagnostics.publishCaptureRecord(record, progressDirectory: directory! + "/missing", fallbackDirectory: directory)
+    var attempts = 0
+    GitXTestProcessDiagnostics.publishCaptureRecord(record, progressDirectory: "/missing", fallbackDirectory: directory) { _, _ in
+        attempts += 1
+        throw GitXTestProgressRecords.PublicationError(operation: "publish-record", category: "system", posixCode: EIO)
+    }
+    precondition(attempts == 2)
+    checkpoint("publication warning retained; app continues")
+    exit(0)
+}
 if mode == "environment" {
     checkpoint(GitXTestGitEnvironment.isolated([:])["GITX_TEST_STDERR_DIRECTORY"] ?? "unowned")
     exit(0)
@@ -90,13 +120,31 @@ let bytes = Array("raw-stderr-".utf8) + [0, 255] + Array("-end\nAddressSanitizer
 _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
 checkpoint("after-raw-write")
 ''')
-        subprocess.run(["xcrun", "swiftc", "-warnings-as-errors", "-D", "DEBUG", "-D", "GITX_APP_TARGET",
-                        str(ROOT / "GitXTests/GitXTestGitEnvironment.swift"), str(main),
-                        "-o", str(cls.executable)], check=True, capture_output=True, text=True)
+        sdk_platform = pathlib.Path(subprocess.check_output(["xcrun", "--show-sdk-platform-path"], text=True).strip())
+        frameworks = sdk_platform / "Developer/Library/Frameworks"
+        cls.required_runtime_paths = [frameworks.parent / "PrivateFrameworks", sdk_platform.parents[2] / "SharedFrameworks"]
+        libraries = frameworks.parent.parent / "usr/lib"
+        runtime_arguments = [argument for directory in cls.required_runtime_paths
+                             for argument in ("-Xlinker", "-rpath", "-Xlinker", str(directory))]
+        compiled = subprocess.run(["xcrun", "swiftc", "-warnings-as-errors", "-I", str(libraries), "-L", str(libraries),
+                        "-Xlinker", "-rpath", "-Xlinker", str(libraries), "-F", str(frameworks),
+                        "-Xlinker", "-rpath", "-Xlinker", str(frameworks), *runtime_arguments, "-D", "DEBUG", "-D", "GITX_APP_TARGET",
+                        str(ROOT / "GitXTests/GitXTestGitEnvironment.swift"),
+                        str(ROOT / "GitXTests/GitXManagedTestObserver.swift"), str(main),
+                        "-o", str(cls.executable)], capture_output=True, text=True)
+        if compiled.returncode:
+            raise RuntimeError(compiled.stderr)
 
     @classmethod
     def tearDownClass(cls):
         cls.build.cleanup()
+
+    def test_probe_embeds_xctest_dependency_runtime_paths(self):
+        commands = subprocess.check_output(["otool", "-l", str(self.executable)], text=True)
+        paths = {line.strip().removeprefix("path ").split(" (offset ")[0]
+                 for line in commands.splitlines() if line.strip().startswith("path ")}
+        for directory in self.required_runtime_paths:
+            self.assertIn(str(directory), paths, "Probe must resolve XCTest dependencies without inherited dyld paths")
 
     def environment(self, directory=None, progress=None):
         environment = dict(os.environ, OS_ACTIVITY_DT_MODE="YES")
@@ -119,6 +167,39 @@ checkpoint("after-raw-write")
                 if expected in line:
                     return
         self.fail(f"Missing checkpoint {expected!r}")
+
+    def test_failure_attachment_budget_prioritizes_the_latest_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for pid in range(10, 15):
+                old = root / f'GitX-{pid}-a.stderr.log'
+                old.write_bytes(b'x' * 65536)
+                os.utime(old, ns=(1_000_000_000, 1_000_000_000))
+            current = root / 'GitX-999-a.stderr.log'
+            current.write_bytes(b'AddressSanitizer: current-launch\n' + b'y' * 65500)
+            result = subprocess.run([self.executable, 'attachments'], env=self.environment(directory),
+                                    capture_output=True, timeout=5, check=True)
+            self.assertEqual(result.stdout.decode().strip().split(',')[0], current.name)
+
+    def test_attachment_case_baseline_excludes_older_unchanged_launches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for pid in range(10, 15):
+                (pathlib.Path(directory) / f'GitX-{pid}-a.stderr.log').write_bytes(b'x' * 65536)
+            result = subprocess.run([self.executable, 'attachment-baseline'], env=self.environment(directory),
+                                    capture_output=True, timeout=5, check=True)
+            self.assertIn(b'case baseline preserves current binary tail', result.stdout)
+
+    def test_capture_publication_failure_retains_exact_error_in_owned_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'publication'], env=self.environment(directory),
+                                    capture_output=True, timeout=5, check=True)
+            self.assertEqual(result.stderr, b'')
+            self.assertIn(b'app continues', result.stdout)
+            records = [json.loads(path.read_text()) for path in pathlib.Path(directory).glob('capture-*.json')]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]['publicationError'],
+                             {'operation': 'open-directory', 'category': 'system', 'errno': 2})
+            self.assertFalse(list(pathlib.Path(directory).glob('.pending-*')))
 
     def test_logging_only_characterizes_native_behavior_without_raw_write(self):
         process = subprocess.Popen([self.executable, "logging-only"], stdout=subprocess.PIPE,

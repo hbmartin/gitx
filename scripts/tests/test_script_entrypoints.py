@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -131,6 +132,10 @@ record = {'schemaVersion': 1, 'event': 'bundle-start', 'pid': os.getpid(), 'bund
 gate = os.open(os.environ['GITX_TEST_NATIVE_STARTUP_GATE'], os.O_RDONLY)
 os.read(gate, 1)
 os.close(gate)
+import sys
+sys.stdout.buffer.write(b'fixture-native-output\n' * 32768)
+sys.stdout.buffer.flush()
+print('native-startup-fixture-output-complete', flush=True)
 PYTHON
 fi
 ''')
@@ -142,36 +147,86 @@ fi
                 run = self.root / 'artifacts/verification' / run_id
                 gate_path = self.root / ('native-startup-gate-' + name)
                 os.mkfifo(gate_path)
-                gate = os.open(gate_path, os.O_RDWR | os.O_NONBLOCK)
                 environment = dict(self.environment, GITX_TEST_NATIVE_STARTUP_GATE=str(gate_path))
-                process = subprocess.Popen([script, '--run-id', run_id, *arguments], env=environment,
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if name == 'raw':
+                    environment['GITX_DERIVED_DATA'] = str(self.root / 'custom native cache/DerivedData')
                 manifest = run / 'Diagnostics' / diagnostic / 'diagnostic-owner.json'
                 released = False
-                deadline = time.monotonic() + 20
-                wake = threading.Event()
-                try:
-                    while process.poll() is None and time.monotonic() < deadline:
-                        if manifest.exists():
-                            state = json.loads(manifest.read_text())
-                            if state.get('hostStartup', {}).get('source') == 'xctest-observer' and not released:
-                                os.write(gate, b'1')
-                                released = True
-                        wake.wait(.01)
-                    self.assertIsNotNone(process.poll(), 'The canonical wrapper must finish within its backstop')
-                finally:
-                    if process.poll() is None:
-                        process.terminate()
-                    stdout, stderr = process.communicate(timeout=10)
-                    os.close(gate)
-                self.assertEqual(process.returncode, 0, (stdout + stderr).decode(errors='replace'))
+                with tempfile.TemporaryFile() as transcript:
+                    gate = os.open(gate_path, os.O_RDWR | os.O_NONBLOCK)
+                    process = None
+                    completed = None
+                    try:
+                        process = subprocess.Popen([script, '--run-id', run_id, *arguments], env=environment,
+                                                   stdout=transcript, stderr=subprocess.STDOUT)
+                        deadline = time.monotonic() + 20
+                        wake = threading.Event()
+                        while process.poll() is None and time.monotonic() < deadline:
+                            if manifest.exists():
+                                state = json.loads(manifest.read_text())
+                                if state.get('hostStartup', {}).get('source') == 'xctest-observer' and not released:
+                                    os.write(gate, b'1')
+                                    released = True
+                            wake.wait(.01)
+                        completed = process.poll()
+                    finally:
+                        try:
+                            if process is not None:
+                                if process.poll() is None:
+                                    process.terminate()
+                                process.communicate(timeout=10)
+                        finally:
+                            os.close(gate)
+                    transcript.seek(0)
+                    output = transcript.read()
+                tail = output[-4096:].decode(errors='replace')
+                self.assertIsNotNone(completed, 'The canonical wrapper must finish within its backstop: ' + tail)
+                self.assertEqual(process.returncode, 0, tail)
+                log = run / ('Logs/GitX.log' if name == 'preset' else 'Logs/raw.log')
+                canonical = log.read_bytes()
+                self.assertEqual(canonical.count(b'fixture-native-output\n'), 32768)
+                self.assertIn(b'native-startup-fixture-output-complete', canonical)
                 self.assertTrue(released, 'The canonical supervisor must acknowledge native startup before release')
                 state = json.loads(manifest.read_text())
                 self.assertEqual(state['hostStartup']['source'], 'xctest-observer')
                 self.assertIn('outputCapture', state, 'Startup and the authoritative capture share one supervisor')
                 self.assertTrue(list((run / 'Logs/Native').glob('*/native-diagnostics.json')))
                 self.assertFalse(list((run / 'Logs').glob('*-console.log')))
-                self.assertEqual(self.receipt(run_id)['status'], 'passed')
+                receipt = self.receipt(run_id)
+                self.assertEqual(receipt['status'], 'passed')
+                primary = pathlib.Path(environment['GITX_DERIVED_DATA']).parent / 'Fixtures' / run_id / 'Native'
+                fallback = pathlib.Path.home() / 'Library/Caches/GitX/Verification' / hashlib.sha256(str(self.root).encode()).hexdigest()[:16] / 'NativeFallback'
+                commands = [step['command'] for step in receipt['steps']
+                            if 'build-for-testing' in step['command'] or 'test-without-building' in step['command']]
+                self.assertTrue(commands)
+                for command in commands:
+                    self.assertIn('GITX_TEST_NATIVE_STORAGE_ROOT=' + str(primary), command)
+                    self.assertIn('GITX_TEST_NATIVE_FALLBACK_ROOT=' + str(fallback), command)
+
+    def test_native_sandbox_path_overrides_are_rejected_before_owned_output(self):
+        script = self.install_script('xcodebuild.sh')
+        self.install_mock_xcodebuild(self.root / 'Products')
+        for setting in ('GITX_TEST_NATIVE_STORAGE_ROOT', 'GITX_TEST_NATIVE_FALLBACK_ROOT'):
+            with self.subTest(setting=setting):
+                run_id = 'invalid-native-' + setting.lower()
+                result = subprocess.run([script, '--run-id', run_id, 'test', 'correctness', setting + '=/'],
+                                        env=self.environment, capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('Native diagnostic sandbox paths are managed', result.stderr)
+                self.assertFalse((self.root / 'artifacts/verification' / run_id).exists())
+
+    def test_ui_runner_native_write_exceptions_are_scoped_to_test_settings(self):
+        key = 'com.apple.security.temporary-exception.files.absolute-path.read-write'
+        entitlements = plistlib.loads((ROOT / 'GitXUITests/GitXUITests.entitlements').read_bytes())
+        self.assertEqual(entitlements[key], ['/private/tmp/gitx-ui-fixtures/',
+                         '$(GITX_TEST_NATIVE_STORAGE_ROOT)/', '$(GITX_TEST_NATIVE_FALLBACK_ROOT)/'])
+        production = plistlib.loads((ROOT / 'GitX.entitlements').read_bytes())
+        self.assertNotIn(key, production)
+        project = (ROOT / 'GitX.xcodeproj/project.pbxproj').read_text()
+        for identifier in ('CC00000AA00000A', 'CC00000BA00000B'):
+            block = project.split(identifier + ' /*', 1)[1].split('name = ', 1)[0]
+            for setting in ('GITX_TEST_NATIVE_STORAGE_ROOT', 'GITX_TEST_NATIVE_FALLBACK_ROOT'):
+                self.assertIn(setting + ' = "$(PROJECT_TEMP_DIR)/NativeDiagnostics-Unmanaged";', block)
 
     def test_xcodebuild_captures_complete_output_before_console_forwarding(self) -> None:
         script = self.install_script('xcodebuild.sh')
@@ -430,10 +485,14 @@ fi
         for invocation in tests:
             self.assertIn("ENABLE_HARDENED_RUNTIME=NO", invocation)
             self.assertIn("CODE_SIGN_IDENTITY=-", invocation)
+            self.assertIn("GITX_TEST_NATIVE_STORAGE_ROOT=", invocation)
+            self.assertIn("GITX_TEST_NATIVE_FALLBACK_ROOT=", invocation)
         captured.write_text("")
         subprocess.run([script, "--configuration", "Release", "build"], check=True,
                        capture_output=True, text=True, env=self.environment)
         self.assertNotIn("ENABLE_HARDENED_RUNTIME=NO", captured.read_text())
+        self.assertNotIn("GITX_TEST_NATIVE_STORAGE_ROOT=", captured.read_text())
+        self.assertNotIn("GITX_TEST_NATIVE_FALLBACK_ROOT=", captured.read_text())
 
     def install_mock_xcodebuild(
         self,
@@ -920,7 +979,14 @@ fi
         self.assertLess(names.index("signatures"), names.index("raw"))
         self.assertEqual(receipt["evidence"]["status"], "valid")
         execution = next(step for step in receipt["steps"] if step["name"] == "raw")
-        self.assertIn("--startup-timeout", execution["command"])
+        supervisor = execution["supervisorCommand"]
+        self.assertIn("--startup-timeout", supervisor)
+        self.assertIn("--timeout", supervisor)
+        self.assertIn("--native-test-root", supervisor)
+        separator = supervisor.index("--")
+        self.assertEqual(supervisor[separator + 1:], execution["command"])
+        self.assertEqual(sum(argument.endswith("workflow_session.py") for argument in supervisor), 1)
+        self.assertNotIn("--startup-timeout", execution["command"])
 
     def test_xcodebuild_wrapper_reuses_shared_derived_data(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -2359,6 +2425,29 @@ class VerificationWorkflowTests(unittest.TestCase):
         self.assertIn("UNIT_RESULT: ${{ needs['unit-tests'].result }}", gate)
         self.assertIn('ANALYSIS_RESULT: ${{ needs.analyzer.result }}', gate)
         self.assertIn("WORKTREE_RESULT: ${{ needs['worktree-contracts'].result }}", gate)
+
+    def test_native_repetitions_include_followup_failures_without_relaxing_limits(self):
+        # Structure protection only; hosted results establish actual execution.
+        job = self.jobs()['worktree-contracts']
+        step = job.split('- name: Repeat the stabilized native CI regressions five times', 1)[1].split('- name:', 1)[0]
+        self.assertIn('test correctness -test-iterations 5', step)
+        self.assertIn('timeout-minutes: 75', job)
+        for selector in [
+            'WorktreeAppKitTests/testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt',
+            'WorktreeAppKitTests/testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting',
+            'WorktreeAppKitTests/testClosingSidebarRevokesPreviouslyIssuedMenusAndRetainedItems',
+            'WorktreeRepairSafetyTests/testQueuedGlobalRepairRequiresFreshLocateApprovalWhenMovedDirectoryAliasChanges',
+            'IndexCommitServiceTests/testCoordinatorReleasesFinalRepositoryOwnershipOnMainThread',
+            'HistoryControllerTests/testAutomaticTreeFallbackPreservesRememberedFileUntilUserSelectsAnother',
+            'HistoryControllerTests/testGitTreeFileSizeSupportsConcurrentPreviewLoads',
+            'HistoryControllerTests/testSelectionReconciliationWorkingStateStatusAndTreeRestoration',
+            'HistoryControllerTests/testIndexRefreshRejectsOldMutationGenerationAndClearsPendingAfterFinishNotification',
+            'HistoryControllerTests/testPendingIndexReconciliationDisablesMutationAndCommitControlsWithoutClearingSelection',
+            'ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage',
+        ]:
+            with self.subTest(selector=selector):
+                self.assertIn('-only-testing:GitXTests/' + selector, step)
+        self.assertNotIn('continue-on-error', job)
 
     def test_required_native_ci_gate_only_accepts_three_successes(self):
         gate = self.jobs()['unit-and-analyze']

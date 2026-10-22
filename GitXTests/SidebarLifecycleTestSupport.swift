@@ -1,23 +1,26 @@
-@testable import GitX
 import ForgeKit
+@testable import GitX
 import Synchronization
 import XCTest
 
 @MainActor
-private final class RemoteRoutingSidebar: GitX.PBGitSidebarController {
+private final class RemoteRoutingRecorder: NSResponder {
     private(set) var addRemoteRequests = 0
 
-    override func tryToPerform(_ action: Selector, with object: Any?) -> Bool {
-        guard action == NSSelectorFromString("addRemote:") else { return super.tryToPerform(action, with: object) }
+    @objc func addRemote(_ sender: Any?) {
         addRemoteRequests += 1
-        return true
     }
 }
 
 /// Reach Swift-only navigation through the app module without expanding production selectors.
 @MainActor
 enum SidebarLifecycleTestSupport {
-    static func assertSortAndRemoteRouting(repository: NSObject, afterClose: Bool) throws {
+    static func assertSortAndRemoteRouting(
+        repository: NSObject,
+        afterClose: Bool,
+        alphabeticalReferences: [String],
+        recentReferences: [String]
+    ) throws {
         let repository = try XCTUnwrap(repository as? GitX.PBGitRepository)
         let originalComposition = GitX.ApplicationComposition.shared
         let suite = "GitXTests.SidebarActions.\(UUID().uuidString)"
@@ -31,24 +34,58 @@ enum SidebarLifecycleTestSupport {
             defaults.removePersistentDomain(forName: suite)
         }
         GitX.ApplicationSettings.branchSort = .alphabetical
-        let sidebar = try XCTUnwrap(RemoteRoutingSidebar(repository: repository, superController: nil))
-        _ = sidebar.view
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
         defer { sidebar.closeView() }
+        _ = sidebar.view
+        let outline = try XCTUnwrap(sidebar.sourceView)
+        let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+        outline.expandItem(branches)
+        let requested = try XCTUnwrap(branches.sortedChildren.first { $0.revSpecifier?.simpleRef() == alphabeticalReferences.first })
+        let row = outline.row(forItem: requested)
+        XCTAssertGreaterThanOrEqual(row, 0)
+        outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        // Selection publishes the revision and may rebuild the sidebar synchronously.
+        let currentBranches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+        let retainedRows = currentBranches.sortedChildren
+        let selected = try XCTUnwrap(sidebar.selectedItem())
+        XCTAssertEqual(selected.revSpecifier?.simpleRef(), alphabeticalReferences.first)
+        let revision = repository.currentBranch
+        func displayedReferences() throws -> [String] {
+            let currentBranches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
+            return sidebar.visibleChildren(for: currentBranches).compactMap { $0.revSpecifier?.simpleRef() }
+                .filter { alphabeticalReferences.contains($0) }
+        }
+        XCTAssertNotEqual(alphabeticalReferences, recentReferences, "The fixture must distinguish sorting policies")
+        XCTAssertEqual(try displayedReferences(), alphabeticalReferences)
+        let recorder = RemoteRoutingRecorder()
+        XCTAssertTrue(recorder.responds(to: #selector(RemoteRoutingRecorder.addRemote(_:))))
+        let previousResponder = sidebar.nextResponder
+        sidebar.nextResponder = recorder
+        defer { sidebar.nextResponder = previousResponder }
         let notifications = Mutex(0)
         let observer = NotificationCenter.default.addObserver(
             forName: Notification.Name("PBBranchSidebarSettingsDidChangeNotification"), object: nil, queue: nil
         ) { _ in notifications.withLock { $0 += 1 } }
         defer { NotificationCenter.default.removeObserver(observer) }
-        if afterClose { sidebar.closeView() }
+        if afterClose {
+            sidebar.closeView()
+        }
 
-        sidebar.toggleBranchSort(nil)
+        sidebar.toggleBranchSort(sidebar)
         let presentation = try XCTUnwrap(sidebar.value(forKey: "branchPresentation") as? GitX.BranchSidebarPresentation)
         XCTAssertEqual(presentation.usesRecentSorting, !afterClose)
         XCTAssertEqual(GitX.ApplicationSettings.branchSort, afterClose ? .alphabetical : .recentCommit)
         XCTAssertEqual(defaults.integer(forKey: "PBBranchSortMode"), GitX.ApplicationSettings.branchSort.rawValue)
         XCTAssertEqual(notifications.withLock { $0 }, afterClose ? 0 : 1)
+        XCTAssertEqual(try displayedReferences(), afterClose ? alphabeticalReferences : recentReferences)
+        XCTAssertTrue(repository.currentBranch === revision)
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), selected.revSpecifier?.simpleRef())
+        if afterClose {
+            XCTAssertEqual(currentBranches.sortedChildren.map(ObjectIdentifier.init), retainedRows.map(ObjectIdentifier.init))
+            XCTAssertTrue(sidebar.selectedItem() === selected)
+        }
         sidebar.fetchPullPushAction(nil)
-        XCTAssertEqual(sidebar.addRemoteRequests, afterClose ? 0 : 1)
+        XCTAssertEqual(recorder.addRemoteRequests, afterClose ? 0 : 1)
     }
 
     static func assertClosedNavigationIsInert(_ owner: NSObject) throws {

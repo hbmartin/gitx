@@ -28,7 +28,7 @@ final class GitXInteropContractTests: XCTestCase {
     }
 
     func testNativeCaptureBootstrapIsDebugOnly() {
-        let bootstrap = NSClassFromString("PBGitXTestProcessDiagnostics")
+        let bootstrap: AnyClass? = NSClassFromString("PBGitXTestProcessDiagnostics")
         #if DEBUG
             XCTAssertNotNil(bootstrap)
             if let bootstrap {

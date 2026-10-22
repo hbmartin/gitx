@@ -44,7 +44,7 @@ final class HistoryFileIdentityTests: XCTestCase {
             try GitXTestGitFixture.run(["commit", "-q", "-m", "literal history"], in: directory)
             let repository = try XCTUnwrap(GitXTestGitRepository(url: directory))
             defer { repository.revisionList?.cleanup() }
-            let nodes = try XCTUnwrap(PBHistoryTreePresentation(repository: repository).tree(for: headCommit(in: repository)).children)
+            let nodes = try XCTUnwrap(PBHistoryTreePresentation(repository: repository).tree(for: headCommit(in: repository)).children as? [PBGitTree])
             for path in paths {
                 let node = try XCTUnwrap(nodes.first { $0.path == path })
                 XCTAssertEqual(node.log("%s").trimmingCharacters(in: .newlines), "literal history", path)
@@ -75,7 +75,7 @@ final class HistoryFileIdentityTests: XCTestCase {
             for sort in [PBChangedFilesSortMode.alphabetical, .status, .gitOrder] {
                 PBApplicationSettings.changedFilesSort = sort
                 let tree = presentation.tree(for: commit)
-                let nodes = try XCTUnwrap(tree.children)
+                let nodes = try XCTUnwrap(tree.children as? [PBGitTree])
                 XCTAssertEqual(nodes.count, 2)
                 let byPath = try Dictionary(uniqueKeysWithValues: nodes.map { try (XCTUnwrap($0.value(forKey: "rawPath") as? Data), $0) })
                 XCTAssertEqual(Set(byPath.keys), Set([nfc, nfd]))
@@ -110,7 +110,7 @@ final class HistoryFileIdentityTests: XCTestCase {
             PBApplicationSettings.changedFilesSort = .status
             let presentation = PBHistoryTreePresentation(repository: repository)
             let tree = try presentation.tree(for: headCommit(in: repository))
-            let nodes = try XCTUnwrap(tree.children)
+            let nodes = try XCTUnwrap(tree.children as? [PBGitTree])
             XCTAssertEqual(tree.fullPath, "", "The flattened root keeps children relative to the repository")
             XCTAssertEqual(nodes.map(\.fullPath), ["file2.txt", "file10.txt", "folder/new.txt"])
             XCTAssertEqual(nodes.prefix(2).map { presentation.displayTitle(for: $0) }, ["A  file2.txt", "A  file10.txt"])
@@ -132,7 +132,7 @@ final class HistoryFileIdentityTests: XCTestCase {
             let repository = try XCTUnwrap(GitXTestGitRepository(url: directory))
             defer { repository.revisionList?.cleanup() }
             let presentation = PBHistoryTreePresentation(repository: repository)
-            let nodes = try XCTUnwrap(try presentation.tree(for: headCommit(in: repository)).children)
+            let nodes = try XCTUnwrap(try presentation.tree(for: headCommit(in: repository)).children as? [PBGitTree])
             XCTAssertEqual(nodes.count, 2)
             let unsafe = try XCTUnwrap(nodes.first { ($0.value(forKey: "rawPath") as? Data) == invalid })
             let safe = try XCTUnwrap(nodes.first { ($0.value(forKey: "rawPath") as? Data) == literal })
@@ -166,7 +166,7 @@ final class HistoryFileIdentityTests: XCTestCase {
             try GitXTestGitFixture.run(["commit", "-q", "-m", "preview decisions"], in: directory)
             let repository = try XCTUnwrap(GitXTestGitRepository(url: directory))
             defer { repository.revisionList?.cleanup() }
-            let nodes = try XCTUnwrap(PBHistoryTreePresentation(repository: repository).tree(for: headCommit(in: repository)).children)
+            let nodes = try XCTUnwrap(PBHistoryTreePresentation(repository: repository).tree(for: headCommit(in: repository)).children as? [PBGitTree])
             for path in ["image.png", ".png", "forced.txt", "nul.txt"] {
                 let node = try XCTUnwrap(nodes.first { $0.path == path })
                 XCTAssertTrue(node.textContents().contains("binary file"), path)
@@ -228,8 +228,8 @@ final class HistoryFileIdentityTests: XCTestCase {
             let repository = try XCTUnwrap(GitXTestGitRepository(url: directory))
             defer { repository.revisionList?.cleanup() }
             let root = try headCommit(in: repository).tree
-            let folder = try XCTUnwrap(root.children.first)
-            let leaf = try XCTUnwrap(folder.children.first)
+            let folder = try XCTUnwrap(root.children.first as? PBGitTree)
+            let leaf = try XCTUnwrap(folder.children.first as? PBGitTree)
             let outline = NSOutlineView(frame: NSRect(x: 0, y: 0, width: 420, height: 240))
             outline.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("file")))
             let source = OutlineSource(root: root)
