@@ -200,6 +200,8 @@ jobs:
             -only-testing:GitXTests/HistoryControllerTests/testAutomaticTreeFallbackPreservesRememberedFileUntilUserSelectsAnother \
             -only-testing:GitXTests/HistoryControllerTests/testGitTreeFileSizeSupportsConcurrentPreviewLoads \
             -only-testing:GitXTests/HistoryControllerTests/testSelectionReconciliationWorkingStateStatusAndTreeRestoration \
+            -only-testing:GitXTests/HistoryControllerTests/testIndexRefreshRejectsOldMutationGenerationAndClearsPendingAfterFinishNotification \
+            -only-testing:GitXTests/HistoryControllerTests/testPendingIndexReconciliationDisablesMutationAndCommitControlsWithoutClearingSelection \
             -only-testing:GitXTests/ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage
       - name: Measure Release worktree safety and header update costs
         if: ${{ !cancelled() && steps.native_setup_ready.outcome == 'success' }}

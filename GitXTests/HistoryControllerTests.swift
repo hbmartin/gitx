@@ -3495,9 +3495,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     func testIndexRefreshRejectsOldMutationGenerationAndClearsPendingAfterFinishNotification() throws {
         try fixture.write("generation fixture\n", to: "generation.txt")
-        refreshIndex()
-        let index = repository.index
+        // Window-owned refreshes have their own finished notifications. Keep
+        // this synthetic publication cycle on a separate real index and drain
+        // its one initial read before observing the exact event sequence.
+        let index = PBGitIndex(repository: repository)
+        let initial = expectation(forNotification: Notification.Name(PBGitIndexFinishedIndexRefresh), object: index)
+        index.refresh()
+        wait(for: [initial], timeout: 10)
         let before = index.indexChanges
+        XCTAssertEqual(before.map(\.rawPath), [Data("generation.txt".utf8)])
         let oldGeneration = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber)
         let oldReconciled = try XCTUnwrap(index.value(forKey: "reconciledMutationGeneration") as? NSNumber)
         index.setValue(100, forKey: "mutationGeneration")
@@ -3724,15 +3730,33 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let fileList = pane.fileListController
         fileList.setListLayout(.sectionedList)
         try selectUnstagedFile("pending-controls.txt", in: pane)
+        waitForFreshDiffAuthority(in: pane, containing: "+worktree portion")
         let selected = try XCTUnwrap(fileList.unstagedFilesController.selectedObjects as? [PBChangedFile])
         let completedDiff = pane.diffPaneController.contentView.textView.string
         let buttons = Mirror(reflecting: pane).children.compactMap { $0.value as? NSButton }
         let commit = try XCTUnwrap(buttons.first { $0.accessibilityIdentifier() == "CommitButton" })
         let amend = try XCTUnwrap(buttons.first { $0.title == "Amend" })
         XCTAssertTrue(commit.isEnabled)
-        repository.index.setValue(true, forKey: "mutationReconciliationPending")
-        defer { repository.index.setValue(false, forKey: "mutationReconciliationPending") }
+        let index = repository.index
+        XCTAssertTrue(waitForCondition { self.indexIsQuiescent(index) })
+        let coordinator = try XCTUnwrap(index.value(forKey: "refreshCoordinator") as? NSObject)
+        let generation = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber)
+        let revision = index.snapshotRevision
+        // The synthetic pending interval must survive both new refresh
+        // requests and callbacks from reads started before this interval.
+        index.setValue(PausedIndexRefresh(), forKey: "refreshCoordinator")
+        index.setValue(generation.uintValue + 1, forKey: "mutationGeneration")
+        index.setValue(true, forKey: "mutationReconciliationPending")
+        defer {
+            index.setValue(false, forKey: "mutationReconciliationPending")
+            index.setValue(generation, forKey: "mutationGeneration")
+            index.setValue(coordinator, forKey: "refreshCoordinator")
+        }
+        index.applyRefreshResult(PBIndexRefreshResult(staged: [:], unstaged: [:], untracked: [:], mutationGeneration: generation.uintValue))
+        index.refresh()
         pumpRunLoop()
+        XCTAssertTrue(index.mutationReconciliationPending)
+        XCTAssertEqual(index.snapshotRevision, revision, "An old result or a new refresh cannot finish the controlled pending interval")
         XCTAssertFalse(commit.isEnabled)
         XCTAssertFalse(amend.isEnabled)
         for selector in ["stageFiles:", "unstageFiles:", "discardFiles:", "discardFilesForcibly:", "ignoreFiles:", "moveToTrash:", "toggleAmendCommit:"] {
@@ -3747,12 +3771,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             }
         }
         let indexBefore = try fixture.git(["show", ":pending-controls.txt"])
+        XCTAssertTrue(index.mutationReconciliationPending)
         pane.perform(NSSelectorFromString("stageFiles:"), with: nil)
+        XCTAssertTrue(index.mutationReconciliationPending)
         pane.perform(NSSelectorFromString("discardFilesForcibly:"), with: nil)
+        XCTAssertTrue(index.mutationReconciliationPending)
         XCTAssertEqual(try fixture.git(["show", ":pending-controls.txt"]), indexBefore)
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("pending-controls.txt"), encoding: .utf8),
                        "staged portion\nworktree portion\n")
-        repository.index.setValue(false, forKey: "mutationReconciliationPending")
+        index.setValue(false, forKey: "mutationReconciliationPending")
         pumpRunLoop()
         XCTAssertTrue(commit.isEnabled)
         XCTAssertTrue(amend.isEnabled)

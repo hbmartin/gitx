@@ -2441,6 +2441,8 @@ class VerificationWorkflowTests(unittest.TestCase):
             'HistoryControllerTests/testAutomaticTreeFallbackPreservesRememberedFileUntilUserSelectsAnother',
             'HistoryControllerTests/testGitTreeFileSizeSupportsConcurrentPreviewLoads',
             'HistoryControllerTests/testSelectionReconciliationWorkingStateStatusAndTreeRestoration',
+            'HistoryControllerTests/testIndexRefreshRejectsOldMutationGenerationAndClearsPendingAfterFinishNotification',
+            'HistoryControllerTests/testPendingIndexReconciliationDisablesMutationAndCommitControlsWithoutClearingSelection',
             'ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage',
         ]:
             with self.subTest(selector=selector):

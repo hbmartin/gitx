@@ -1466,7 +1466,7 @@
     {
       "id": "STATE-002",
       "family": "Partial failure and reconciliation",
-      "invariant": "Successful chunks are reconciled before controls recover, including failure paths. Busy commit submissions refuse immediately without enqueuing, while background Git commands retain FIFO order. Owned worktree reconciliation preserves pending invalidations; failure leaves the previous snapshot stale and earns one recovery read, with later events/manual refresh retryable and no automatic retry loop.",
+      "invariant": "Successful chunks are reconciled before controls recover, including failure paths. Busy commit submissions refuse immediately without enqueuing, while background Git commands retain FIFO order. Owned worktree reconciliation preserves pending invalidations; failure leaves the previous snapshot stale and earns one recovery read, with later events/manual refresh retryable and no automatic retry loop. PR #105 follow-up fixtures own their synthetic publication intervals: unrelated window reads cannot satisfy an exact event-sequence oracle or clear a synthetic pending flag before direct-action refusal is checked.",
       "rootCause": "Early return or premature idle publication leaves the displayed index and operation eligibility untruthful.",
       "sourcePaths": [
         "Classes/git/IndexMutation*",
@@ -1582,6 +1582,18 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Controlled tasks satisfy invalidations preceding owned reconciliation and retain those arriving during it, preserve last rows through failure, launch one recovery read and allow manual retry without automatic looping or late resurrection."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testIndexRefreshRejectsOldMutationGenerationAndClearsPendingAfterFinishNotification",
+          "role": "boundary",
+          "oracle": "Initialize an independent real index and await its initial finished event before recording a synthetic cycle. Reject the old mutation generation, retain rows on failed components, require exactly updated then finished, and observe pending at publication before it clears."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testPendingIndexReconciliationDisablesMutationAndCommitControlsWithoutClearingSelection",
+          "role": "failure",
+          "oracle": "After completed diff authority and writer quiescence, pause future refreshes and advance the synthetic mutation generation. Deliver an old result and a new refresh request; neither may advance the snapshot or clear pending. Direct stage/discard actions retain pending, exact index/worktree bytes, selected raw paths and completed diff; controls recover only after explicit release. The existing native CI lane repeats both cases five times without relaxed budgets; workflow structure assertions are not runtime evidence."
         }
       ]
     },
