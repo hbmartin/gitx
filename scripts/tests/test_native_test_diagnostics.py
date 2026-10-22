@@ -29,6 +29,23 @@ func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
 let environment = ProcessInfo.processInfo.environment
 let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
+if mode == "attachment-baseline" {
+    var state = GitXManagedTestObserver.AttachmentState(in: directory)
+    precondition(state.take(in: directory).isEmpty)
+    let file = URL(fileURLWithPath: directory!).appendingPathComponent("GitX-999-a.stderr.log")
+    try Data([0, 255, 65]).write(to: file)
+    let first = state.take(in: directory)
+    precondition(first.count == 1 && first[0].data == Data([0, 255, 65]))
+    precondition(state.take(in: directory).isEmpty)
+    checkpoint("case baseline preserves current binary tail")
+    exit(0)
+}
+if mode == "attachments" {
+    var state = GitXManagedTestObserver.AttachmentState()
+    let names = state.take(in: directory).map(\.filename)
+    checkpoint(names.joined(separator: ","))
+    exit(0)
+}
 if mode == "publication" {
     let record: [String: Any] = ["schemaVersion": 1, "event": "capture", "pid": getpid(),
                                "invocationID": "probe", "verificationSession": "session", "state": "unavailable"]
@@ -103,9 +120,16 @@ let bytes = Array("raw-stderr-".utf8) + [0, 255] + Array("-end\nAddressSanitizer
 _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
 checkpoint("after-raw-write")
 ''')
-        subprocess.run(["xcrun", "swiftc", "-warnings-as-errors", "-D", "DEBUG", "-D", "GITX_APP_TARGET",
-                        str(ROOT / "GitXTests/GitXTestGitEnvironment.swift"), str(main),
-                        "-o", str(cls.executable)], check=True, capture_output=True, text=True)
+        frameworks = pathlib.Path(subprocess.check_output(["xcrun", "--show-sdk-platform-path"], text=True).strip()) / "Developer/Library/Frameworks"
+        libraries = frameworks.parent.parent / "usr/lib"
+        compiled = subprocess.run(["xcrun", "swiftc", "-warnings-as-errors", "-I", str(libraries), "-L", str(libraries),
+                        "-Xlinker", "-rpath", "-Xlinker", str(libraries), "-F", str(frameworks),
+                        "-Xlinker", "-rpath", "-Xlinker", str(frameworks), "-D", "DEBUG", "-D", "GITX_APP_TARGET",
+                        str(ROOT / "GitXTests/GitXTestGitEnvironment.swift"),
+                        str(ROOT / "GitXTests/GitXManagedTestObserver.swift"), str(main),
+                        "-o", str(cls.executable)], capture_output=True, text=True)
+        if compiled.returncode:
+            raise RuntimeError(compiled.stderr)
 
     @classmethod
     def tearDownClass(cls):
@@ -132,6 +156,27 @@ checkpoint("after-raw-write")
                 if expected in line:
                     return
         self.fail(f"Missing checkpoint {expected!r}")
+
+    def test_failure_attachment_budget_prioritizes_the_latest_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for pid in range(10, 15):
+                old = root / f'GitX-{pid}-a.stderr.log'
+                old.write_bytes(b'x' * 65536)
+                os.utime(old, ns=(1_000_000_000, 1_000_000_000))
+            current = root / 'GitX-999-a.stderr.log'
+            current.write_bytes(b'AddressSanitizer: current-launch\n' + b'y' * 65500)
+            result = subprocess.run([self.executable, 'attachments'], env=self.environment(directory),
+                                    capture_output=True, timeout=5, check=True)
+            self.assertEqual(result.stdout.decode().strip().split(',')[0], current.name)
+
+    def test_attachment_case_baseline_excludes_older_unchanged_launches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for pid in range(10, 15):
+                (pathlib.Path(directory) / f'GitX-{pid}-a.stderr.log').write_bytes(b'x' * 65536)
+            result = subprocess.run([self.executable, 'attachment-baseline'], env=self.environment(directory),
+                                    capture_output=True, timeout=5, check=True)
+            self.assertIn(b'case baseline preserves current binary tail', result.stdout)
 
     def test_capture_publication_failure_retains_exact_error_in_owned_fallback(self):
         with tempfile.TemporaryDirectory() as directory:

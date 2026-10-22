@@ -1971,6 +1971,12 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "A missing invocation root retains the open-lease-directory operation and ENOENT."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testFailureAttachmentsExcludePreCaseLogsAndPrioritizeNewLaunches",
+          "role": "boundary",
+          "oracle": "Snapshot existing log identities and lengths before a case. Unchanged prior launches consume no budget; new launches precede growing existing logs, appended bytes are retained once, binary bytes and source files remain intact. Compiled native probes additionally place five alphabetically earlier logs before a current crashing launch and require the current tail first."
         }
       ]
     },

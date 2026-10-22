@@ -53,6 +53,8 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     }
 
     func testCaseWillStart(_ testCase: XCTestCase) {
+        let directory = ProcessInfo.processInfo.environment["GITX_TEST_STDERR_DIRECTORY"]
+        attachmentStates.withLock { $0[ObjectIdentifier(testCase)] = AttachmentState(in: directory) }
         // Take before recording: XCTest synchronously calls observers for the issue.
         if let failure = startup.withLock({ $0.takeFailure() }) {
             let invocation = ProcessInfo.processInfo.environment["GITX_TEST_INVOCATION_ID"] ?? "unconfigured"
@@ -77,26 +79,67 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
 
     struct AttachmentState: Sendable {
         static let perFileLimit = 65536
-        static let perCaseLimit = 262144
+        static let perCaseLimit = 262_144
         private(set) var retainedBytes = 0
         private var offsets: [String: Int64] = [:]
+        private var baseline: [String: Int64] = [:]
 
-        mutating func take(in directory: String?) -> [Excerpt] {
-            guard retainedBytes < Self.perCaseLimit, let directory, !directory.isEmpty,
+        private struct Candidate {
+            let file: URL
+            let identity: String
+            let end: Int64
+            let modified: Int64
+        }
+
+        init(in directory: String? = nil) {
+            for candidate in Self.candidates(in: directory) {
+                baseline[candidate.identity] = candidate.end
+            }
+            offsets = baseline
+        }
+
+        private static func candidates(in directory: String?) -> [Candidate] {
+            guard let directory, !directory.isEmpty,
                   let files = try? FileManager.default.contentsOfDirectory(
                       at: URL(fileURLWithPath: directory), includingPropertiesForKeys: nil
                   ) else { return [] }
+            return files.compactMap { file in
+                guard file.lastPathComponent.hasSuffix(".stderr.log") else { return nil }
+                let descriptor = file.path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) }
+                guard descriptor >= 0 else { return nil }
+                defer { Darwin.close(descriptor) }
+                var info = stat()
+                guard fstat(descriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                      info.st_uid == geteuid() else { return nil }
+                return Candidate(file: file, identity: "\(info.st_dev):\(info.st_ino)", end: Int64(info.st_size),
+                                 modified: Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec))
+            }
+        }
+
+        mutating func take(in directory: String?) -> [Excerpt] {
+            guard retainedBytes < Self.perCaseLimit else { return [] }
+            let candidates = Self.candidates(in: directory).filter { $0.end > (offsets[$0.identity] ?? 0) }.sorted {
+                let leftIsNew = baseline[$0.identity] == nil
+                let rightIsNew = baseline[$1.identity] == nil
+                if leftIsNew != rightIsNew {
+                    return leftIsNew
+                }
+                if $0.modified != $1.modified {
+                    return $0.modified > $1.modified
+                }
+                return $0.file.lastPathComponent < $1.file.lastPathComponent
+            }
             var excerpts: [Excerpt] = []
-            for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-                guard retainedBytes < Self.perCaseLimit, file.lastPathComponent.hasSuffix(".stderr.log"),
-                      let excerpt = read(file) else { continue }
+            for candidate in candidates {
+                guard retainedBytes < Self.perCaseLimit, let excerpt = read(candidate) else { continue }
                 retainedBytes += excerpt.data.count
                 excerpts.append(excerpt)
             }
             return excerpts
         }
 
-        private mutating func read(_ file: URL) -> Excerpt? {
+        private mutating func read(_ candidate: Candidate) -> Excerpt? {
+            let file = candidate.file
             let descriptor = file.path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) }
             guard descriptor >= 0 else { return nil }
             defer { Darwin.close(descriptor) }
@@ -104,6 +147,7 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
             guard fstat(descriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
                   info.st_uid == geteuid() else { return nil }
             let identity = "\(info.st_dev):\(info.st_ino)"
+            guard identity == candidate.identity else { return nil }
             let previous = offsets[identity] ?? 0
             let end = Int64(info.st_size)
             guard end > previous else { return nil }
@@ -114,7 +158,9 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                 var read = 0
                 while read < buffer.count {
                     let count = Darwin.pread(descriptor, buffer.baseAddress?.advanced(by: read), buffer.count - read, off_t(start + Int64(read)))
-                    if count < 0, errno == EINTR { continue }
+                    if count < 0, errno == EINTR {
+                        continue
+                    }
                     guard count > 0 else { break }
                     read += count
                 }
@@ -148,4 +194,5 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
         return state.take(in: directory).map { $0.attachment() }
     }
 }
+
 // swiftlint:enable unused_declaration
