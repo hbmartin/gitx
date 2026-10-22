@@ -1317,7 +1317,7 @@
           "identifier": "GitXTests/ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage",
           "check": "correctness",
           "role": "boundary",
-          "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged. PR #103 follow-up: in the loaded authenticated repository window, require Attention selection and its actual table mounted in the window. Mount alternate content, retain selection/revision/rows, close the real sidebar and invoke Attention again; content and selection must remain unchanged. All preexisting proof bits remain required."
+          "oracle": "The existing Debug app product proof also invokes disabled Sync Fork with no binding and verifies the gateway, physical HEAD and Git configuration remain unchanged. PR #103 follow-up: in the loaded authenticated repository window, require Attention selection and its actual table mounted in the window. Mount alternate content, retain selection/revision/rows, close the real sidebar and invoke Attention again; content and selection must remain unchanged. All preexisting proof bits remain required. Live Attention mount and closed-sidebar inertness have separate proof bits and diagnostic assertions; both repository window controllers close on every exit. Authored assertions and Debug/Release compilation do not substitute for desktop execution."
         },
         {
           "source": "GitXTests/ForgeMarkdownAvatarTests.swift",
@@ -1432,14 +1432,14 @@
           "identifier": "GitXTests/WorktreeAppKitTests/testLiveSidebarSortAndRemoteRoutingHaveObservableEffects",
           "check": "correctness",
           "role": "valid",
-          "oracle": "A live sidebar changes the observed sorting mode, persists the preference, emits exactly one sort notification and sends addRemote: through an effective test-only responder recorder. Restore the exact original preference at teardown."
+          "oracle": "A live sidebar changes the observed sorting mode, persists the preference, emits exactly one sort notification and sends addRemote: through an effective test-only responder recorder. Restore the exact original preference at teardown. Explicit raw commit objects give alpha-sort-old and zeta-sort-new contrasting timestamps; assert actual displayed reference order, retained closed rows/selection/revision, unchanged HEAD, persisted mode, notification count and real responder routing. Keep independently named live and closed controls with shared setup."
         },
         {
           "source": "GitXTests/WorktreeAppKitTests.swift",
           "identifier": "GitXTests/WorktreeAppKitTests/testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting",
           "check": "correctness",
           "role": "failure",
-          "oracle": "Use the same effective live fixture after close; sorting and its persisted setting stay unchanged, no sort notification is posted and no addRemote: request reaches the recorder."
+          "oracle": "Use the same effective live fixture after close; sorting and its persisted setting stay unchanged, no sort notification is posted and no addRemote: request reaches the recorder. Explicit raw commit objects give alpha-sort-old and zeta-sort-new contrasting timestamps; assert actual displayed reference order, retained closed rows/selection/revision, unchanged HEAD, persisted mode, notification count and real responder routing. Keep independently named live and closed controls with shared setup."
         },
         {
           "source": "GitXTests/WorktreeAppKitTests.swift",

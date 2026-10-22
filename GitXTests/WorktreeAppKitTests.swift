@@ -107,21 +107,33 @@ final class WorktreeAppKitTests: XCTestCase {
     func testLiveSidebarSortAndRemoteRoutingHaveObservableEffects() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
+        let references = try fixture.makeBranchSortContrast()
+        let head = try fixture.git(["rev-parse", "HEAD"])
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         defer { service.cancel() }
         await ready(service)
-        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(repository: repository, afterClose: false)
+        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(
+            repository: repository, afterClose: false,
+            alphabeticalReferences: references, recentReferences: Array(references.reversed())
+        )
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
     }
 
     func testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
+        let references = try fixture.makeBranchSortContrast()
+        let head = try fixture.git(["rev-parse", "HEAD"])
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         defer { service.cancel() }
         await ready(service)
-        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(repository: repository, afterClose: true)
+        try SidebarLifecycleTestSupport.assertSortAndRemoteRouting(
+            repository: repository, afterClose: true,
+            alphabeticalReferences: references, recentReferences: Array(references.reversed())
+        )
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
     }
 
     func testFreshRepositoryWindowMountsHistoryWithoutSelectionNavigation() async throws {
@@ -3524,6 +3536,30 @@ final class WorktreeAppKitTests: XCTestCase {
             let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: (directory ?? main).path)
             GitXTestGitFixture.prepare(task); try task.launch()
             return String(decoding: task.standardOutputData, as: UTF8.self)
+        }
+
+        func makeBranchSortContrast() throws -> [String] {
+            let tree = try git(["rev-parse", "HEAD^{tree}"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let parent = try git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let branches = [("alpha-sort-old", 946_684_800), ("zeta-sort-new", 978_307_200)]
+            return try branches.map { name, timestamp in
+                let commit = """
+                tree \(tree)
+                parent \(parent)
+                author Sort Fixture <sort@gitx.invalid> \(timestamp) +0000
+                committer Sort Fixture <sort@gitx.invalid> \(timestamp) +0000
+
+                Explicit sort fixture \(name)
+
+                """
+                let output = try GitXTestGitFixture.run(
+                    ["hash-object", "-t", "commit", "-w", "--stdin"], in: main, standardInput: Data(commit.utf8)
+                )
+                let oid = output.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+                let reference = "refs/heads/\(name)"
+                _ = try git(["update-ref", reference, oid])
+                return reference
+            }
         }
 
         func cleanup() {
