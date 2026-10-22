@@ -120,11 +120,15 @@ let bytes = Array("raw-stderr-".utf8) + [0, 255] + Array("-end\nAddressSanitizer
 _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
 checkpoint("after-raw-write")
 ''')
-        frameworks = pathlib.Path(subprocess.check_output(["xcrun", "--show-sdk-platform-path"], text=True).strip()) / "Developer/Library/Frameworks"
+        sdk_platform = pathlib.Path(subprocess.check_output(["xcrun", "--show-sdk-platform-path"], text=True).strip())
+        frameworks = sdk_platform / "Developer/Library/Frameworks"
+        cls.required_runtime_paths = [frameworks.parent / "PrivateFrameworks", sdk_platform.parents[2] / "SharedFrameworks"]
         libraries = frameworks.parent.parent / "usr/lib"
+        runtime_arguments = [argument for directory in cls.required_runtime_paths
+                             for argument in ("-Xlinker", "-rpath", "-Xlinker", str(directory))]
         compiled = subprocess.run(["xcrun", "swiftc", "-warnings-as-errors", "-I", str(libraries), "-L", str(libraries),
                         "-Xlinker", "-rpath", "-Xlinker", str(libraries), "-F", str(frameworks),
-                        "-Xlinker", "-rpath", "-Xlinker", str(frameworks), "-D", "DEBUG", "-D", "GITX_APP_TARGET",
+                        "-Xlinker", "-rpath", "-Xlinker", str(frameworks), *runtime_arguments, "-D", "DEBUG", "-D", "GITX_APP_TARGET",
                         str(ROOT / "GitXTests/GitXTestGitEnvironment.swift"),
                         str(ROOT / "GitXTests/GitXManagedTestObserver.swift"), str(main),
                         "-o", str(cls.executable)], capture_output=True, text=True)
@@ -134,6 +138,13 @@ checkpoint("after-raw-write")
     @classmethod
     def tearDownClass(cls):
         cls.build.cleanup()
+
+    def test_probe_embeds_xctest_dependency_runtime_paths(self):
+        commands = subprocess.check_output(["otool", "-l", str(self.executable)], text=True)
+        paths = {line.strip().removeprefix("path ").split(" (offset ")[0]
+                 for line in commands.splitlines() if line.strip().startswith("path ")}
+        for directory in self.required_runtime_paths:
+            self.assertIn(str(directory), paths, "Probe must resolve XCTest dependencies without inherited dyld paths")
 
     def environment(self, directory=None, progress=None):
         environment = dict(os.environ, OS_ACTIVITY_DT_MODE="YES")
