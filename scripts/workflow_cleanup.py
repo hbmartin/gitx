@@ -1378,12 +1378,13 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                         raise session.NativeRetirementDeferred(reason)
                     yield
             try:
-                state, reason, _ = session.retire_registered_native_sources(
+                state, reason, registered = session.retire_registered_native_sources(
                     item["registration"], checkout=root, authorize=authorize_native_retirement,
                     retry_retained=retry_retained_native)
             except session.ResourceBusy:
-                state, reason = "deferred", "retirement-proof-held"
-            report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason})
+                state, reason, registered = "deferred", "retirement-proof-held", None
+            report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason,
+                                               "outcome": (registered or {}).get("retirementOutcome")})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
         saved = False

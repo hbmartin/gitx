@@ -1380,8 +1380,111 @@ sys.stdout.buffer.write(b'command-sentinel' * 8192)
                         target.write_bytes(b'replacement-data')
                     owner = json.loads(native.registration.read_text())
                     state, _ = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
-                    self.assertEqual(state, 'deferred')
+                    self.assertEqual(state, 'retained')
                     self.assertTrue(native.root.exists())
+
+    def test_killed_partial_deletion_resumes_from_durable_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            self.capture_fixture(root)
+            reader, writer = os.pipe()
+            command = r"""
+import errno, json, os, pathlib, sys
+import workflow_session as session
+root = pathlib.Path(sys.argv[1]); session.ROOT = root
+native = session.NativeTestDiagnostics(root / 'cache', root / 'artifacts/verification/run/Logs/Native', 'session', ['bundle'], True)
+(native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'complete-before-kill')
+def interrupted(path):
+    (path / 'invocation.lease').unlink()
+    os.write(int(sys.argv[2]), (str(native.registration) + '\n').encode())
+    os.read(int(sys.argv[3]), 1)
+session.shutil.rmtree = interrupted
+native.close()
+"""
+            gate_reader, gate_writer = os.pipe()
+            child = subprocess.Popen([sys.executable, '-c', command, str(root), str(writer), str(gate_reader)],
+                env=dict(os.environ, PYTHONPATH=str(ROOT / 'scripts')), pass_fds=(writer, gate_reader))
+            try:
+                self.assertTrue(select.select([reader], [], [], 5)[0], 'deleting checkpoint precedes interruption')
+                path = pathlib.Path(os.read(reader, 4096).decode().strip())
+                child.kill()
+                child.wait(timeout=5)
+                with mock.patch.object(session, 'ROOT', root):
+                    state, reason, owner = session.retire_registered_native_sources(path)
+                self.assertEqual(state, 'retired', reason)
+                self.assertEqual((pathlib.Path(owner['artifactDirectory']) / 'GitX-42-a.stderr.log').read_bytes(), b'complete-before-kill')
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+                for descriptor in (reader, writer, gate_reader, gate_writer):
+                    os.close(descriptor)
+
+    def test_deleting_proof_rejects_replacements_new_contents_and_changed_archives(self):
+        for variant in ('root', 'extra', 'symlink', 'archive', 'original'):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                    source.write_bytes(b'original')
+                    with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError(errno.EIO, 'interrupted')):
+                        native.close()
+                    owner = json.loads(native.registration.read_text())
+                    quarantine = pathlib.Path(owner['retirementPath'])
+                    if variant == 'root':
+                        quarantine.rename(quarantine.with_name('original-quarantine'))
+                        quarantine.mkdir()
+                    elif variant == 'extra':
+                        (quarantine / 'foreign').write_bytes(b'preserve')
+                    elif variant == 'symlink':
+                        (quarantine / 'Stderr' / source.name).unlink()
+                        (quarantine / 'Stderr' / source.name).symlink_to(native.archive / source.name)
+                    elif variant == 'archive':
+                        (native.archive / source.name).write_bytes(b'changed')
+                    else:
+                        native.root.mkdir()
+                    state, _, _ = session.retire_registered_native_sources(native.registration)
+                    self.assertEqual(state, 'retained')
+                    self.assertTrue(quarantine.exists())
+
+    def test_partial_native_deletion_resumes_without_removed_controls(self):
+        for removed in ('invocation.lease', 'native-owner.json', 'Stderr', 'all'):
+            with self.subTest(removed=removed), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                    source.write_bytes(b'archived-\x00\xff')
+                    remove = session.shutil.rmtree
+                    def partial(path):
+                        for name in ('invocation.lease', 'native-owner.json', 'Stderr', 'Progress') if removed == 'all' else (removed,):
+                            entry = path / name
+                            remove(entry) if entry.is_dir() else entry.unlink()
+                        raise OSError(errno.EIO, 'partial-delete')
+                    with mock.patch.object(session.shutil, 'rmtree', side_effect=partial):
+                        native.close()
+                    state, reason, _ = session.retire_registered_native_sources(native.registration)
+                    self.assertEqual(state, 'retired', reason)
+                    self.assertEqual((native.archive / source.name).read_bytes(), b'archived-\x00\xff')
+
+    def test_final_completion_survives_registration_lock_contention(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                source.write_bytes(b'completed-under-contention')
+                with session.NativeRegistration(native.registration):
+                    result = native.close()
+                self.assertTrue(result['collectionComplete'])
+                state, reason, registered = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired', reason)
+                self.assertTrue(registered['collectionComplete'])
+                self.assertEqual((native.archive / source.name).read_bytes(), b'completed-under-contention')
 
     def test_partial_native_removal_preserves_durable_intent_and_archive(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1456,7 +1559,7 @@ sys.stdout.buffer.write(b'command-sentinel' * 8192)
                     source.unlink()
                     source.write_bytes(b'preserve-new-source')
                 state, reason = session.retire_native_sources(owner, persist=replace_after_validation)
-                self.assertEqual((state, reason), ('deferred', 'source-changed-during-retirement'))
+                self.assertEqual((state, reason), ('retained', 'source-changed-during-retirement'))
                 retained = pathlib.Path(owner['retirementPath']) / 'Stderr' / source.name
                 self.assertEqual(retained.read_bytes(), b'preserve-new-source')
                 self.assertEqual((native.archive / source.name).read_bytes(), b'archived-original')
