@@ -79,7 +79,7 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(discovered[0][1]['retirementState'], 'deferred')
 
     def test_permanently_retained_native_evidence_does_not_poison_later_cleanup(self):
-        for condition in ('incomplete', 'archive-missing', 'source-missing'):
+        for condition in ('incomplete', 'archive-missing', 'source-missing', 'archive-symlink', 'source-symlink'):
             with self.subTest(condition=condition), self.native_archive_waiting_for_retirement() as (native, source, release):
                 release()
                 if condition == 'incomplete':
@@ -88,6 +88,13 @@ class CleanupTests(unittest.TestCase):
                     session.atomic_json(native.registration, record)
                 elif condition == 'archive-missing':
                     shutil.rmtree(native.archive)
+                elif condition == 'archive-symlink':
+                    archived = native.archive / source.name
+                    archived.unlink()
+                    archived.symlink_to(source)
+                elif condition == 'source-symlink':
+                    source.unlink()
+                    source.symlink_to(native.archive / source.name)
                 else:
                     shutil.rmtree(native.root)
                 cleanup.queue_commit(self.root)

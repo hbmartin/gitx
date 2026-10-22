@@ -1118,6 +1118,7 @@ def native_retirement_boundary(origin, operation, *, evidence=False):
         raise NativeRetirementFault(NativeRetirementOutcome('deferred', reason, origin, operation, error.errno)) from error
     except OSError as error:
         suffix = ('missing' if error.errno in {errno.ENOENT, errno.ENOTDIR} else
+                  'invalid' if error.errno == errno.ELOOP else
                   'unavailable' if error.errno in {errno.EACCES, errno.EPERM} else 'unproven')
         state = 'retained' if evidence and suffix != 'unproven' else 'deferred'
         raise NativeRetirementFault(NativeRetirementOutcome(state, origin + '-' + suffix, origin, operation, error.errno)) from error
