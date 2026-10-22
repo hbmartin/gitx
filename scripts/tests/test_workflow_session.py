@@ -24,6 +24,86 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_native_capture_metadata_channels_fail_independently(self):
+        for failed in ('primary', 'fallback'):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                    source.write_bytes(b'good-binary-\x00\xff')
+                    record = self.startup_record(native.invocation, native.session)
+                    record.update(event='capture', state='captured', filename=source.name)
+                    target = native.stderr_directory if failed == 'primary' else native.progress_directory
+                    (target / 'capture-42-a.json').write_text(json.dumps(record))
+                    owner, method = (native.progress, 'records') if failed == 'primary' else (native, '_fallback_capture_records')
+                    with mock.patch.object(owner, method, side_effect=OSError(errno.EIO, 'fixture-channel')):
+                        result = native.close()
+                    self.assertEqual(result['captures'], [record])
+                    self.assertTrue(result['collectionComplete'])
+                    self.assertFalse(result['captureMetadataComplete'])
+                    self.assertIn('capture-record-' + failed, result['warnings'])
+                    self.assertEqual((native.archive / source.name).read_bytes(), b'good-binary-\x00\xff')
+
+    def test_diagnostics_samples_each_owned_pid_only_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            duplicate = '42 42 fixture'
+            with mock.patch.object(session, 'owned_processes', return_value=[duplicate]), \
+                    mock.patch.object(session.platform, 'system', return_value='Darwin'), \
+                    mock.patch.object(session.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+                session.diagnostics(directory, 42, 'unknown-host-startup-timeout', [{'process': duplicate}])
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(json.loads((pathlib.Path(directory) / 'blocker.json').read_text())['processes'], [duplicate])
+
+    def test_interruption_never_signals_a_child_reaped_during_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, diagnostics = self.capture_fixture(root)
+            reader, writer = os.pipe()
+            release_reader, release_writer = os.pipe()
+            child, ready = None, False
+            spawn, kill = session.subprocess.Popen, session.os.kill
+            def remember(*args, **kwargs):
+                nonlocal child
+                process = spawn(*args, **kwargs)
+                if kwargs.get('start_new_session'):
+                    child = process
+                return process
+            def progress():
+                nonlocal ready
+                if not ready:
+                    self.assertTrue(select.select([reader], [], [], 5)[0])
+                    os.read(reader, 1)
+                    ready = True
+                    kill(os.getpid(), signal.SIGINT)
+                return False
+            def finish_during_diagnostics(*_):
+                os.write(release_writer, b'X')
+                child.wait(timeout=5)
+            def refuse_reaped(pid, signum):
+                if child is not None and pid == child.pid and child.returncode is not None:
+                    self.fail('A reaped child PID must not be signalled')
+                return kill(pid, signum)
+            command = 'import os,sys; os.write(int(sys.argv[1]),b"R"); os.read(int(sys.argv[2]),1); sys.exit(65)'
+            try:
+                with mock.patch.object(session, 'ROOT', root), \
+                        mock.patch.object(session.subprocess, 'Popen', side_effect=remember), \
+                        mock.patch.object(session.NativeTestDiagnostics, 'poll', side_effect=progress), \
+                        mock.patch.object(session, 'diagnostics', side_effect=finish_during_diagnostics), \
+                        mock.patch.object(session.os, 'kill', side_effect=refuse_reaped):
+                    status = session.supervise([sys.executable, '-c', command, str(writer), str(release_reader)],
+                        directory=diagnostics, output_log=output, native_test_root=root / 'cache', pass_fds=(writer, release_reader))
+                self.assertEqual(status, 130)
+                metadata = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+                self.assertEqual(metadata['childExitCodeBeforeStop'], 65)
+                self.assertEqual(metadata['childExitCode'], 65)
+            finally:
+                if child is not None and child.poll() is None:
+                    child.kill(); child.wait(timeout=5)
+                for descriptor in (reader, writer, release_reader, release_writer):
+                    os.close(descriptor)
+
     def test_native_failure_preserves_a_natural_positive_exit_during_diagnostics(self):
         for category in ('native-progress-unavailable', 'native-startup-publication-failed'):
             for natural_exit in (65, 0, None):

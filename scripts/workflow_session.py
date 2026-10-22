@@ -749,7 +749,8 @@ def stop_detached(processes, signal_number=signal.SIGTERM):
 def diagnostics(directory, group, category, detached=()):
     directory = pathlib.Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    processes = owned_processes(group) + [process["process"] for process in detached]
+    processes = list({line.split()[0]: line for line in
+                      owned_processes(group) + [process["process"] for process in detached]}.values())
     atomic_json(directory / "blocker.json", {"category": category, "ownedProcessGroup": group,
                 "processes": processes, "nextAction": "Inspect retained logs and samples; retry after resolving the reported blocker."})
     for line in processes:
@@ -890,11 +891,7 @@ def exclusive_native_rename(source, destination, *, sync_parent=False):
     if sync_parent:
         parents = dict.fromkeys((pathlib.Path(source).parent, pathlib.Path(destination).parent))
         for parent in parents:
-            descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+            sync_native_directory(parent)
 
 
 def read_native_record(directory, name, invocation, session):
@@ -1714,12 +1711,13 @@ class NativeTestDiagnostics:
 
     def _finish(self):
         self._discover()
-        try:
-            captures = [record for record in self.progress.records() if record.get('event') == 'capture']
-            captures.extend(self._fallback_capture_records())
-        except OSError:
-            captures = []
-            self.warnings.add('progress-read')
+        captures, metadata_complete = [], True
+        for channel, read in (('primary', self.progress.records), ('fallback', self._fallback_capture_records)):
+            try:
+                captures.extend(record for record in read() if record.get('event') == 'capture')
+            except OSError:
+                metadata_complete = False
+                self.warnings.add('capture-record-' + channel)
         if any(record.get('publicationError') for record in captures):
             self.warnings.add('capture-publication')
         if self.requested:
@@ -1763,8 +1761,8 @@ class NativeTestDiagnostics:
             except OSError:
                 complete = False
                 self.warnings.add('collection-incomplete')
-        complete &= not self.warnings.intersection({'capture-read', 'progress-read', 'metadata-retention'})
-        self.result.update(captures=captures, files=collected, collectionComplete=bool(complete),
+        complete &= not self.warnings.intersection({'capture-read', 'progress-read'})
+        self.result.update(captures=captures, captureMetadataComplete=metadata_complete, files=collected, collectionComplete=bool(complete),
                            collectionScope='observed-files-at-command-completion', nativeForwardComplete=forwarded,
                            mirroredBytes=self.emitted_bytes)
         if not complete:
@@ -1929,7 +1927,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                 # children; simultaneous termination races PID verification and
                 # can strand otherwise safely removable fixture homes.
                 with contextlib.suppress(ProcessLookupError):
-                    os.kill(child.pid, signal.SIGTERM)
+                    child.send_signal(signal.SIGTERM)
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     child.wait(timeout=3)
             stop_detached(descendants + detached)
