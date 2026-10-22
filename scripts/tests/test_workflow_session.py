@@ -24,6 +24,20 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_exclusive_rename_without_durability_supports_distinct_parent_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            left, right = root / 'left', root / 'right'
+            left.mkdir()
+            right.mkdir()
+            source, destination = left / 'source', right / 'destination'
+            source.write_bytes(b'complete-record')
+            with mock.patch.object(session.os, 'fsync') as sync:
+                session.exclusive_native_rename(source, destination)
+            sync.assert_not_called()
+            self.assertFalse(source.exists())
+            self.assertEqual(destination.read_bytes(), b'complete-record')
+
     def test_native_failure_status_uses_the_child_state_before_termination(self):
         outcomes = [('running-positive', 7, False), ('running-zero', 0, False),
                     ('running-signal', None, False), ('already-failed', 9, True)]

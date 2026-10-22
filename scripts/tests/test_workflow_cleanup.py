@@ -68,6 +68,13 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(later['status'], 'complete')
             self.assertEqual(later['nativeRetirement'], [])
 
+    def test_native_registration_discovery_reads_metadata_without_hashing_archives(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, _):
+            with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('discovery hashed archive bytes')):
+                discovered = session.registered_native_sources(self.root)
+            self.assertEqual([path for path, _ in discovered], [native.registration])
+            self.assertEqual(discovered[0][1]['retirementState'], 'deferred')
+
     def test_completed_native_retirement_recovers_after_final_registration_failure(self):
         with self.native_archive_waiting_for_retirement() as (native, source, release):
             release()
