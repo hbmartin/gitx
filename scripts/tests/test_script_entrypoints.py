@@ -920,7 +920,14 @@ fi
         self.assertLess(names.index("signatures"), names.index("raw"))
         self.assertEqual(receipt["evidence"]["status"], "valid")
         execution = next(step for step in receipt["steps"] if step["name"] == "raw")
-        self.assertIn("--startup-timeout", execution["command"])
+        supervisor = execution["supervisorCommand"]
+        self.assertIn("--startup-timeout", supervisor)
+        self.assertIn("--timeout", supervisor)
+        self.assertIn("--native-test-root", supervisor)
+        separator = supervisor.index("--")
+        self.assertEqual(supervisor[separator + 1:], execution["command"])
+        self.assertEqual(sum(argument.endswith("workflow_session.py") for argument in supervisor), 1)
+        self.assertNotIn("--startup-timeout", execution["command"])
 
     def test_xcodebuild_wrapper_reuses_shared_derived_data(self) -> None:
         script = self.install_script("xcodebuild.sh")

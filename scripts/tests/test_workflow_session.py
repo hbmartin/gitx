@@ -515,6 +515,33 @@ os.read(int(sys.argv[1]), 1)
                 self.assertFalse(manifest['outputCapture']['captureComplete'])
                 self.assertEqual(output.read_bytes(), b'fixture\n')
 
+    def test_canonical_capture_close_and_metadata_failures_keep_child_status_in_metadata(self):
+        for failure in ('close', 'metadata'):
+            for child_status in (0, 7):
+                with self.subTest(failure=failure, child_status=child_status), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory)
+                    _, output, diagnostics = self.capture_fixture(root)
+                    close, publish = session.CapturedConsole.close, session.atomic_json
+                    def failed_close(capture):
+                        metrics = close(capture)
+                        if failure == 'close':
+                            metrics['closeError'] = 'OSError'
+                        return metrics
+                    def failed_metadata(path, value):
+                        if failure == 'metadata' and pathlib.Path(path).name.endswith('.capture.json'):
+                            raise OSError(errno.ENOSPC, 'fixture-metadata-full')
+                        return publish(path, value)
+                    with mock.patch.object(session, 'ROOT', root), \
+                            mock.patch.object(session.CapturedConsole, 'close', failed_close), \
+                            mock.patch.object(session, 'atomic_json', side_effect=failed_metadata):
+                        status = session.supervise([sys.executable, '-c', f'raise SystemExit({child_status})'],
+                            directory=diagnostics, output_log=output)
+                    state = json.loads((diagnostics / 'diagnostic-owner.json').read_text())
+                    self.assertEqual(status, 74)
+                    self.assertEqual(state['childExitCode'], child_status)
+                    self.assertEqual(state['category'], 'output-capture-failed')
+                    self.assertFalse(state['outputCapture']['captureComplete'])
+
     def test_capture_destination_cannot_escape_the_configured_artifact_directory(self):
         for variant in ['absolute', 'traversal', 'prefix', 'parent-symlink']:
             with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
@@ -912,8 +939,12 @@ os.read(int(sys.argv[1]), 1)
                 with current.open('ab') as stream:
                     stream.write(data[20:])
                 self.assertTrue(progress.observed())
-                with mock.patch.object(session.os, 'getuid', return_value=os.getuid() + 1):
-                    self.assertFalse(progress.observed(), 'Foreign-owned records never establish startup')
+                foreign_progress = session.NativeTestProgress(root, 'invocation-1', 'session-1', ['net.phere.GitXTests'])
+                try:
+                    with mock.patch.object(session.os, 'getuid', return_value=os.getuid() + 1):
+                        self.assertFalse(foreign_progress.observed(), 'Foreign-owned records never establish startup')
+                finally:
+                    foreign_progress.close()
             finally:
                 progress.close()
 

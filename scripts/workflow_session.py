@@ -1636,8 +1636,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                 metrics = capture.close()
                 if (metrics['flushError'] or metrics['closeError']) and not category:
                     category = 'output-capture-failed'
-                    if status in (None, 0):
-                        status = 74
+                    status = 74
                 metrics['captureComplete'] = category is None
                 # This sidecar is uploaded with Logs. Never synchronously write
                 # a truncation notice to stderr: run_step merges it with the
@@ -1649,8 +1648,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     metrics['captureComplete'] = False
                     if not category:
                         category = 'output-capture-failed'
-                        if status in (None, 0):
-                            status = 74
+                        status = 74
                 ownership['outputCapture'] = metrics
         finally:
             ownership['childExitCode'] = child.returncode

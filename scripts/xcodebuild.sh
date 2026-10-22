@@ -410,6 +410,14 @@ elapsed_seconds() {
 }
 
 record_step() {
+	local supervisor_count=$1
+	shift
+	local supervisor_options=()
+	while (( supervisor_count > 0 )); do
+		supervisor_options+=("--supervisor-argument=$1")
+		shift
+		supervisor_count=$((supervisor_count - 1))
+	done
 	name=$1
 	status=$2
 	exit_code=$3
@@ -420,21 +428,34 @@ record_step() {
 	python3 "$support" receipt-step \
 		--name "$name" --status "$status" --exit-code "$exit_code" \
 		--duration "$duration" --log "$log_path" --xcresult "$result_path" \
-		"$receipt" \
+		${supervisor_options[@]+"${supervisor_options[@]}"} "$receipt" \
 		-- "$@" >/dev/null
 }
 
 run_step() {
+	run_supervised_step 0 "$@"
+}
+
+run_supervised_step() {
+	local option_count=$1
+	shift
+	local supervisor_arguments=()
+	while (( option_count > 0 )); do
+		supervisor_arguments+=("$1")
+		shift
+		option_count=$((option_count - 1))
+	done
 	step_name=$1
 	log_path=$2
 	result_path=$3
 	shift 3
 	started=$(python3 -c 'import time; print(time.time())')
-	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" && -z "${native_supervisor_arguments[*]:-}" ]]; then
-		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${native_supervisor_arguments[@]+"${native_supervisor_arguments[@]}"} -- "$@" 2>&1 | xcbeautify --disable-logging
+	local supervisor_command=(python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${supervisor_arguments[@]+"${supervisor_arguments[@]}"} -- "$@")
+	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" && ${#supervisor_arguments[@]} -eq 0 ]]; then
+		"${supervisor_command[@]}" 2>&1 | xcbeautify --disable-logging
 		step_status=${PIPESTATUS[0]}
 	else
-		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${native_supervisor_arguments[@]+"${native_supervisor_arguments[@]}"} -- "$@"
+		"${supervisor_command[@]}"
 		step_status=$?
 	fi
 	duration=$(elapsed_seconds "$started")
@@ -443,7 +464,7 @@ run_step() {
 	else
 		step_result=failed
 	fi
-	record_step "$step_name" "$step_result" "$step_status" "$duration" "$log_path" "$result_path" "$@"
+	record_step "${#supervisor_command[@]}" "${supervisor_command[@]}" "$step_name" "$step_result" "$step_status" "$duration" "$log_path" "$result_path" "$@"
 	receipt_step_status=$?
 	if (( step_status == 0 && receipt_step_status != 0 )); then step_status=$receipt_step_status; fi
 	return "$step_status"
@@ -456,7 +477,7 @@ run_native_step() {
 		--diagnostics "$run_dir/Diagnostics/$4" ${native_capture_arguments[@]+"${native_capture_arguments[@]}"})
 	[[ -z "$2" ]] || native_supervisor_arguments+=(--startup-timeout "$2")
 	shift 4
-	run_step "$@"
+	run_supervised_step "${#native_supervisor_arguments[@]}" "${native_supervisor_arguments[@]}" "$@"
 }
 
 doctor_mode=build
@@ -500,7 +521,7 @@ else
 	doctor_result=blocked
 	overall_status=blocked
 fi
-record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --scope "$doctor_scope" --developer-dir "$developer_dir" --destination "$destination"
+record_step 0 doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --scope "$doctor_scope" --developer-dir "$developer_dir" --destination "$destination"
 (( doctor_status == 0 )) || exit "$doctor_status"
 
 workspace=$(config workspace)

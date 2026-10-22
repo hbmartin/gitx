@@ -550,6 +550,7 @@ def command_receipt_step(arguments: argparse.Namespace) -> int:
         "exitCode": 77 if missing_probe else 78 if missing_execution else arguments.exit_code,
         "durationSeconds": round(arguments.duration, 3),
         "command": scrub_arguments(arguments.command),
+        "supervisorCommand": scrub_arguments(getattr(arguments, "supervisor_argument", []) or []),
         "log": relative_artifact(arguments.log),
         "xcresult": relative_artifact(arguments.xcresult),
         "failureCategory": failure_category,
@@ -886,6 +887,7 @@ def parser() -> argparse.ArgumentParser:
     receipt_step.add_argument("--duration", type=float, required=True)
     receipt_step.add_argument("--log")
     receipt_step.add_argument("--xcresult")
+    receipt_step.add_argument("--supervisor-argument", action="append", default=[])
     receipt_step.add_argument("command", nargs=argparse.REMAINDER)
     receipt_step.set_defaults(handler=command_receipt_step)
 
