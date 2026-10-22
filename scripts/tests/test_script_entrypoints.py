@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -144,6 +145,8 @@ fi
                 os.mkfifo(gate_path)
                 gate = os.open(gate_path, os.O_RDWR | os.O_NONBLOCK)
                 environment = dict(self.environment, GITX_TEST_NATIVE_STARTUP_GATE=str(gate_path))
+                if name == 'raw':
+                    environment['GITX_DERIVED_DATA'] = str(self.root / 'custom native cache/DerivedData')
                 process = subprocess.Popen([script, '--run-id', run_id, *arguments], env=environment,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 manifest = run / 'Diagnostics' / diagnostic / 'diagnostic-owner.json'
@@ -171,7 +174,42 @@ fi
                 self.assertIn('outputCapture', state, 'Startup and the authoritative capture share one supervisor')
                 self.assertTrue(list((run / 'Logs/Native').glob('*/native-diagnostics.json')))
                 self.assertFalse(list((run / 'Logs').glob('*-console.log')))
-                self.assertEqual(self.receipt(run_id)['status'], 'passed')
+                receipt = self.receipt(run_id)
+                self.assertEqual(receipt['status'], 'passed')
+                primary = pathlib.Path(environment['GITX_DERIVED_DATA']).parent / 'Fixtures' / run_id / 'Native'
+                fallback = pathlib.Path.home() / 'Library/Caches/GitX/Verification' / hashlib.sha256(str(self.root).encode()).hexdigest()[:16] / 'NativeFallback'
+                commands = [step['command'] for step in receipt['steps']
+                            if 'build-for-testing' in step['command'] or 'test-without-building' in step['command']]
+                self.assertTrue(commands)
+                for command in commands:
+                    self.assertIn('GITX_TEST_NATIVE_STORAGE_ROOT=' + str(primary), command)
+                    self.assertIn('GITX_TEST_NATIVE_FALLBACK_ROOT=' + str(fallback), command)
+
+
+    def test_native_sandbox_path_overrides_are_rejected_before_owned_output(self):
+        script = self.install_script('xcodebuild.sh')
+        self.install_mock_xcodebuild(self.root / 'Products')
+        for setting in ('GITX_TEST_NATIVE_STORAGE_ROOT', 'GITX_TEST_NATIVE_FALLBACK_ROOT'):
+            with self.subTest(setting=setting):
+                run_id = 'invalid-native-' + setting.lower()
+                result = subprocess.run([script, '--run-id', run_id, 'test', 'correctness', setting + '=/'],
+                                        env=self.environment, capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('Native diagnostic sandbox paths are managed', result.stderr)
+                self.assertFalse((self.root / 'artifacts/verification' / run_id).exists())
+
+    def test_ui_runner_native_write_exceptions_are_scoped_to_test_settings(self):
+        key = 'com.apple.security.temporary-exception.files.absolute-path.read-write'
+        entitlements = plistlib.loads((ROOT / 'GitXUITests/GitXUITests.entitlements').read_bytes())
+        self.assertEqual(entitlements[key], ['/private/tmp/gitx-ui-fixtures/',
+                         '$(GITX_TEST_NATIVE_STORAGE_ROOT)/', '$(GITX_TEST_NATIVE_FALLBACK_ROOT)/'])
+        production = plistlib.loads((ROOT / 'GitX.entitlements').read_bytes())
+        self.assertNotIn(key, production)
+        project = (ROOT / 'GitX.xcodeproj/project.pbxproj').read_text()
+        for identifier in ('CC00000AA00000A', 'CC00000BA00000B'):
+            block = project.split(identifier + ' /*', 1)[1].split('name = ', 1)[0]
+            for setting in ('GITX_TEST_NATIVE_STORAGE_ROOT', 'GITX_TEST_NATIVE_FALLBACK_ROOT'):
+                self.assertIn(setting + ' = "$(PROJECT_TEMP_DIR)/NativeDiagnostics-Unmanaged";', block)
 
     def test_xcodebuild_captures_complete_output_before_console_forwarding(self) -> None:
         script = self.install_script('xcodebuild.sh')
@@ -430,10 +468,14 @@ fi
         for invocation in tests:
             self.assertIn("ENABLE_HARDENED_RUNTIME=NO", invocation)
             self.assertIn("CODE_SIGN_IDENTITY=-", invocation)
+            self.assertIn("GITX_TEST_NATIVE_STORAGE_ROOT=", invocation)
+            self.assertIn("GITX_TEST_NATIVE_FALLBACK_ROOT=", invocation)
         captured.write_text("")
         subprocess.run([script, "--configuration", "Release", "build"], check=True,
                        capture_output=True, text=True, env=self.environment)
         self.assertNotIn("ENABLE_HARDENED_RUNTIME=NO", captured.read_text())
+        self.assertNotIn("GITX_TEST_NATIVE_STORAGE_ROOT=", captured.read_text())
+        self.assertNotIn("GITX_TEST_NATIVE_FALLBACK_ROOT=", captured.read_text())
 
     def install_mock_xcodebuild(
         self,

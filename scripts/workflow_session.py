@@ -371,6 +371,10 @@ def verification_cache_root(root=ROOT):
     return (base if base.is_absolute() else root / base).resolve()
 
 
+def native_fallback_root(root=ROOT):
+    return pathlib.Path.home() / 'Library/Caches/GitX/Verification' / digest(str(pathlib.Path(root).resolve()).encode())[:16] / 'NativeFallback'
+
+
 def verification_artifact_root(root=ROOT):
     root = pathlib.Path(root).resolve()
     config = json.loads((root / "scripts/verification-config.json").read_text())
@@ -1324,7 +1328,7 @@ class NativeTestDiagnostics:
                       'invocationID': self.invocation, 'verificationSession': session, 'status': 'running',
                       'producer': producer_identity(), 'startedAt': dt.datetime.now(dt.timezone.utc).isoformat(),
                       'artifactDirectory': str(self.archive), 'collectionComplete': False, 'retirementState': 'pending'}
-        fallback = pathlib.Path.home() / 'Library/Caches/GitX/Verification' / digest(str(ROOT.resolve()).encode())[:16] / 'NativeFallback'
+        fallback = native_fallback_root()
         operation = 'create-directory'
         for index, selected in enumerate((pathlib.Path(root), fallback)):
             try:

@@ -202,6 +202,10 @@ if (( profile_rules )) && [[ "$command" != "analyze" ]]; then
 fi
 for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
 	case "$argument" in
+		GITX_TEST_NATIVE_STORAGE_ROOT=*|GITX_TEST_NATIVE_FALLBACK_ROOT=*)
+			echo "Native diagnostic sandbox paths are managed by scripts/xcodebuild.sh." >&2
+			exit 2
+			;;
 		COMPILATION_CACHE_ENABLE_CACHING=*|COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=*)
 			echo "Use --compilation-cache to select and record managed compilation cache settings." >&2
 			exit 2
@@ -573,8 +577,15 @@ configure_test_forge_storage() {
 	mkdir -p "$forge_test_root" || return $?
 	export TEST_RUNNER_GITX_UITEST_FORGE_STORAGE_ROOT="$forge_test_root"
 	printf 'Test Forge storage: %s\n' "$forge_test_root"
+	configure_native_test_storage
+}
+
+configure_native_test_storage() {
 	# Apps write to the configured cache; the supervisor archives files into Logs.
 	native_test_root="${derived_data%/*}/Fixtures/$run_id/Native"
+	local native_fallback
+	native_fallback=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import workflow_session as session; print(session.native_fallback_root())' "$root/scripts") || return $?
+	native_storage_arguments=("GITX_TEST_NATIVE_STORAGE_ROOT=$native_test_root" "GITX_TEST_NATIVE_FALLBACK_ROOT=$native_fallback")
 	native_capture_arguments=()
 	[[ "$configuration" != Debug ]] || native_capture_arguments+=(--capture-native-stderr)
 }
@@ -603,25 +614,25 @@ xcode_test() {
 			thread-sanitizer) ensure_probe_option -enableThreadSanitizer YES ;;
 		esac
 		run_step compile:host-preflight "$logs/$plan-host-build.log" "" \
-			"$xcodebuild" "${common[@]}" build-for-testing -testPlan GitXHostPreflight \
+			"$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" build-for-testing -testPlan GitXHostPreflight \
 			CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO ${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	# Compile before starting host deadlines, preserving suite instrumentation.
 	run_step "compile:$test_preset" "$logs/$plan-build.log" "" \
-		"$xcodebuild" "${common[@]}" build-for-testing -testPlan "$plan" \
+		"$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" build-for-testing -testPlan "$plan" \
 		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@" || return $?
 	run_step signatures "$logs/$plan-signatures.log" "" python3 "$root/scripts/workflow_session.py" signatures "$derived_data" || return $?
 	local snapshot="$results/$plan-inputs.json"
 	python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || return $?
 	if [[ "$test_preset" != "ui-preflight" && "$test_preset" != "ui" ]]; then
 		run_native_step 120 "" net.phere.GitXTests host host-preflight "$logs/$plan-host.log" "$results/$plan-host.xcresult" \
-			"$xcodebuild" "${common[@]}" test-without-building -testPlan GitXHostPreflight \
+			"$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" test-without-building -testPlan GitXHostPreflight \
 			-only-testing:GitXTests/GitXHostStartTests/testHostStarts \
 			-resultBundlePath "$results/$plan-host.xcresult" CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
 			${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	run_native_step "${GITX_COMMAND_TIMEOUT:-7200}" 120 "$native_test_bundle" "$plan" "test:$test_preset" "$logs/$plan.log" "$result" \
-		"$xcodebuild" "${common[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
+		"$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
 		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@"
 	local test_status=$?
 	run_step evidence "$logs/$plan-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"
@@ -675,7 +686,8 @@ stage_built_app() {
 case "$command" in
 	build-tests)
 		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
-		run_step build-tests "$logs/build-tests.log" "" "$xcodebuild" "${common[@]}" build-for-testing \
+		configure_native_test_storage || exit $?
+		run_step build-tests "$logs/build-tests.log" "" "$xcodebuild" "${common[@]}" "${native_storage_arguments[@]}" build-for-testing \
 			-testPlan GitX CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
 			${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		;;
@@ -870,7 +882,10 @@ case "$command" in
 		raw_common+=(${cache_arguments[@]+"${cache_arguments[@]}"})
 		# Release Swift packages also need testable interfaces for app-hosted
 		# XCTest imports; ordinary release builds retain their normal settings.
-		(( is_test_build )) && raw_common+=( ENABLE_TESTABILITY=YES )
+		if (( is_test_build )); then
+			configure_native_test_storage || exit $?
+			raw_common+=( ENABLE_TESTABILITY=YES "${native_storage_arguments[@]}" )
+		fi
 		# Local ad hoc test hosts cannot use Release library validation with
 		# third-party signed frameworks. Production build/archive stays intact.
 		if (( is_test_build )) && [[ "$signing_mode" == "ad-hoc" ]]; then
