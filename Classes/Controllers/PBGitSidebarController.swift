@@ -234,7 +234,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         for menu in issuedMenus.allObjects {
             revokeMenu(menu)
         }
-        Self.logger.info("Closed sidebar: count=\(issuedMenuItems.count) category=lifetime")
+        let itemCount = issuedMenuItems.count
+        Self.logger.info("Closed sidebar: count=\(itemCount) category=lifetime")
         issuedMenuItems.removeAllObjects()
         issuedMenus.removeAllObjects()
         inventoryHeaderCell?.setInventoryProgress(visible: false, message: nil)
