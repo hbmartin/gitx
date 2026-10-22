@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 
 from support import ROOT
@@ -206,7 +207,13 @@ class PinnedToolsTests(unittest.TestCase):
 
         self.assertIn("\n  toolchain-smoke:\n", verify_workflow)
         self.assertIn("\n  toolchain-smoke:\n", build_workflow)
-        self.assertEqual(verify_workflow.count("needs: toolchain-smoke"), 7)
+        jobs = dict(re.findall(r"^  ([a-z][a-z0-9-]*):\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)",
+                               verify_workflow.split("\njobs:\n", 1)[1], re.MULTILINE | re.DOTALL))
+        for name in ("core", "forgekit", "worktree-contracts", "unit-tests", "analyzer", "ui", "sanitizers", "performance"):
+            with self.subTest(job=name):
+                self.assertIn(name, jobs)
+                self.assertRegex(jobs[name], r"(?m)^    needs: toolchain-smoke$")
+        self.assertIn("needs: [unit-tests, analyzer, worktree-contracts]", jobs["unit-and-analyze"])
         self.assertIn("needs: toolchain-smoke", build_workflow)
         self.assertIn("artifacts/verification", verify_workflow + build_workflow)
 
