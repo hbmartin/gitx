@@ -965,6 +965,54 @@ def descriptor_digest(descriptor):
     return hasher.hexdigest()
 
 
+def sync_native_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def persist_native_registration(path, value):
+    atomic_json(path, value)
+    sync_native_directory(pathlib.Path(path).parent)
+
+
+def native_path_absent(path):
+    try:
+        pathlib.Path(path).lstat()
+        return False
+    except FileNotFoundError:
+        return True
+
+
+def validate_native_archive(owner, checkout):
+    declared_archive = pathlib.Path(owner['artifactDirectory'])
+    archive = declared_archive.resolve()
+    if (owner.get('kind') != 'gitx-native-invocation' or owner.get('schemaVersion') != 1 or
+            owner.get('checkout') != str(checkout.resolve()) or not owner.get('collectionComplete') or
+            not declared_archive.is_absolute() or declared_archive.is_symlink() or
+            not archive.is_relative_to(verification_artifact_root(checkout).resolve())):
+        raise ValueError('Invalid native archive registration')
+    identity = native_directory_identity(archive)
+    if owner.get('archiveDirectoryIdentity', identity) != identity:
+        raise ValueError('Native archive directory was replaced')
+    names = set()
+    for item in owner['files']:
+        name = item['name']
+        if (item['folder'] not in ('Progress', 'Stderr') or name in names or
+                not (NATIVE_RECORD_NAME.fullmatch(name) or NATIVE_STDERR_NAME.fullmatch(name))):
+            raise ValueError('Invalid native archive manifest')
+        names.add(name)
+        descriptor, info = open_owned_regular(archive / name, identity=tuple(item['archiveIdentity']))
+        try:
+            if info.st_size != item['bytes'] or descriptor_digest(descriptor) != item['sha256']:
+                raise ValueError('Native archive changed')
+        finally:
+            os.close(descriptor)
+    return archive
+
+
 def retire_native_sources(owner, *, checkout=None, persist=None):
     """Remove only an invocation's complete, unchanged, unlocked archive duplicates."""
     descriptors = []
@@ -973,11 +1021,24 @@ def retire_native_sources(owner, *, checkout=None, persist=None):
         original = pathlib.Path(owner['sourceDirectory'])
         root = original
         prepared = pathlib.Path(owner.get('retirementPath', str(original)))
-        if not original.exists() and prepared != original:
+        archive = validate_native_archive(owner, checkout)
+        if not original.is_absolute() or original.resolve() != original or original.is_symlink():
+            return 'deferred', 'invalid-source-path'
+        parent_identity = native_directory_identity(original.parent)
+        if owner.get('retirementParentIdentity', parent_identity) != parent_identity:
+            return 'deferred', 'retirement-parent-changed'
+        if prepared != original:
             if prepared.parent != original.parent or not re.fullmatch(r'\.gitx-native-retired-[0-9a-f]{32}', prepared.name):
                 return 'deferred', 'invalid-retirement-path'
-            root = prepared
-        archive = pathlib.Path(owner['artifactDirectory'])
+            if native_path_absent(original):
+                if native_path_absent(prepared):
+                    if owner.get('retirementPhase') in ('prepared', 'deleting', 'retired') or owner.get('retirementState') in ('prepared', 'deferred'):
+                        owner['retirementPhase'] = 'retired'
+                        return 'retired', 'registered-sources-already-absent'
+                    return 'deferred', 'retirement-unproven'
+                root = prepared
+            elif not native_path_absent(prepared):
+                return 'deferred', 'conflicting-retirement-paths'
         if (owner.get('kind') != 'gitx-native-invocation' or owner.get('schemaVersion') != 1 or
                 owner.get('checkout') != str(checkout.resolve()) or not owner.get('collectionComplete') or
                 root.is_symlink() or root.resolve() != root or archive.is_symlink() or
@@ -1030,9 +1091,10 @@ def retire_native_sources(owner, *, checkout=None, persist=None):
         if root == original:
             if persist is None:
                 return 'deferred', 'retirement-registration-required'
-            owner.update(retirementPath=str(quarantine), retirementState='prepared')
+            owner.update(retirementPath=str(quarantine), retirementState='prepared', retirementPhase='prepared',
+                         retirementParentIdentity=parent_identity)
             persist(owner)
-            exclusive_native_rename(root, quarantine)
+            exclusive_native_rename(root, quarantine, sync_parent=True)
         if native_directory_identity(quarantine) != owner['directoryIdentity'] or native_directory_identity(root.parent) != parent_identity:
             return 'deferred', 'retirement-identity-changed'
         actual_after = set()
@@ -1053,7 +1115,13 @@ def retire_native_sources(owner, *, checkout=None, persist=None):
             info = (archive / name).lstat()
             if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != snapshot:
                 return 'deferred', 'archive-changed-during-retirement'
+        if persist is None:
+            return 'deferred', 'retirement-registration-required'
+        owner['retirementPhase'] = 'deleting'
+        persist(owner)
         shutil.rmtree(quarantine)
+        sync_native_directory(quarantine.parent)
+        owner['retirementPhase'] = 'retired'
         return 'retired', None
     except BlockingIOError:
         return 'deferred', 'producer-lease-held'
@@ -1162,6 +1230,7 @@ class NativeTestDiagnostics:
                 raise ValueError('Invalid native artifact directory')
             self.archive.mkdir(parents=True, mode=0o700)
             self.archive_identity = native_directory_identity(self.archive)
+            self.owner['archiveDirectoryIdentity'] = self.archive_identity
             self.archive_ready = True
         except (OSError, ValueError):
             self.warnings.add('collection-incomplete')
@@ -1298,14 +1367,14 @@ class NativeTestDiagnostics:
                               files=self.result['files'], collectionComplete=self.result['collectionComplete'],
                               finishedAt=dt.datetime.now(dt.timezone.utc).isoformat())
             self._checkpoint()
-            state, reason = retire_native_sources(self.owner, persist=lambda value: atomic_json(self.registration, value))
+            state, reason = retire_native_sources(self.owner, persist=lambda value: persist_native_registration(self.registration, value))
             self.owner.update(retirementState=state, retirementReason=reason)
             self.result.update(retirementState=state, retirementReason=reason, warnings=sorted(self.warnings))
             if state != 'retired':
                 self._checkpoint()
             else:
                 with contextlib.suppress(OSError):
-                    atomic_json(self.registration, self.owner)
+                    persist_native_registration(self.registration, self.owner)
             if self.archive_ready:
                 with contextlib.suppress(OSError):
                     atomic_json(self.archive / 'native-diagnostics.json', self.result)

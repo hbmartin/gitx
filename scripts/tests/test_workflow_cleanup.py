@@ -68,6 +68,70 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(later['status'], 'complete')
             self.assertEqual(later['nativeRetirement'], [])
 
+    def test_completed_native_retirement_recovers_after_final_registration_failure(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            publish = session.atomic_json
+            def fail_completed_registration(path, value):
+                if pathlib.Path(path) == native.registration and value.get('retirementState') == 'retired':
+                    raise OSError(28, 'fixture-final-registration-full')
+                return publish(path, value)
+            with mock.patch.object(session, 'atomic_json', side_effect=fail_completed_registration):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertFalse(native.root.exists(), report['nativeRetirement'])
+            self.assertTrue(cleanup.pending_path(self.root).exists())
+            self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
+            recovered = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(recovered['status'], 'complete', recovered.get('nativeRetirement'))
+            self.assertFalse(cleanup.pending_path(self.root).exists())
+            self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'retired')
+
+    def test_missing_native_sources_require_prior_retirement_and_unchanged_archive(self):
+        for variant in ('legacy', 'unprepared', 'incomplete', 'archive-replaced', 'quarantine-symlink'):
+            with self.subTest(variant=variant), self.native_archive_waiting_for_retirement() as (native, source, release):
+                release()
+                owner = cleanup.read_json(native.registration)
+                state, _ = session.retire_native_sources(owner, checkout=self.root,
+                    persist=lambda value: session.persist_native_registration(native.registration, value))
+                self.assertEqual(state, 'retired')
+                durable = cleanup.read_json(native.registration)
+                if variant == 'legacy':
+                    durable.pop('retirementPhase', None)
+                    durable.pop('retirementParentIdentity', None)
+                    durable['retirementState'] = 'prepared'
+                elif variant == 'unprepared':
+                    durable.pop('retirementPath')
+                    durable.pop('retirementPhase', None)
+                    durable['retirementState'] = 'pending'
+                elif variant == 'incomplete':
+                    durable['collectionComplete'] = False
+                elif variant == 'archive-replaced':
+                    (native.archive / source.name).write_bytes(b'changed')
+                else:
+                    pathlib.Path(durable['retirementPath']).symlink_to(native.archive, target_is_directory=True)
+                state, reason = session.retire_native_sources(durable, checkout=self.root,
+                    persist=lambda value: session.persist_native_registration(native.registration, value))
+                self.assertEqual(state, 'retired' if variant == 'legacy' else 'deferred', reason)
+                self.assertTrue(native.archive.exists())
+
+    def test_native_retirement_does_not_delete_before_registration_directory_sync(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            owner = cleanup.read_json(native.registration)
+            sync = session.sync_native_directory
+            def fail_registration_sync(path):
+                if pathlib.Path(path) == native.registration.parent:
+                    raise OSError(5, 'fixture-directory-sync')
+                return sync(path)
+            with mock.patch.object(session, 'sync_native_directory', side_effect=fail_registration_sync):
+                state, _ = session.retire_native_sources(owner, checkout=self.root,
+                    persist=lambda value: session.persist_native_registration(native.registration, value))
+            self.assertEqual(state, 'deferred')
+            self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+
     def test_native_retirement_incomplete_protected_and_exception_paths_remain_pending(self):
         with self.native_archive_waiting_for_retirement() as (native, source, release):
             release()

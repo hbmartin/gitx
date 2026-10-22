@@ -1380,15 +1380,15 @@ def run_cleanup(root, receipt, inherited=None):
                     else:
                         state, reason = session.retire_native_sources(
                             native_owner, checkout=root,
-                            persist=lambda value: session.atomic_json(item["registration"], value))
+                            persist=lambda value: session.persist_native_registration(item["registration"], value))
                     native_owner.update(retirementState=state, retirementReason=reason)
-                    session.atomic_json(item["registration"], native_owner)
+                    session.persist_native_registration(item["registration"], native_owner)
                     report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason})
             except (OSError, ValueError, KeyError, session.ResourceBusy):
                 native_owner.update(retirementState="deferred", retirementReason="native retirement unproven")
                 # Retain the queue even if registration storage itself is unavailable.
                 with contextlib.suppress(OSError, ValueError, KeyError):
-                    session.atomic_json(item["registration"], native_owner)
+                    session.persist_native_registration(item["registration"], native_owner)
                 report["nativeRetirement"].append({"paths": item["paths"], "state": "deferred", "reason": "native retirement unproven"})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
