@@ -67,8 +67,24 @@ enum SidebarLifecycleTestSupport {
             forName: Notification.Name("PBBranchSidebarSettingsDidChangeNotification"), object: nil, queue: nil
         ) { _ in notifications.withLock { $0 += 1 } }
         defer { NotificationCenter.default.removeObserver(observer) }
+        let remoteControls = try XCTUnwrap(sidebar.value(forKey: "remoteControls") as? NSSegmentedControl)
+        XCTAssertTrue(remoteControls.target === sidebar)
+        XCTAssertNotNil(remoteControls.action)
+        let extraControls = [NSButton(), NSButton()]
+        for control in extraControls {
+            control.target = sidebar
+            control.action = NSSelectorFromString("toggleBranchSort:")
+            control.isHidden = true
+        }
+        sidebar.view.addSubview(extraControls[0])
+        try XCTUnwrap(sidebar.sourceListControlsView).addSubview(extraControls[1])
         if afterClose {
             sidebar.closeView()
+            for control in extraControls + [remoteControls] {
+                XCTAssertNil(control.target)
+                XCTAssertNil(control.action)
+                XCTAssertFalse(control.isEnabled)
+            }
         }
 
         sidebar.toggleBranchSort(sidebar)
@@ -84,7 +100,12 @@ enum SidebarLifecycleTestSupport {
             XCTAssertEqual(currentBranches.sortedChildren.map(ObjectIdentifier.init), retainedRows.map(ObjectIdentifier.init))
             XCTAssertTrue(sidebar.selectedItem() === selected)
         }
-        sidebar.fetchPullPushAction(nil)
+        if afterClose {
+            sidebar.fetchPullPushAction(remoteControls)
+        } else {
+            remoteControls.selectedSegment = 0
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(remoteControls.action), to: remoteControls.target, from: remoteControls))
+        }
         XCTAssertEqual(recorder.addRemoteRequests, afterClose ? 0 : 1)
     }
 

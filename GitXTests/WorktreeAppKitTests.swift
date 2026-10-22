@@ -89,6 +89,10 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertNil(outline.target)
         XCTAssertNil(outline.doubleAction)
         XCTAssertFalse(actionButton.isEnabled)
+        let remoteControls = try XCTUnwrap(sidebar.value(forKey: "remoteControls") as? NSSegmentedControl)
+        XCTAssertNil(remoteControls.target)
+        XCTAssertNil(remoteControls.action)
+        XCTAssertFalse(remoteControls.isEnabled)
         for menu in [actionMenu, rowMenu, branchMenu, nestedMenu] {
             XCTAssertTrue(menu.items.isEmpty)
             sidebar.menuNeedsUpdate(menu)
