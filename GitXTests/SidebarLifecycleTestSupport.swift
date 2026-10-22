@@ -70,7 +70,7 @@ enum SidebarLifecycleTestSupport {
         let remoteControls = try XCTUnwrap(sidebar.value(forKey: "remoteControls") as? NSSegmentedControl)
         XCTAssertTrue(remoteControls.target === sidebar)
         XCTAssertNotNil(remoteControls.action)
-        let extraControls = [NSButton(), NSButton()]
+        let extraControls: [NSControl] = [NSButton(), NSButton()]
         for control in extraControls {
             control.target = sidebar
             control.action = NSSelectorFromString("toggleBranchSort:")

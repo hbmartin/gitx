@@ -194,7 +194,7 @@ fi
                 self.assertFalse(list((run / 'Logs').glob('*-console.log')))
                 receipt = self.receipt(run_id)
                 self.assertEqual(receipt['status'], 'passed')
-                primary = pathlib.Path(environment['GITX_DERIVED_DATA']).parent / 'Fixtures' / run_id / 'Native'
+                primary = pathlib.Path(environment['GITX_DERIVED_DATA']).parent / 'NativeDiagnostics'
                 fallback = pathlib.Path.home() / 'Library/Caches/GitX/Verification' / hashlib.sha256(str(self.root).encode()).hexdigest()[:16] / 'NativeFallback'
                 commands = [step['command'] for step in receipt['steps']
                             if 'build-for-testing' in step['command'] or 'test-without-building' in step['command']]
@@ -202,6 +202,18 @@ fi
                 for command in commands:
                     self.assertIn('GITX_TEST_NATIVE_STORAGE_ROOT=' + str(primary), command)
                     self.assertIn('GITX_TEST_NATIVE_FALLBACK_ROOT=' + str(fallback), command)
+
+    def test_native_build_write_root_is_stable_across_run_ids(self):
+        script = self.install_script('xcodebuild.sh')
+        self.install_mock_xcodebuild(self.root / 'Products')
+        settings = []
+        for run_id in ('stable-native-one', 'stable-native-two'):
+            result = subprocess.run([script, '--run-id', run_id, 'build-tests'], env=self.environment,
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            command = next(step['command'] for step in self.receipt(run_id)['steps'] if step['name'] == 'build-tests')
+            settings.append([argument for argument in command if argument.startswith('GITX_TEST_NATIVE_STORAGE_ROOT=')])
+        self.assertEqual(settings, [['GITX_TEST_NATIVE_STORAGE_ROOT=' + str(self.root / 'build/NativeDiagnostics')]] * 2)
 
     def test_native_sandbox_path_overrides_are_rejected_before_owned_output(self):
         script = self.install_script('xcodebuild.sh')
@@ -1264,7 +1276,7 @@ fi
         self.assertEqual(len({record["invocation"] for record in records}), 4)
         for record, name in zip(records, ("preset", "preset", "raw", "raw")):
             native = pathlib.Path(record["diagnostics"])
-            self.assertTrue(native.is_relative_to(self.root / "build/Fixtures"))
+            self.assertTrue(native.is_relative_to(self.root / "build/NativeDiagnostics"))
             self.assertFalse(native.is_relative_to(self.root / "artifacts/verification"))
             self.assertFalse(pathlib.Path(record["progress"]).exists(), 'Fully archived inactive scratch is retired')
             archive = self.root / "artifacts/verification" / f"native-stderr-{name}" / "Logs/Native" / record["invocation"]
@@ -1425,11 +1437,11 @@ fi
             check=False,
             capture_output=True,
             text=True,
-            env=self.environment,
+            env=self.environment | {"GITHUB_RUN_ID": "39773335888", "GITHUB_RUN_ATTEMPT": "1"},
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-        invocations = captured.read_text().split("__INVOCATION__")
+        invocations = [value.splitlines() for value in captured.read_text().split("__INVOCATION__")]
         preflight = next(value for value in invocations if "GitXUIPreflight" in value)
         full_ui = next(value for value in invocations if "GitXUI" in value and "GitXUIPreflight" not in value)
         self.assertNotIn("-only-testing", preflight)
@@ -1441,9 +1453,11 @@ fi
         self.assertNotIn("CALLER_TIMEOUTS", preflight)
         self.assertNotIn("-default-test-execution-time-allowance=777", preflight)
         self.assertNotIn("888", preflight)
-        self.assertIn("-test-timeouts-enabled\nYES", preflight)
-        self.assertIn("-default-test-execution-time-allowance\n60", preflight)
-        self.assertIn("-maximum-test-execution-time-allowance\n90", preflight)
+        for option, value in (("-test-timeouts-enabled", "YES"),
+                              ("-default-test-execution-time-allowance", "60"),
+                              ("-maximum-test-execution-time-allowance", "90")):
+            self.assertEqual(preflight.count(option), 1)
+            self.assertEqual(preflight[preflight.index(option) + 1], value)
         self.assertIn("-only-testing", full_ui)
         self.assertIn("GitXUITests/ExampleTests", full_ui)
         self.assertIn("-skip-testing:GitXUITests/SkippedTests", full_ui)

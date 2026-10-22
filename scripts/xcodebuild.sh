@@ -582,7 +582,7 @@ configure_test_forge_storage() {
 
 configure_native_test_storage() {
 	# Apps write to the configured cache; the supervisor archives files into Logs.
-	native_test_root="${derived_data%/*}/Fixtures/$run_id/Native"
+	native_test_root="${derived_data%/*}/NativeDiagnostics"
 	local native_fallback
 	native_fallback=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import workflow_session as session; print(session.native_fallback_root())' "$root/scripts") || return $?
 	native_storage_arguments=("GITX_TEST_NATIVE_STORAGE_ROOT=$native_test_root" "GITX_TEST_NATIVE_FALLBACK_ROOT=$native_fallback")
