@@ -35,6 +35,7 @@ enum SidebarLifecycleTestSupport {
         }
         GitX.ApplicationSettings.branchSort = .alphabetical
         let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        defer { sidebar.closeView() }
         _ = sidebar.view
         let outline = try XCTUnwrap(sidebar.sourceView)
         let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
@@ -57,7 +58,6 @@ enum SidebarLifecycleTestSupport {
         let previousResponder = sidebar.nextResponder
         sidebar.nextResponder = recorder
         defer { sidebar.nextResponder = previousResponder }
-        defer { sidebar.closeView() }
         let notifications = Mutex(0)
         let observer = NotificationCenter.default.addObserver(
             forName: Notification.Name("PBBranchSidebarSettingsDidChangeNotification"), object: nil, queue: nil
