@@ -2008,6 +2008,13 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "A held pre-commit hook keeps the operation alive after external repository ownership clears; final deallocation must occur on main. Foundation-only probes compile the actual private production token declaration in Debug and Release, force a worker to retain the last token after a serviced main event, and require main-thread destruction; the original token fails both controlled cases. These probes supplement app-hosted and sanitizer evidence rather than replacing it."
+        },
+        {
+          "source": "scripts/tests/test_script_entrypoints.py",
+          "identifier": "VerificationWorkflowTests/test_native_repetitions_include_followup_failures_without_relaxing_limits",
+          "check": "static",
+          "role": "boundary",
+          "oracle": "The existing five-iteration native lane includes every follow-up failure in header publication, repair alias ownership, closed sidebar actions, repository lifetime, History leaf traversal and Forge lifecycle. Preserve the 75-minute budget, setup/cancellation guards and strict results; source assertions do not establish hosted scheduling or execution."
         }
       ]
     },

@@ -2426,6 +2426,27 @@ class VerificationWorkflowTests(unittest.TestCase):
         self.assertIn('ANALYSIS_RESULT: ${{ needs.analyzer.result }}', gate)
         self.assertIn("WORKTREE_RESULT: ${{ needs['worktree-contracts'].result }}", gate)
 
+    def test_native_repetitions_include_followup_failures_without_relaxing_limits(self):
+        # Structure protection only; hosted results establish actual execution.
+        job = self.jobs()['worktree-contracts']
+        step = job.split('- name: Repeat the stabilized native CI regressions five times', 1)[1].split('- name:', 1)[0]
+        self.assertIn('test correctness -test-iterations 5', step)
+        self.assertIn('timeout-minutes: 75', job)
+        for selector in [
+            'WorktreeAppKitTests/testFailedWorktreeRefreshShowsAccessibleWarningAndEqualSnapshotRecoveryClearsIt',
+            'WorktreeAppKitTests/testClosedSidebarPreservesSortAndSuppressesRemoteResponderRouting',
+            'WorktreeAppKitTests/testClosingSidebarRevokesPreviouslyIssuedMenusAndRetainedItems',
+            'WorktreeRepairSafetyTests/testQueuedGlobalRepairRequiresFreshLocateApprovalWhenMovedDirectoryAliasChanges',
+            'IndexCommitServiceTests/testCoordinatorReleasesFinalRepositoryOwnershipOnMainThread',
+            'HistoryControllerTests/testAutomaticTreeFallbackPreservesRememberedFileUntilUserSelectsAnother',
+            'HistoryControllerTests/testGitTreeFileSizeSupportsConcurrentPreviewLoads',
+            'HistoryControllerTests/testSelectionReconciliationWorkingStateStatusAndTreeRestoration',
+            'ForgeMarkdownAvatarTests/testAppModuleProductBoundariesReceiveAppHostedCoverage',
+        ]:
+            with self.subTest(selector=selector):
+                self.assertIn('-only-testing:GitXTests/' + selector, step)
+        self.assertNotIn('continue-on-error', job)
+
     def test_required_native_ci_gate_only_accepts_three_successes(self):
         gate = self.jobs()['unit-and-analyze']
         marker = '- name: Require all native verification jobs'
