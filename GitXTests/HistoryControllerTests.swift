@@ -6737,6 +6737,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     private func flattenedTree(_ root: PBGitTree) -> [PBGitTree] {
+        if root.leaf {
+            return [root]
+        }
         guard let children = root.children as? [PBGitTree] else {
             XCTFail("Tree children must retain their production type")
             return [root]
