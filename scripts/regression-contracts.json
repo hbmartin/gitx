@@ -1440,6 +1440,12 @@
           "check": "correctness",
           "role": "failure",
           "oracle": "Use the same effective live fixture after close; sorting and its persisted setting stay unchanged, no sort notification is posted and no addRemote: request reaches the recorder."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testClosingSidebarRevokesPreviouslyIssuedMenusAndRetainedItems",
+          "role": "boundary",
+          "oracle": "Live checkout and worktree removal menu selectors route through a real first responder recorder. After repeated close, outline event wiring and owned controls are inactive; action, row, branch and nested menus are empty, including callbacks after closure. Retained items from a prior menu refresh have no action/target/represented authority. Revision and Git HEAD stay unchanged. Diagnostic attachments are collected only by actual AppKit execution; a locked-screen skip is not passing evidence."
         }
       ]
     },

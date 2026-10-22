@@ -91,6 +91,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     private var worktreesGroup: PBSourceViewItem?
     private var restoringSelection = false
     private var hasClosed = false
+    private let issuedMenus = NSHashTable<NSMenu>.weakObjects()
+    private let issuedMenuItems = NSHashTable<NSMenuItem>.weakObjects()
     private var inventoryHeaderState = WorktreeInventoryHeaderState()
     private var inventoryHeaderPresentation: WorktreeInventoryPresentation?
     private var inventoryHeaderInput: WorktreeInventoryHeaderInput?
@@ -213,7 +215,28 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     override open func closeView() {
+        guard !hasClosed else { return }
         hasClosed = true
+        sourceView?.delegate = nil
+        sourceView?.target = nil
+        sourceView?.doubleAction = nil
+        actionButton?.isEnabled = false
+        remoteControls?.isEnabled = false
+        if isViewLoaded {
+            disconnectOwnedControls(in: view)
+        }
+        if let menu = actionButton?.menu {
+            rememberMenu(menu)
+        }
+        for item in issuedMenuItems.allObjects {
+            revokeMenuItem(item)
+        }
+        for menu in issuedMenus.allObjects {
+            revokeMenu(menu)
+        }
+        Self.logger.info("Closed sidebar: count=\(issuedMenuItems.count) category=lifetime")
+        issuedMenuItems.removeAllObjects()
+        issuedMenus.removeAllObjects()
         inventoryHeaderCell?.setInventoryProgress(visible: false, message: nil)
         worktreeObservations.removeAll()
         currentBranchObservation = nil
@@ -222,6 +245,43 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         stashesObservation = nil
         NotificationCenter.default.removeObserver(self)
         super.closeView()
+    }
+
+    private func disconnectOwnedControls(in view: NSView) {
+        if let control = view as? NSControl, control.target === self {
+            control.target = nil
+            control.action = nil
+            control.isEnabled = false
+        }
+        for child in view.subviews {
+            disconnectOwnedControls(in: child)
+        }
+    }
+
+    private func rememberMenu(_ menu: NSMenu) {
+        issuedMenus.add(menu)
+        for item in menu.items {
+            issuedMenuItems.add(item)
+            if let submenu = item.submenu {
+                rememberMenu(submenu)
+            }
+        }
+    }
+
+    private func revokeMenuItem(_ item: NSMenuItem) {
+        item.isEnabled = false
+        item.target = nil
+        item.action = nil
+        item.representedObject = nil
+        if let submenu = item.submenu {
+            revokeMenu(submenu)
+        }
+    }
+
+    private func revokeMenu(_ menu: NSMenu) {
+        menu.delegate = nil
+        menu.items.forEach(revokeMenuItem)
+        menu.removeAllItems()
     }
 
     isolated deinit {
@@ -351,7 +411,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
             inventoryHeaderInput = nil
         }
         let input = WorktreeInventoryHeaderInput(status: service.inventoryStatus, hasSnapshot: service.hasPublishedSnapshot,
-                                                isStale: service.isSnapshotStale, capabilityExplanation: service.explanation)
+                                                 isStale: service.isSnapshotStale, capabilityExplanation: service.explanation)
         guard input != inventoryHeaderInput else { return false }
         inventoryHeaderInput = input
         let presentation = inventoryHeaderState.presentation(rawStatus: input.status, hasSnapshot: input.hasSnapshot,
@@ -1196,6 +1256,7 @@ extension PBGitSidebarController {
     @objc(addMenuItemsForRef:toMenu:)
     dynamic func addMenuItems(for ref: PBGitRef?, to menu: NSMenu) {
         guard !hasClosed else { return }
+        defer { rememberMenu(menu) }
         guard let ref, let items = sidebarHistoryMenuBuilder?.menuItems(for: ref) else { return }
         for item in items {
             menu.addItem(item)
@@ -1205,6 +1266,7 @@ extension PBGitSidebarController {
     @objc(addMenuItemsForSubmodule:toMenu:)
     dynamic func addMenuItems(for submodule: PBSourceViewGitSubmoduleItem?, to menu: NSMenu) {
         guard !hasClosed else { return }
+        defer { rememberMenu(menu) }
         guard let submodule else { return }
         let item = menu.addItem(
             withTitle: NSLocalizedString("Open Submodule", comment: "Open Submodule menu item"),
@@ -1246,6 +1308,7 @@ extension PBGitSidebarController {
     public dynamic func menu(forRow row: Int) -> NSMenu {
         guard !hasClosed else { return NSMenu() }
         let menu = NSMenu()
+        defer { rememberMenu(menu) }
         menu.autoenablesItems = false
         guard let viewItem = sourceView?.item(atRow: row) as? PBSourceViewItem else { return menu }
         if addWorktreeMenuItems(for: viewItem, to: menu) {
@@ -1257,7 +1320,8 @@ extension PBGitSidebarController {
     }
 
     public func menuNeedsUpdate(_ menu: NSMenu) {
-        guard !hasClosed else { return }
+        guard !hasClosed else { revokeMenu(menu); return }
+        defer { rememberMenu(menu) }
         menu.removeAllItems()
         if menu === actionButton?.menu {
             menu.addItem(actionIconItem())
