@@ -15,6 +15,10 @@ class TestBuildContractTests(unittest.TestCase):
     def test_repository_lifetime_token_main_queue_release_is_valid(self):
         self.lifetime_token_probe(release_on_worker=False)
 
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('xcrun'), 'Local Swift runtime required')
+    def test_repository_lifetime_token_releases_on_main_when_worker_is_last_owner(self):
+        self.lifetime_token_probe(release_on_worker=True)
+
     def lifetime_token_probe(self, *, release_on_worker):
         source = (ROOT / 'Classes/git/IndexCommitCoordinator.swift').read_text()
         prefix = source.split('// swift6-safety-justification: Immutable service ownership', 1)[0]
