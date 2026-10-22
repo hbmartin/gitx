@@ -42,6 +42,36 @@ final class WorktreeEvidenceTests: XCTestCase {
         return WorktreeEvidenceNode(value)
     }
 
+    func testPreparedAliasScopeRemainsReadOnlyUntilFreshOwnershipValidation() throws {
+        let own = try fixture()
+        let foreign = try fixture()
+        let checkout = own.root.appendingPathComponent("owned-checkout")
+        let alias = own.root.appendingPathComponent("alias")
+        try FileManager.default.moveItem(at: own.original, to: checkout)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: checkout)
+        let record = GitWorktree(path: own.original.path, hasBrokenLink: true, movedPath: alias.path, folderExists: false)
+        let records = [GitWorktree(path: own.common.deletingLastPathComponent().path, isMain: true), record]
+        let seeds = try WorktreeLinkInspector.captureRepairOwnershipSeeds(records: records, commonDirectory: own.common.path)
+        let preparation = try WorktreeLinkInspector.captureRepairPreparation(seeds: seeds, commonDirectory: own.common.path)
+        let protected = [checkout.appendingPathComponent(".git"), own.backlink, foreign.gitfile, foreign.backlink]
+        let bytes = try protected.map { try Data(contentsOf: $0) }
+
+        try FileManager.default.removeItem(at: alias)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: foreign.original)
+        let preview = try WorktreeLinkInspector.captureRepairScope(records: records, commonDirectory: own.common.path, preparation: preparation)
+        XCTAssertEqual(preview.targets.map(\.path), [WorktreePaths.canonical(checkout.path)])
+        XCTAssertThrowsError(try WorktreeLinkInspector.captureRepairScope(records: records, commonDirectory: own.common.path)) { error in
+            guard case WorktreeEvidenceError.invalidRepair = error else {
+                return XCTFail("Fresh global validation must reject the foreign alias: \(error)")
+            }
+        }
+        let selection = WorktreeRepairSelection(originalPath: record.path, path: checkout.path)
+        let located = try WorktreeLinkInspector.captureRepairScope(records: records, commonDirectory: own.common.path, selection: selection)
+        XCTAssertEqual(located.targets.map(\.path), [WorktreePaths.canonical(checkout.path)])
+        try WorktreeLinkInspector.validateRepairScope(located, commonDirectory: own.common.path)
+        XCTAssertEqual(try protected.map { try Data(contentsOf: $0) }, bytes, "Preparation and validation never write either repository's links")
+    }
+
     private func replacingMetadata(_ base: WorktreeEvidenceFileSystem = .live, _ change: @escaping (String, WorktreeEvidenceNode?) throws -> WorktreeEvidenceNode?) -> WorktreeEvidenceFileSystem {
         WorktreeEvidenceFileSystem(metadata: { try change($0, base.metadata($0)) }, read: base.read, names: base.names, readLink: WorktreeEvidenceFileSystem.live.readLink, readableNode: WorktreeEvidenceFileSystem.live.readableNode)
     }
