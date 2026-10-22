@@ -1963,7 +1963,7 @@
           "identifier": "GitXTests/GitXTestGitFixtureTests/testInvocationLeaseFailuresPreserveCauseAndCloseEveryAcquiredDescriptor",
           "check": "correctness",
           "role": "failure",
-          "oracle": "Inject parent/lease inspection and ownership failures, open exhaustion and lock contention; assert typed operation/category/errno, closed descriptors, nonblocking flags and unchanged evidence. Actual native subprocess fixtures additionally reject FIFO, symlink, directory and absent leases within a bounded backstop; authored protection is not execution evidence."
+          "oracle": "Inject parent/lease inspection and ownership failures, open exhaustion and lock contention; assert typed operation/category/errno, closed descriptors, nonblocking flags and unchanged evidence. Actual native subprocess fixtures additionally reject FIFO, symlink, directory and absent leases within a bounded backstop; authored protection is not execution evidence. Capture syscall result and errno before XCTest assertions. The retirement queue fixture creates a distinct commit and queues its token after the proof lease releases; cleanup identifies the newer token explicitly and cannot clear it."
         },
         {
           "source": "GitXTests/GitXTestGitFixtureTests.swift",

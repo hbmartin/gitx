@@ -25,8 +25,10 @@ final class GitXTestGitFixtureTests: XCTestCase {
 
         var lease: GitXTestInvocationLease? = try GitXTestInvocationLease(progressDirectory: progress.path)
         XCTAssertNotNil(lease)
-        XCTAssertEqual(flock(probe, LOCK_EX | LOCK_NB), -1)
-        XCTAssertEqual(errno, EWOULDBLOCK)
+        let lockedResult = flock(probe, LOCK_EX | LOCK_NB)
+        let lockedCode = errno
+        XCTAssertEqual(lockedResult, -1, "held invocation lease")
+        XCTAssertEqual(lockedCode, EWOULDBLOCK, "held invocation lease")
         lease = nil
         XCTAssertEqual(flock(probe, LOCK_EX | LOCK_NB), 0)
         XCTAssertEqual(flock(probe, LOCK_UN), 0)
@@ -84,8 +86,10 @@ final class GitXTestGitFixtureTests: XCTestCase {
             }
             XCTAssertEqual(inspections, failure.operation.hasSuffix("directory") || failure.operation == "open-lease" ? 1 : 2)
             for descriptor in descriptors {
-                XCTAssertEqual(fcntl(descriptor, F_GETFD), -1, failure.operation)
-                XCTAssertEqual(errno, EBADF)
+                let result = fcntl(descriptor, F_GETFD)
+                let code = errno
+                XCTAssertEqual(result, -1, failure.operation)
+                XCTAssertEqual(code, EBADF, failure.operation)
             }
             XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("invocation.lease")), evidence)
         }

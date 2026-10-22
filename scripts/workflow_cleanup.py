@@ -1396,6 +1396,8 @@ def run_cleanup(root, receipt, inherited=None):
         try:
             with session.Leases(proof, owner, inherited=authenticated):
                 _, changed = eligibility(root, receipt)
+                if read_json(pending_path(root)) != pending:
+                    changed = "newer commit queued"
                 changed = changed or removed_original_problem()
                 native_deferred = any(item["state"] != "retired" for item in report["nativeRetirement"])
                 report["status"] = "partial" if (report["skipped"] or report["failed"] or report["discoveryErrors"] or

@@ -170,17 +170,38 @@ class CleanupTests(unittest.TestCase):
         with self.native_archive_waiting_for_retirement() as (_, source, release):
             release()
             cleanup.queue_commit(self.root)
+            original_pending = cleanup.read_json(cleanup.pending_path(self.root))
             receipt = self.valid_receipt()
-            retire = session.retire_native_sources
+            retire, acquire = session.retire_native_sources, session.Leases
             newer = None
-            def queue_during_retirement(*args, **kwargs):
-                nonlocal newer
+            retired = False
+            queueing = False
+            def commit_during_retirement(*args, **kwargs):
+                nonlocal retired
                 outcome = retire(*args, **kwargs)
-                cleanup.queue_commit(self.root)
-                newer = cleanup.read_json(cleanup.pending_path(self.root))
+                self.assertEqual(outcome[0], 'retired')
+                self.git('commit', '--allow-empty', '-qm', 'new work during native retirement')
+                retired = True
                 return outcome
-            with mock.patch.object(session, 'retire_native_sources', side_effect=queue_during_retirement):
+            @contextlib.contextmanager
+            def queue_after_proof_release(*args, **kwargs):
+                nonlocal newer, queueing
+                with acquire(*args, **kwargs) as lease:
+                    yield lease
+                # A concurrent queue writer can enter only after the retirement proof lease releases.
+                if retired and newer is None and not queueing:
+                    queueing = True
+                    try:
+                        cleanup.queue_commit(self.root)
+                        newer = cleanup.read_json(cleanup.pending_path(self.root))
+                    finally:
+                        queueing = False
+            with mock.patch.object(session, 'retire_native_sources', side_effect=commit_during_retirement), \
+                    mock.patch.object(session, 'Leases', side_effect=queue_after_proof_release):
                 report = cleanup.run_cleanup(self.root, receipt)
+            self.assertIsNotNone(newer)
+            self.assertNotEqual(newer['head'], original_pending['head'])
+            self.assertNotEqual(newer['token'], original_pending['token'])
             self.assertEqual(report['status'], 'partial')
             self.assertEqual(report['reason'], 'newer commit queued')
             self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root)), newer)
