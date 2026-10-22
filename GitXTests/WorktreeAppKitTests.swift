@@ -1543,8 +1543,10 @@ final class WorktreeAppKitTests: XCTestCase {
             let branches = try XCTUnwrap(sidebar.items.compactMap { $0 as? PBSourceViewItem }.first { $0.title == "BRANCHES" })
             let inserted = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/aaa-before-main"))
             branches.addChild(PBSourceViewItem(title: "aaa-before-main", revSpecifier: inserted))
-            repository.willChangeValue(forKey: "currentBranch")
-            repository.didChangeValue(forKey: "currentBranch")
+            autoreleasepool {
+                repository.willChangeValue(forKey: "currentBranch")
+                repository.didChangeValue(forKey: "currentBranch")
+            }
             XCTAssertTrue(repository.currentBranch === revision, "A row shift before History exists must not choose the old numerical index")
             XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), revision.simpleRef())
             XCTAssertEqual((sidebar.selectedItem() as? PBSourceViewGitWorktreeItem)?.identity, selectedIdentity)

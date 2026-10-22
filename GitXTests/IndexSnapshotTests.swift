@@ -95,12 +95,13 @@ final class IndexSnapshotTests: XCTestCase {
 
         let tree = PBWorkingTree.root(for: repository)
 
-        XCTAssertEqual(Set(tree.children.map(\.fullPath)), Set(["staged.txt", "deleted.txt", "binary.txt", "missing.txt"]))
-        XCTAssertFalse(tree.children.contains { $0.path == "f\\xFF" }, "An escaped invalid-byte label is never a literal tree leaf")
-        XCTAssertEqual(tree.children.first { $0.path == "staged.txt" }?.displayPath, "staged.txt  [S]")
-        XCTAssertEqual(tree.children.first { $0.path == "deleted.txt" }?.displayPath, "deleted.txt  [D]")
-        XCTAssertEqual(tree.children.first { $0.path == "binary.txt" }?.contents, "This file cannot be displayed as text.")
-        let missing = try XCTUnwrap(tree.children.first { $0.path == "missing.txt" })
+        let children = try XCTUnwrap(tree.children as? [PBGitTree])
+        XCTAssertEqual(Set(children.map(\.fullPath)), Set(["staged.txt", "deleted.txt", "binary.txt", "missing.txt"]))
+        XCTAssertFalse(children.contains { $0.path == "f\\xFF" }, "An escaped invalid-byte label is never a literal tree leaf")
+        XCTAssertEqual(children.first { $0.path == "staged.txt" }?.displayPath, "staged.txt  [S]")
+        XCTAssertEqual(children.first { $0.path == "deleted.txt" }?.displayPath, "deleted.txt  [D]")
+        XCTAssertEqual(children.first { $0.path == "binary.txt" }?.contents, "This file cannot be displayed as text.")
+        let missing = try XCTUnwrap(children.first { $0.path == "missing.txt" })
         let temporaryFile = try XCTUnwrap(missing.tmpFileNameForContents())
         defer { try? FileManager.default.removeItem(atPath: temporaryFile) }
         XCTAssertEqual(try String(contentsOfFile: temporaryFile, encoding: .utf8), "indexed fallback")
@@ -150,7 +151,7 @@ final class IndexSnapshotTests: XCTestCase {
             let presentation = PBHistoryTreePresentation(repository: repository)
             let root = presentation.tree(for: PBUncommittedChanges(repository: repository))
             XCTAssertEqual(root.children.count, 1)
-            XCTAssertEqual(try presentation.displayTitle(for: XCTUnwrap(root.children.first)), "D  same.txt")
+            XCTAssertEqual(try presentation.displayTitle(for: XCTUnwrap(root.children.first as? PBGitTree)), "D  same.txt")
         }
     }
 

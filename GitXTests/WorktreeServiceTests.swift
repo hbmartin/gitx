@@ -45,12 +45,16 @@ extension PBRepositoryWorktreeService {
     func assertRejectedRepairPreparation(_ preview: PBWorktreeRepairPreview?, error: NSError?, cause: WorktreeEvidenceError? = nil,
                                          file: StaticString = #filePath, line: UInt = #line)
     {
-        if let preview { discardRepairPreview(preview) }
+        if let preview {
+            discardRepairPreview(preview)
+        }
         XCTAssertNil(preview, "Rejected preparation must never grant approval", file: file, line: line)
         XCTAssertNotNil(error, file: file, line: line)
         let underlying = error?.userInfo[NSUnderlyingErrorKey] as? NSError
         XCTAssertEqual(underlying?.domain, (WorktreeEvidenceError.changed("") as NSError).domain, file: file, line: line)
-        if let cause { XCTAssertEqual(underlying?.code, (cause as NSError).code, file: file, line: line) }
+        if let cause {
+            XCTAssertEqual(underlying?.code, (cause as NSError).code, file: file, line: line)
+        }
     }
 
     func prepareAndConfirmRepair(worktree: PBGitWorktree, movedTo path: String, approval: WorktreeTestRepairApproval,
@@ -74,7 +78,9 @@ extension PBRepositoryWorktreeService {
                                              confirmationRequested: (@MainActor @Sendable () -> Void)?,
                                              completion: @escaping @MainActor @Sendable (NSError?) -> Void)
     {
-        if let error { completion(error); return }
+        if let error {
+            completion(error); return
+        }
         guard let preview else {
             completion(NSError(domain: "GitXRepairTestApproval", code: 1))
             return
@@ -103,7 +109,11 @@ extension PBRepositoryWorktreeService {
     func prepareAndConfirmRepair(worktree: PBGitWorktree, movedTo path: String, approval: WorktreeTestRepairApproval) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             prepareAndConfirmRepair(worktree: worktree, movedTo: path, approval: approval) { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
             }
         }
     }
@@ -658,7 +668,9 @@ final class WorktreeServiceTests: XCTestCase {
                     let status = installed.service.observe(\.inventoryStatus) { service, _ in
                         MainActor.assumeIsolated {
                             let expected = recoverySucceeds ? WorktreeInventoryStatus.fresh : .stale
-                            if service.inventoryStatus == expected.rawValue { recovered.fulfill() }
+                            if service.inventoryStatus == expected.rawValue {
+                                recovered.fulfill()
+                            }
                         }
                     }
                     defer { status.invalidate() }
@@ -2449,14 +2461,18 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let repository = try RepositoryTestGitRepository(url: fixture.main)
             var repairs = 0
             let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
-                if arguments.contains("repair") { repairs += 1 }
+                if arguments.contains("repair") {
+                    repairs += 1
+                }
                 return nil
             })
             defer { service.cancel() }
             try await ready(service)
             let tree = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
             let link = fixture.linked.appendingPathComponent(".git")
-            if requiresReclaim { try FileManager.default.removeItem(at: link) }
+            if requiresReclaim {
+                try FileManager.default.removeItem(at: link)
+            }
             let before = try metadata(in: fixture)
             let approvals: [WorktreeTestRepairApproval] = requiresReclaim
                 ? [.repair(paths: [fixture.linked.path]), .reclaim(paths: [fixture.linked.path], reclaimPaths: [fixture.main.path])]
@@ -2480,7 +2496,11 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         func testConfirmedRepairRetainsFIFOThroughHeldValidationAndReconciliation() async throws {
             let fixture = try RepairFixture(label: "confirmed-admission-boundary")
             var cleanupRegistered = false
-            defer { if !cleanupRegistered { fixture.cleanup() } }
+            defer {
+                if !cleanupRegistered {
+                    fixture.cleanup()
+                }
+            }
             let repository = try RepositoryTestGitRepository(url: fixture.main)
             let checkpoint = WorktreeWorkerCheckpoint()
             let reconciliation = ControlledWorktreeTask()
@@ -2489,7 +2509,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             var repairs = 0
             var followingCommands = 0
             let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
-                if arguments.contains("repair") { repairs += 1; holdReconciliation = true }
+                if arguments.contains("repair") {
+                    repairs += 1; holdReconciliation = true
+                }
                 if holdReconciliation, arguments == ["worktree", "list", "--porcelain", "-z"] {
                     holdReconciliation = false
                     reading.fulfill()
@@ -2498,7 +2520,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
                 return nil
             })
             let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
-                if arguments.starts(with: ["worktree", "lock"]) { followingCommands += 1 }
+                if arguments.starts(with: ["worktree", "lock"]) {
+                    followingCommands += 1
+                }
                 return nil
             })
             service.repairValidationObserver = { checkpoint.wait() }
@@ -2507,7 +2531,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
                 service.cancel(); following.cancel()
                 checkpoint.resume()
                 reconciliation.finish(nil, error: CancellationError())
-                if checkpoint.expectsResult { await self.fulfillment(of: [checkpoint.finishedExpectation()], timeout: 10) }
+                if checkpoint.expectsResult {
+                    await self.fulfillment(of: [checkpoint.finishedExpectation()], timeout: 10)
+                }
                 let drained = self.expectation(description: "confirmed repair and following writer drain before fixture cleanup")
                 service.drainForTesting { following.drainForTesting { drained.fulfill() } }
                 await self.fulfillment(of: [drained], timeout: 10)
@@ -2535,10 +2561,12 @@ final class WorktreeRepairSafetyTests: XCTestCase {
                 }
             }
             await fulfillment(of: [checkpoint.entered], timeout: 10)
-            following.lockWorktree(path: fixture.linked.path, reason: "after confirmed repair") { _, error in
-                // swift6-safety-justification: Lifecycle completions run on the main queue.
-                MainActor.assumeIsolated {
-                    XCTAssertNil(error); result.names.append("following"); progressed.fulfill()
+            enqueue {
+                following.lockWorktree(path: fixture.linked.path, reason: "after confirmed repair") { _, error in
+                    // swift6-safety-justification: Lifecycle completions run on the main queue.
+                    MainActor.assumeIsolated {
+                        XCTAssertNil(error); result.names.append("following"); progressed.fulfill()
+                    }
                 }
             }
             XCTAssertTrue(checkpoint.isWaiting)
@@ -2549,7 +2577,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             XCTAssertEqual(repairs, 1)
             XCTAssertEqual(followingCommands, 0, "Reconciliation retains the same admission")
             XCTAssertTrue(result.names.isEmpty)
-            reconciliation.finish(Data(try fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
+            try reconciliation.finish(Data(fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
             await fulfillment(of: [repaired, progressed], timeout: 10)
             XCTAssertEqual(result.names, ["repair", "following"])
             XCTAssertEqual(followingCommands, 1)
@@ -2564,7 +2592,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         var repairs = 0
         let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
-            if arguments.contains("repair") { repairs += 1 }
+            if arguments.contains("repair") {
+                repairs += 1
+            }
             return nil
         })
         let following = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"))
@@ -2574,8 +2604,10 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertNil(result.error)
         let preview = try XCTUnwrap(result.preview)
         let done = expectation(description: "writer progresses while repair approval waits")
-        following.lockWorktree(path: fixture.linked.path, reason: "during approval") { _, error in
-            XCTAssertNil(error); done.fulfill()
+        enqueue {
+            following.lockWorktree(path: fixture.linked.path, reason: "during approval") { _, error in
+                XCTAssertNil(error); done.fulfill()
+            }
         }
         await fulfillment(of: [done], timeout: 10)
         XCTAssertEqual(repairs, 0)
@@ -5065,7 +5097,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             let launched = expectation(description: "first writer holds admission")
             var repairCommands = 0
             let service = PBRepositoryWorktreeService(repository: repository) { arguments in
-                if arguments.starts(with: ["worktree", "repair"]) { repairCommands += 1 }
+                if arguments.starts(with: ["worktree", "repair"]) {
+                    repairCommands += 1
+                }
                 if arguments == ["worktree", "lock", "--reason", "held", fixture.linked.path] {
                     launched.fulfill(); return blocked
                 }
@@ -5199,7 +5233,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let launched = expectation(description: "first writer holds admission")
         var repairCommands = 0
         let service = makeService(repository: repository, fixture: fixture, blocked: blocked, launched: launched, taskOverride: { arguments in
-            if arguments.contains("repair") { repairCommands += 1 }
+            if arguments.contains("repair") {
+                repairCommands += 1
+            }
             return nil
         })
         defer { service.cancel(); blocked.finish(nil, error: CancellationError()) }
@@ -5244,7 +5280,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let launched = expectation(description: "first writer holds admission")
         var repairCommands = 0
         let service = makeService(repository: repository, fixture: fixture, blocked: blocked, launched: launched, taskOverride: { arguments in
-            if arguments.contains("repair") { repairCommands += 1 }
+            if arguments.contains("repair") {
+                repairCommands += 1
+            }
             return nil
         })
         defer { service.cancel(); blocked.finish(nil, error: CancellationError()) }
@@ -5276,7 +5314,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         var repairCommands = 0
         let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
-            if arguments.contains("repair") { repairCommands += 1 }
+            if arguments.contains("repair") {
+                repairCommands += 1
+            }
             return nil
         })
         defer { service.cancel() }
@@ -5308,7 +5348,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let launched = expectation(description: "first writer holds admission")
         var repairCommands = 0
         let service = makeService(repository: repository, fixture: fixture, blocked: blocked, launched: launched, taskOverride: { arguments in
-            if arguments.contains("repair") { repairCommands += 1 }
+            if arguments.contains("repair") {
+                repairCommands += 1
+            }
             return nil
         })
         defer { service.cancel(); blocked.finish(nil, error: CancellationError()) }
@@ -5609,7 +5651,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let launched = expectation(description: "first writer holds admission")
         var repairCommands = 0
         let service = makeService(repository: repository, fixture: fixture, blocked: blocked, launched: launched, taskOverride: { arguments in
-            if arguments.contains("repair") { repairCommands += 1 }
+            if arguments.contains("repair") {
+                repairCommands += 1
+            }
             return nil
         })
         defer { service.cancel(); blocked.finish(nil, error: CancellationError()) }

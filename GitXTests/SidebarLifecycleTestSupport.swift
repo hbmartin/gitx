@@ -1,16 +1,14 @@
-@testable import GitX
 import ForgeKit
+@testable import GitX
 import Synchronization
 import XCTest
 
 @MainActor
-private final class RemoteRoutingSidebar: GitX.PBGitSidebarController {
+private final class RemoteRoutingRecorder: NSResponder {
     private(set) var addRemoteRequests = 0
 
-    override func tryToPerform(_ action: Selector, with object: Any?) -> Bool {
-        guard action == NSSelectorFromString("addRemote:") else { return super.tryToPerform(action, with: object) }
+    @objc func addRemote(_ sender: Any?) {
         addRemoteRequests += 1
-        return true
     }
 }
 
@@ -31,24 +29,31 @@ enum SidebarLifecycleTestSupport {
             defaults.removePersistentDomain(forName: suite)
         }
         GitX.ApplicationSettings.branchSort = .alphabetical
-        let sidebar = try XCTUnwrap(RemoteRoutingSidebar(repository: repository, superController: nil))
+        let sidebar = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
         _ = sidebar.view
+        let recorder = RemoteRoutingRecorder()
+        XCTAssertTrue(recorder.responds(to: #selector(RemoteRoutingRecorder.addRemote(_:))))
+        let previousResponder = sidebar.nextResponder
+        sidebar.nextResponder = recorder
+        defer { sidebar.nextResponder = previousResponder }
         defer { sidebar.closeView() }
         let notifications = Mutex(0)
         let observer = NotificationCenter.default.addObserver(
             forName: Notification.Name("PBBranchSidebarSettingsDidChangeNotification"), object: nil, queue: nil
         ) { _ in notifications.withLock { $0 += 1 } }
         defer { NotificationCenter.default.removeObserver(observer) }
-        if afterClose { sidebar.closeView() }
+        if afterClose {
+            sidebar.closeView()
+        }
 
-        sidebar.toggleBranchSort(nil)
+        sidebar.toggleBranchSort(sidebar)
         let presentation = try XCTUnwrap(sidebar.value(forKey: "branchPresentation") as? GitX.BranchSidebarPresentation)
         XCTAssertEqual(presentation.usesRecentSorting, !afterClose)
         XCTAssertEqual(GitX.ApplicationSettings.branchSort, afterClose ? .alphabetical : .recentCommit)
         XCTAssertEqual(defaults.integer(forKey: "PBBranchSortMode"), GitX.ApplicationSettings.branchSort.rawValue)
         XCTAssertEqual(notifications.withLock { $0 }, afterClose ? 0 : 1)
         sidebar.fetchPullPushAction(nil)
-        XCTAssertEqual(sidebar.addRemoteRequests, afterClose ? 0 : 1)
+        XCTAssertEqual(recorder.addRemoteRequests, afterClose ? 0 : 1)
     }
 
     static func assertClosedNavigationIsInert(_ owner: NSObject) throws {

@@ -2184,7 +2184,7 @@
           "source": "GitXTests/WorktreeAppKitTests.swift",
           "identifier": "GitXTests/WorktreeAppKitTests/testRepairOfferThroughObjectiveCImportedSubclassKeepsWindowState",
           "role": "compatibility",
-          "oracle": "Invoke the window delegate through an Objective-C-imported subclass and preserve both nil-window and loaded-window state without crashing or presenting a repair sheet."
+          "oracle": "Invoke the window delegate through an Objective-C-imported subclass and preserve both nil-window and loaded-window state without crashing or presenting a repair sheet. PR #104 follow-up consumer builds explicitly import the shared app bridge and refine existing Objective-C classes with categories rather than duplicate interfaces. Legacy array contents remain asserted as PBGitTree values; callback-controlled repair fixtures retain synchronous admission boundaries while existing async consumers remain available. The live remote-routing control uses a real next responder."
         },
         {
           "source": "GitXTests/GitXInteropContractTests.swift",

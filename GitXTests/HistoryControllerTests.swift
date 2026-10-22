@@ -2171,7 +2171,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         PBApplicationSettings.changedFilesOnly = true
         let workingPresentation = PBHistoryTreePresentation(repository: repository)
         let flatWorkingTree = try workingPresentation.tree(for: XCTUnwrap(workingState))
-        let flatWorkingPaths = flatWorkingTree.children.map(\.fullPath)
+        let flatWorkingPaths = try XCTUnwrap(flatWorkingTree.children as? [PBGitTree]).map(\.fullPath)
         XCTAssertEqual(flatWorkingPaths, ["uncommitted.txt"])
         try historyController.commitController.setSelectedObjects([XCTUnwrap(workingState)])
         historyController.selectedCommitDetailsIndex = 1
@@ -2608,7 +2608,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         enum FixtureFailure: Error { case expected }
         var owner: GitFixture? = try GitFixture()
         let normal = try XCTUnwrap(owner).makeAuxiliaryDirectory(suffix: "normal")
-        XCTAssertFalse(normal.path.hasPrefix(try XCTUnwrap(owner).path + "/"))
+        XCTAssertFalse(try normal.path.hasPrefix(XCTUnwrap(owner).path + "/"))
         try XCTUnwrap(owner).removeAuxiliaryDirectory(normal)
         XCTAssertFalse(FileManager.default.fileExists(atPath: normal.path))
         var retained: URL?
@@ -2616,12 +2616,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             retained = try XCTUnwrap(owner).makeAuxiliaryDirectory(suffix: "throwing")
             throw FixtureFailure.expected
         } catch FixtureFailure.expected {
-            XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(retained).path))
+            XCTAssertTrue(try FileManager.default.fileExists(atPath: XCTUnwrap(retained).path))
         }
         weak let releasedOwner = owner
         owner = nil
         XCTAssertNil(releasedOwner)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(retained).path))
+        XCTAssertFalse(try FileManager.default.fileExists(atPath: XCTUnwrap(retained).path))
     }
 
     private func verifyPushChoiceDuringFailedSubmission(_ choice: Bool) async throws {
@@ -2935,7 +2935,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         PBApplicationSettings.changedFilesOnly = false
         defer { PBApplicationSettings.changedFilesOnly = previous }
         let root = PBWorkingTree.root(for: repository)
-        let folder = try XCTUnwrap(root.children.first { $0.path == "nested" })
+        let folder = try XCTUnwrap(XCTUnwrap(root.children as? [PBGitTree]).first { $0.path == "nested" })
         XCTAssertFalse(folder.leaf)
         let expected = try XCTUnwrap(repository.workingDirectoryURL()).appendingPathComponent("nested").path
         XCTAssertEqual(folder.tmpFileNameForContents(), expected)
@@ -2998,7 +2998,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let state = PBUncommittedChanges(repository: repository)
         let presentation = PBHistoryTreePresentation(repository: repository)
         let root = presentation.tree(for: state)
-        let nodes = root.children.filter { $0.fullPath == "nested/tracked.txt" }
+        let nodes = try XCTUnwrap(root.children as? [PBGitTree]).filter { $0.fullPath == "nested/tracked.txt" }
         XCTAssertEqual(nodes.count, 1)
         let node = try XCTUnwrap(nodes.first)
         XCTAssertEqual(presentation.displayTitle(for: node), "D  nested/tracked.txt")
@@ -3034,9 +3034,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             index.setValue(NSMutableArray(array: before), forKey: "files")
             index.didChangeValue(forKey: "indexChanges")
         }
-        func leaves(_ tree: PBGitTree) -> [PBWorkingTree] {
-            tree.children.flatMap { child in
-                child.leaf ? (child as? PBWorkingTree).map { [$0] } ?? [] : leaves(child)
+        func leaves(_ tree: PBGitTree) throws -> [PBWorkingTree] {
+            try XCTUnwrap(tree.children as? [PBGitTree]).flatMap { child in
+                child.leaf ? (child as? PBWorkingTree).map { [$0] } ?? [] : try leaves(child)
             }
         }
         var root: PBWorkingTree? = PBWorkingTree.root(for: repository)
@@ -3049,7 +3049,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.updateUncommittedChanges()
         let state = try XCTUnwrap(historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges)
         let flat = PBHistoryTreePresentation(repository: repository).tree(for: state)
-        let presented = try XCTUnwrap(flat.children.first { $0.fullPath == label } as? PBWorkingTree)
+        let presented = try XCTUnwrap(XCTUnwrap(flat.children as? [PBGitTree]).first { $0.fullPath == label } as? PBWorkingTree)
         XCTAssertEqual(presented.rawPath, Data(label.utf8))
         historyController.commitController.setSelectedObjects([state])
         historyController.selectedCommitDetailsIndex = 1
@@ -3140,14 +3140,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(PBGitBinary.accept(wrapper.path))
 
         let root = PBWorkingTree.root(for: repository)
-        let folder = try XCTUnwrap(root.children.first { $0.path == "nested" })
-        let tracked = try XCTUnwrap(folder.children.first { $0.path == "tracked.txt" } as? PBWorkingTree)
+        let folder = try XCTUnwrap(XCTUnwrap(root.children as? [PBGitTree]).first { $0.path == "nested" })
+        let tracked = try XCTUnwrap(XCTUnwrap(folder.children as? [PBGitTree]).first { $0.path == "tracked.txt" } as? PBWorkingTree)
         let expectedCommit = try fixture.git(["log", "-1", "--pretty=format:%H", "--", "nested/tracked.txt"])
 
         XCTAssertTrue(tracked.blame().contains("author GitX Tests"), "Ordinary tracked filenames retain real blame on older Git")
         XCTAssertFalse(tracked.blame().contains("author Not Committed Yet"))
         XCTAssertTrue(tracked.log("%H").contains(expectedCommit), "Ordinary tracked filenames retain history on older Git")
-        let special = try XCTUnwrap(root.children.first { $0.path == specialPath } as? PBWorkingTree)
+        let special = try XCTUnwrap(XCTUnwrap(root.children as? [PBGitTree]).first { $0.path == specialPath } as? PBWorkingTree)
         XCTAssertTrue(special.blame().isEmpty, "An unsupported tracked filename must not be mislabelled as uncommitted")
         XCTAssertTrue(special.log("%H").isEmpty, "An unsupported pathspec must not match other filenames")
     }
@@ -3159,9 +3159,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try fixture.git(["--literal-pathspecs", "add", "--", path, "wild-other.txt"])
         try fixture.git(["commit", "--quiet", "-m", "literal wildcard and sibling"])
         let root = PBWorkingTree.root(for: repository)
-        let file = try XCTUnwrap(root.children.first { $0.path == path } as? PBWorkingTree)
+        let file = try XCTUnwrap(XCTUnwrap(root.children as? [PBGitTree]).first { $0.path == path } as? PBWorkingTree)
 
-        let blame = file.blame()
+        let blame = try XCTUnwrap(file.blame())
         XCTAssertTrue(blame.contains("\tliteral wildcard contents"))
         XCTAssertFalse(blame.contains("\tsibling contents"))
         XCTAssertTrue(file.log("%s").contains("literal wildcard and sibling"))
@@ -3175,7 +3175,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try FileManager.default.removeItem(at: URL(fileURLWithPath: fixture.path).appendingPathComponent(path))
         let pane = try openStagingPane()
         let root = PBWorkingTree.root(for: repository)
-        let leaf = try XCTUnwrap(root.children.first { $0.fullPath == path } as? PBWorkingTree)
+        let leaf = try XCTUnwrap(XCTUnwrap(root.children as? [PBGitTree]).first { $0.fullPath == path } as? PBWorkingTree)
         XCTAssertEqual(leaf.contents, "literal index filename", "The existing text API trims the terminal LF while preserving the literal index filename")
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data(path.utf8) })
         try selectDiffFile(file, staged: true, in: pane)
@@ -6737,7 +6737,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     private func flattenedTree(_ root: PBGitTree) -> [PBGitTree] {
-        [root] + root.children.flatMap(flattenedTree)
+        guard let children = root.children as? [PBGitTree] else {
+            XCTFail("Tree children must retain their production type")
+            return [root]
+        }
+        return [root] + children.flatMap(flattenedTree)
     }
 
     private func descendant(identifier: String, in root: NSView?) -> NSView? {
