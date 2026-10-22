@@ -1,4 +1,5 @@
 import Darwin
+import Synchronization
 import XCTest
 
 final class GitXTestGitFixtureTests: XCTestCase {
@@ -225,6 +226,80 @@ final class GitXTestGitFixtureTests: XCTestCase {
         try handle.close()
         XCTAssertEqual(state.take(in: directory.path).first?.data, Data("new issue".utf8))
         XCTAssertEqual(try Data(contentsOf: current), sentinel)
+    }
+
+    func testLogIndexCachesQuiescentFilesAndTracksInheritedWriterLeases() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        for pid in 1 ... 20 {
+            let name = "GitX-\(getpid())-\(pid).stderr.log"
+            try Data("old".utf8).write(to: directory.appendingPathComponent(name))
+            try GitXTestProgressRecords.write([
+                "schemaVersion": 1, "event": "capture", "state": "captured", "filename": name,
+                "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture",
+            ], prefix: "capture", directory: directory.path)
+        }
+        let changed = expectation(description: "directory change delivered")
+        changed.assertForOverFulfill = false
+        let closed = expectation(description: "watch descriptor closed")
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(
+            directory: directory.path, invocationID: "fixture", verificationSession: "fixture", progressDirectory: nil, onDirectoryChange: { changed.fulfill() }, onClosed: { closed.fulfill() }
+        ))
+        defer { index.close() }
+        XCTAssertEqual(index.snapshot().count, 20)
+        let inspections = index.inspectionCount
+        for _ in 0 ..< 30 {
+            XCTAssertEqual(index.snapshot().count, 20)
+        }
+        XCTAssertEqual(index.inspectionCount, inspections)
+        let current = directory.appendingPathComponent("GitX-999-a.stderr.log")
+        let writer = current.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_APPEND | O_CLOEXEC, 0o600) }
+        XCTAssertGreaterThanOrEqual(writer, 0)
+        guard writer >= 0 else { return }
+        defer { Darwin.close(writer) }
+        XCTAssertEqual(flock(writer, LOCK_SH | LOCK_NB), 0)
+        wait(for: [changed], timeout: 5)
+        let session = GitXManagedTestObserver.CaseAttachments(candidates: index.snapshot())
+        let sentinel = Data([0, 255]) + Data("current case".utf8)
+        sentinel.withUnsafeBytes { XCTAssertEqual(Darwin.write(writer, $0.baseAddress, $0.count), $0.count) }
+        let candidates = index.snapshot()
+        let bytes = Mutex(0)
+        DispatchQueue.concurrentPerform(iterations: 8) { _ in
+            let excerpts = session.take(candidates: candidates)
+            bytes.withLock { $0 += excerpts.reduce(0) { $0 + $1.data.count } }
+        }
+        XCTAssertEqual(bytes.withLock { $0 }, sentinel.count)
+        session.close()
+        XCTAssertTrue(session.take(candidates: candidates).isEmpty)
+        index.close()
+        wait(for: [closed], timeout: 5)
+        XCTAssertTrue(index.snapshot().isEmpty)
+    }
+
+    func testLogIndexRejectsReplacementFilesAndDirectoryRedirection() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let file = directory.appendingPathComponent("GitX-42-a.stderr.log")
+        try Data("old".utf8).write(to: file)
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(directory: directory.path))
+        defer { index.close() }
+        let original = try XCTUnwrap(index.snapshot().first)
+        let retainedFile = try FileHandle(forReadingFrom: file)
+        defer { try? retainedFile.close() }
+        try FileManager.default.removeItem(at: file)
+        try Data("new".utf8).write(to: file)
+        let replacement = try XCTUnwrap(index.snapshot().first)
+        XCTAssertNotEqual(original.identity, replacement.identity)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: directory.appendingPathComponent("absent"))
+        XCTAssertTrue(index.snapshot().isEmpty)
+        let moved = directory.appendingPathExtension("moved")
+        try FileManager.default.moveItem(at: directory, to: moved)
+        directories.append(moved)
+        try FileManager.default.createSymbolicLink(at: directory, withDestinationURL: moved)
+        XCTAssertTrue(index.snapshot().isEmpty)
     }
 
     func testProgressPublicationLeavesOnlyCompleteDistinctRecordsAndPreservesEvidence() throws {

@@ -24,11 +24,64 @@ class NativeTestDiagnosticsTests(unittest.TestCase):
 import Darwin
 import Foundation
 import OSLog
+import Synchronization
 
 func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
 let environment = ProcessInfo.processInfo.environment
 let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
+if mode == "log-index" {
+    let root = URL(fileURLWithPath: directory!)
+    for pid in 1 ... 20 {
+        let name = "GitX-\(getpid())-\(pid).stderr.log"
+        try Data(repeating: 65, count: 70000).write(to: root.appendingPathComponent(name))
+        try GitXTestProgressRecords.write(["schemaVersion": 1, "event": "capture", "state": "captured", "filename": name,
+            "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture"], prefix: "capture", directory: directory!)
+    }
+    let changed = DispatchSemaphore(value: 0)
+    let closed = DispatchSemaphore(value: 0)
+    let index = GitXManagedTestObserver.LogIndex(directory: directory, invocationID: "fixture", verificationSession: "fixture", progressDirectory: nil, onDirectoryChange: { changed.signal() }, onClosed: { closed.signal() })!
+    let baseline = index.snapshot()
+    let initial = index.inspectionCount
+    for _ in 0 ..< 30 { precondition(index.snapshot().count == 20) }
+    precondition(index.inspectionCount == initial)
+    let current = root.appendingPathComponent("GitX-\(getpid())-ffff.stderr.log")
+    try Data().write(to: current)
+    precondition(index.snapshot().first { $0.file == current }?.finalized == false)
+    try FileManager.default.removeItem(at: current)
+    let writer = current.path.withCString { open($0, O_WRONLY | O_CREAT | O_EXCL | O_APPEND, 0o600) }
+    precondition(writer >= 0 && flock(writer, LOCK_SH | LOCK_NB) == 0)
+    let prefix = Data("before-case".utf8)
+    prefix.withUnsafeBytes { precondition(Darwin.write(writer, $0.baseAddress, $0.count) == $0.count) }
+    precondition(changed.wait(timeout: .now() + 5) == .success)
+    let session = GitXManagedTestObserver.CaseAttachments(candidates: index.snapshot())
+    precondition(session.take(candidates: index.snapshot()).isEmpty)
+    let sentinel = Data([0, 255]) + Data("AddressSanitizer: current case".utf8)
+    sentinel.withUnsafeBytes { precondition(Darwin.write(writer, $0.baseAddress, $0.count) == $0.count) }
+    let candidates = index.snapshot()
+    let count = Mutex(0)
+    DispatchQueue.concurrentPerform(iterations: 8) { _ in
+        let bytes = session.take(candidates: candidates).reduce(0) { $0 + $1.data.count }
+        count.withLock { $0 += bytes }
+    }
+    precondition(count.withLock { $0 } == sentinel.count)
+    session.close()
+    precondition(session.take(candidates: candidates).isEmpty)
+    try GitXTestProgressRecords.write(["schemaVersion": 1, "event": "capture", "state": "captured", "filename": current.lastPathComponent,
+        "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture"], prefix: "capture", directory: directory!)
+    precondition(index.snapshot().first { $0.file == current }?.finalized == false)
+    Darwin.close(writer)
+    _ = index.snapshot()
+    let finalized = index.inspectionCount
+    for _ in 0 ..< 30 { _ = index.snapshot() }
+    precondition(index.inspectionCount == finalized)
+    index.close()
+    precondition(closed.wait(timeout: .now() + 5) == .success)
+    precondition(index.snapshot().isEmpty)
+    precondition(baseline.count == 20)
+    checkpoint("indexed historical=20 inspections=\(initial) final=\(finalized) concurrent-bytes=\(sentinel.count)")
+    exit(0)
+}
 if mode == "attachment-baseline" {
     var state = GitXManagedTestObserver.AttachmentState(in: directory)
     precondition(state.take(in: directory).isEmpty)
@@ -167,6 +220,15 @@ checkpoint("after-raw-write")
                 if expected in line:
                     return
         self.fail(f"Missing checkpoint {expected!r}")
+
+    def test_log_index_reuses_quiescent_logs_and_serializes_case_ranges(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'log-index'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('indexed historical=20 inspections=20', result.stdout)
+            self.assertIn('concurrent-bytes=', result.stdout)
+            print(json.dumps({'nativeLogIndex': result.stdout.strip()}))
 
     def test_failure_attachment_budget_prioritizes_the_latest_launch(self):
         with tempfile.TemporaryDirectory() as directory:

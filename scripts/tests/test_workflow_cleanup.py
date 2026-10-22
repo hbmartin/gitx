@@ -79,7 +79,7 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(discovered[0][1]['retirementState'], 'deferred')
 
     def test_permanently_retained_native_evidence_does_not_poison_later_cleanup(self):
-        for condition in ('incomplete', 'archive-missing', 'source-missing'):
+        for condition in ('incomplete', 'archive-missing', 'source-missing', 'archive-symlink', 'source-symlink'):
             with self.subTest(condition=condition), self.native_archive_waiting_for_retirement() as (native, source, release):
                 release()
                 if condition == 'incomplete':
@@ -88,6 +88,13 @@ class CleanupTests(unittest.TestCase):
                     session.atomic_json(native.registration, record)
                 elif condition == 'archive-missing':
                     shutil.rmtree(native.archive)
+                elif condition == 'archive-symlink':
+                    archived = native.archive / source.name
+                    archived.unlink()
+                    archived.symlink_to(source)
+                elif condition == 'source-symlink':
+                    source.unlink()
+                    source.symlink_to(native.archive / source.name)
                 else:
                     shutil.rmtree(native.root)
                 cleanup.queue_commit(self.root)
@@ -173,6 +180,67 @@ class CleanupTests(unittest.TestCase):
                     mock.patch.object(session, 'descriptor_digest', side_effect=hash_outside_proof):
                 report = cleanup.run_cleanup(self.root, receipt)
             self.assertEqual(report['status'], 'complete', report.get('nativeRetirement'))
+
+    def test_authorization_lease_contention_has_a_structured_retryable_outcome(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            owner = cleanup.read_json(native.registration)
+            @contextlib.contextmanager
+            def authorize():
+                raise session.ResourceBusy('fixture-proof', {'runId': 'fixture', 'pid': os.getpid()})
+                yield
+            outcome = session.retire_native_sources(owner, checkout=self.root,
+                persist=lambda value: session.persist_native_registration(native.registration, value), authorize=authorize)
+            self.assertEqual(outcome.state, 'deferred')
+            self.assertEqual(outcome.origin, 'authorization')
+            self.assertEqual(outcome.reason, 'retirement-proof-held')
+            self.assertNotIn('retirementPath', owner)
+            self.assertTrue(source.exists())
+
+    def test_authorization_exceptions_remain_retryable_without_unused_preparation(self):
+        for boundary in (1, 2):
+            for cause in (FileNotFoundError(errno.ENOENT, 'inputs disappeared'), ValueError('proof changed')):
+                with self.subTest(boundary=boundary, cause=type(cause).__name__), self.native_archive_waiting_for_retirement() as (native, source, release):
+                    release()
+                    owner = cleanup.read_json(native.registration)
+                    calls = 0
+                    @contextlib.contextmanager
+                    def authorize():
+                        nonlocal calls
+                        calls += 1
+                        if calls == boundary:
+                            raise cause
+                        yield
+                    result = session.retire_native_sources(owner, checkout=self.root,
+                        persist=lambda value: session.persist_native_registration(native.registration, value), authorize=authorize)
+                    self.assertEqual(result.state, 'deferred')
+                    self.assertEqual(result.origin, 'authorization')
+                    self.assertEqual(result.error_number, getattr(cause, 'errno', None))
+                    if boundary == 1:
+                        self.assertNotIn('retirementPath', owner)
+                        self.assertTrue(source.exists())
+                    else:
+                        self.assertEqual(owner['retirementPhase'], 'prepared')
+                        self.assertTrue(pathlib.Path(owner['retirementPath']).exists())
+
+    def test_retirement_hashes_each_archive_once_and_authorizes_only_mutations(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, release):
+            release()
+            archive_inodes = {path.stat().st_ino for path in native.archive.iterdir() if path.name.endswith('.stderr.log')}
+            digest, counts, calls = session.descriptor_digest, {}, []
+            def measured(descriptor):
+                inode = os.fstat(descriptor).st_ino
+                counts[inode] = counts.get(inode, 0) + 1
+                return digest(descriptor)
+            @contextlib.contextmanager
+            def authorize():
+                calls.append(time.monotonic())
+                yield
+            with mock.patch.object(session, 'descriptor_digest', side_effect=measured):
+                state, reason, _ = session.retire_registered_native_sources(native.registration, checkout=self.root, authorize=authorize)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual([counts[inode] for inode in archive_inodes], [1])
+            self.assertEqual(len(calls), 2, 'Only rename and deletion require authorization')
 
     def test_native_writer_lease_rejects_retirement_before_archive_hashing(self):
         with self.native_archive_waiting_for_retirement() as (native, source, _):
@@ -337,7 +405,7 @@ else:
                     pathlib.Path(durable['retirementPath']).symlink_to(native.archive, target_is_directory=True)
                 state, reason = session.retire_native_sources(durable, checkout=self.root,
                     persist=lambda value: session.persist_native_registration(native.registration, value))
-                self.assertEqual(state, 'retired' if variant == 'legacy' else 'deferred', reason)
+                self.assertEqual(state, 'retired' if variant == 'legacy' else 'retained', reason)
                 self.assertTrue(native.archive.exists())
 
     def test_native_retirement_does_not_delete_before_registration_directory_sync(self):

@@ -1,4 +1,5 @@
 import Darwin
+import Dispatch
 import Foundation
 import Synchronization
 import XCTest
@@ -24,7 +25,8 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     }
 
     private let startup = Mutex(StartupState())
-    private let attachmentStates = Mutex<[ObjectIdentifier: AttachmentState]>([:])
+    private let attachmentStates = Mutex<[ObjectIdentifier: CaseAttachments]>([:])
+    private let logIndex = Mutex<LogIndex?>(nil)
 
     @objc static func install() {
         _ = registration
@@ -32,6 +34,8 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
 
     func testBundleWillStart(_ testBundle: Bundle) {
         let environment = ProcessInfo.processInfo.environment
+        let index = LogIndex(directory: environment["GITX_TEST_STDERR_DIRECTORY"])
+        logIndex.withLock { $0 = index }
         guard let directory = environment["GITX_TEST_PROGRESS_DIRECTORY"], !directory.isEmpty,
               let invocation = environment["GITX_TEST_INVOCATION_ID"], !invocation.isEmpty,
               let session = environment["GITX_VERIFICATION_SESSION"], !session.isEmpty else { return }
@@ -53,8 +57,9 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     }
 
     func testCaseWillStart(_ testCase: XCTestCase) {
-        let directory = ProcessInfo.processInfo.environment["GITX_TEST_STDERR_DIRECTORY"]
-        attachmentStates.withLock { $0[ObjectIdentifier(testCase)] = AttachmentState(in: directory) }
+        let index = logIndex.withLock { $0 }
+        let session = CaseAttachments(candidates: index?.snapshot() ?? [])
+        attachmentStates.withLock { $0[ObjectIdentifier(testCase)] = session }
         // Take before recording: XCTest synchronously calls observers for the issue.
         if let failure = startup.withLock({ $0.takeFailure() }) {
             let invocation = ProcessInfo.processInfo.environment["GITX_TEST_INVOCATION_ID"] ?? "unconfigured"
@@ -77,6 +82,254 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
         }
     }
 
+    /// One owned directory index per bundle; quiescent logs never need repeated opens.
+    final nonisolated class LogIndex: Sendable {
+        private struct State {
+            var descriptor: Int32 = -1
+            var watcher: (any DispatchSourceFileSystemObject)?
+            var known: [String: AttachmentState.Candidate] = [:]
+            var directoryStamp: Int64?
+            var dirty = true
+            var closed = false
+            var revision = 0
+            var inspections = 0
+        }
+
+        private struct CaptureRecords {
+            var stamps: [String: Int64] = [:]
+            var accepted = Set<String>()
+            var filenames = Set<String>()
+        }
+
+        private let records = Mutex(CaptureRecords())
+        private let invocationID: String?
+        private let verificationSession: String?
+        private let progressDirectory: String?
+
+        private func readyCaptures() -> Set<String> {
+            guard let invocationID, let verificationSession else { return [] }
+            var cached = records.withLock { $0 }
+            for directory in [directory, progressDirectory].compactMap({ $0 }) {
+                let parent = directory.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) }
+                guard parent >= 0 else { continue }
+                defer { Darwin.close(parent) }
+                var info = stat()
+                guard fstat(parent, &info) == 0, info.st_uid == geteuid() else { continue }
+                let stamp = Self.modified(info)
+                guard cached.stamps[directory] != stamp else { continue }
+                guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
+                for name in names where name.hasPrefix("capture-") && name.hasSuffix(".json") {
+                    let key = directory + "/" + name
+                    guard !cached.accepted.contains(key) else { continue }
+                    let descriptor = name.withCString { openat(parent, $0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) }
+                    guard descriptor >= 0 else { continue }
+                    defer { Darwin.close(descriptor) }
+                    var recordInfo = stat()
+                    guard fstat(descriptor, &recordInfo) == 0, recordInfo.st_uid == geteuid(),
+                          (recordInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), recordInfo.st_size <= 65536 else { continue }
+                    var data = Data(count: Int(recordInfo.st_size))
+                    let size = data.withUnsafeMutableBytes { Darwin.pread(descriptor, $0.baseAddress, $0.count, 0) }
+                    guard size == data.count,
+                          let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          record["schemaVersion"] as? Int == 1, record["event"] as? String == "capture",
+                          record["state"] as? String == "captured", record["invocationID"] as? String == invocationID,
+                          record["verificationSession"] as? String == verificationSession,
+                          let pid = record["pid"] as? Int, pid > 0, name.hasPrefix("capture-\(pid)-"),
+                          let filename = record["filename"] as? String,
+                          filename.hasPrefix("GitX-\(pid)-"), filename.hasSuffix(".stderr.log"),
+                          !filename.contains("/"), !filename.contains("\\") else { continue }
+                    cached.accepted.insert(key)
+                    cached.filenames.insert(filename)
+                }
+                cached.stamps[directory] = stamp
+            }
+            return records.withLock { value in
+                value.accepted.formUnion(cached.accepted)
+                value.filenames.formUnion(cached.filenames)
+                value.stamps = cached.stamps
+                return value.filenames
+            }
+        }
+
+        private let state = Mutex(State())
+        private let directory: String
+        private let identity: String
+
+        init?(directory: String?, invocationID: String? = ProcessInfo.processInfo.environment["GITX_TEST_INVOCATION_ID"],
+              verificationSession: String? = ProcessInfo.processInfo.environment["GITX_VERIFICATION_SESSION"],
+              progressDirectory: String? = ProcessInfo.processInfo.environment["GITX_TEST_PROGRESS_DIRECTORY"], onDirectoryChange: (@Sendable () -> Void)? = nil, onClosed: (@Sendable () -> Void)? = nil)
+        {
+            guard let directory, !directory.isEmpty else { return nil }
+            let descriptor = directory.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) }
+            guard descriptor >= 0 else { return nil }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, info.st_uid == geteuid() else {
+                Darwin.close(descriptor)
+                return nil
+            }
+            self.directory = directory
+            self.invocationID = invocationID
+            self.verificationSession = verificationSession
+            self.progressDirectory = progressDirectory
+            identity = "\(info.st_dev):\(info.st_ino)"
+            let watcher = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: descriptor, eventMask: [.write, .rename, .delete, .revoke],
+                queue: DispatchQueue(label: "GitXTests.NativeLogIndex")
+            )
+            state.withLock {
+                $0.descriptor = descriptor
+                $0.watcher = watcher
+            }
+            watcher.setEventHandler { [weak self] in
+                self?.state.withLock { $0.dirty = true }
+                onDirectoryChange?()
+            }
+            watcher.setCancelHandler {
+                Darwin.close(descriptor)
+                onClosed?()
+            }
+            watcher.resume()
+        }
+
+        var inspectionCount: Int {
+            state.withLock { $0.inspections }
+        }
+
+        func snapshot() -> [AttachmentState.Candidate] {
+            // Pin the descriptor while doing I/O outside the shared index lock.
+            let inputs = state.withLock { value -> (Int32, Bool, Int64?, Int, [String: AttachmentState.Candidate]) in
+                guard !value.closed else { return (-1, false, nil, 0, [:]) }
+                let copy = Darwin.dup(value.descriptor)
+                guard copy >= 0 else { return (-1, false, nil, 0, [:]) }
+                guard fcntl(copy, F_SETFD, FD_CLOEXEC) == 0 else {
+                    Darwin.close(copy)
+                    return (-1, false, nil, 0, [:])
+                }
+                return (copy, value.dirty, value.directoryStamp, value.revision, value.known)
+            }
+            guard inputs.0 >= 0 else { return [] }
+            defer { Darwin.close(inputs.0) }
+            var info = stat()
+            var pathInfo = stat()
+            guard fstat(inputs.0, &info) == 0,
+                  directory.withCString({ lstat($0, &pathInfo) }) == 0,
+                  (pathInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR), pathInfo.st_uid == geteuid(),
+                  identity == "\(pathInfo.st_dev):\(pathInfo.st_ino)" else { return [] }
+            let stamp = Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec)
+            let discover = inputs.1 || stamp != inputs.2
+            let names: [String]
+            if discover {
+                guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return [] }
+                names = entries.filter { $0.hasSuffix(".stderr.log") }
+            } else {
+                names = Array(inputs.4.keys)
+            }
+            let ready = readyCaptures()
+            var known: [String: AttachmentState.Candidate] = [:]
+            var inspections = 0
+            for name in names {
+                if let cached = inputs.4[name], cached.finalized {
+                    if !discover {
+                        known[name] = cached
+                        continue
+                    }
+                    var current = stat()
+                    if cached.file.path.withCString({ lstat($0, &current) }) == 0,
+                       cached.identity == "\(current.st_dev):\(current.st_ino)",
+                       Int64(current.st_size) == cached.end,
+                       (current.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                       Self.modified(current) == cached.modified
+                    {
+                        known[name] = cached
+                        continue
+                    }
+                }
+                inspections += 1
+                let file = URL(fileURLWithPath: directory).appendingPathComponent(name)
+                if let candidate = AttachmentState.inspect(file, mayFinalize: ready.contains(name)) {
+                    known[name] = candidate
+                }
+            }
+            return state.withLock { value in
+                guard !value.closed else { return [] }
+                value.inspections += inspections
+                if value.revision == inputs.3 {
+                    value.known = known
+                    value.directoryStamp = stamp
+                    value.dirty = false
+                    value.revision += 1
+                }
+                return Array(known.values)
+            }
+        }
+
+        private static func modified(_ info: stat) -> Int64 {
+            Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec)
+        }
+
+        func close() {
+            let watcher = state.withLock { value -> (any DispatchSourceFileSystemObject)? in
+                value.closed = true
+                value.known.removeAll()
+                let watcher = value.watcher
+                value.watcher = nil
+                return watcher
+            }
+            watcher?.cancel()
+        }
+
+        deinit { close() }
+    }
+
+    /// Different cases do not share a filesystem lock; each case serializes its own byte ranges.
+    final nonisolated class CaseAttachments: Sendable {
+        private struct State {
+            var value: AttachmentState
+            let queueKey: DispatchSpecificKey<UInt8>
+            var closed = false
+        }
+
+        private let state: Mutex<State>
+        private let queue = DispatchQueue(label: "GitXTests.CaseAttachments")
+
+        init(candidates: [AttachmentState.Candidate]) {
+            let key = DispatchSpecificKey<UInt8>()
+            state = Mutex(State(value: AttachmentState(candidates: candidates), queueKey: key))
+            queue.setSpecific(key: key, value: 1)
+        }
+
+        private func serialized<Result>(_ body: () -> Result) -> Result {
+            let key = state.withLock { $0.queueKey }
+            if DispatchQueue.getSpecific(key: key) != nil {
+                return body()
+            }
+            return queue.sync(execute: body)
+        }
+
+        func take(candidates: [AttachmentState.Candidate]) -> [Excerpt] {
+            serialized {
+                state.withLock { value in
+                    guard !value.closed else { return [] }
+                    return value.value.take(in: nil, candidates: candidates)
+                }
+            }
+        }
+
+        func attach(candidates: [AttachmentState.Candidate], to testCase: XCTestCase) {
+            serialized {
+                // Keep delivery ordered with close, outside the state mutex. Reentrant
+                // XCTest issue callbacks can reserve only previously unseen ranges.
+                for excerpt in take(candidates: candidates) {
+                    testCase.add(excerpt.attachment())
+                }
+            }
+        }
+
+        func close() {
+            serialized { state.withLock { $0.closed = true } }
+        }
+    }
+
     struct AttachmentState: Sendable {
         static let perFileLimit = 65536
         static let perCaseLimit = 262_144
@@ -84,15 +337,16 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
         private var offsets: [String: Int64] = [:]
         private var baseline: [String: Int64] = [:]
 
-        private struct Candidate {
+        struct Candidate: Sendable {
             let file: URL
             let identity: String
             let end: Int64
             let modified: Int64
+            let finalized: Bool
         }
 
-        init(in directory: String? = nil) {
-            for candidate in Self.candidates(in: directory) {
+        init(in directory: String? = nil, candidates: [Candidate]? = nil) {
+            for candidate in candidates ?? Self.candidates(in: directory) {
                 baseline[candidate.identity] = candidate.end
             }
             offsets = baseline
@@ -103,22 +357,27 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                   let files = try? FileManager.default.contentsOfDirectory(
                       at: URL(fileURLWithPath: directory), includingPropertiesForKeys: nil
                   ) else { return [] }
-            return files.compactMap { file in
-                guard file.lastPathComponent.hasSuffix(".stderr.log") else { return nil }
-                let descriptor = file.path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) }
-                guard descriptor >= 0 else { return nil }
-                defer { Darwin.close(descriptor) }
-                var info = stat()
-                guard fstat(descriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
-                      info.st_uid == geteuid() else { return nil }
-                return Candidate(file: file, identity: "\(info.st_dev):\(info.st_ino)", end: Int64(info.st_size),
-                                 modified: Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec))
-            }
+            return files.compactMap { inspect($0) }
         }
 
-        mutating func take(in directory: String?) -> [Excerpt] {
+        static func inspect(_ file: URL, mayFinalize: Bool = false) -> Candidate? {
+            guard file.lastPathComponent.hasSuffix(".stderr.log") else { return nil }
+            let descriptor = file.path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) }
+            guard descriptor >= 0 else { return nil }
+            defer { Darwin.close(descriptor) }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  info.st_uid == geteuid() else { return nil }
+            // Shared capture locks follow inherited stderr; a PID check cannot prove quiescence.
+            let finalized = mayFinalize && flock(descriptor, LOCK_EX | LOCK_NB) == 0
+            return Candidate(file: file, identity: "\(info.st_dev):\(info.st_ino)", end: Int64(info.st_size),
+                             modified: Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec),
+                             finalized: finalized)
+        }
+
+        mutating func take(in directory: String?, candidates: [Candidate]? = nil) -> [Excerpt] {
             guard retainedBytes < Self.perCaseLimit else { return [] }
-            let candidates = Self.candidates(in: directory).filter { $0.end > (offsets[$0.identity] ?? 0) }.sorted {
+            let candidates = (candidates ?? Self.candidates(in: directory)).filter { $0.end > (offsets[$0.identity] ?? 0) }.sorted {
                 let leftIsNew = baseline[$0.identity] == nil
                 let rightIsNew = baseline[$1.identity] == nil
                 if leftIsNew != rightIsNew {
@@ -174,19 +433,29 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     }
 
     func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) {
-        let excerpts = attachmentStates.withLock { states in
-            var state = states[ObjectIdentifier(testCase)] ?? AttachmentState()
-            let excerpts = state.take(in: ProcessInfo.processInfo.environment["GITX_TEST_STDERR_DIRECTORY"])
-            states[ObjectIdentifier(testCase)] = state
-            return excerpts
-        }
-        for excerpt in excerpts {
-            testCase.add(excerpt.attachment())
-        }
+        guard let session = attachmentStates.withLock({ $0[ObjectIdentifier(testCase)] }) else { return }
+        let index = logIndex.withLock { $0 }
+        session.attach(candidates: index?.snapshot() ?? [], to: testCase)
     }
 
     func testCaseDidFinish(_ testCase: XCTestCase) {
-        _ = attachmentStates.withLock { $0.removeValue(forKey: ObjectIdentifier(testCase)) }
+        let session = attachmentStates.withLock { $0.removeValue(forKey: ObjectIdentifier(testCase)) }
+        session?.close()
+    }
+
+    func testBundleDidFinish(_ testBundle: Bundle) {
+        let index = logIndex.withLock { value in
+            let index = value
+            value = nil
+            return index
+        }
+        index?.close()
+        let sessions = attachmentStates.withLock { value in
+            let sessions = Array(value.values)
+            value.removeAll()
+            return sessions
+        }
+        sessions.forEach { $0.close() }
     }
 
     static func failureAttachments(in directory: String?) -> [XCTAttachment] {

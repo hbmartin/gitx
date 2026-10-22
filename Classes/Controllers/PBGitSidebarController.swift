@@ -227,6 +227,9 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         if isViewLoaded {
             disconnectOwnedControls(in: view)
         }
+        if let controls = sourceListControlsView {
+            disconnectOwnedControls(in: controls)
+        }
         if let menu = actionButton?.menu {
             rememberMenu(menu)
         }
