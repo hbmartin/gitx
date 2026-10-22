@@ -1406,7 +1406,13 @@ def promote_native_completion(registration):
     manifest, _ = open_owned_regular(pathlib.Path(final['sourceDirectory']) / 'native-owner.json', maximum=1024 * 1024)
     with os.fdopen(manifest, 'rb') as stream:
         source_owner = json.load(stream)
-    if any(source_owner.get(key) != final.get(key) for key in (*keys, 'files', 'collectionComplete', 'status')):
+    if any(source_owner.get(key) != final.get(key) for key in keys):
+        raise ValueError('Native finalization source identity changed')
+    if source_owner.get('status') == 'running':
+        # The immutable handoff is authoritative if the optional source checkpoint
+        # could not be written. Repair only this already-registered owned manifest.
+        atomic_json(pathlib.Path(final['sourceDirectory']) / 'native-owner.json', final)
+    elif any(source_owner.get(key) != final.get(key) for key in ('files', 'collectionComplete', 'status')):
         raise ValueError('Native finalization manifest changed')
     if 'archiveDirectoryIdentity' in final and native_directory_identity(final['artifactDirectory']) != final['archiveDirectoryIdentity']:
         raise ValueError('Native finalization archive changed')

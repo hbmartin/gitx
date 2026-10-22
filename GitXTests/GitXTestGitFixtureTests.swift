@@ -233,13 +233,18 @@ final class GitXTestGitFixtureTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         directories.append(directory)
         for pid in 1 ... 20 {
-            try Data("old".utf8).write(to: directory.appendingPathComponent("GitX-\(pid)-a.stderr.log"))
+            let name = "GitX-\(getpid())-\(pid).stderr.log"
+            try Data("old".utf8).write(to: directory.appendingPathComponent(name))
+            try GitXTestProgressRecords.write([
+                "schemaVersion": 1, "event": "capture", "state": "captured", "filename": name,
+                "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture",
+            ], prefix: "capture", directory: directory.path)
         }
         let changed = expectation(description: "directory change delivered")
         changed.assertForOverFulfill = false
         let closed = expectation(description: "watch descriptor closed")
         let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(
-            directory: directory.path, onDirectoryChange: { changed.fulfill() }, onClosed: { closed.fulfill() }
+            directory: directory.path, invocationID: "fixture", verificationSession: "fixture", progressDirectory: nil, onDirectoryChange: { changed.fulfill() }, onClosed: { closed.fulfill() }
         ))
         defer { index.close() }
         XCTAssertEqual(index.snapshot().count, 20)

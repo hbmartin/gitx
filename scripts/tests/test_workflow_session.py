@@ -1550,6 +1550,27 @@ native.close()
                     self.assertEqual(state, 'retired', reason)
                     self.assertEqual((native.archive / source.name).read_bytes(), b'archived-\x00\xff')
 
+    def test_finalization_handoff_recovers_a_failed_source_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                source.write_bytes(b'final-without-source-checkpoint')
+                publish = session.atomic_json
+                def fail_source(path, value):
+                    if pathlib.Path(path) == native.root / 'native-owner.json' and value.get('status') == 'passed':
+                        raise OSError(errno.ENOSPC, 'source-checkpoint-full')
+                    return publish(path, value)
+                with session.NativeRegistration(native.registration), mock.patch.object(session, 'atomic_json', side_effect=fail_source):
+                    result = native.close()
+                self.assertTrue(result['collectionComplete'])
+                self.assertIn('metadata-retention', result['warnings'])
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired', reason)
+                self.assertEqual((native.archive / source.name).read_bytes(), b'final-without-source-checkpoint')
+
     def test_final_completion_survives_registration_lock_contention(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

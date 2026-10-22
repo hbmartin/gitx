@@ -33,16 +33,22 @@ let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
 if mode == "log-index" {
     let root = URL(fileURLWithPath: directory!)
     for pid in 1 ... 20 {
-        try Data(repeating: 65, count: 70000).write(to: root.appendingPathComponent("GitX-\(pid)-a.stderr.log"))
+        let name = "GitX-\(getpid())-\(pid).stderr.log"
+        try Data(repeating: 65, count: 70000).write(to: root.appendingPathComponent(name))
+        try GitXTestProgressRecords.write(["schemaVersion": 1, "event": "capture", "state": "captured", "filename": name,
+            "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture"], prefix: "capture", directory: directory!)
     }
     let changed = DispatchSemaphore(value: 0)
     let closed = DispatchSemaphore(value: 0)
-    let index = GitXManagedTestObserver.LogIndex(directory: directory, onDirectoryChange: { changed.signal() }, onClosed: { closed.signal() })!
+    let index = GitXManagedTestObserver.LogIndex(directory: directory, invocationID: "fixture", verificationSession: "fixture", progressDirectory: nil, onDirectoryChange: { changed.signal() }, onClosed: { closed.signal() })!
     let baseline = index.snapshot()
     let initial = index.inspectionCount
     for _ in 0 ..< 30 { precondition(index.snapshot().count == 20) }
     precondition(index.inspectionCount == initial)
-    let current = root.appendingPathComponent("GitX-999-a.stderr.log")
+    let current = root.appendingPathComponent("GitX-\(getpid())-ffff.stderr.log")
+    try Data().write(to: current)
+    precondition(index.snapshot().first { $0.file == current }?.finalized == false)
+    try FileManager.default.removeItem(at: current)
     let writer = current.path.withCString { open($0, O_WRONLY | O_CREAT | O_EXCL | O_APPEND, 0o600) }
     precondition(writer >= 0 && flock(writer, LOCK_SH | LOCK_NB) == 0)
     let prefix = Data("before-case".utf8)
@@ -61,6 +67,9 @@ if mode == "log-index" {
     precondition(count.withLock { $0 } == sentinel.count)
     session.close()
     precondition(session.take(candidates: candidates).isEmpty)
+    try GitXTestProgressRecords.write(["schemaVersion": 1, "event": "capture", "state": "captured", "filename": current.lastPathComponent,
+        "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture"], prefix: "capture", directory: directory!)
+    precondition(index.snapshot().first { $0.file == current }?.finalized == false)
     Darwin.close(writer)
     _ = index.snapshot()
     let finalized = index.inspectionCount
