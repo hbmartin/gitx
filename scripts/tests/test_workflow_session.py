@@ -1383,6 +1383,46 @@ sys.stdout.buffer.write(b'command-sentinel' * 8192)
                     self.assertEqual(state, 'deferred')
                     self.assertTrue(native.root.exists())
 
+    def test_partial_native_removal_preserves_durable_intent_and_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                source.write_bytes(b'keep-archive-\x00\xff')
+                def partial_removal(path):
+                    (path / 'invocation.lease').unlink()
+                    raise OSError(errno.EIO, 'fixture-after-first-unlink')
+                with mock.patch.object(session.shutil, 'rmtree', side_effect=partial_removal):
+                    native.close()
+                durable = json.loads(native.registration.read_text())
+                self.assertEqual(durable['retirementPhase'], 'deleting')
+                self.assertTrue(pathlib.Path(durable['retirementPath']).exists())
+                self.assertEqual((native.archive / source.name).read_bytes(), b'keep-archive-\x00\xff')
+
+    def test_native_final_checkpoint_matches_source_and_registration_while_writer_holds_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                (native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'complete-manifest')
+                lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+                try:
+                    fcntl.flock(lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    result = native.close()
+                    source = json.loads((native.root / 'native-owner.json').read_text())
+                    registered = json.loads(native.registration.read_text())
+                    self.assertTrue(result['collectionComplete'])
+                    for value in (source, registered):
+                        self.assertTrue(value['collectionComplete'])
+                        self.assertEqual(value['status'], 'passed')
+                        self.assertEqual(value['files'], result['files'])
+                    self.assertEqual(result['retirementReason'], 'producer-lease-held')
+                finally:
+                    os.close(lease)
+
     def test_native_retirement_resumes_registered_quarantine_after_interrupted_removal(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
