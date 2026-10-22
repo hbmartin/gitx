@@ -875,6 +875,20 @@ os.read(int(sys.argv[1]), 1)
                 'verificationSession': verification_session, 'bundleID': 'net.phere.GitXTests',
                 'pid': 42} | changes
 
+    def test_authenticated_startup_remains_observed_after_record_retirement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            record = root / 'startup-42-a.json'
+            record.write_text(json.dumps(self.startup_record()))
+            progress = session.NativeTestProgress(root, 'invocation-1', 'session-1', ['net.phere.GitXTests'])
+            try:
+                self.assertTrue(progress.observed())
+                record.unlink()
+                with mock.patch.object(session, 'read_native_record', side_effect=AssertionError('accepted startup was reread')):
+                    self.assertTrue(progress.observed(), 'Startup is an authenticated historical event')
+            finally:
+                progress.close()
+
     def test_native_progress_requires_matching_complete_owned_xctest_records(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
