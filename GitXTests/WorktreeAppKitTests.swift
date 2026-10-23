@@ -35,6 +35,18 @@ private final class SidebarMenuActionRecorder: NSResponder {
 
 @MainActor
 final class WorktreeAppKitTests: XCTestCase {
+    func testClosingSidebarBeforeNibLoadRemainsTerminalWithoutMountingContent() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        defer { service.cancel() }
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        try SidebarLifecycleTestSupport.assertClosingUnloadedSidebarRemainsTerminal(repository: repository)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+    }
+
     func testClosingSidebarRevokesPreviouslyIssuedMenusAndRetainedItems() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

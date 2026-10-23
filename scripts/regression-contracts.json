@@ -1460,6 +1460,13 @@
           "identifier": "GitXTests/WorktreeAppKitTests/testClosingSidebarRevokesPreviouslyIssuedMenusAndRetainedItems",
           "role": "boundary",
           "oracle": "Live checkout and worktree removal menu selectors route through a real first responder recorder. After repeated close, outline event wiring and owned controls are inactive; action, row, branch and nested menus are empty, including callbacks after closure. Retained items from a prior menu refresh have no action/target/represented authority. Revision and Git HEAD stay unchanged. Diagnostic attachments are collected only by actual AppKit execution; a locked-screen skip is not passing evidence. Capture current published item identities after selection-driven reconstruction; closure restores selection by those identities after delegate/view teardown, without navigation or revision changes."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testClosingSidebarBeforeNibLoadRemainsTerminalWithoutMountingContent",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Close a real repository sidebar before its nib loads, close again, and invoke navigation, presentation, sorting, remote Add and Forge actions with a valid recipient. Assert no view/content, rows, remote action, revision, preference or HEAD change. Preserve the existing sidebar coverage floor; this exercises the no-outline close fallback."
         }
       ]
     },

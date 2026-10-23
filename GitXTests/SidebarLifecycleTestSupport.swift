@@ -121,6 +121,33 @@ enum SidebarLifecycleTestSupport {
         XCTAssertEqual(recorder.addRemoteRequests, afterClose ? 0 : 1)
     }
 
+    static func assertClosingUnloadedSidebarRemainsTerminal(repository: NSObject) throws {
+        let repository = try XCTUnwrap(repository as? GitX.PBGitRepository)
+        let owner: NSObject = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        let sidebar = try XCTUnwrap(owner as? GitX.PBGitSidebarController)
+        let revision = repository.currentBranch
+        let sort = GitX.ApplicationSettings.branchSort
+        XCTAssertFalse(sidebar.isViewLoaded)
+        XCTAssertNil(sidebar.sourceView)
+        sidebar.closeView()
+        sidebar.closeView()
+        let recipient = RemoteRoutingRecorder()
+        sidebar.nextResponder = recipient
+        sidebar.selectCurrentBranch()
+        sidebar.reloadSidebarPresentation()
+        sidebar.toggleBranchSort(sidebar)
+        sidebar.fetchPullPushAction(nil)
+        sidebar.showForgeAttention(nil)
+        XCTAssertFalse(sidebar.browseSelectedWorktreeHistory())
+        XCTAssertEqual(recipient.addRemoteRequests, 0)
+        XCTAssertFalse(sidebar.isViewLoaded, "Closing before nib load must not mount content on later actions")
+        XCTAssertNil(sidebar.sourceView)
+        XCTAssertNil(sidebar.selectedItem())
+        XCTAssertEqual(sidebar.items.count, 0)
+        XCTAssertTrue(repository.currentBranch === revision)
+        XCTAssertEqual(GitX.ApplicationSettings.branchSort, sort)
+    }
+
     static func assertClosedNavigationIsInert(_ owner: NSObject) throws {
         let sidebar = try XCTUnwrap(owner as? GitX.PBGitSidebarController)
         XCTAssertFalse(sidebar.browseSelectedWorktreeHistory())
