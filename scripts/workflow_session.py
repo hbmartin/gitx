@@ -1125,7 +1125,7 @@ def native_retirement_boundary(origin, operation, *, evidence=False):
     except NativeRetirementDeferred as error:
         raise NativeRetirementFault(NativeRetirementOutcome('deferred', str(error), 'authorization', operation)) from error
     except BlockingIOError as error:
-        reason = 'producer-lease-held' if origin == 'source' else origin + '-busy'
+        reason = 'producer-lease-held' if origin in {'source', 'producer'} else origin + '-busy'
         raise NativeRetirementFault(NativeRetirementOutcome('deferred', reason, origin, operation, error.errno)) from error
     except OSError as error:
         suffix = ('missing' if error.errno in {errno.ENOENT, errno.ENOTDIR} else
@@ -1430,21 +1430,32 @@ def native_source_ownership(owner):
     """Keep root and inherited file writers excluded through metadata recovery."""
     descriptors = []
     try:
-        with native_retirement_boundary('source', 'establish-writer-ownership', evidence=True):
+        with native_retirement_boundary('source', 'inspect-writer-root', evidence=True):
             root = pathlib.Path(owner['sourceDirectory'])
             if root.is_symlink() or root.resolve() != root or native_directory_identity(root) != owner['directoryIdentity']:
                 raise ValueError('Native source ownership changed')
+        with native_retirement_boundary('producer', 'acquire-invocation-lease'):
             lease, _ = open_owned_regular(root / 'invocation.lease')
             descriptors.append(lease)
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            for folder in ('Stderr', 'Progress'):
-                path = root / folder
+        for folder in ('Stderr', 'Progress'):
+            path = root / folder
+            with native_retirement_boundary('producer', 'inspect-writer-directory'):
                 if native_path_absent(path):
                     continue
                 native_directory_identity(path)
-                for entry in path.iterdir():
-                    descriptor, _ = open_owned_regular(entry)
+                entries = list(path.iterdir())
+            for entry in entries:
+                with native_retirement_boundary('source', 'inspect-writer-file', evidence=True):
+                    try:
+                        descriptor, _ = open_owned_regular(entry)
+                    except OSError as error:
+                        if error.errno in {errno.EACCES, errno.EPERM}:
+                            raise NativeRetirementFault(NativeRetirementOutcome('deferred', 'producer-lease-unproven',
+                                                        'producer', 'inspect-writer-file', error.errno)) from error
+                        raise
                     descriptors.append(descriptor)
+                with native_retirement_boundary('producer', 'acquire-file-lease'):
                     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
     finally:
@@ -1631,12 +1642,12 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
                 raise ValueError('Native registration ownership changed')
             if owner.get('retirementState') == 'retired':
                 return native_retirement_result(path, owner, authorize=authorize)
+            if owner.get('retirementState') == 'retained' and not retry_retained:
+                return owner['retirementState'], owner.get('retirementReason'), owner
             if admit:
                 with native_retirement_boundary('authorization', 'admit-native-retirement'):
                     if reason := admit():
                         raise NativeRetirementDeferred(reason)
-            if owner.get('retirementState') == 'retained' and not retry_retained:
-                return owner['retirementState'], owner.get('retirementReason'), owner
             # A prepared/deleting quarantine already has published completed
             # evidence; its durable proof deliberately permits missing controls.
             recovering = owner.get('retirementPhase') in {'prepared', 'deleting', 'retired'}

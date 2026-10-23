@@ -171,6 +171,42 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertFalse(native.root.exists())
                 self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
 
+    def test_default_retained_skip_does_not_require_new_mutation_admission(self):
+        with self.completed_native_fixture() as (native, _):
+            owner = json.loads(native.registration.read_text())
+            owner.update(retirementState='retained', retirementReason='archive-incomplete')
+            session.atomic_json(native.registration, owner)
+            before = native.registration.read_bytes()
+            with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('retained evidence rehashed')):
+                state, reason, _ = session.retire_registered_native_sources(native.registration, admit=lambda: 'protected native source')
+            self.assertEqual((state, reason), ('retained', 'archive-incomplete'))
+            self.assertEqual(native.registration.read_bytes(), before)
+            state, reason, _ = session.retire_registered_native_sources(native.registration, admit=lambda: 'protected native source', retry_retained=True)
+            self.assertEqual((state, reason), ('deferred', 'protected native source'))
+            self.assertEqual(native.registration.read_bytes(), before)
+
+    def test_unprovable_writer_lease_does_not_publish_sticky_evidence(self):
+        for boundary in ('invocation', 'file'):
+            with self.subTest(boundary=boundary), self.completed_native_fixture() as (native, source):
+                before = native.registration.read_bytes()
+                opened, locked = session.open_owned_regular, session.fcntl.flock
+                def fail_open(path, *args, **kwargs):
+                    if boundary == 'invocation' and pathlib.Path(path) == native.root / 'invocation.lease':
+                        raise PermissionError(errno.EACCES, 'unprovable-invocation-writer')
+                    return opened(path, *args, **kwargs)
+                def fail_lock(descriptor, flags):
+                    if boundary == 'file' and os.fstat(descriptor).st_ino == source.stat().st_ino:
+                        raise PermissionError(errno.EACCES, 'unprovable-file-writer')
+                    return locked(descriptor, flags)
+                with mock.patch.object(session, 'open_owned_regular', side_effect=fail_open), \
+                        mock.patch.object(session.fcntl, 'flock', side_effect=fail_lock), \
+                        mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('unproven writer allowed hashing')):
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'deferred', reason)
+                self.assertEqual(owner['retirementOutcome']['errno'], errno.EACCES)
+                self.assertEqual(native.registration.read_bytes(), before)
+                self.assertTrue(source.exists())
+
     def test_finalization_never_classifies_or_mutates_an_active_writer(self):
         for inherited in (False, True):
             with self.subTest(inherited=inherited), self.completed_native_fixture() as (native, source):
