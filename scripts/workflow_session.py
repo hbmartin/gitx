@@ -1063,6 +1063,24 @@ class NativeRegistration:
                 os.close(directory)
 
 
+class NativeRegistrationSnapshot:
+    """A captured version; each comparison/publication owns only a short transaction."""
+
+    def __init__(self, path, *, retry_retained=False):
+        self.path = pathlib.Path(path)
+        self.retry_retained = retry_retained
+        with NativeRegistration(path, retry_retained=retry_retained) as transaction:
+            self.identity = transaction.identity
+            self.current = transaction.current
+
+    def publish(self, value):
+        with NativeRegistration(self.path, retry_retained=self.retry_retained) as transaction:
+            if transaction.identity != self.identity or transaction.current != self.current:
+                raise NativeRegistrationChanged()
+            transaction.publish(value)
+            self.current = transaction.current
+
+
 def persist_native_registration(path, value):
     with NativeRegistration(path, create=True) as registration:
         registration.publish(value)
@@ -1444,7 +1462,14 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, ret
     """Publish one fresh structured outcome; never write a stale fallback snapshot."""
     owner = None
     try:
-        with NativeRegistration(path, retry_retained=retry_retained) as registration:
+        # Serialize retirement independently of the producer's checkpoint lock.
+        # This resource remains stable when the source is renamed or partly removed.
+        with native_retirement_boundary('registration', 'acquire-retirement-lease'):
+            retirement = Leases([str(pathlib.Path(path).absolute()) + '.retirement'],
+                                {'runId': 'native-retirement', 'pid': os.getpid()}, inherited={})
+            retirement.__enter__()
+        try:
+            registration = NativeRegistrationSnapshot(path, retry_retained=retry_retained)
             if registration.current.get('retirementState') not in {'retired', 'retained'}:
                 try:
                     with native_retirement_boundary('completion', 'validate-completion', evidence=True):
@@ -1466,6 +1491,10 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, ret
             owner.update(retirementState=outcome.state, retirementReason=outcome.reason, retirementOutcome=outcome.metadata())
             registration.publish(owner)
             return outcome.state, outcome.reason, owner
+        finally:
+            retirement.__exit__(None, None, None)
+    except NativeRetirementFault as error:
+        return error.outcome.state, error.outcome.reason, dict(owner or {}, retirementOutcome=error.outcome.metadata())
     except (OSError, ValueError, TypeError, KeyError) as error:
         reason = 'registration-writer-held' if isinstance(error, BlockingIOError) else 'registration-publication-unproven'
         outcome = NativeRetirementOutcome('deferred', reason, 'registration', 'publish-registration', getattr(error, 'errno', None))

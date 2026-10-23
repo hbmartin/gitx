@@ -24,6 +24,62 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_retirement_does_not_hold_registration_lock_during_hash_or_deletion(self):
+        for boundary in ('hash', 'delete'):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                _, output, _ = self.capture_fixture(root)
+                with mock.patch.object(session, 'ROOT', root):
+                    native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                    (native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'lock-progress')
+                    lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+                    try:
+                        fcntl.flock(lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                        native.close()
+                    finally:
+                        os.close(lease)
+                    original = session.descriptor_digest if boundary == 'hash' else session.shutil.rmtree
+                    observations = []
+                    def inspect(*args, **kwargs):
+                        with session.NativeRegistration(native.registration) as transaction:
+                            observations.append(transaction.current['status'])
+                        return original(*args, **kwargs)
+                    owner, method = (session, 'descriptor_digest') if boundary == 'hash' else (session.shutil, 'rmtree')
+                    with mock.patch.object(owner, method, side_effect=inspect):
+                        state, reason, _ = session.retire_registered_native_sources(native.registration)
+                    self.assertEqual(state, 'retired', reason)
+                    self.assertTrue(observations)
+                    self.assertEqual(set(observations), {'passed'})
+
+    def test_retirement_preserves_a_registration_published_while_hashing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                source.write_bytes(b'preserve-newer')
+                lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+                try:
+                    fcntl.flock(lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    native.close()
+                finally:
+                    os.close(lease)
+                digest = session.descriptor_digest
+                advanced = None
+                def advance(descriptor):
+                    nonlocal advanced
+                    if advanced is None:
+                        with session.NativeRegistration(native.registration) as transaction:
+                            advanced = dict(transaction.current, fixtureNewer=True)
+                            transaction.publish(advanced)
+                    return digest(descriptor)
+                with mock.patch.object(session, 'descriptor_digest', side_effect=advance):
+                    state, _, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'deferred')
+                self.assertEqual(json.loads(native.registration.read_text()), advanced)
+                self.assertEqual(source.read_bytes(), b'preserve-newer')
+
     def test_registration_transactions_release_and_preserve_completed_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / 'NativeSources' / 'invocation.json'
