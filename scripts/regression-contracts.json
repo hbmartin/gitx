@@ -837,7 +837,7 @@
           "identifier": "GitXUITests/Milestone2WorkflowUITests/testExactCheckoutFetchesOnlyApprovedRefAndSwitchesToNamedBranch",
           "check": "ui",
           "role": "valid",
-          "oracle": "Position the native inspector window within the visible screen before asserting hittability; explicit confirmation fetches only the approved ref and switches to the named branch at the approved OID."
+          "oracle": "Position the native inspector window within the visible screen before asserting hittability; explicit confirmation fetches only the approved ref and switches to the named branch at the approved OID. Positioning requires the complete checkout action inside the display visible bounds and hittable, not an exact accessibility window-decoration edge; retain all native confirmation, HEAD, branch, approved-ref and foreign-ref assertions."
         },
         {
           "source": "GitXCore/Tests/GitXCoreTests/WorktreeEvidenceTests.swift",
@@ -1483,6 +1483,13 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Hold coordinator admission while the real overlay starts, invalidate before releasing registration, then require the bound-only interval and background refresh routing with no renewed session reader request. A controlled five-iteration run covers the cancellation path without timing-dependent incidental registration races."
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testActionRequiresCompleteVisibleBoundsInAccessibilityCoordinates",
+          "check": "ui",
+          "role": "boundary",
+          "oracle": "Independent visible-frame examples cover Cocoa-to-accessibility coordinate conversion, the measured visible checkout action, exact inside edges, two-point clipping, right/bottom clipping and empty actions. A window-decoration border does not replace action visibility as the native interaction oracle."
         }
       ]
     },
