@@ -30,6 +30,74 @@ func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
 let environment = ProcessInfo.processInfo.environment
 let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
+if mode == "log-index-retry" {
+    let root = URL(fileURLWithPath: directory!)
+    var files: [URL] = []
+    for pid in 1 ... 21 {
+        let file = root.appendingPathComponent("GitX-\(pid)-retry.stderr.log")
+        try Data([0, 255, 65]).write(to: file)
+        precondition(chmod(file.path, 0) == 0)
+        files.append(file)
+    }
+    let index = GitXManagedTestObserver.LogIndex(directory: directory)!
+    precondition(index.snapshot().isEmpty)
+    for file in files { precondition(chmod(file.path, 0o600) == 0) }
+    var seen = Set<String>()
+    var batches: [Int] = []
+    for _ in 0 ..< 4 {
+        let previous = index.retryInspectionCount
+        seen.formUnion(index.snapshot().map(\.identity))
+        let retried = index.retryInspectionCount - previous
+        precondition(retried <= 16)
+        batches.append(retried)
+    }
+    precondition(seen.count == 21, "permission restoration must retry without directory events")
+    // Active validated files may also be refreshed; only failed entries use the retry budget.
+    let log = root.appendingPathComponent("GitX-\(getpid())-record.stderr.log")
+    try Data([66]).write(to: log)
+    let record = try GitXTestProgressRecords.write(["schemaVersion": 1, "event": "capture", "state": "captured", "filename": log.lastPathComponent,
+        "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture"], prefix: "capture", directory: directory!)
+    precondition(chmod(record.path, 0) == 0)
+    let records = GitXManagedTestObserver.LogIndex(directory: directory, invocationID: "fixture", verificationSession: "fixture", progressDirectory: nil)!
+    precondition(records.snapshot().first { $0.file == log }?.finalized == false)
+    precondition(chmod(record.path, 0o600) == 0)
+    precondition(records.snapshot().first { $0.file == log }?.finalized == true, "capture metadata must retry")
+    index.close()
+    records.close()
+    checkpoint("retry recovered=\(seen.count) inspections=\(batches)")
+    exit(0)
+}
+if mode == "attachment-delivery" {
+    let file = URL(fileURLWithPath: directory!).appendingPathComponent("GitX-42-a.stderr.log")
+    try Data([0, 255, 65]).write(to: file)
+    let candidate = GitXManagedTestObserver.AttachmentState.inspect(file)!
+    let attachments = GitXManagedTestObserver.CaseAttachments(candidates: [])
+    let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+    let closed = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+    let count = Mutex(0)
+    DispatchQueue.global().async {
+        let caller = Thread.current
+        attachments.deliver(candidates: [candidate]) { excerpt in
+            precondition(Thread.current === caller)
+            precondition(excerpt.data == Data([0, 255, 65]))
+            count.withLock { $0 += 1 }
+            attachments.deliver(candidates: [candidate]) { _ in preconditionFailure("duplicate reentrant delivery") }
+            entered.signal()
+            _ = release.wait(timeout: .now() + 5)
+        }
+        finished.signal()
+    }
+    precondition(entered.wait(timeout: .now() + 5) == .success)
+    DispatchQueue.global().async { attachments.close(); closed.signal() }
+    let result = closed.wait(timeout: .now() + 5)
+    release.signal()
+    precondition(finished.wait(timeout: .now() + 5) == .success)
+    precondition(result == .success, "closure must not await external delivery")
+    attachments.deliver(candidates: [candidate]) { _ in preconditionFailure("delivery admitted after close") }
+    precondition(count.withLock { $0 } == 1)
+    checkpoint("closure completed while admitted delivery waited; caller thread and bytes preserved")
+    exit(0)
+}
 if mode == "log-index" {
     let root = URL(fileURLWithPath: directory!)
     for pid in 1 ... 20 {
@@ -220,6 +288,21 @@ checkpoint("after-raw-write")
                 if expected in line:
                     return
         self.fail(f"Missing checkpoint {expected!r}")
+
+    def test_transient_index_inspection_recovers_without_directory_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'log-index-retry'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('retry recovered=21', result.stdout)
+            print(json.dumps({'nativeRetryIndex': result.stdout.strip()}))
+
+    def test_attachment_close_does_not_wait_for_admitted_external_callbacks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'attachment-delivery'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('closure completed while admitted delivery waited', result.stdout)
 
     def test_log_index_reuses_quiescent_logs_and_serializes_case_ranges(self):
         with tempfile.TemporaryDirectory() as directory:
