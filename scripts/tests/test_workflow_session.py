@@ -24,6 +24,36 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_registration_transactions_release_and_preserve_completed_snapshots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'NativeSources' / 'invocation.json'
+            running = {'kind': 'gitx-native-invocation', 'schemaVersion': 1,
+                       'invocationID': 'invocation', 'status': 'running', 'collectionComplete': False}
+            session.persist_native_registration(path, running)
+            with session.NativeRegistration(path) as first:
+                self.assertEqual(first.current, running)
+                completed = dict(running, status='passed', collectionComplete=True)
+                first.publish(completed)
+            with session.NativeRegistration(path) as following:
+                self.assertEqual(following.current, completed)
+                with self.assertRaises(session.NativeRegistrationChanged):
+                    following.publish(running)
+            self.assertEqual(json.loads(path.read_text()), completed)
+
+    def test_completion_handoff_is_exclusive_and_keeps_the_final_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registration = pathlib.Path(directory) / 'invocation.json'
+            final = {'invocationID': 'invocation', 'status': 'passed', 'collectionComplete': True,
+                     'files': [{'name': 'GitX-42-a.stderr.log', 'bytes': 7, 'sha256': 'fixture'}]}
+            session.publish_native_completion(registration, final)
+            path = session.native_completion_path(registration)
+            original = path.read_bytes()
+            with self.assertRaises(FileExistsError):
+                session.publish_native_completion(registration, dict(final, status='failed'))
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(json.loads(original)['owner'], final)
+            self.assertEqual(list(path.parent.glob('.pending-*')), [])
+
     def test_native_capture_metadata_channels_fail_independently(self):
         for failed in ('primary', 'fallback'):
             with self.subTest(failed=failed), tempfile.TemporaryDirectory() as directory:
