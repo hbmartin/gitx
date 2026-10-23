@@ -228,6 +228,113 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: current), sentinel)
     }
 
+    func testRecoveredLogInspectionExcludesUnvalidatedPreCaseBytes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let file = directory.appendingPathComponent("GitX-42-a.stderr.log")
+        try Data("before-case".utf8).write(to: file)
+        XCTAssertEqual(chmod(file.path, 0), 0)
+        defer { _ = chmod(file.path, 0o600) }
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(directory: directory.path))
+        defer { index.close() }
+        let baseline = index.caseSnapshot()
+        XCTAssertTrue(baseline.candidates.isEmpty)
+        XCTAssertEqual(baseline.names, [file.lastPathComponent])
+        let session = GitXManagedTestObserver.CaseAttachments(candidates: baseline.candidates, preexistingNames: baseline.names)
+        XCTAssertEqual(chmod(file.path, 0o600), 0)
+        XCTAssertTrue(session.take(candidates: index.snapshot()).isEmpty)
+        let tail = Data([0, 255, 65])
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: tail)
+        try handle.close()
+        XCTAssertEqual(session.take(candidates: index.snapshot()).first?.data, tail)
+        session.close()
+    }
+
+    func testLogIndexRetriesUnreadableEntriesWithoutDirectoryChanges() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        var files: [URL] = []
+        defer { files.forEach { _ = chmod($0.path, 0o600) } }
+        for number in 1 ... 21 {
+            let file = directory.appendingPathComponent("GitX-\(number)-retry.stderr.log")
+            try Data([0, 255, 65]).write(to: file)
+            files.append(file)
+            XCTAssertEqual(chmod(file.path, 0), 0)
+        }
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(directory: directory.path))
+        defer { index.close() }
+        XCTAssertTrue(index.snapshot().isEmpty)
+        files.forEach { XCTAssertEqual(chmod($0.path, 0o600), 0) }
+        var recovered = Set<String>()
+        for _ in 0 ..< 4 {
+            let before = index.retryInspectionCount
+            recovered.formUnion(index.snapshot().map(\.identity))
+            XCTAssertLessThanOrEqual(index.retryInspectionCount - before, 16)
+        }
+        XCTAssertEqual(recovered.count, files.count)
+    }
+
+    func testLogIndexRetriesCaptureRecordsWithoutDirectoryChanges() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let file = directory.appendingPathComponent("GitX-\(getpid())-retry.stderr.log")
+        try Data([0, 255]).write(to: file)
+        let record = try GitXTestProgressRecords.write([
+            "schemaVersion": 1, "event": "capture", "state": "captured", "filename": file.lastPathComponent,
+            "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture",
+        ], prefix: "capture", directory: directory.path)
+        XCTAssertEqual(chmod(record.path, 0), 0)
+        defer { _ = chmod(record.path, 0o600) }
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(
+            directory: directory.path, invocationID: "fixture", verificationSession: "fixture", progressDirectory: nil
+        ))
+        defer { index.close() }
+        XCTAssertEqual(index.snapshot().first?.finalized, false)
+        XCTAssertEqual(chmod(record.path, 0o600), 0)
+        XCTAssertEqual(index.snapshot().first?.finalized, true)
+        XCTAssertLessThanOrEqual(index.retryInspectionCount, 16)
+    }
+
+    func testAttachmentClosureDoesNotWaitForAdmittedDelivery() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let file = directory.appendingPathComponent("GitX-42-a.stderr.log")
+        let bytes = Data([0, 255, 65])
+        try bytes.write(to: file)
+        let candidate = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(file))
+        let session = GitXManagedTestObserver.CaseAttachments(candidates: [])
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let closed = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+        let received = Mutex<Data?>(nil)
+        let onCaller = Mutex(false)
+        DispatchQueue.global().async {
+            let caller = Thread.current
+            session.deliver(candidates: [candidate]) { excerpt in
+                received.withLock { $0 = excerpt.data }
+                onCaller.withLock { $0 = Thread.current === caller }
+                entered.signal()
+                _ = release.wait(timeout: .now() + 5)
+            }
+            finished.signal()
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 5), .success)
+        DispatchQueue.global().async { session.close(); closed.signal() }
+        let closure = closed.wait(timeout: .now() + 5)
+        release.signal()
+        XCTAssertEqual(finished.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual(closure, .success)
+        XCTAssertEqual(received.withLock { $0 }, bytes)
+        XCTAssertTrue(onCaller.withLock { $0 })
+        session.deliver(candidates: [candidate]) { _ in XCTFail("Closed session admitted a new delivery") }
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+    }
+
     func testLogIndexCachesQuiescentFilesAndTracksInheritedWriterLeases() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

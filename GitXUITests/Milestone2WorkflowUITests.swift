@@ -1,6 +1,19 @@
 import AppKit
 import XCTest
 
+private nonisolated struct InspectorActionViewport {
+    let frame: CGRect
+
+    init(visibleFrame: CGRect, primaryDisplayTop: CGFloat) {
+        frame = CGRect(x: visibleFrame.minX, y: primaryDisplayTop - visibleFrame.maxY,
+                       width: visibleFrame.width, height: visibleFrame.height)
+    }
+
+    func contains(_ action: CGRect) -> Bool {
+        !action.isEmpty && frame.contains(action)
+    }
+}
+
 @MainActor
 // swift6-safety-justification: XCTest owns the test-case lifetime, while all mutable application and fixture state is confined to the main actor.
 final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
@@ -10,6 +23,19 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
+    }
+
+    func testActionRequiresCompleteVisibleBoundsInAccessibilityCoordinates() {
+        let viewport = InspectorActionViewport(
+            visibleFrame: CGRect(x: 0, y: 90, width: 2880, height: 1500), primaryDisplayTop: 1620
+        )
+        XCTAssertEqual(viewport.frame, CGRect(x: 0, y: 30, width: 2880, height: 1500))
+        XCTAssertTrue(viewport.contains(CGRect(x: 880.5, y: 781.5, width: 100.5, height: 26)))
+        XCTAssertTrue(viewport.contains(CGRect(x: 0, y: 30, width: 100, height: 26)))
+        XCTAssertFalse(viewport.contains(CGRect(x: -2, y: 30, width: 100, height: 26)))
+        XCTAssertFalse(viewport.contains(CGRect(x: 2800, y: 30, width: 100, height: 26)))
+        XCTAssertFalse(viewport.contains(CGRect(x: 0, y: 1520, width: 100, height: 26)))
+        XCTAssertFalse(viewport.contains(.zero))
     }
 
     override nonisolated func tearDown() {
@@ -196,8 +222,8 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             elementText(inspectorTitle),
             "Contributor checkout through the native Pull Request inspector"
         )
-        try positionWindowForInspectorActions(in: app)
         let checkout = app.buttons["GitX.PullRequest.Checkout"]
+        try positionWindowForInspectorAction(checkout, in: app)
         try requireHittable(checkout, timeout: 5)
         retainDiagnosticScreenshot(
             named: "M2-05-Pull-Request-Overview-And-Checkout",
@@ -404,18 +430,22 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         return app
     }
 
-    private func positionWindowForInspectorActions(in app: XCUIApplication) throws {
+    private func positionWindowForInspectorAction(_ action: XCUIElement, in app: XCUIApplication) throws {
         let window = app.windows.firstMatch
-        let visibleFrame = try XCTUnwrap(NSScreen.main).visibleFrame
-        let displacement = visibleFrame.minX - window.frame.minX
-        guard abs(displacement) > 2 else { return }
-        // The inspector can grow a window beyond a small virtual display.
-        // Move its leading edge into view before testing its native actions.
-        let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0))
-            .withOffset(CGVector(dx: 0, dy: 12))
-        titlebar.click(forDuration: 0.2, thenDragTo: titlebar.withOffset(CGVector(dx: displacement, dy: 0)))
+        let viewport = try InspectorActionViewport(
+            visibleFrame: XCTUnwrap(NSScreen.main).visibleFrame,
+            primaryDisplayTop: XCTUnwrap(NSScreen.screens.first).frame.maxY
+        )
+        XCTAssertTrue(action.exists)
+        if !viewport.contains(action.frame) {
+            // Move the action into view; window decoration need not land on an exact pixel.
+            let displacement = viewport.frame.midX - action.frame.midX
+            let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: 12))
+            titlebar.click(forDuration: 0.2, thenDragTo: titlebar.withOffset(CGVector(dx: displacement, dy: 0)))
+        }
         let positioned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            abs(window.frame.minX - visibleFrame.minX) < 2
+            viewport.contains(action.frame) && action.isHittable
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: 5), .completed)
     }

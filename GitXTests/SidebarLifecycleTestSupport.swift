@@ -100,13 +100,52 @@ enum SidebarLifecycleTestSupport {
             XCTAssertEqual(currentBranches.sortedChildren.map(ObjectIdentifier.init), retainedRows.map(ObjectIdentifier.init))
             XCTAssertTrue(sidebar.selectedItem() === selected)
         }
+        // Outside a momentary mouse-tracking event AppKit reports -1 even after
+        // selectedSegment is assigned. Model the clicked state for this programmatic
+        // dispatch, then restore the nib's actual momentary behavior.
+        let trackingMode = remoteControls.trackingMode
+        XCTAssertEqual(trackingMode, .momentary)
+        remoteControls.trackingMode = .selectOne
+        defer { remoteControls.trackingMode = trackingMode }
+        remoteControls.selectedSegment = 0
+        XCTAssertEqual(remoteControls.selectedSegment, 0)
+        XCTAssertEqual(remoteControls.isEnabled, !afterClose)
+        // A closed direct invocation must be refused even with a valid recipient.
+        sidebar.nextResponder = recorder
+        XCTAssertTrue(sidebar.nextResponder === recorder)
         if afterClose {
             sidebar.fetchPullPushAction(remoteControls)
         } else {
-            remoteControls.selectedSegment = 0
             XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(remoteControls.action), to: remoteControls.target, from: remoteControls))
         }
         XCTAssertEqual(recorder.addRemoteRequests, afterClose ? 0 : 1)
+    }
+
+    static func assertClosingUnloadedSidebarRemainsTerminal(repository: NSObject) throws {
+        let repository = try XCTUnwrap(repository as? GitX.PBGitRepository)
+        let owner: NSObject = try XCTUnwrap(PBGitSidebarController(repository: repository, superController: nil))
+        let sidebar = try XCTUnwrap(owner as? GitX.PBGitSidebarController)
+        let revision = repository.currentBranch
+        let sort = GitX.ApplicationSettings.branchSort
+        XCTAssertFalse(sidebar.isViewLoaded)
+        XCTAssertNil(sidebar.sourceView)
+        sidebar.closeView()
+        sidebar.closeView()
+        let recipient = RemoteRoutingRecorder()
+        sidebar.nextResponder = recipient
+        sidebar.selectCurrentBranch()
+        sidebar.reloadSidebarPresentation()
+        sidebar.toggleBranchSort(sidebar)
+        sidebar.fetchPullPushAction(nil)
+        sidebar.showForgeAttention(nil)
+        XCTAssertFalse(sidebar.browseSelectedWorktreeHistory())
+        XCTAssertEqual(recipient.addRemoteRequests, 0)
+        XCTAssertFalse(sidebar.isViewLoaded, "Closing before nib load must not mount content on later actions")
+        XCTAssertNil(sidebar.sourceView)
+        XCTAssertNil(sidebar.selectedItem())
+        XCTAssertEqual(sidebar.items.count, 0)
+        XCTAssertTrue(repository.currentBranch === revision)
+        XCTAssertEqual(GitX.ApplicationSettings.branchSort, sort)
     }
 
     static func assertClosedNavigationIsInert(_ owner: NSObject) throws {

@@ -1086,6 +1086,73 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         await coordinator.invalidate()
     }
 
+    func testInvalidationUnregistersAnApplicationRegistrationThatReturnsAfterCancellation() async throws {
+        let credential = try credentialReference()
+        let binding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: credential.accountID
+        )
+        let target = try ForgeRefreshTarget(authentication: .credential(credential), repository: repository)
+        let recorder = ForgeApplicationRefreshRecorder()
+        let coordinator = ForgeApplicationRefreshCoordinator(
+            bindingProvider: nil,
+            resolveTarget: { _ in nil },
+            backgroundRefresh: { target, binding, reason in
+                await recorder.recordBackground(target: target, binding: binding, reason: reason)
+            },
+            sleep: { _ in throw CancellationError() }
+        )
+        await coordinator.start()
+        let entered = expectation(description: "coordinator holds registration admission")
+        let release = DispatchSemaphore(value: 0)
+        let barrier = Task { await coordinator.holdRegistrationAdmission(entered: entered, release: release) }
+        defer { release.signal() }
+        await fulfillment(of: [entered], timeout: 1)
+
+        let reader = try OverlayReaderDouble(
+            factsMode: .success(remote(facts(description: "Initial"))),
+            history: [:]
+        )
+        let context = RepositoryForgeOverlayContext(
+            access: .account(login: "octocat"),
+            authentication: .credential(credential),
+            reader: reader,
+            cache: OverlayCacheDouble(facts: nil),
+            cooldowns: ForgeCredentialCooldownRegistry(),
+            binding: binding,
+            refreshCoordinator: coordinator
+        )
+        let fixedNow = now
+        let session = RepositoryForgeOverlaySession(
+            repository: repository,
+            loader: RepositoryForgeOverlayLoader(bootstrap: .ready(repository, context), now: { fixedNow }),
+            scheduler: OverlaySchedulerDouble(),
+            networkMonitor: OverlayNetworkMonitorDouble()
+        )
+        session.start()
+        try await waitForFactsRequests(1, reader: reader)
+        session.invalidate()
+        release.signal()
+        let released = await barrier.value
+        XCTAssertTrue(released, "Registration must remain held until explicit release")
+
+        // Registration leaves the bound target behind; only its cancelled client must disappear.
+        let deadline = ContinuousClock.now + .seconds(1)
+        while await coordinator.interval(for: target) != ForgeRefreshPolicy.boundRepositoryInterval,
+              ContinuousClock.now < deadline
+        {
+            await Task.yield()
+        }
+        let interval = await coordinator.interval(for: target)
+        XCTAssertEqual(interval, ForgeRefreshPolicy.boundRepositoryInterval)
+        await coordinator.requestNetworkRestorationRefresh()
+        try await waitForBackgroundRefreshCount(1, recorder: recorder)
+        let requests = await reader.factsRequestCount()
+        XCTAssertEqual(requests, 1, "A late registration must not revive the invalidated session")
+        await coordinator.invalidate()
+    }
+
     private func makeSession(
         reader: any RepositoryForgeOverlayReading,
         cache: any RepositoryForgeOverlayCaching,
@@ -1326,6 +1393,14 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
             completeness: .complete,
             cooldownDeadline: nil
         )
+    }
+}
+
+private extension ForgeApplicationRefreshCoordinator {
+    /// Hold only this actor's admission, leaving the session's main actor free to cancel.
+    func holdRegistrationAdmission(entered: XCTestExpectation, release: DispatchSemaphore) -> Bool {
+        entered.fulfill()
+        return release.wait(timeout: .now() + 1) == .success
     }
 }
 
