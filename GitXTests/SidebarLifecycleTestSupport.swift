@@ -100,10 +100,22 @@ enum SidebarLifecycleTestSupport {
             XCTAssertEqual(currentBranches.sortedChildren.map(ObjectIdentifier.init), retainedRows.map(ObjectIdentifier.init))
             XCTAssertTrue(sidebar.selectedItem() === selected)
         }
+        // Outside a momentary mouse-tracking event AppKit reports -1 even after
+        // selectedSegment is assigned. Model the clicked state for this programmatic
+        // dispatch, then restore the nib's actual momentary behavior.
+        let trackingMode = remoteControls.trackingMode
+        XCTAssertEqual(trackingMode, .momentary)
+        remoteControls.trackingMode = .selectOne
+        defer { remoteControls.trackingMode = trackingMode }
+        remoteControls.selectedSegment = 0
+        XCTAssertEqual(remoteControls.selectedSegment, 0)
+        XCTAssertEqual(remoteControls.isEnabled, !afterClose)
+        // A closed direct invocation must be refused even with a valid recipient.
+        sidebar.nextResponder = recorder
+        XCTAssertTrue(sidebar.nextResponder === recorder)
         if afterClose {
             sidebar.fetchPullPushAction(remoteControls)
         } else {
-            remoteControls.selectedSegment = 0
             XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(remoteControls.action), to: remoteControls.target, from: remoteControls))
         }
         XCTAssertEqual(recorder.addRemoteRequests, afterClose ? 0 : 1)
