@@ -58,7 +58,9 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
 
     func testCaseWillStart(_ testCase: XCTestCase) {
         let index = logIndex.withLock { $0 }
-        let session = CaseAttachments(candidates: index?.snapshot() ?? [])
+        let baseline = index?.caseSnapshot()
+        let session = CaseAttachments(candidates: baseline?.candidates ?? [], preexistingNames: baseline?.names ?? [],
+                                      needsBaselineRecovery: baseline?.complete == false)
         attachmentStates.withLock { $0[ObjectIdentifier(testCase)] = session }
         // Take before recording: XCTest synchronously calls observers for the issue.
         if let failure = startup.withLock({ $0.takeFailure() }) {
@@ -119,6 +121,12 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
             var revision = 0
             var inspections = 0
             var retryInspections = 0
+        }
+
+        struct CaseBaseline: Sendable {
+            let candidates: [AttachmentState.Candidate]
+            let names: Set<String>
+            let complete: Bool
         }
 
         private struct Inputs {
@@ -261,23 +269,27 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
         }
 
         func snapshot() -> [AttachmentState.Candidate] {
+            caseSnapshot().candidates
+        }
+
+        func caseSnapshot() -> CaseBaseline {
             // Per-index scans do I/O outside the global case-state lock. Closure
             // only marks state and cancels the watcher; it never waits for a scan.
             scans.lock()
             defer { scans.unlock() }
-            guard let inputs = inputs() else { return [] }
+            guard let inputs = inputs() else { return CaseBaseline(candidates: [], names: [], complete: false) }
             defer { Darwin.close(inputs.descriptor) }
             var info = stat()
             var pathInfo = stat()
             guard fstat(inputs.descriptor, &info) == 0,
                   directory.withCString({ lstat($0, &pathInfo) }) == 0,
                   (pathInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR), pathInfo.st_uid == geteuid(),
-                  identity == "\(pathInfo.st_dev):\(pathInfo.st_ino)" else { return [] }
+                  identity == "\(pathInfo.st_dev):\(pathInfo.st_ino)" else { return CaseBaseline(candidates: [], names: [], complete: false) }
             let stamp = FileMetadata.modified(info)
             let discover = inputs.dirty || stamp != inputs.stamp
             let names: Set<String>
             if discover {
-                guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return [] }
+                guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return CaseBaseline(candidates: [], names: [], complete: false) }
                 names = Set(entries.filter { $0.hasSuffix(".stderr.log") })
             } else {
                 names = inputs.names
@@ -314,7 +326,7 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                 }
             }
             return state.withLock { value in
-                guard !value.closed else { return [] }
+                guard !value.closed else { return CaseBaseline(candidates: [], names: [], complete: false) }
                 value.inspections += inspections
                 value.retryInspections += retry.count
                 if value.revision == inputs.revision {
@@ -325,7 +337,7 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                     value.dirty = false
                     value.revision += 1
                 }
-                return Array(known.values)
+                return CaseBaseline(candidates: Array(known.values), names: names, complete: true)
             }
         }
 
@@ -354,8 +366,9 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
 
         private let state: Mutex<State>
 
-        init(candidates: [AttachmentState.Candidate]) {
-            state = Mutex(State(value: AttachmentState(candidates: candidates)))
+        init(candidates: [AttachmentState.Candidate], preexistingNames: Set<String> = [], needsBaselineRecovery: Bool = false) {
+            state = Mutex(State(value: AttachmentState(candidates: candidates, preexistingNames: preexistingNames,
+                                                       needsBaselineRecovery: needsBaselineRecovery)))
         }
 
         func take(candidates: [AttachmentState.Candidate]) -> [Excerpt] {
@@ -390,6 +403,8 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
         private(set) var retainedBytes = 0
         private var offsets: [String: Int64] = [:]
         private var baseline: [String: Int64] = [:]
+        private var unresolvedBaselineNames: Set<String>
+        private var needsBaselineRecovery: Bool
 
         struct Candidate: Sendable {
             let file: URL
@@ -399,10 +414,13 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
             let finalized: Bool
         }
 
-        init(in directory: String? = nil, candidates: [Candidate]? = nil) {
-            for candidate in candidates ?? Self.candidates(in: directory) {
+        init(in directory: String? = nil, candidates: [Candidate]? = nil, preexistingNames: Set<String> = [], needsBaselineRecovery: Bool = false) {
+            let initial = candidates ?? Self.candidates(in: directory)
+            for candidate in initial {
                 baseline[candidate.identity] = candidate.end
             }
+            unresolvedBaselineNames = preexistingNames.subtracting(initial.map { $0.file.lastPathComponent })
+            self.needsBaselineRecovery = needsBaselineRecovery
             offsets = baseline
         }
 
@@ -431,7 +449,18 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
 
         mutating func take(in directory: String?, candidates: [Candidate]? = nil) -> [Excerpt] {
             guard retainedBytes < Self.perCaseLimit else { return [] }
-            let candidates = (candidates ?? Self.candidates(in: directory)).filter { $0.end > (offsets[$0.identity] ?? 0) }.sorted {
+            let available = candidates ?? Self.candidates(in: directory)
+            for candidate in available where needsBaselineRecovery || unresolvedBaselineNames.contains(candidate.file.lastPathComponent) {
+                // The old prefix could not be inspected at case start. Never
+                // attach unproven pre-case bytes; complete raw logs remain archived.
+                baseline[candidate.identity] = candidate.end
+                offsets[candidate.identity] = candidate.end
+                unresolvedBaselineNames.remove(candidate.file.lastPathComponent)
+            }
+            if !available.isEmpty {
+                needsBaselineRecovery = false
+            }
+            let candidates = available.filter { $0.end > (offsets[$0.identity] ?? 0) }.sorted {
                 let leftIsNew = baseline[$0.identity] == nil
                 let rightIsNew = baseline[$1.identity] == nil
                 if leftIsNew != rightIsNew {

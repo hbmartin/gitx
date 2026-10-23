@@ -30,6 +30,34 @@ func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
 let environment = ProcessInfo.processInfo.environment
 let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
+if mode == "attachment-recovered-baseline" {
+    let file = URL(fileURLWithPath: directory!).appendingPathComponent("GitX-42-a.stderr.log")
+    try Data("before-case".utf8).write(to: file)
+    let attachments = GitXManagedTestObserver.CaseAttachments(candidates: [], preexistingNames: [file.lastPathComponent])
+    let initial = GitXManagedTestObserver.AttachmentState.inspect(file)!
+    precondition(attachments.take(candidates: [initial]).isEmpty, "unvalidated pre-case bytes must not become a new launch")
+    let writer = try FileHandle(forWritingTo: file)
+    try writer.seekToEnd()
+    let tail = Data([0, 255, 65])
+    try writer.write(contentsOf: tail)
+    try writer.close()
+    precondition(attachments.take(candidates: [GitXManagedTestObserver.AttachmentState.inspect(file)!]).first?.data == tail)
+    let index = GitXManagedTestObserver.LogIndex(directory: directory)!
+    precondition(chmod(directory!, 0) == 0)
+    let failed = index.caseSnapshot()
+    precondition(!failed.complete)
+    let uncertain = GitXManagedTestObserver.CaseAttachments(candidates: failed.candidates, preexistingNames: failed.names, needsBaselineRecovery: true)
+    precondition(chmod(directory!, 0o700) == 0)
+    precondition(uncertain.take(candidates: index.snapshot()).isEmpty)
+    let append = try FileHandle(forWritingTo: file)
+    try append.seekToEnd()
+    try append.write(contentsOf: tail)
+    try append.close()
+    precondition(uncertain.take(candidates: index.snapshot()).first?.data == tail)
+    index.close()
+    checkpoint("recovered baseline excludes old bytes and retains exact new binary tail")
+    exit(0)
+}
 if mode == "log-index-retry" {
     let root = URL(fileURLWithPath: directory!)
     var files: [URL] = []
@@ -288,6 +316,13 @@ checkpoint("after-raw-write")
                 if expected in line:
                     return
         self.fail(f"Missing checkpoint {expected!r}")
+
+    def test_recovered_inspection_never_includes_unvalidated_pre_case_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'attachment-recovered-baseline'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('recovered baseline excludes old bytes', result.stdout)
 
     def test_transient_index_inspection_recovers_without_directory_events(self):
         with tempfile.TemporaryDirectory() as directory:

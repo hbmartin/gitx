@@ -228,6 +228,31 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: current), sentinel)
     }
 
+    func testRecoveredLogInspectionExcludesUnvalidatedPreCaseBytes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let file = directory.appendingPathComponent("GitX-42-a.stderr.log")
+        try Data("before-case".utf8).write(to: file)
+        XCTAssertEqual(chmod(file.path, 0), 0)
+        defer { _ = chmod(file.path, 0o600) }
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(directory: directory.path))
+        defer { index.close() }
+        let baseline = index.caseSnapshot()
+        XCTAssertTrue(baseline.candidates.isEmpty)
+        XCTAssertEqual(baseline.names, [file.lastPathComponent])
+        let session = GitXManagedTestObserver.CaseAttachments(candidates: baseline.candidates, preexistingNames: baseline.names)
+        XCTAssertEqual(chmod(file.path, 0o600), 0)
+        XCTAssertTrue(session.take(candidates: index.snapshot()).isEmpty)
+        let tail = Data([0, 255, 65])
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: tail)
+        try handle.close()
+        XCTAssertEqual(session.take(candidates: index.snapshot()).first?.data, tail)
+        session.close()
+    }
+
     func testLogIndexRetriesUnreadableEntriesWithoutDirectoryChanges() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
