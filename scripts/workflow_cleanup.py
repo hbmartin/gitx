@@ -1377,12 +1377,22 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     if reason:
                         raise session.NativeRetirementDeferred(reason)
                     yield
-            try:
-                state, reason, registered = session.retire_registered_native_sources(
-                    item["registration"], checkout=root, authorize=authorize_native_retirement,
-                    retry_retained=retry_retained_native)
-            except session.ResourceBusy:
-                state, reason, registered = "deferred", "retirement-proof-held", None
+            def admit_native_retirement():
+                # Cheap refusal before source/archive I/O. This is not authority:
+                # every mutation still takes a fresh proof lease and full gate.
+                if read_json(pending_path(root)) != pending:
+                    return "newer commit queued"
+                if session.git(root, "rev-parse", "HEAD").strip() != pending["head"]:
+                    return "commit-or-inputs-changed"
+                if report["discoveryErrors"]:
+                    return "protection-discovery-incomplete"
+                source = pathlib.Path(item["owner"]["sourceDirectory"])
+                if any(overlap(source, path) for path in report["protectedPaths"]):
+                    return "protected native source"
+                return None
+            state, reason, registered = session.retire_registered_native_sources(
+                item["registration"], checkout=root, authorize=authorize_native_retirement,
+                admit=admit_native_retirement, retry_retained=retry_retained_native)
             report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason,
                                                "outcome": (registered or {}).get("retirementOutcome")})
         reports = directory / "reports"

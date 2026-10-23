@@ -55,7 +55,7 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(report['reason'], 'native retirement deferred')
             self.assertEqual(report['nativeRetirement'][0]['state'], 'deferred')
             self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root)), pending)
-            self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'deferred')
+            self.assertEqual(cleanup.read_json(native.registration)['retirementState'], 'pending', 'Held writer metadata remains untouched')
             self.assertEqual(cleanup.read_json(report['report'])['nativeRetirement'], report['nativeRetirement'])
             self.assertEqual(source.read_bytes(), original)
             release()
@@ -76,7 +76,7 @@ class CleanupTests(unittest.TestCase):
             with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('discovery hashed archive bytes')):
                 discovered = session.registered_native_sources(self.root)
             self.assertEqual([path for path, _ in discovered], [native.registration])
-            self.assertEqual(discovered[0][1]['retirementState'], 'deferred')
+            self.assertEqual(discovered[0][1], cleanup.read_json(native.registration))
 
     def test_permanently_retained_native_evidence_does_not_poison_later_cleanup(self):
         for condition in ('incomplete', 'archive-missing', 'source-missing', 'archive-symlink', 'source-symlink'):
@@ -123,8 +123,9 @@ class CleanupTests(unittest.TestCase):
                 nonlocal completed
                 report = inventory(*args, **kwargs)
                 record = cleanup.read_json(native.registration)
-                state, reason = session.retire_native_sources(record, checkout=self.root,
+                outcome = session.retire_native_sources(record, checkout=self.root,
                     persist=lambda value: session.persist_native_registration(native.registration, value))
+                state, reason = outcome.state, outcome.reason
                 self.assertEqual(state, 'retired', reason)
                 record.update(retirementState=state, retirementReason=reason)
                 session.persist_native_registration(native.registration, record)
@@ -240,13 +241,14 @@ class CleanupTests(unittest.TestCase):
                 state, reason, _ = session.retire_registered_native_sources(native.registration, checkout=self.root, authorize=authorize)
             self.assertEqual(state, 'retired', reason)
             self.assertEqual([counts[inode] for inode in archive_inodes], [1])
-            self.assertEqual(len(calls), 2, 'Only rename and deletion require authorization')
+            self.assertEqual(len(calls), 3, 'Rename, deletion and outcome publication each require fresh authorization')
 
     def test_native_writer_lease_rejects_retirement_before_archive_hashing(self):
         with self.native_archive_waiting_for_retirement() as (native, source, _):
             owner = cleanup.read_json(native.registration)
             with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('blocked archive rehashed')):
-                state, reason = session.retire_native_sources(owner, checkout=self.root)
+                outcome = session.retire_native_sources(owner, checkout=self.root)
+                state, reason = outcome.state, outcome.reason
             self.assertEqual((state, reason), ('deferred', 'producer-lease-held'))
             self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
 
@@ -385,8 +387,9 @@ else:
             with self.subTest(variant=variant), self.native_archive_waiting_for_retirement() as (native, source, release):
                 release()
                 owner = cleanup.read_json(native.registration)
-                state, _ = session.retire_native_sources(owner, checkout=self.root,
+                outcome = session.retire_native_sources(owner, checkout=self.root,
                     persist=lambda value: session.persist_native_registration(native.registration, value))
+                state = outcome.state
                 self.assertEqual(state, 'retired')
                 durable = cleanup.read_json(native.registration)
                 if variant == 'legacy':
@@ -403,8 +406,9 @@ else:
                     (native.archive / source.name).write_bytes(b'changed')
                 else:
                     pathlib.Path(durable['retirementPath']).symlink_to(native.archive, target_is_directory=True)
-                state, reason = session.retire_native_sources(durable, checkout=self.root,
+                outcome = session.retire_native_sources(durable, checkout=self.root,
                     persist=lambda value: session.persist_native_registration(native.registration, value))
+                state, reason = outcome.state, outcome.reason
                 self.assertEqual(state, 'retired' if variant == 'legacy' else 'retained', reason)
                 self.assertTrue(native.archive.exists())
 
@@ -418,8 +422,9 @@ else:
                     raise OSError(5, 'fixture-directory-sync')
                 return sync(path)
             with mock.patch.object(session, 'sync_native_directory', side_effect=fail_registration_sync):
-                state, _ = session.retire_native_sources(owner, checkout=self.root,
+                outcome = session.retire_native_sources(owner, checkout=self.root,
                     persist=lambda value: session.persist_native_registration(native.registration, value))
+                state = outcome.state
             self.assertEqual(state, 'deferred')
             self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
 
@@ -456,7 +461,11 @@ else:
                         self.assertEqual(cleanup.pending_path(self.root).exists(), expected == 'deferred')
                         self.assertTrue(source.exists())
                         self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
-                        self.assertEqual(cleanup.read_json(native.registration)['retirementState'], expected)
+                        self.assertEqual(cleanup.read_json(native.registration),
+                                         dict(original_owner, collectionComplete=False, retirementState='retained',
+                                              retirementReason=report['nativeRetirement'][0]['reason'],
+                                              retirementOutcome=report['nativeRetirement'][0]['outcome'])
+                                         if condition == 'incomplete' else original_owner)
                     finally:
                         # subTest suppresses assertions before the next iteration; restore even on that path.
                         session.atomic_json(native.registration, original_owner)
@@ -472,7 +481,7 @@ else:
             def commit_and_queue_during_retirement(*args, **kwargs):
                 nonlocal newer
                 outcome = retire(*args, **kwargs)
-                self.assertEqual(outcome[0], 'retired')
+                self.assertEqual(outcome.state, 'retired')
                 self.git('commit', '--allow-empty', '-qm', 'new work during native retirement')
                 # Hashing/retirement no longer owns the broad proof lease. A real
                 # queue writer can enter here before cleanup's final queue check.
@@ -506,7 +515,8 @@ else:
             self.assertTrue(any(item['paths'] == [str(native.root)] for item in report['nativeSources']))
             owner = discovered[0][1]
             owner['collectionComplete'] = False
-            state, _ = session.retire_native_sources(owner, checkout=self.root)
+            outcome = session.retire_native_sources(owner, checkout=self.root)
+            state = outcome.state
             self.assertEqual(state, 'deferred')
             self.assertEqual(source.read_bytes(), b'preserve-native')
         finally:

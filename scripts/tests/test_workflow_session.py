@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import contextlib
 import errno
 import fcntl
 import os
@@ -24,6 +25,174 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def completed_native_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, output, _ = self.capture_fixture(root)
+            with mock.patch.object(session, 'ROOT', root):
+                native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
+                source = native.stderr_directory / 'GitX-42-a.stderr.log'
+                source.write_bytes(b'finalization-\x00\xff')
+                lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+                try:
+                    fcntl.flock(lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    native.close()
+                finally:
+                    os.close(lease)
+                yield native, source
+
+    def test_retirement_admission_refusal_does_not_hash_or_publish(self):
+        for reason in ('newer commit queued', 'commit-or-inputs-changed', 'protected native source', 'protection-discovery-incomplete'):
+            with self.subTest(reason=reason), self.completed_native_fixture() as (native, source):
+                before = native.registration.read_bytes()
+                with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('refused admission hashed files')):
+                    state, actual, _ = session.retire_registered_native_sources(native.registration, admit=lambda: reason)
+                self.assertEqual((state, actual), ('deferred', reason))
+                self.assertEqual(native.registration.read_bytes(), before)
+                self.assertTrue(source.exists())
+
+    def test_concurrent_retirement_is_nonblocking_without_blocking_registry_publishers(self):
+        with self.completed_native_fixture() as (native, _):
+            digest = session.descriptor_digest
+            results = []
+            def overlap(descriptor):
+                if not results:
+                    results.append(session.retire_registered_native_sources(native.registration))
+                    with session.NativeRegistration(native.registration) as writer:
+                        self.assertEqual(writer.current['status'], 'passed')
+                return digest(descriptor)
+            with mock.patch.object(session, 'descriptor_digest', side_effect=overlap):
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual(results[0][:2], ('deferred', 'registration-busy'))
+
+    def test_completion_recovery_hashes_each_source_and_archive_once(self):
+        with self.completed_native_fixture() as (native, source):
+            before = json.loads(native.registration.read_text())
+            before.update(status='running', collectionComplete=False, files=[])
+            session.atomic_json(native.registration, before)
+            expected = {source.stat().st_ino, (native.archive / source.name).stat().st_ino}
+            digest, counts, durations = session.descriptor_digest, {}, []
+            def measured(descriptor):
+                inode = os.fstat(descriptor).st_ino
+                counts[inode] = counts.get(inode, 0) + 1
+                start = time.monotonic()
+                try:
+                    return digest(descriptor)
+                finally:
+                    durations.append(time.monotonic() - start)
+            with mock.patch.object(session, 'descriptor_digest', side_effect=measured):
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual({inode: counts[inode] for inode in expected}, dict.fromkeys(expected, 1))
+            print(json.dumps({'completionRecovery': {'digestCalls': counts, 'digestSeconds': durations}}))
+
+    def test_finalization_repairs_both_checkpoint_orders_and_explicit_retained_retry(self):
+        for variant in ('registry-running', 'source-running', 'source-missing', 'retained-repaired'):
+            with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):
+                registered = json.loads(native.registration.read_text())
+                checkpoint = native.root / 'native-owner.json'
+                if variant in ('registry-running', 'retained-repaired'):
+                    registered.update(status='running', collectionComplete=False, files=[])
+                    if variant == 'retained-repaired':
+                        registered.update(retirementState='retained', retirementReason='completion-invalid')
+                    session.atomic_json(native.registration, registered)
+                elif variant == 'source-running':
+                    owner = json.loads(checkpoint.read_text())
+                    owner.update(status='running', collectionComplete=False, files=[])
+                    session.atomic_json(checkpoint, owner)
+                else:
+                    checkpoint.unlink()
+                state, reason, result = session.retire_registered_native_sources(native.registration, retry_retained=True)
+                self.assertEqual(state, 'retired', reason)
+                self.assertTrue(result['collectionComplete'])
+                self.assertFalse(native.root.exists())
+                self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_finalization_never_classifies_or_mutates_an_active_writer(self):
+        for inherited in (False, True):
+            with self.subTest(inherited=inherited), self.completed_native_fixture() as (native, source):
+                before = json.loads(native.registration.read_text())
+                before.update(status='running', collectionComplete=False, files=[])
+                session.atomic_json(native.registration, before)
+                session.atomic_json(session.native_completion_path(native.registration), [])
+                lease = os.open(source if inherited else native.root / 'invocation.lease', os.O_RDONLY)
+                try:
+                    fcntl.flock(lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    state, reason, _ = session.retire_registered_native_sources(native.registration)
+                    self.assertEqual(state, 'deferred', reason)
+                    self.assertEqual(json.loads(native.registration.read_text()), before)
+                finally:
+                    os.close(lease)
+                # A live PID with no usable final handoff still cannot be poisoned.
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'deferred', reason)
+                self.assertEqual(json.loads(native.registration.read_text()), before)
+
+    def test_refused_authorization_cannot_publish_completion_or_retained_state(self):
+        for fault in ('valid-completion', 'invalid-archive', 'changed-owner'):
+            with self.subTest(fault=fault), self.completed_native_fixture() as (native, source):
+                before = json.loads(native.registration.read_text())
+                before.update(status='running', collectionComplete=False, files=[])
+                session.atomic_json(native.registration, before)
+                checkpoint = native.root / 'native-owner.json'
+                owner = json.loads(checkpoint.read_text())
+                owner.update(status='running', collectionComplete=False, files=[])
+                if fault == 'changed-owner':
+                    owner['invocationID'] = 'foreign'
+                session.atomic_json(checkpoint, owner)
+                if fault == 'invalid-archive':
+                    (native.archive / source.name).write_bytes(b'changed')
+                source_before = checkpoint.read_bytes()
+                @contextlib.contextmanager
+                def refuse():
+                    raise session.NativeRetirementDeferred('newer commit queued')
+                    yield
+                state, reason, _ = session.retire_registered_native_sources(native.registration, authorize=refuse)
+                self.assertEqual((state, reason), ('deferred', 'newer commit queued'))
+                self.assertEqual(json.loads(native.registration.read_text()), before)
+                self.assertEqual(checkpoint.read_bytes(), source_before)
+                self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+
+    def test_finalization_publishes_registration_before_repair_and_recovers_repair_failure(self):
+        with self.completed_native_fixture() as (native, source):
+            checkpoint = native.root / 'native-owner.json'
+            owner = json.loads(checkpoint.read_text())
+            owner.update(status='running', collectionComplete=False, files=[])
+            session.atomic_json(checkpoint, owner)
+            registry = json.loads(native.registration.read_text())
+            registry.update(status='running', collectionComplete=False, files=[])
+            session.atomic_json(native.registration, registry)
+            publish = session.atomic_json
+            def fail_repair(path, value):
+                if pathlib.Path(path) == checkpoint:
+                    self.assertEqual(json.loads(native.registration.read_text())['status'], 'passed')
+                    raise OSError(errno.ENOSPC, 'repair-full')
+                return publish(path, value)
+            with mock.patch.object(session, 'atomic_json', side_effect=fail_repair):
+                state, _, result = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'deferred')
+            self.assertEqual(result['retirementOutcome']['errno'], errno.ENOSPC)
+            self.assertTrue(session.native_completion_path(native.registration).exists())
+            state, reason, _ = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_permanent_deletion_permissions_require_explicit_repaired_retry(self):
+        for code in (errno.EACCES, errno.EPERM):
+            with self.subTest(errno=code), self.completed_native_fixture() as (native, source):
+                with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError(code, 'manual-repair')):
+                    state, reason, result = session.retire_registered_native_sources(native.registration)
+                self.assertEqual((state, reason), ('retained', 'deletion-unavailable'))
+                self.assertEqual(result['retirementOutcome']['errno'], code)
+                quarantine = pathlib.Path(result['retirementPath'])
+                self.assertTrue(quarantine.exists())
+                self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retained')
+                state, reason, _ = session.retire_registered_native_sources(native.registration, retry_retained=True)
+                self.assertEqual(state, 'retired', reason)
+                self.assertFalse(quarantine.exists())
+
     def test_retirement_does_not_hold_registration_lock_during_hash_or_deletion(self):
         for boundary in ('hash', 'delete'):
             with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as directory:
@@ -1470,7 +1639,8 @@ sys.exit(int(sys.argv[1]))
                     child.wait(timeout=5)
 
                     owner = json.loads(native.registration.read_text())
-                    state, reason = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                    outcome = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                    state, reason = outcome.state, outcome.reason
                     self.assertEqual((state, reason), ('retired', None))
                     self.assertFalse(native.root.exists())
                     self.assertTrue(archived.read_bytes().endswith(b'last-bytes'))
@@ -1545,7 +1715,8 @@ sys.stdout.buffer.write(b'command-sentinel' * 8192)
                         target.unlink()
                         target.write_bytes(b'replacement-data')
                     owner = json.loads(native.registration.read_text())
-                    state, _ = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                    outcome = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                    state = outcome.state
                     self.assertEqual(state, 'retained')
                     self.assertTrue(native.root.exists())
 
@@ -1688,7 +1859,10 @@ native.close()
                         moved = completion.parent.with_name('saved-completions')
                         completion.parent.rename(moved)
                         completion.parent.symlink_to(moved, target_is_directory=True)
-                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                    # This oracle concerns abandoned malformed evidence, distinct
+                    # from the live-producer refusal regression above.
+                    with mock.patch.object(session, 'producer_state', return_value='abandoned'):
+                        state, reason, owner = session.retire_registered_native_sources(native.registration)
                     self.assertEqual(state, 'retained', reason)
                     self.assertEqual(owner['retirementOutcome']['origin'], 'completion')
                     self.assertEqual(source.read_bytes(), b'protected-finalization')
@@ -1814,7 +1988,8 @@ native.close()
                     native.close()
                 owner = json.loads(native.registration.read_text())
                 self.assertTrue(pathlib.Path(owner['retirementPath']).exists())
-                state, _ = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                outcome = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
+                state = outcome.state
                 self.assertEqual(state, 'retired')
                 self.assertFalse(pathlib.Path(owner['retirementPath']).exists())
 
@@ -1835,7 +2010,8 @@ native.close()
                     session.atomic_json(native.registration, value)
                     source.unlink()
                     source.write_bytes(b'preserve-new-source')
-                state, reason = session.retire_native_sources(owner, persist=replace_after_validation)
+                outcome = session.retire_native_sources(owner, persist=replace_after_validation)
+                state, reason = outcome.state, outcome.reason
                 self.assertEqual((state, reason), ('retained', 'source-changed-during-retirement'))
                 retained = pathlib.Path(owner['retirementPath']) / 'Stderr' / source.name
                 self.assertEqual(retained.read_bytes(), b'preserve-new-source')
