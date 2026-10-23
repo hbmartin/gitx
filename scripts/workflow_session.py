@@ -1559,6 +1559,60 @@ def publish_native_retirement_outcome(registration, outcome, authorize):
     return owner
 
 
+def cleanup_native_completion(path, owner, *, authorize=None):
+    """Remove only a proven duplicate; its outcome never changes source status."""
+    completion = native_completion_path(path)
+    directory = descriptor = None
+    try:
+        with native_retirement_boundary('handoff', 'validate-redundant-handoff', evidence=True):
+            if owner.get('retirementState') != 'retired' or not owner.get('collectionComplete'):
+                return NativeRetirementOutcome('retained', 'handoff-unresolved', 'handoff')
+            try:
+                identity = native_directory_identity(completion.parent)
+                directory = os.open(completion.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                info = os.fstat(directory)
+                if [info.st_dev, info.st_ino] != identity or info.st_uid != os.getuid():
+                    raise ValueError('Completion directory changed')
+                descriptor, info = open_owned_regular(completion.name, directory=directory, maximum=1024 * 1024)
+            except FileNotFoundError:
+                return NativeRetirementOutcome('absent', origin='handoff')
+            snapshot = native_stat_snapshot(info)
+            completion_owner = json.loads(os.read(descriptor, 1024 * 1024))
+            if (not isinstance(completion_owner, dict) or completion_owner.get('schemaVersion') != 1 or
+                    completion_owner.get('kind') != 'gitx-native-completion' or not isinstance(completion_owner.get('owner'), dict) or
+                    any(completion_owner['owner'].get(key) != owner.get(key) for key in NATIVE_OWNER_IDENTITY + NATIVE_FINAL_FIELDS)):
+                raise ValueError('Completion does not match retired registration')
+        with native_retirement_authorization(authorize):
+            with native_retirement_boundary('handoff', 'remove-redundant-handoff', evidence=True):
+                # Only a short metadata transaction; no hashing or recursive work.
+                with NativeRegistration(path) as transaction:
+                    if transaction.current != owner:
+                        raise NativeRegistrationChanged()
+                    if (not native_path_absent(owner['sourceDirectory']) or
+                            not native_path_absent(owner.get('retirementPath', owner['sourceDirectory']))):
+                        return NativeRetirementOutcome('retained', 'handoff-sources-present', 'handoff', 'remove-redundant-handoff')
+                    if (native_directory_identity(completion.parent) != identity or
+                            native_stat_snapshot(os.stat(completion.name, dir_fd=directory, follow_symlinks=False)) != snapshot):
+                        raise NativeRegistrationChanged()
+                    os.unlink(completion.name, dir_fd=directory)
+                    os.fsync(directory)
+        return NativeRetirementOutcome('removed', origin='handoff', operation='remove-redundant-handoff')
+    except NativeRetirementFault as error:
+        return error.outcome
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if directory is not None:
+            os.close(directory)
+
+
+def native_retirement_result(path, owner, *, authorize=None):
+    state, reason = owner['retirementState'], owner.get('retirementReason')
+    if state == 'retired':
+        owner = dict(owner, handoffCleanup=cleanup_native_completion(path, owner, authorize=authorize).metadata())
+    return state, reason, owner
+
+
 def retire_registered_native_sources(path, *, checkout=None, authorize=None, admit=None, retry_retained=False):
     """Keep the public three-value wrapper; internal outcomes use named fields."""
     owner = None
@@ -1575,11 +1629,13 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
             owner = dict(registration.current)
             if owner.get('invocationID') != pathlib.Path(path).stem or owner.get('checkout') != str(checkout.resolve()):
                 raise ValueError('Native registration ownership changed')
+            if owner.get('retirementState') == 'retired':
+                return native_retirement_result(path, owner, authorize=authorize)
             if admit:
                 with native_retirement_boundary('authorization', 'admit-native-retirement'):
                     if reason := admit():
                         raise NativeRetirementDeferred(reason)
-            if owner.get('retirementState') == 'retired' or (owner.get('retirementState') == 'retained' and not retry_retained):
+            if owner.get('retirementState') == 'retained' and not retry_retained:
                 return owner['retirementState'], owner.get('retirementReason'), owner
             # A prepared/deleting quarantine already has published completed
             # evidence; its durable proof deliberately permits missing controls.
@@ -1602,6 +1658,8 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
                                 outcome.origin not in {'authorization', 'registration'} and not evidence.get('logicalCompletion')):
                             outcome = NativeRetirementOutcome('deferred', 'completion-unconfirmed', 'producer', outcome.operation, outcome.error_number)
                     owner = publish_native_retirement_outcome(registration, outcome, authorize)
+                    if outcome.state == 'retired':
+                        return native_retirement_result(path, owner, authorize=authorize)
                     return outcome.state, outcome.reason, owner
             except NativeRetirementFault as error:
                 # Completed registrations can record protected missing/invalid
@@ -1637,6 +1695,28 @@ def registered_native_sources(root=ROOT):
                 continue
             result.append((path, owner))
         except (OSError, ValueError, AttributeError):
+            continue
+    return result
+
+
+def registered_native_completions(root=ROOT):
+    """Only explicit retired audit records can identify older duplicate handoffs."""
+    directory = verification_artifact_root(root) / 'NativeSources'
+    try:
+        native_directory_identity(directory)
+        native_directory_identity(directory / 'Completions')
+    except (OSError, ValueError):
+        return []
+    result = []
+    for completion in (directory / 'Completions').glob('*.json'):
+        path = directory / completion.name
+        try:
+            owner = read_native_object(path)
+            if (owner.get('kind') == 'gitx-native-invocation' and owner.get('schemaVersion') == 1 and
+                    owner.get('checkout') == str(pathlib.Path(root).resolve()) and path.stem == owner.get('invocationID') and
+                    owner.get('retirementState') == 'retired'):
+                result.append((path, owner))
+        except (OSError, ValueError):
             continue
     return result
 
@@ -1864,6 +1944,8 @@ class NativeTestDiagnostics:
                 os.close(self.lease)
             self.closed = True
             state, reason, registered = retire_registered_native_sources(self.registration)
+            if registered and 'handoffCleanup' in registered:
+                self.result['handoffCleanup'] = registered['handoffCleanup']
             if registered:
                 self.owner.update({key: registered[key] for key in ('retirementPath', 'retirementParentIdentity', 'retirementPhase') if key in registered})
             self.owner.update(retirementState=state, retirementReason=reason)

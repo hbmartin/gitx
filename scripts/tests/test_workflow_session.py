@@ -88,6 +88,67 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual({inode: counts[inode] for inode in expected}, dict.fromkeys(expected, 1))
             print(json.dumps({'completionRecovery': {'digestCalls': counts, 'digestSeconds': durations}}))
 
+    def test_retired_invocation_removes_redundant_handoff_and_keeps_audit_registration(self):
+        with self.completed_native_fixture() as (native, source):
+            completion = session.native_completion_path(native.registration)
+            self.assertTrue(completion.exists())
+            state, reason, owner = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual(owner['handoffCleanup']['state'], 'removed')
+            self.assertFalse(completion.exists())
+            self.assertEqual(json.loads(native.registration.read_text())['retirementState'], 'retired')
+            self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+            print(json.dumps({'handoffCounts': {'before': 1, 'after': len(list(completion.parent.glob('*.json')))}}))
+
+    def test_redundant_handoff_cleanup_is_authorized_and_independent_of_source_status(self):
+        for refusal in ('authorization', 'unlink', 'symlink', 'malformed', 'source-reappeared'):
+            with self.subTest(refusal=refusal), self.completed_native_fixture() as (native, _):
+                completion = session.native_completion_path(native.registration)
+                envelope = json.loads(completion.read_text())
+                self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
+                session.atomic_json(completion, envelope)
+                audit = native.registration.read_bytes()
+                @contextlib.contextmanager
+                def authorize():
+                    if refusal == 'authorization':
+                        raise session.NativeRetirementDeferred('newer commit queued')
+                    yield
+                if refusal == 'symlink':
+                    foreign = completion.with_name('foreign')
+                    foreign.write_bytes(b'foreign-evidence')
+                    completion.unlink()
+                    completion.symlink_to(foreign)
+                elif refusal == 'malformed':
+                    session.atomic_json(completion, [])
+                elif refusal == 'source-reappeared':
+                    native.root.mkdir()
+                unlink = session.os.unlink
+                def refuse_unlink(path, *args, **kwargs):
+                    if refusal == 'unlink' and pathlib.Path(path).name == completion.name:
+                        raise PermissionError(errno.EACCES, 'handoff-unavailable')
+                    return unlink(path, *args, **kwargs)
+                with mock.patch.object(session.os, 'unlink', side_effect=refuse_unlink):
+                    state, _, owner = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                self.assertEqual(state, 'retired')
+                self.assertEqual(native.registration.read_bytes(), audit)
+                self.assertTrue(completion.exists())
+                self.assertIn(owner['handoffCleanup']['state'], {'deferred', 'retained'})
+                if refusal == 'authorization':
+                    self.assertEqual(owner['handoffCleanup']['reason'], 'newer commit queued')
+                if refusal == 'unlink':
+                    self.assertEqual(owner['handoffCleanup']['errno'], errno.EACCES)
+                # Only this isolated fixture repairs the rejected evidence.
+                if completion.is_symlink():
+                    self.assertEqual(completion.read_bytes(), b'foreign-evidence')
+                    completion.unlink()
+                if native.root.exists():
+                    native.root.rmdir()
+                session.atomic_json(completion, envelope)
+                state, _, owner = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired')
+                self.assertEqual(owner['handoffCleanup']['state'], 'removed')
+                self.assertFalse(completion.exists())
+
     def test_finalization_repairs_both_checkpoint_orders_and_explicit_retained_retry(self):
         for variant in ('registry-running', 'source-running', 'source-missing', 'retained-repaired'):
             with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):

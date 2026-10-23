@@ -902,6 +902,8 @@ def inventory(root, receipt=None, now=None):
                                "reason": "retained native evidence" if owner.get("retirementState") == "retained" else
                                          "complete archive awaiting validation" if owner.get("collectionComplete") else "protected incomplete native archive",
                                "owner": owner} for path, owner in session.registered_native_sources(root)],
+            "nativeCompletions": [{"registration": str(path), "paths": [str(session.native_completion_path(path))]}
+                                  for path, _ in session.registered_native_completions(root)],
             "candidates": selected, "retained": retained, "discoveryErrors": errors, "entryErrors": entry_errors,
             "accountingErrors": accounting_errors, "protectionToken": token, "protectionReferrers": referrers,
             "protectedPaths": [str(p) for p in protected],
@@ -1366,13 +1368,15 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                             failed["paths"] = [error.journal]
                     report["failed"].append(failed)
         report["nativeRetirement"] = []
+        report["nativeHandoffs"] = []
         for item in report.get("nativeSources", []):
             @contextlib.contextmanager
             def authorize_native_retirement():
                 with session.Leases(proof, owner, inherited=authenticated):
                     reason = gate()
                     source = pathlib.Path(item["owner"]["sourceDirectory"])
-                    if any(overlap(source, path) for path in report["protectedPaths"]):
+                    completion = session.native_completion_path(item["registration"])
+                    if any(overlap(candidate, path) for candidate in (source, completion) for path in report["protectedPaths"]):
                         reason = reason or "protected native source"
                     if reason:
                         raise session.NativeRetirementDeferred(reason)
@@ -1395,6 +1399,22 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                 admit=admit_native_retirement, retry_retained=retry_retained_native)
             report["nativeRetirement"].append({"paths": item["paths"], "state": state, "reason": reason,
                                                "outcome": (registered or {}).get("retirementOutcome")})
+            if registered and "handoffCleanup" in registered:
+                report["nativeHandoffs"].append({"registration": item["registration"], **registered["handoffCleanup"]})
+        for item in report.get("nativeCompletions", []):
+            @contextlib.contextmanager
+            def authorize_native_handoff():
+                with session.Leases(proof, owner, inherited=authenticated):
+                    reason = gate()
+                    if any(overlap(session.native_completion_path(item["registration"]), path) for path in report["protectedPaths"]):
+                        reason = reason or "protected native handoff"
+                    if reason:
+                        raise session.NativeRetirementDeferred(reason)
+                    yield
+            state, _, registered = session.retire_registered_native_sources(
+                item["registration"], checkout=root, authorize=authorize_native_handoff)
+            outcome = (registered or {}).get("handoffCleanup", {"state": "deferred", "reason": "retirement-unconfirmed"})
+            report["nativeHandoffs"].append({"registration": item["registration"], **outcome})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
         saved = False

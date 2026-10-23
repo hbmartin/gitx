@@ -71,6 +71,29 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(later['status'], 'complete')
             self.assertEqual(later['nativeRetirement'], [])
 
+    def test_cleanup_discovers_only_registered_retired_handoff_duplicates(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            completion = session.native_completion_path(native.registration)
+            envelope = cleanup.read_json(completion)
+            self.assertEqual(session.retire_registered_native_sources(native.registration, checkout=self.root)[0], 'retired')
+            session.atomic_json(completion, envelope)
+            audit = native.registration.read_bytes()
+            unknown = completion.with_name('unmarked.json')
+            unknown.write_bytes(b'unmarked historical evidence')
+            self.assertEqual(session.registered_native_sources(self.root), [])
+            self.assertEqual([path for path, _ in session.registered_native_completions(self.root)], [native.registration])
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'complete')
+            self.assertEqual(report['nativeRetirement'], [])
+            self.assertEqual(report['nativeHandoffs'][0]['state'], 'removed')
+            self.assertFalse(completion.exists())
+            self.assertEqual(native.registration.read_bytes(), audit)
+            self.assertEqual(unknown.read_bytes(), b'unmarked historical evidence')
+            self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
+
     def test_native_registration_discovery_reads_metadata_without_hashing_archives(self):
         with self.native_archive_waiting_for_retirement() as (native, _, _):
             with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('discovery hashed archive bytes')):
@@ -241,7 +264,7 @@ class CleanupTests(unittest.TestCase):
                 state, reason, _ = session.retire_registered_native_sources(native.registration, checkout=self.root, authorize=authorize)
             self.assertEqual(state, 'retired', reason)
             self.assertEqual([counts[inode] for inode in archive_inodes], [1])
-            self.assertEqual(len(calls), 3, 'Rename, deletion and outcome publication each require fresh authorization')
+            self.assertEqual(len(calls), 4, 'Rename, deletion, outcome publication and redundant handoff removal each require fresh authorization')
 
     def test_native_writer_lease_rejects_retirement_before_archive_hashing(self):
         with self.native_archive_waiting_for_retirement() as (native, source, _):
