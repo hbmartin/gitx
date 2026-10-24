@@ -429,11 +429,27 @@ else:
                     (native.archive / source.name).write_bytes(b'changed')
                 else:
                     pathlib.Path(durable['retirementPath']).symlink_to(native.archive, target_is_directory=True)
-                outcome = session.retire_native_sources(durable, checkout=self.root,
-                    persist=lambda value: session.persist_native_registration(native.registration, value))
-                state, reason = outcome.state, outcome.reason
+                session.atomic_json(native.registration, durable)
+                state, reason, _ = session.retire_registered_native_sources(native.registration, checkout=self.root)
                 self.assertEqual(state, 'retired' if variant == 'legacy' else 'retained', reason)
                 self.assertTrue(native.archive.exists())
+
+    def test_cleanup_recovers_registered_legacy_quarantines_without_phase(self):
+        for prior_state in ('prepared', 'deferred'):
+            with self.subTest(state=prior_state), self.native_archive_waiting_for_retirement() as (native, source, release):
+                release()
+                owner = cleanup.read_json(native.registration)
+                quarantine = native.root.with_name('.gitx-native-retired-' + 'b' * 32)
+                owner.update(retirementPath=str(quarantine), retirementState=prior_state)
+                session.exclusive_native_rename(native.root, quarantine)
+                session.atomic_json(native.registration, owner)
+                cleanup.queue_commit(self.root)
+                report = cleanup.run_cleanup(self.root, self.valid_receipt())
+                self.assertEqual(report['status'], 'complete', report['nativeRetirement'])
+                self.assertEqual(report['nativeRetirement'][0]['state'], 'retired')
+                self.assertFalse(quarantine.exists())
+                self.assertFalse(cleanup.pending_path(self.root).exists())
+                self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
 
     def test_native_retirement_does_not_delete_before_registration_directory_sync(self):
         with self.native_archive_waiting_for_retirement() as (native, source, release):

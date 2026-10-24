@@ -70,6 +70,90 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual((native.archive / source.name).read_bytes(), archived)
                 self.assertEqual(json.loads(native.registration.read_text())['retirementState'], 'retired')
 
+    def test_legacy_registered_quarantines_recover_without_phase(self):
+        for state in ('prepared', 'deferred'):
+            for contents in ('intact', 'partial', 'absent'):
+                with self.subTest(state=state, contents=contents), self.completed_native_fixture() as (native, source):
+                    owner = json.loads(native.registration.read_text())
+                    quarantine = native.root.with_name('.gitx-native-retired-' + 'a' * 32)
+                    owner.update(retirementState=state, retirementPath=str(quarantine),
+                                 retirementParentIdentity=session.native_directory_identity(native.root.parent))
+                    if contents == 'partial':
+                        owner['deletionProof'] = session.native_deletion_proof(native.root, owner)
+                    session.exclusive_native_rename(native.root, quarantine)
+                    if contents == 'partial':
+                        (quarantine / 'invocation.lease').unlink()
+                        (quarantine / 'native-owner.json').unlink()
+                    elif contents == 'absent':
+                        session.shutil.rmtree(quarantine)
+                    session.atomic_json(native.registration, owner)
+                    state_after, reason, _ = session.retire_registered_native_sources(native.registration)
+                    self.assertEqual(state_after, 'retired', reason)
+                    self.assertFalse(quarantine.exists())
+                    self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_invalid_writer_inventory_is_retained_but_uncertain_access_is_deferred(self):
+        for kind in ('fifo', 'directory', 'foreign-owner'):
+            with self.subTest(kind=kind), self.completed_native_fixture() as (native, source):
+                invalid = native.stderr_directory / 'unexpected'
+                if kind == 'fifo':
+                    os.mkfifo(invalid)
+                elif kind == 'directory':
+                    invalid.mkdir()
+                else:
+                    invalid.write_bytes(b'foreign')
+                inspect = session.os.fstat
+                inode = invalid.stat().st_ino
+                def foreign_info(descriptor):
+                    info = inspect(descriptor)
+                    if kind == 'foreign-owner' and info.st_ino == inode:
+                        values = list(info); values[4] = os.getuid() + 1
+                        return os.stat_result(values)
+                    return info
+                with mock.patch.object(session.os, 'fstat', side_effect=foreign_info):
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retained', reason)
+                self.assertEqual(owner['retirementOutcome']['errno'], errno.EPERM)
+                self.assertEqual(owner['retirementOutcome']['operation'], 'inspect-writer-file')
+                self.assertTrue(source.exists())
+                with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('retained evidence rehashed')):
+                    self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retained')
+
+    def test_invalid_inventory_does_not_poison_uncertain_running_registration(self):
+        with self.completed_native_fixture() as (native, _):
+            owner = json.loads(native.registration.read_text())
+            owner.update(status='running', collectionComplete=False, files=[])
+            session.atomic_json(native.registration, owner)
+            before = native.registration.read_bytes()
+            os.mkfifo(native.stderr_directory / 'unproven-writer')
+            state, reason, _ = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'deferred', reason)
+            self.assertEqual(native.registration.read_bytes(), before)
+
+    def test_post_removal_sync_permission_failure_is_retryable_without_manual_retry(self):
+        for code in (errno.EACCES, errno.EPERM):
+            with self.subTest(errno=code), self.completed_native_fixture() as (native, source):
+                sync = session.sync_native_directory
+                def fail_removed_parent(path):
+                    if pathlib.Path(path) == native.root.parent and not native.root.exists():
+                        quarantine = list(native.root.parent.glob('.gitx-native-retired-*'))
+                        if not quarantine:
+                            raise OSError(code, 'removed parent sync failed')
+                    return sync(path)
+                with mock.patch.object(session, 'sync_native_directory', side_effect=fail_removed_parent):
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'deferred', reason)
+                self.assertEqual(owner['retirementPhase'], 'deleting')
+                self.assertEqual(owner['retirementOutcome']['operation'], 'sync-retirement-parent')
+                calls = []
+                def record_sync(path):
+                    calls.append(pathlib.Path(path)); return sync(path)
+                with mock.patch.object(session, 'sync_native_directory', side_effect=record_sync):
+                    state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired', reason)
+                self.assertIn(native.root.parent, calls)
+                self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
     def test_retirement_admission_refusal_does_not_hash_or_publish(self):
         for reason in ('newer commit queued', 'commit-or-inputs-changed', 'protected native source', 'protection-discovery-incomplete'):
             with self.subTest(reason=reason), self.completed_native_fixture() as (native, source):
