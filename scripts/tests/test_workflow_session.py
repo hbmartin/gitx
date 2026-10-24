@@ -207,6 +207,48 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
         if result.returncode == 0:
             print(result.stdout.splitlines()[-1])
 
+    def test_empty_checkpoint_recovers_only_with_authenticated_handoff_and_authorization(self):
+        for variant in ('registered-complete', 'registered-running', 'invalid-handoff', 'refused-authorization'):
+            with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):
+                checkpoint = native.root / 'native-owner.json'
+                session.atomic_json(checkpoint, {})
+                if variant == 'registered-running':
+                    owner = json.loads(native.registration.read_text())
+                    owner.update(status='running', collectionComplete=False, files=[])
+                    session.atomic_json(native.registration, owner)
+                if variant == 'invalid-handoff':
+                    session.atomic_json(session.native_completion_path(native.registration), {})
+                before = native.registration.read_bytes()
+                @contextlib.contextmanager
+                def authorize():
+                    if variant == 'refused-authorization':
+                        raise session.NativeRetirementDeferred('newer commit queued')
+                    yield
+                state, reason, _ = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                if variant in ('registered-complete', 'registered-running'):
+                    self.assertEqual(state, 'retired', reason)
+                    self.assertFalse(native.root.exists())
+                else:
+                    self.assertEqual(state, 'deferred' if variant == 'refused-authorization' else 'retained', reason)
+                    self.assertEqual(json.loads(checkpoint.read_text()), {})
+                    if variant == 'refused-authorization':
+                        self.assertEqual(native.registration.read_bytes(), before)
+                self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_empty_checkpoint_replacement_before_repair_is_not_overwritten(self):
+        with self.completed_native_fixture() as (native, source):
+            checkpoint = native.root / 'native-owner.json'
+            session.atomic_json(checkpoint, {})
+            foreign = {'invocationID': 'foreign'}
+            @contextlib.contextmanager
+            def authorize():
+                session.atomic_json(checkpoint, foreign)
+                yield
+            state, reason, _ = session.retire_registered_native_sources(native.registration, authorize=authorize)
+            self.assertEqual(state, 'deferred', reason)
+            self.assertEqual(json.loads(checkpoint.read_text()), foreign)
+            self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+
     def test_retirement_admission_refusal_does_not_hash_or_publish(self):
         for reason in ('newer commit queued', 'commit-or-inputs-changed', 'protected native source', 'protection-discovery-incomplete'):
             with self.subTest(reason=reason), self.completed_native_fixture() as (native, source):

@@ -1391,7 +1391,8 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                 if report["discoveryErrors"]:
                     return "protection-discovery-incomplete"
                 source = pathlib.Path(item["owner"]["sourceDirectory"])
-                if any(overlap(source, path) for path in report["protectedPaths"]):
+                completion = session.native_completion_path(item["registration"])
+                if any(overlap(candidate, path) for candidate in (source, completion) for path in report["protectedPaths"]):
                     return "protected native source"
                 return None
             state, reason, registered = session.retire_registered_native_sources(
@@ -1405,7 +1406,7 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
             @contextlib.contextmanager
             def authorize_native_handoff():
                 with session.Leases(proof, owner, inherited=authenticated):
-                    reason = gate()
+                    reason = "protection-discovery-incomplete" if report["discoveryErrors"] else gate()
                     if any(overlap(session.native_completion_path(item["registration"]), path) for path in report["protectedPaths"]):
                         reason = reason or "protected native handoff"
                     if reason:
@@ -1425,12 +1426,17 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     changed = "newer commit queued"
                 changed = changed or removed_original_problem()
                 native_deferred = any(item["state"] not in {"retired", "retained"} for item in report["nativeRetirement"])
+                handoff_deferred = any(item["state"] not in {"removed", "absent", "retained"} for item in report["nativeHandoffs"])
                 report["status"] = "partial" if (report["skipped"] or report["failed"] or report["discoveryErrors"] or
-                                                 report["entryErrors"] or native_deferred or changed) else "complete"
+                                                 report["entryErrors"] or native_deferred or handoff_deferred or changed) else "complete"
                 if changed:
                     report["reason"] = changed
+                elif report["failed"]:
+                    report["reason"] = report["failed"][0]["reason"]
                 elif native_deferred:
                     report["reason"] = "native retirement deferred"
+                elif handoff_deferred:
+                    report["reason"] = "native handoff cleanup deferred"
                 if report["status"] == "complete" and read_json(pending_path(root)) != pending:
                     report.update(status="partial", reason="newer commit queued")
                 report["finishedAt"] = records.now()

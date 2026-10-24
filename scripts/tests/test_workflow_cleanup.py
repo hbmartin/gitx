@@ -94,6 +94,101 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(unknown.read_bytes(), b'unmarked historical evidence')
             self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
 
+    def test_handoff_deferral_and_incomplete_discovery_keep_cleanup_pending(self):
+        for condition in ('lease-held', 'corrupt-ledger', 'discovery-incomplete'):
+            with self.subTest(condition=condition), self.native_archive_waiting_for_retirement() as (native, _, release):
+                release()
+                completion = session.native_completion_path(native.registration)
+                envelope = cleanup.read_json(completion)
+                self.assertEqual(session.retire_registered_native_sources(native.registration, checkout=self.root)[0], 'retired')
+                session.atomic_json(completion, envelope)
+                audit = native.registration.read_bytes()
+                cleanup.queue_commit(self.root)
+                receipt = self.valid_receipt()
+                pending = cleanup.read_json(cleanup.pending_path(self.root))
+                ledger = self.root / '.git/gitx-workflow/ledger.json'
+                ledger_before = ledger.read_bytes() if ledger.exists() else None
+                try:
+                    with contextlib.ExitStack() as controls:
+                        if condition == 'lease-held':
+                            controls.enter_context(session.NativeControlLease(native.registration.with_name(native.registration.name + '.retirement.lock')))
+                        elif condition == 'corrupt-ledger':
+                            ledger.write_text('broken JSON')
+                        else:
+                            inventory = cleanup.inventory
+                            def incomplete_discovery(*args, **kwargs):
+                                report = inventory(*args, **kwargs)
+                                self.assertIsNotNone(report['protectionToken'])
+                                report['discoveryErrors'].append({'path': str(self.root), 'reason': 'fixture: worktree protection discovery unavailable'})
+                                return report
+                            controls.enter_context(mock.patch.object(cleanup, 'inventory', side_effect=incomplete_discovery))
+                        report = cleanup.run_cleanup(self.root, receipt)
+                    self.assertEqual(report['status'], 'partial', report['nativeHandoffs'])
+                    self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root)), pending)
+                    self.assertTrue(completion.exists())
+                    self.assertEqual(native.registration.read_bytes(), audit)
+                finally:
+                    if ledger_before is None:
+                        ledger.unlink(missing_ok=True)
+                    else:
+                        ledger.write_bytes(ledger_before)
+                recovered = cleanup.run_cleanup(self.root, receipt)
+                self.assertEqual(recovered['status'], 'complete', recovered['nativeHandoffs'])
+                self.assertFalse(completion.exists())
+                self.assertEqual(native.registration.read_bytes(), audit)
+
+    def test_protected_completion_refuses_before_native_hashing(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            inventory = cleanup.inventory
+            def protected_inventory(*args, **kwargs):
+                report = inventory(*args, **kwargs)
+                report['protectedPaths'].append(str(session.native_completion_path(native.registration)))
+                return report
+            before = native.registration.read_bytes()
+            with mock.patch.object(cleanup, 'inventory', side_effect=protected_inventory), \
+                    mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('protected handoff allowed hashing')):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertEqual(report['nativeRetirement'][0]['state'], 'deferred')
+            self.assertEqual(native.registration.read_bytes(), before)
+            self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+
+    def test_candidate_failure_reason_survives_native_deferral(self):
+        with self.native_archive_waiting_for_retirement():
+            self.run_directory('failed-candidate')
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            with mock.patch.object(cleanup, 'finish_journal', side_effect=OSError('candidate-removal-refused')):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertTrue(report['failed'])
+            self.assertEqual(report['reason'], report['failed'][0]['reason'])
+            self.assertEqual(report['nativeRetirement'][0]['state'], 'deferred')
+
+    def test_completed_native_cleanup_measures_full_gate_cost_per_invocation(self):
+        with self.native_archive_waiting_for_retirement() as (first, _, release_first), \
+                self.native_archive_waiting_for_retirement() as (second, _, release_second):
+            release_first(); release_second()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            eligibility, durations = cleanup.eligibility, []
+            def measured(*args, **kwargs):
+                started = time.monotonic()
+                try:
+                    return eligibility(*args, **kwargs)
+                finally:
+                    durations.append(time.monotonic() - started)
+            with mock.patch.object(cleanup, 'eligibility', side_effect=measured):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'complete', report['nativeRetirement'])
+            self.assertEqual(len(durations), 2 + 3 * 2 + 1, 'Two admissions, three full gates per source, one final queue-clear proof')
+            self.assertFalse(first.root.exists()); self.assertFalse(second.root.exists())
+            print(json.dumps({'nativeCleanupGateMeasurement': {'invocations': 2, 'fullEligibilityCalls': len(durations),
+                                                              'durationSeconds': durations}}))
+
     def test_native_registration_discovery_reads_metadata_without_hashing_archives(self):
         with self.native_archive_waiting_for_retirement() as (native, _, _):
             with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('discovery hashed archive bytes')):
@@ -264,7 +359,7 @@ class CleanupTests(unittest.TestCase):
                 state, reason, _ = session.retire_registered_native_sources(native.registration, checkout=self.root, authorize=authorize)
             self.assertEqual(state, 'retired', reason)
             self.assertEqual([counts[inode] for inode in archive_inodes], [1])
-            self.assertEqual(len(calls), 4, 'Rename, deletion, outcome publication and redundant handoff removal each require fresh authorization')
+            self.assertEqual(len(calls), 3, 'Rename and deletion release authority; final publication and handoff share one fresh held scope')
 
     def test_native_writer_lease_rejects_retirement_before_archive_hashing(self):
         with self.native_archive_waiting_for_retirement() as (native, source, _):
