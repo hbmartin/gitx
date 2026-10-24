@@ -12,7 +12,7 @@
     "Classes/Controllers/FlowDeltaAdapters.swift": 0.9771,
     "Classes/Controllers/ForgeAccountLifecycle.swift": 0.9852,
     "Classes/Controllers/ForgeAccountsPreferences.swift": 0.9463,
-    "Classes/Controllers/ForgeApplicationRefreshCoordinator.swift": 0.9451,
+    "Classes/Controllers/ForgeApplicationRefreshCoordinator.swift": 0.9457,
     "Classes/Controllers/ForgeApplicationServices.swift": 0.9971,
     "Classes/Controllers/ForgeCredentialStore.swift": 0.9892,
     "Classes/Controllers/ForgeDeepLinkApplicationRouter.swift": 0.7162,
