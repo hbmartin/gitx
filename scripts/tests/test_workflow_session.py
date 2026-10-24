@@ -154,6 +154,59 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertIn(native.root.parent, calls)
                 self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
 
+    def test_missing_registration_does_not_create_retirement_controls(self):
+        for parent_exists in (False, True):
+            with self.subTest(parent_exists=parent_exists), tempfile.TemporaryDirectory() as directory:
+                parent = pathlib.Path(directory) / 'NativeSources'
+                if parent_exists:
+                    parent.mkdir()
+                state, _, _ = session.retire_registered_native_sources(parent / ('a' * 32 + '.json'))
+                self.assertEqual(state, 'deferred')
+                self.assertEqual(parent.exists(), parent_exists)
+                if parent_exists:
+                    self.assertEqual(list(parent.iterdir()), [])
+
+    def test_retirement_reuses_owned_descriptors_under_a_256_descriptor_limit(self):
+        script = r'''
+import fcntl, json, os, pathlib, resource, sys
+import workflow_session as s
+root = pathlib.Path(sys.argv[1]).resolve()
+(root / 'scripts').mkdir()
+(root / 'scripts/verification-config.json').write_text(json.dumps({'artifactRoot': 'artifacts/verification'}))
+s.ROOT = root
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (min(1024, hard) if hard != resource.RLIM_INFINITY else 1024, hard))
+native = s.NativeTestDiagnostics(root / 'cache', root / 'artifacts/verification/run/Logs/Native', 'session', ['bundle'], True)
+for number in range(130):
+    (native.stderr_directory / ('GitX-%d-a.stderr.log' % number)).write_bytes(bytes([number, 0, 255]))
+lease = os.open(native.root / 'invocation.lease', os.O_RDONLY)
+fcntl.flock(lease, fcntl.LOCK_SH | fcntl.LOCK_NB)
+assert native.close()['collectionComplete']
+os.close(lease)
+resource.setrlimit(resource.RLIMIT_NOFILE, (256, hard))
+opened, peak, source_opens = s.open_owned_regular, 0, 0
+def measure(path, *args, **kwargs):
+    global peak, source_opens
+    result = opened(path, *args, **kwargs)
+    peak = max(peak, len(os.listdir('/dev/fd')))
+    if pathlib.Path(path).parent == native.stderr_directory:
+        source_opens += 1
+    return result
+s.open_owned_regular = measure
+state, reason, owner = s.retire_registered_native_sources(native.registration)
+assert state == 'retired', (state, reason, owner.get('retirementOutcome'))
+assert source_opens == 130, source_opens
+for number in range(130):
+    assert (native.archive / ('GitX-%d-a.stderr.log' % number)).read_bytes() == bytes([number, 0, 255])
+print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDescriptors': peak, 'softLimit': 256}))
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, '-c', script, directory], env=os.environ | {'PYTHONPATH': str(ROOT / 'scripts')},
+                                    capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr[-4000:])
+        if result.returncode == 0:
+            print(result.stdout.splitlines()[-1])
+
     def test_retirement_admission_refusal_does_not_hash_or_publish(self):
         for reason in ('newer commit queued', 'commit-or-inputs-changed', 'protected native source', 'protection-discovery-incomplete'):
             with self.subTest(reason=reason), self.completed_native_fixture() as (native, source):
