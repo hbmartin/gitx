@@ -47,6 +47,7 @@ actor ForgeApplicationRefreshCoordinator {
     private let resolveTarget: TargetResolver
     private let backgroundRefresh: BackgroundRefresh
     private let sleep: Sleep
+    private let registrationDelivery: (@Sendable () async -> Void)?
     private var persistedBindings: [ForgeRefreshTarget: ForgeRepositoryBinding] = [:]
     private var clients: [ForgeRefreshTarget: [UUID: Client]] = [:]
     private var registrationTargets: [UUID: ForgeRefreshTarget] = [:]
@@ -64,12 +65,14 @@ actor ForgeApplicationRefreshCoordinator {
         backgroundRefresh: @escaping BackgroundRefresh,
         sleep: @escaping Sleep = { interval in
             try await Task.sleep(for: .seconds(interval))
-        }
+        },
+        registrationDelivery: (@Sendable () async -> Void)? = nil
     ) {
         self.bindingProvider = bindingProvider
         self.resolveTarget = resolveTarget
         self.backgroundRefresh = backgroundRefresh
         self.sleep = sleep
+        self.registrationDelivery = registrationDelivery
     }
 
     static func makeDefault(
@@ -175,6 +178,9 @@ actor ForgeApplicationRefreshCoordinator {
         persistedBindings[target] = persistedBindings[target] ?? binding
         schedule(target)
         logger.debug("Registered open Forge overlay with application refresh coordinator")
+        if let registrationDelivery {
+            await registrationDelivery()
+        }
         return registration
     }
 
