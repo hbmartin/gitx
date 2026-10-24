@@ -130,6 +130,22 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(state, 'deferred', reason)
             self.assertEqual(native.registration.read_bytes(), before)
 
+    def test_inaccessible_writer_directory_remains_retryable_without_sticky_publication(self):
+        with self.completed_native_fixture() as (native, source):
+            before = native.registration.read_bytes()
+            mode = native.stderr_directory.stat().st_mode & 0o777
+            native.stderr_directory.chmod(0)
+            try:
+                state, reason, owner = session.retire_registered_native_sources(native.registration)
+            finally:
+                native.stderr_directory.chmod(mode)
+            self.assertEqual(state, 'deferred', reason)
+            self.assertEqual(owner['retirementOutcome']['operation'], 'inspect-writer-directory')
+            self.assertEqual(owner['retirementOutcome']['errno'], errno.EACCES)
+            self.assertEqual(native.registration.read_bytes(), before)
+            self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+            self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
+
     def test_post_removal_sync_permission_failure_is_retryable_without_manual_retry(self):
         for code in (errno.EACCES, errno.EPERM):
             with self.subTest(errno=code), self.completed_native_fixture() as (native, source):

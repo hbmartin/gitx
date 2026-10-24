@@ -95,7 +95,7 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
 
     def test_handoff_deferral_and_incomplete_discovery_keep_cleanup_pending(self):
-        for condition in ('lease-held', 'corrupt-ledger', 'discovery-incomplete'):
+        for condition in ('lease-held', 'corrupt-ledger', 'discovery-incomplete', 'protected-handoff'):
             with self.subTest(condition=condition), self.native_archive_waiting_for_retirement() as (native, _, release):
                 release()
                 completion = session.native_completion_path(native.registration)
@@ -110,11 +110,12 @@ class CleanupTests(unittest.TestCase):
                 ledger_before = ledger.read_bytes() if ledger.exists() else None
                 try:
                     with contextlib.ExitStack() as controls:
+                        eligibility = controls.enter_context(mock.patch.object(cleanup, 'eligibility', wraps=cleanup.eligibility))
                         if condition == 'lease-held':
                             controls.enter_context(session.NativeControlLease(native.registration.with_name(native.registration.name + '.retirement.lock')))
                         elif condition == 'corrupt-ledger':
                             ledger.write_text('broken JSON')
-                        else:
+                        elif condition == 'discovery-incomplete':
                             inventory = cleanup.inventory
                             def incomplete_discovery(*args, **kwargs):
                                 report = inventory(*args, **kwargs)
@@ -122,11 +123,25 @@ class CleanupTests(unittest.TestCase):
                                 report['discoveryErrors'].append({'path': str(self.root), 'reason': 'fixture: worktree protection discovery unavailable'})
                                 return report
                             controls.enter_context(mock.patch.object(cleanup, 'inventory', side_effect=incomplete_discovery))
+                        else:
+                            inventory = cleanup.inventory
+                            def protected_handoff(*args, **kwargs):
+                                report = inventory(*args, **kwargs)
+                                report['protectedPaths'].append(str(completion))
+                                return report
+                            controls.enter_context(mock.patch.object(cleanup, 'inventory', side_effect=protected_handoff))
                         report = cleanup.run_cleanup(self.root, receipt)
                     self.assertEqual(report['status'], 'partial', report['nativeHandoffs'])
                     self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root)), pending)
                     self.assertTrue(completion.exists())
                     self.assertEqual(native.registration.read_bytes(), audit)
+                    if condition == 'lease-held':
+                        outcome = report['nativeHandoffs'][0]
+                        self.assertEqual(outcome['reason'], 'registration-busy')
+                        self.assertEqual(outcome['operation'], 'acquire-retirement-lease')
+                        self.assertIn(outcome['errno'], (errno.EAGAIN, errno.EWOULDBLOCK))
+                    if condition == 'protected-handoff':
+                        self.assertEqual(eligibility.call_count, 3, 'Known protection needs no per-handoff full proof')
                 finally:
                     if ledger_before is None:
                         ledger.unlink(missing_ok=True)

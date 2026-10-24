@@ -68,7 +68,7 @@ if mode == "attachment-recovered-baseline" {
     checkpoint("recovered baseline excludes old bytes and retains exact new binary tail")
     exit(0)
 }
-if mode == "log-index-retry" {
+if mode == "log-index-retry" || mode == "log-index-churn" {
     let root = URL(fileURLWithPath: directory!)
     var files: [URL] = []
     for pid in 1 ... 21 {
@@ -81,7 +81,7 @@ if mode == "log-index-retry" {
     let index = GitXManagedTestObserver.LogIndex(directory: directory, invalidateSnapshot: { interrupt.withLock { $0 } })!
     precondition(index.snapshot().isEmpty)
     for file in files { precondition(chmod(file.path, 0o600) == 0) }
-    interrupt.withLock { $0 = true }
+    interrupt.withLock { $0 = mode == "log-index-churn" }
     var seen = Set<String>()
     var batches: [Int] = []
     for _ in 0 ..< 4 {
@@ -343,6 +343,14 @@ checkpoint("after-raw-write")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('retry recovered=21', result.stdout)
             print(json.dumps({'nativeRetryIndex': result.stdout.strip()}))
+
+    def test_transient_index_retry_rotation_survives_directory_churn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'log-index-churn'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('retry recovered=21', result.stdout)
+            print(json.dumps({'nativeRetryIndexChurn': result.stdout.strip()}))
 
     def test_attachment_close_does_not_wait_for_admitted_external_callbacks(self):
         with tempfile.TemporaryDirectory() as directory:
