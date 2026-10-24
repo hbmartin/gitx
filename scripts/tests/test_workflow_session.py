@@ -42,6 +42,34 @@ class WorkflowSessionTests(unittest.TestCase):
                     os.close(lease)
                 yield native, source
 
+    def test_registered_quarantine_recovery_preserves_archived_bytes(self):
+        for phase in ('prepared', 'deleting'):
+            with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
+                archived = (native.archive / source.name).read_bytes()
+                publish = session.NativeRegistrationSnapshot.publish
+                def interrupt_publication(registration, value):
+                    if phase == 'prepared' and value.get('retirementPhase') == 'deleting':
+                        raise OSError(errno.ENOSPC, 'characterization publication interrupted')
+                    return publish(registration, value)
+                remove = session.shutil.rmtree
+                def interrupt_removal(path, *args, **kwargs):
+                    if phase == 'deleting' and pathlib.Path(path).name.startswith('.gitx-native-retired-'):
+                        raise OSError(errno.EINTR, 'characterization removal interrupted')
+                    return remove(path, *args, **kwargs)
+                with mock.patch.object(session.NativeRegistrationSnapshot, 'publish', new=interrupt_publication), \
+                        mock.patch.object(session.shutil, 'rmtree', side_effect=interrupt_removal):
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'deferred', reason)
+                self.assertEqual(owner['retirementPhase'], phase)
+                quarantine = pathlib.Path(owner['retirementPath'])
+                self.assertFalse(native.root.exists())
+                self.assertTrue(quarantine.is_dir())
+                state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired', reason)
+                self.assertFalse(quarantine.exists())
+                self.assertEqual((native.archive / source.name).read_bytes(), archived)
+                self.assertEqual(json.loads(native.registration.read_text())['retirementState'], 'retired')
+
     def test_retirement_admission_refusal_does_not_hash_or_publish(self):
         for reason in ('newer commit queued', 'commit-or-inputs-changed', 'protected native source', 'protection-discovery-incomplete'):
             with self.subTest(reason=reason), self.completed_native_fixture() as (native, source):
