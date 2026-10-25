@@ -70,6 +70,21 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual((native.archive / source.name).read_bytes(), archived)
                 self.assertEqual(json.loads(native.registration.read_text())['retirementState'], 'retired')
 
+    def test_genuine_legacy_intact_quarantine_needs_no_new_metadata(self):
+        for state in ('prepared', 'deferred'):
+            with self.subTest(state=state), self.completed_native_fixture() as (native, source):
+                owner = json.loads(native.registration.read_text())
+                for field in ('retirementPhase', 'retirementParentIdentity', 'deletionProof'):
+                    owner.pop(field, None)
+                quarantine = native.root.with_name('.gitx-native-retired-' + 'b' * 32)
+                owner.update(retirementState=state, retirementPath=str(quarantine))
+                session.exclusive_native_rename(native.root, quarantine)
+                session.atomic_json(native.registration, owner)
+                state_after, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state_after, 'retired', reason)
+                self.assertFalse(quarantine.exists())
+                self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
     def test_legacy_registered_quarantines_recover_without_phase(self):
         for state in ('prepared', 'deferred'):
             for contents in ('intact', 'partial', 'absent'):
