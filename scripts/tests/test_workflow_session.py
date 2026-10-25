@@ -42,6 +42,21 @@ class WorkflowSessionTests(unittest.TestCase):
                     os.close(lease)
                 yield native, source
 
+    def test_retirement_controls_release_and_keep_persistent_inode(self):
+        with self.completed_native_fixture() as (native, source):
+            control = native.registration.with_name(native.registration.name + '.retirement.lock')
+            identity = session.native_stat_snapshot(control.stat())[:2]
+            with session.NativeControlLease(control):
+                with self.assertRaises(BlockingIOError):
+                    with session.NativeControlLease(control):
+                        self.fail('A second retirement acquired the same control')
+            with session.NativeControlLease(control):
+                self.assertEqual(session.native_stat_snapshot(control.stat())[:2], identity)
+            state, reason, owner = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual(owner['deletionProof']['parentIdentity'], owner['retirementParentIdentity'])
+            self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
     def test_registered_quarantine_recovery_preserves_archived_bytes(self):
         for phase in ('prepared', 'deleting'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
