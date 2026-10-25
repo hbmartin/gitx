@@ -27,9 +27,10 @@ final class GitXPerformanceTests: XCTestCase {
                             ], prefix: "capture", directory: root.path)
                         }
                     }
+                    let invalidate: (@Sendable () -> Bool)? = churn ? { @Sendable in true } : nil
                     let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(
                         directory: root.path, invocationID: "scaling", verificationSession: "scaling", progressDirectory: nil,
-                        invalidateSnapshot: churn ? { true } : nil
+                        invalidateSnapshot: invalidate
                     ))
                     defer { index.close() }
                     XCTAssertEqual(index.snapshot().count, count)

@@ -440,6 +440,20 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         return app
     }
 
+    func testInspectorDisplacementCorrectsObservedClampingOnce() throws {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        let clipped = CGRect(x: -2.25, y: 790.5, width: 995, height: 25)
+        let first = try XCTUnwrap(viewport.displacement(toContain: clipped))
+        // Simulate a window manager applying less than the requested movement.
+        let observed = clipped.offsetBy(dx: first.dx / 4, dy: first.dy / 4)
+        XCTAssertFalse(viewport.contains(observed))
+        let correction = try XCTUnwrap(viewport.displacement(toContain: observed))
+        let final = observed.offsetBy(dx: correction.dx, dy: correction.dy)
+        XCTAssertTrue(viewport.contains(final))
+        let settled = try XCTUnwrap(viewport.displacement(toContain: final))
+        XCTAssertEqual(settled, .zero)
+    }
+
     func testOversizedInspectorActionsHaveNoSafeDisplacement() {
         let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
         XCTAssertNil(viewport.displacement(toContain: CGRect(x: -2, y: 0, width: 1001, height: 25)))

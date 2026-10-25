@@ -227,6 +227,35 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual(outcome['errno'], errno.EPERM if condition == 'foreign-owner' else errno.EACCES)
                 self.assertEqual(native.registration.read_bytes(), before)
 
+    def test_promotion_writes_revalidate_the_selected_parent(self):
+        for boundary in ('promote', 'repair'):
+            with self.subTest(boundary=boundary), self.completed_native_fixture() as (native, source):
+                checkpoint = native.root / 'native-owner.json'
+                session.atomic_json(checkpoint, {})
+                if boundary == 'promote':
+                    prior = json.loads(native.registration.read_text())
+                    prior.update(status='running', collectionComplete=False, files=[])
+                    session.atomic_json(native.registration, prior)
+                changed = False
+                @contextlib.contextmanager
+                def authorize():
+                    nonlocal changed
+                    if not changed:
+                        changed = True
+                        parent = native.root.parent
+                        saved = parent.with_name('saved-parent')
+                        parent.rename(saved)
+                        parent.mkdir()
+                        (saved / native.root.name).rename(native.root)
+                    yield
+                state, reason, owner = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                self.assertTrue(changed)
+                self.assertEqual(state, 'retained', reason)
+                self.assertEqual(json.loads(checkpoint.read_text()), {}, 'Refused location cannot repair the reserved checkpoint')
+                self.assertEqual(owner['status'], 'running' if boundary == 'promote' else 'passed')
+                self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+                self.assertEqual(owner['retirementOutcome']['operation'], boundary + '-completion' if boundary == 'promote' else 'repair-source-checkpoint')
+
     def test_registered_quarantine_recovery_preserves_archived_bytes(self):
         for phase in ('prepared', 'deleting'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
