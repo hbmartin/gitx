@@ -86,7 +86,7 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
 
     def test_legacy_registered_quarantines_recover_without_phase(self):
-        for state in ('prepared', 'deferred'):
+        for state in ('prepared', 'deferred', 'retained'):
             for contents in ('intact', 'partial', 'controls-only', 'log-missing', 'directory-missing', 'absent'):
                 with self.subTest(state=state, contents=contents), self.completed_native_fixture() as (native, source):
                     owner = json.loads(native.registration.read_text())
@@ -108,7 +108,12 @@ class WorkflowSessionTests(unittest.TestCase):
                     elif contents == 'absent':
                         session.shutil.rmtree(quarantine)
                     session.atomic_json(native.registration, owner)
-                    state_after, reason, _ = session.retire_registered_native_sources(native.registration)
+                    if state == 'retained':
+                        before = native.registration.read_bytes()
+                        with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('Default retained retry hashed evidence')):
+                            self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retained')
+                        self.assertEqual(native.registration.read_bytes(), before)
+                    state_after, reason, _ = session.retire_registered_native_sources(native.registration, retry_retained=state == 'retained')
                     self.assertEqual(state_after, 'retired', reason)
                     self.assertFalse(quarantine.exists())
                     self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
@@ -141,6 +146,8 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual(state, 'retained', reason)
                 self.assertTrue(quarantine.exists())
                 self.assertTrue((quarantine / 'native-owner.json').exists())
+                self.assertEqual(session.retire_registered_native_sources(native.registration, retry_retained=True)[0], 'retained')
+                self.assertTrue(quarantine.exists())
 
     def test_typed_invalid_evidence_respects_retryable_metadata_boundaries(self):
         for origin in ('authorization', 'registration', 'durability', 'source', 'archive', 'producer'):

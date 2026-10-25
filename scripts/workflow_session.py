@@ -1323,8 +1323,10 @@ class NativeRetirementLocation:
         return self.root != self.original or self.phase in {'prepared', 'deleting', 'retired'}
 
 
-def native_retirement_location(owner, checkout):
+def native_retirement_location(owner, checkout, *, retry_retained=False):
     with native_retirement_boundary('source', 'inspect-root', evidence=True):
+        legacy_recovery = owner.get('retirementState') in {'prepared', 'deferred'} or (
+            retry_retained and owner.get('retirementState') == 'retained')
         original = pathlib.Path(owner['sourceDirectory'])
         root = original
         prepared = pathlib.Path(owner.get('retirementPath', str(original)))
@@ -1338,7 +1340,7 @@ def native_retirement_location(owner, checkout):
                 raise NativeRetirementFault(NativeRetirementOutcome('retained', 'invalid-retirement-path', 'source'))
             if native_path_absent(original):
                 if native_path_absent(prepared):
-                    if not (owner.get('retirementPhase') in ('prepared', 'deleting', 'retired') or owner.get('retirementState') in ('prepared', 'deferred')):
+                    if not (owner.get('retirementPhase') in ('prepared', 'deleting', 'retired') or legacy_recovery):
                         raise NativeRetirementFault(NativeRetirementOutcome('retained', 'retirement-evidence-incomplete', 'source'))
                     return NativeRetirementLocation(original, prepared, parent_identity, owner.get('retirementPhase'), True)
                 root = prepared
@@ -1350,7 +1352,7 @@ def native_retirement_location(owner, checkout):
             raise NativeRetirementFault(NativeRetirementOutcome('retained', 'source-invalid', 'source'))
 
     phase = owner.get('retirementPhase')
-    if root != original and phase is None and owner.get('retirementState') in {'prepared', 'deferred'}:
+    if root != original and phase is None and legacy_recovery:
         # Legacy rmtree could consume any subset, including only diagnostic
         # folders. Surviving controls do not establish an intact preparation.
         phase = 'deleting'
@@ -1786,7 +1788,7 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
             # A prepared/deleting quarantine already has published completed
             # evidence; its durable proof deliberately permits missing controls.
             try:
-                location = native_retirement_location(owner, checkout)
+                location = native_retirement_location(owner, checkout, retry_retained=retry_retained)
                 recovering = location.recovering
                 with (contextlib.nullcontext() if recovering else native_source_ownership(owner)) as ownership:
                     evidence = {'sourceOwnership': ownership} if ownership else {}

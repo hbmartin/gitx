@@ -213,14 +213,17 @@ class CleanupTests(unittest.TestCase):
     def test_genuine_legacy_absent_quarantine_completes_cleanup(self):
         self.assert_genuine_legacy_cleanup('absent')
 
-    def assert_genuine_legacy_cleanup(self, variant):
+    def test_explicit_retry_recovers_a_previously_retained_legacy_quarantine(self):
+        self.assert_genuine_legacy_cleanup('controls-missing', retained=True)
+
+    def assert_genuine_legacy_cleanup(self, variant, retained=False):
         with self.native_archive_waiting_for_retirement() as (native, source, release):
             release()
             owner = json.loads(native.registration.read_text())
             for field in ('retirementPhase', 'retirementParentIdentity', 'deletionProof'):
                 owner.pop(field, None)
             quarantine = native.root.with_name('.gitx-native-retired-' + 'b' * 32)
-            owner.update(retirementState='deferred', retirementPath=str(quarantine))
+            owner.update(retirementState='retained' if retained else 'deferred', retirementPath=str(quarantine))
             session.exclusive_native_rename(native.root, quarantine)
             if variant == 'controls-missing':
                 for name in ('invocation.lease', 'native-owner.json'):
@@ -232,7 +235,14 @@ class CleanupTests(unittest.TestCase):
                 shutil.rmtree(quarantine)
             session.atomic_json(native.registration, owner)
             cleanup.queue_commit(self.root)
-            report = cleanup.run_cleanup(self.root, self.valid_receipt())
+            receipt = self.valid_receipt()
+            if retained:
+                with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('Default cleanup rehashed retained legacy evidence')):
+                    initial = cleanup.run_cleanup(self.root, receipt)
+                self.assertEqual(initial['status'], 'complete')
+                self.assertTrue(quarantine.exists())
+                cleanup.queue_commit(self.root)
+            report = cleanup.run_cleanup(self.root, receipt, retry_retained_native=retained)
             self.assertEqual(report['status'], 'complete', report['nativeRetirement'])
             self.assertEqual(report['nativeRetirement'][0]['state'], 'retired')
             self.assertFalse(quarantine.exists())
