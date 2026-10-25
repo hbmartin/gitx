@@ -204,6 +204,61 @@ class CleanupTests(unittest.TestCase):
             print(json.dumps({'nativeCleanupGateMeasurement': {'invocations': 2, 'fullEligibilityCalls': len(durations),
                                                               'durationSeconds': durations}}))
 
+    def test_genuine_legacy_missing_controls_resume_through_cleanup(self):
+        self.assert_genuine_legacy_cleanup('controls-missing')
+
+    def test_genuine_legacy_surviving_controls_resume_through_cleanup(self):
+        self.assert_genuine_legacy_cleanup('controls-only')
+
+    def test_genuine_legacy_absent_quarantine_completes_cleanup(self):
+        self.assert_genuine_legacy_cleanup('absent')
+
+    def assert_genuine_legacy_cleanup(self, variant):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            owner = json.loads(native.registration.read_text())
+            for field in ('retirementPhase', 'retirementParentIdentity', 'deletionProof'):
+                owner.pop(field, None)
+            quarantine = native.root.with_name('.gitx-native-retired-' + 'b' * 32)
+            owner.update(retirementState='deferred', retirementPath=str(quarantine))
+            session.exclusive_native_rename(native.root, quarantine)
+            if variant == 'controls-missing':
+                for name in ('invocation.lease', 'native-owner.json'):
+                    (quarantine / name).unlink()
+            elif variant == 'controls-only':
+                for folder in ('Stderr', 'Progress'):
+                    shutil.rmtree(quarantine / folder)
+            else:
+                shutil.rmtree(quarantine)
+            session.atomic_json(native.registration, owner)
+            cleanup.queue_commit(self.root)
+            report = cleanup.run_cleanup(self.root, self.valid_receipt())
+            self.assertEqual(report['status'], 'complete', report['nativeRetirement'])
+            self.assertEqual(report['nativeRetirement'][0]['state'], 'retired')
+            self.assertFalse(quarantine.exists())
+            self.assertFalse(cleanup.pending_path(self.root).exists())
+            self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
+
+    def test_invalid_registration_publication_keeps_cleanup_retryable(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            before = native.registration.read_bytes()
+            publish = session.NativeRegistrationSnapshot.publish
+            def invalid_publication(registration, value):
+                if value.get('retirementPhase') == 'prepared':
+                    raise session.NativeEvidenceError('registration replaced at publication')
+                return publish(registration, value)
+            with mock.patch.object(session.NativeRegistrationSnapshot, 'publish', new=invalid_publication):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertEqual(report['nativeRetirement'][0]['state'], 'deferred')
+            self.assertTrue(cleanup.pending_path(self.root).exists())
+            self.assertEqual(native.registration.read_bytes(), before)
+            self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+            self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'complete')
+
     def test_native_registration_discovery_reads_metadata_without_hashing_archives(self):
         with self.native_archive_waiting_for_retirement() as (native, _, _):
             with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('discovery hashed archive bytes')):

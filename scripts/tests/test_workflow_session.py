@@ -87,18 +87,24 @@ class WorkflowSessionTests(unittest.TestCase):
 
     def test_legacy_registered_quarantines_recover_without_phase(self):
         for state in ('prepared', 'deferred'):
-            for contents in ('intact', 'partial', 'absent'):
+            for contents in ('intact', 'partial', 'controls-only', 'log-missing', 'directory-missing', 'absent'):
                 with self.subTest(state=state, contents=contents), self.completed_native_fixture() as (native, source):
                     owner = json.loads(native.registration.read_text())
                     quarantine = native.root.with_name('.gitx-native-retired-' + 'a' * 32)
-                    owner.update(retirementState=state, retirementPath=str(quarantine),
-                                 retirementParentIdentity=session.native_directory_identity(native.root.parent))
-                    if contents == 'partial':
-                        owner['deletionProof'] = session.native_deletion_proof(native.root, owner)
+                    for field in ('retirementPhase', 'retirementParentIdentity', 'deletionProof'):
+                        owner.pop(field, None)
+                    owner.update(retirementState=state, retirementPath=str(quarantine))
                     session.exclusive_native_rename(native.root, quarantine)
                     if contents == 'partial':
                         (quarantine / 'invocation.lease').unlink()
                         (quarantine / 'native-owner.json').unlink()
+                    elif contents == 'controls-only':
+                        for folder in ('Stderr', 'Progress'):
+                            session.shutil.rmtree(quarantine / folder)
+                    elif contents == 'log-missing':
+                        (quarantine / 'Stderr' / source.name).unlink()
+                    elif contents == 'directory-missing':
+                        session.shutil.rmtree(quarantine / 'Stderr')
                     elif contents == 'absent':
                         session.shutil.rmtree(quarantine)
                     session.atomic_json(native.registration, owner)
@@ -106,6 +112,45 @@ class WorkflowSessionTests(unittest.TestCase):
                     self.assertEqual(state_after, 'retired', reason)
                     self.assertFalse(quarantine.exists())
                     self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_genuine_legacy_recovery_rejects_changed_evidence(self):
+        for variant in ('archive', 'identity', 'unexpected', 'replacement', 'original-reappeared'):
+            with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):
+                owner = json.loads(native.registration.read_text())
+                for field in ('retirementPhase', 'retirementParentIdentity', 'deletionProof'):
+                    owner.pop(field, None)
+                quarantine = native.root.with_name('.gitx-native-retired-' + 'c' * 32)
+                owner.update(retirementState='deferred', retirementPath=str(quarantine))
+                session.exclusive_native_rename(native.root, quarantine)
+                (quarantine / 'invocation.lease').unlink()
+                if variant == 'archive':
+                    (native.archive / source.name).write_bytes(b'changed archive')
+                elif variant == 'identity':
+                    owner['directoryIdentity'] = [0, 0]
+                elif variant == 'unexpected':
+                    (quarantine / 'unapproved').write_bytes(b'keep')
+                elif variant == 'replacement':
+                    path = quarantine / 'Stderr' / source.name
+                    saved = quarantine.parent / 'saved-log'
+                    path.rename(saved)
+                    path.write_bytes(saved.read_bytes())
+                else:
+                    native.root.mkdir()
+                session.atomic_json(native.registration, owner)
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retained', reason)
+                self.assertTrue(quarantine.exists())
+                self.assertTrue((quarantine / 'native-owner.json').exists())
+
+    def test_typed_invalid_evidence_respects_retryable_metadata_boundaries(self):
+        for origin in ('authorization', 'registration', 'durability', 'source', 'archive', 'producer'):
+            with self.subTest(origin=origin):
+                with self.assertRaises(session.NativeRetirementFault) as caught:
+                    with session.native_retirement_boundary(origin, 'injected-boundary', evidence=origin in {'source', 'archive'}):
+                        raise session.NativeEvidenceError('invalid inspected identity')
+                outcome = caught.exception.outcome
+                self.assertEqual(outcome.state, 'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained')
+                self.assertEqual((outcome.origin, outcome.operation, outcome.error_number), (origin, 'injected-boundary', errno.EPERM))
 
     def test_invalid_writer_inventory_is_retained_but_uncertain_access_is_deferred(self):
         for kind in ('fifo', 'directory', 'foreign-owner'):

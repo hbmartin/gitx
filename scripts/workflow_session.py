@@ -1165,7 +1165,8 @@ def native_retirement_boundary(origin, operation, *, evidence=False):
         reason = 'producer-lease-held' if origin in {'source', 'producer'} else origin + '-busy'
         raise NativeRetirementFault(NativeRetirementOutcome('deferred', reason, origin, operation, error.errno)) from error
     except NativeEvidenceError as error:
-        raise NativeRetirementFault(NativeRetirementOutcome('retained', origin + '-invalid', origin, operation, error.errno)) from error
+        state = 'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained'
+        raise NativeRetirementFault(NativeRetirementOutcome(state, origin + '-invalid', origin, operation, error.errno)) from error
     except OSError as error:
         suffix = ('missing' if error.errno in {errno.ENOENT, errno.ENOTDIR} else
                   'invalid' if error.errno == errno.ELOOP else
@@ -1256,7 +1257,8 @@ def validate_native_deletion(root, original, owner, *, allow_missing, operation)
 
 def upgrade_legacy_native_deletion(root, owner, descriptors):
     """An old deleting record may prove surviving entries without intact controls."""
-    if owner.get('retirementParentIdentity') != native_directory_identity(root.parent):
+    parent_identity = native_directory_identity(root.parent)
+    if owner.get('retirementParentIdentity', parent_identity) != parent_identity:
         raise ValueError('Legacy deletion has no parent proof')
     files = {item['folder'] + '/' + item['name']: item for item in owner['files']}
     for path in root.rglob('*'):
@@ -1330,8 +1332,9 @@ def native_retirement_location(owner, checkout):
 
     phase = owner.get('retirementPhase')
     if root != original and phase is None and owner.get('retirementState') in {'prepared', 'deferred'}:
-        controls_absent = any(native_path_absent(root / name) for name in ('invocation.lease', 'native-owner.json'))
-        phase = 'deleting' if owner.get('deletionProof') or controls_absent else 'prepared'
+        # Legacy rmtree could consume any subset, including only diagnostic
+        # folders. Surviving controls do not establish an intact preparation.
+        phase = 'deleting'
     return NativeRetirementLocation(original, root, parent_identity, phase)
 
 
@@ -1366,6 +1369,7 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None,
                     return NativeRetirementOutcome('deferred', 'retirement-registration-required', 'registration')
                 with native_retirement_authorization(authorize):
                     owner['deletionProof'] = legacy_proof
+                    owner['retirementParentIdentity'] = parent_identity
                     with native_retirement_boundary('registration', 'publish-deleting-proof'):
                         persist(owner)
             with native_retirement_boundary('source', 'validate-deletion-proof', evidence=True):
