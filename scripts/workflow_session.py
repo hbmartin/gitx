@@ -1810,10 +1810,12 @@ def registered_native_sources(root=ROOT):
     directory = verification_artifact_root(root) / 'NativeSources'
     try:
         native_directory_identity(directory)
-    except OSError:
+    except FileNotFoundError:
         return []
     result = []
-    for path in directory.glob('*.json'):
+    for path in directory.iterdir():
+        if path.suffix != '.json':
+            continue
         try:
             if (owner := read_native_registration(path, root)) and owner.get('retirementState') != 'retired':
                 result.append((path, owner))
@@ -1828,10 +1830,12 @@ def registered_native_completions(root=ROOT):
     try:
         native_directory_identity(directory)
         native_directory_identity(directory / 'Completions')
-    except OSError:
+    except FileNotFoundError:
         return []
     result = []
-    for completion in (directory / 'Completions').glob('*.json'):
+    for completion in (directory / 'Completions').iterdir():
+        if completion.suffix != '.json':
+            continue
         path = directory / completion.name
         try:
             if (owner := read_native_registration(path, root)) and owner.get('retirementState') == 'retired':

@@ -211,6 +211,111 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual([path for path, _ in discovered], [native.registration])
             self.assertEqual(discovered[0][1], cleanup.read_json(native.registration))
 
+    def test_native_registration_discovery_allows_absent_optional_directories(self):
+        directory = self.artifact / 'NativeSources'
+        self.assertFalse(directory.exists())
+        self.assertEqual(session.registered_native_sources(self.root), [])
+        self.assertEqual(session.registered_native_completions(self.root), [])
+        directory.mkdir(parents=True)
+        self.assertEqual(session.registered_native_sources(self.root), [])
+        self.assertEqual(session.registered_native_completions(self.root), [])
+        cleanup.queue_commit(self.root)
+        report = cleanup.run_cleanup(self.root, self.valid_receipt())
+        self.assertEqual(report['status'], 'complete')
+        self.assertFalse(report['discoveryErrors'])
+        self.assertFalse(cleanup.pending_path(self.root).exists())
+
+    def test_native_registration_discovery_propagates_directory_inspection_failures(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, _):
+            directory = native.registration.parent
+            inspect = session.native_directory_identity
+            for discover, target in ((session.registered_native_sources, directory),
+                                     (session.registered_native_completions, directory),
+                                     (session.registered_native_completions, directory / 'Completions')):
+                for error in (PermissionError(errno.EACCES, 'native discovery denied', str(target)),
+                              OSError(errno.EIO, 'native discovery unavailable', str(target)),
+                              session.NativeEvidenceError('Invalid native directory identity')):
+                    with self.subTest(discover=discover.__name__, target=target.name, errno=error.errno):
+                        def fail_inspection(path):
+                            if pathlib.Path(path) == target:
+                                raise error
+                            return inspect(path)
+                        with mock.patch.object(session, 'native_directory_identity', side_effect=fail_inspection):
+                            with self.assertRaises(OSError) as caught:
+                                discover(self.root)
+                        self.assertIs(caught.exception, error)
+
+    def test_native_registration_discovery_propagates_directory_read_failures(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, _):
+            directory = native.registration.parent
+            children = pathlib.Path.iterdir
+            for discover, target in ((session.registered_native_sources, directory),
+                                     (session.registered_native_completions, directory / 'Completions')):
+                for error in (PermissionError(errno.EACCES, 'native directory cannot be read', str(target)),
+                              OSError(errno.EIO, 'native directory read failed', str(target)),
+                              FileNotFoundError(errno.ENOENT, 'native directory vanished after inspection', str(target))):
+                    with self.subTest(discover=discover.__name__, errno=error.errno):
+                        def fail_read(path):
+                            if path == target:
+                                raise error
+                            return children(path)
+                        with mock.patch.object(pathlib.Path, 'iterdir', fail_read):
+                            with self.assertRaises(OSError) as caught:
+                                discover(self.root)
+                        self.assertIs(caught.exception, error)
+
+    def test_failed_native_source_discovery_keeps_cleanup_pending(self):
+        self.assert_native_discovery_failure_preserves_cleanup('sources')
+
+    def test_failed_native_handoff_discovery_keeps_cleanup_pending(self):
+        self.assert_native_discovery_failure_preserves_cleanup('completions')
+
+    def assert_native_discovery_failure_preserves_cleanup(self, channel):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            completion = session.native_completion_path(native.registration)
+            handoff = completion.read_bytes()
+            if channel == 'completions':
+                self.assertEqual(session.retire_registered_native_sources(native.registration, checkout=self.root)[0], 'retired')
+                completion.write_bytes(handoff)
+            registration = native.registration.read_bytes()
+            old = self.run_directory('undiscovered-' + channel)
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            pending = cleanup.pending_path(self.root).read_bytes()
+            target = native.registration.parent if channel == 'sources' else completion.parent
+            inspect = session.native_directory_identity
+            error = PermissionError(errno.EACCES, 'native discovery denied', str(target))
+            def fail_inspection(path):
+                if pathlib.Path(path) == target:
+                    raise error
+                return inspect(path)
+            with mock.patch.object(session, 'native_directory_identity', side_effect=fail_inspection), \
+                    mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('incomplete discovery allowed native hashing')):
+                preview = cleanup.preview(self.root)
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertEqual(preview['status'], 'preview')
+            self.assertTrue(preview['discoveryErrors'])
+            self.assertFalse(preview['diagnosticBytesComplete'])
+            self.assertTrue(any(str(error) == item['reason'] for item in report['discoveryErrors']))
+            self.assertEqual(cleanup.read_json(report['report'])['discoveryErrors'], report['discoveryErrors'])
+            self.assertEqual(report['reclaimedBytes'], 0)
+            self.assertTrue(old.exists())
+            self.assertEqual(cleanup.pending_path(self.root).read_bytes(), pending)
+            self.assertEqual(native.registration.read_bytes(), registration)
+            self.assertEqual(completion.read_bytes(), handoff)
+            if channel == 'sources':
+                self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+            self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
+            recovered = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(recovered['status'], 'complete')
+            self.assertFalse(cleanup.pending_path(self.root).exists())
+            self.assertFalse(old.exists())
+            self.assertFalse(completion.exists())
+            self.assertFalse(native.root.exists())
+            self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
+
     def test_permanently_retained_native_evidence_does_not_poison_later_cleanup(self):
         for condition in ('incomplete', 'archive-missing', 'source-missing', 'archive-symlink', 'source-symlink'):
             with self.subTest(condition=condition), self.native_archive_waiting_for_retirement() as (native, source, release):

@@ -519,6 +519,14 @@ def inventory(root, receipt=None, now=None):
         uncertain(root / ".git", error)
         token = None
         referrers = {}
+    def native_registrations(discover):
+        try:
+            return discover(root)
+        except OSError as error:
+            uncertain(artifact / "NativeSources", error)
+            return []
+    native_sources = native_registrations(session.registered_native_sources)
+    native_completions = native_registrations(session.registered_native_completions)
     if receipt:
         protected[pathlib.Path(receipt).resolve().parent] = "current successful verification"
     ledger = metadata(records.common_directory(root) / "ledger.json", {"items": {}})
@@ -901,9 +909,9 @@ def inventory(root, receipt=None, now=None):
             "nativeSources": [{"registration": str(path), "paths": [owner["sourceDirectory"]],
                                "reason": "retained native evidence" if owner.get("retirementState") == "retained" else
                                          "complete archive awaiting validation" if owner.get("collectionComplete") else "protected incomplete native archive",
-                               "owner": owner} for path, owner in session.registered_native_sources(root)],
+                               "owner": owner} for path, owner in native_sources],
             "nativeCompletions": [{"registration": str(path), "paths": [str(session.native_completion_path(path))]}
-                                  for path, _ in session.registered_native_completions(root)],
+                                  for path, _ in native_completions],
             "candidates": selected, "retained": retained, "discoveryErrors": errors, "entryErrors": entry_errors,
             "accountingErrors": accounting_errors, "protectionToken": token, "protectionReferrers": referrers,
             "protectedPaths": [str(p) for p in protected],
