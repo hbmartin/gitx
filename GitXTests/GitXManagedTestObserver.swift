@@ -85,6 +85,25 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     }
 
     private enum FileMetadata {
+        struct Signature: Equatable, Sendable {
+            let identity: String
+            let mode: mode_t
+            let owner: uid_t
+            let bytes: Int64
+            let modified: Int64
+        }
+
+        static func signature(_ info: stat) -> Signature {
+            Signature(identity: "\(info.st_dev):\(info.st_ino)", mode: info.st_mode, owner: info.st_uid,
+                      bytes: Int64(info.st_size), modified: modified(info))
+        }
+
+        static func signature(at path: String) -> Signature? {
+            var info = stat()
+            guard path.withCString({ lstat($0, &info) }) == 0 else { return nil }
+            return signature(info)
+        }
+
         static func modified(_ info: stat) -> Int64 {
             Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec)
         }
@@ -142,8 +161,8 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
         private struct CaptureRecords {
             var stamps: [String: Int64] = [:]
             var names: [String: Set<String>] = [:]
-            var accepted = Set<String>()
-            var filenames = Set<String>()
+            var accepted: [String: (filename: String, signature: FileMetadata.Signature)] = [:]
+            var invalid: [String: FileMetadata.Signature] = [:]
             var pending: [String] = []
             var retryInspections = 0
         }
@@ -153,22 +172,33 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
         private let invocationID: String?
         private let verificationSession: String?
         private let progressDirectory: String?
+        private let invalidateSnapshot: (@Sendable () -> Bool)?
 
-        private func inspectCapture(_ path: String) -> String? {
-            guard let invocationID, let verificationSession else { return nil }
+        private enum CaptureInspection {
+            case ready(String, FileMetadata.Signature)
+            case invalid(FileMetadata.Signature)
+            case retry
+        }
+
+        private func inspectCapture(_ path: String) -> CaptureInspection {
+            guard let invocationID, let verificationSession,
+                  let expected = FileMetadata.signature(at: path) else { return .retry }
+            guard expected.mode & mode_t(S_IFMT) == mode_t(S_IFREG), expected.owner == geteuid(),
+                  expected.bytes >= 0, expected.bytes <= 65536 else { return .invalid(expected) }
             let file = URL(fileURLWithPath: path)
-            guard let (parent, _) = FileMetadata.ownedDirectory(file.deletingLastPathComponent().path) else { return nil }
+            guard let (parent, _) = FileMetadata.ownedDirectory(file.deletingLastPathComponent().path) else { return .retry }
             defer { Darwin.close(parent) }
             let descriptor = file.lastPathComponent.withCString { openat(parent, $0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC) }
-            guard descriptor >= 0 else { return nil }
+            guard descriptor >= 0 else { return .retry }
             defer { Darwin.close(descriptor) }
             var info = stat()
-            guard fstat(descriptor, &info) == 0, info.st_uid == geteuid(),
-                  (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_size >= 0, info.st_size <= 65536 else { return nil }
+            guard fstat(descriptor, &info) == 0, FileMetadata.signature(info) == expected else { return .retry }
             var data = Data(count: Int(info.st_size))
             let size = data.withUnsafeMutableBytes { Darwin.pread(descriptor, $0.baseAddress, $0.count, 0) }
-            guard size == data.count,
-                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            var after = stat()
+            guard size == data.count, fstat(descriptor, &after) == 0,
+                  FileMetadata.signature(after) == expected, FileMetadata.signature(at: path) == expected else { return .retry }
+            guard let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   record["schemaVersion"] as? Int == 1, record["event"] as? String == "capture",
                   record["state"] as? String == "captured", record["invocationID"] as? String == invocationID,
                   record["verificationSession"] as? String == verificationSession,
@@ -176,38 +206,63 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                   URL(fileURLWithPath: path).lastPathComponent.hasPrefix("capture-\(pid)-"),
                   let filename = record["filename"] as? String,
                   filename.hasPrefix("GitX-\(pid)-"), filename.hasSuffix(".stderr.log"),
-                  !filename.contains("/"), !filename.contains("\\") else { return nil }
-            return filename
+                  !filename.contains("/"), !filename.contains("\\") else { return .invalid(expected) }
+            return .ready(filename, expected)
         }
 
         private func readyCaptures() -> Set<String> {
             guard invocationID != nil, verificationSession != nil else { return [] }
             var cached = records.withLock { $0 }
             var discovered: [String] = []
-            for directory in [directory, progressDirectory].compactMap({ $0 }) {
+            for directory in Set([directory, progressDirectory].compactMap { $0 }).sorted() {
                 guard let (parent, info) = FileMetadata.ownedDirectory(directory) else { continue }
                 defer { Darwin.close(parent) }
                 let stamp = FileMetadata.modified(info)
                 guard cached.stamps[directory] != stamp else { continue }
                 guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
                 let names = Set(entries.filter { $0.hasPrefix("capture-") && $0.hasSuffix(".json") })
-                discovered += names.subtracting(cached.names[directory] ?? []).sorted().map { directory + "/" + $0 }
+                for name in names.sorted() {
+                    let path = directory + "/" + name
+                    if let accepted = cached.accepted[path], FileMetadata.signature(at: path) != accepted.signature {
+                        cached.accepted.removeValue(forKey: path)
+                        discovered.append(path)
+                    } else if !(cached.names[directory] ?? []).contains(name) {
+                        discovered.append(path)
+                    }
+                }
                 cached.names[directory] = names
                 cached.stamps[directory] = stamp
             }
+            // Only successful listings can prove that pending evidence disappeared.
+            let present = Set(cached.names.flatMap { directory, names in names.map { directory + "/" + $0 } })
+            cached.pending.removeAll { !present.contains($0) }
+            cached.accepted = cached.accepted.filter { present.contains($0.key) }
+            cached.invalid = cached.invalid.filter { present.contains($0.key) }
             let retry = Array(cached.pending.prefix(Self.retryLimit))
             cached.pending.removeFirst(retry.count)
-            cached.retryInspections += retry.count
-            for path in discovered + retry where !cached.accepted.contains(path) {
-                if let filename = inspectCapture(path) {
-                    cached.accepted.insert(path)
-                    cached.filenames.insert(filename)
-                } else if !cached.pending.contains(path) {
+            var inspected = Set<String>()
+            for path in discovered + retry where cached.accepted[path] == nil && inspected.insert(path).inserted {
+                if let invalid = cached.invalid[path], FileMetadata.signature(at: path) == invalid {
+                    // Rotate a cheap identity probe; do not reopen unchanged invalid records.
+                    cached.pending.append(path)
+                    continue
+                }
+                cached.invalid.removeValue(forKey: path)
+                if retry.contains(path) {
+                    cached.retryInspections += 1
+                }
+                switch inspectCapture(path) {
+                case let .ready(filename, signature):
+                    cached.accepted[path] = (filename, signature)
+                case let .invalid(signature):
+                    cached.invalid[path] = signature
+                    cached.pending.append(path)
+                case .retry:
                     cached.pending.append(path)
                 }
             }
             records.withLock { $0 = cached }
-            return cached.filenames
+            return Set(cached.accepted.values.map(\.filename))
         }
 
         private let state = Mutex(State())
@@ -216,13 +271,15 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
 
         init?(directory: String?, invocationID: String? = ProcessInfo.processInfo.environment["GITX_TEST_INVOCATION_ID"],
               verificationSession: String? = ProcessInfo.processInfo.environment["GITX_VERIFICATION_SESSION"],
-              progressDirectory: String? = ProcessInfo.processInfo.environment["GITX_TEST_PROGRESS_DIRECTORY"], onDirectoryChange: (@Sendable () -> Void)? = nil, onClosed: (@Sendable () -> Void)? = nil)
+              progressDirectory: String? = ProcessInfo.processInfo.environment["GITX_TEST_PROGRESS_DIRECTORY"], onDirectoryChange: (@Sendable () -> Void)? = nil, onClosed: (@Sendable () -> Void)? = nil,
+              invalidateSnapshot: (@Sendable () -> Bool)? = nil)
         {
             guard let directory, !directory.isEmpty, let (descriptor, info) = FileMetadata.ownedDirectory(directory) else { return nil }
             self.directory = directory
             self.invocationID = invocationID
             self.verificationSession = verificationSession
             self.progressDirectory = progressDirectory
+            self.invalidateSnapshot = invalidateSnapshot
             identity = "\(info.st_dev):\(info.st_ino)"
             let watcher = DispatchSource.makeFileSystemObjectSource(
                 fileDescriptor: descriptor, eventMask: [.write, .rename, .delete, .revoke],
@@ -233,10 +290,7 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                 $0.watcher = watcher
             }
             watcher.setEventHandler { [weak self] in
-                self?.state.withLock {
-                    $0.dirty = true
-                    $0.revision += 1
-                }
+                self?.directoryDidChange()
                 onDirectoryChange?()
             }
             watcher.setCancelHandler {
@@ -252,6 +306,14 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
 
         var retryInspectionCount: Int {
             state.withLock { $0.retryInspections } + records.withLock { $0.retryInspections }
+        }
+
+        private func directoryDidChange() {
+            state.withLock {
+                guard !$0.closed else { return }
+                $0.dirty = true
+                $0.revision += 1
+            }
         }
 
         private func inputs() -> Inputs? {
@@ -325,19 +387,30 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                     pending.append(name)
                 }
             }
+            if invalidateSnapshot?() == true {
+                directoryDidChange()
+            }
             return state.withLock { value in
                 guard !value.closed else { return CaseBaseline(candidates: [], names: [], complete: false) }
                 value.inspections += inspections
                 value.retryInspections += retry.count
-                if value.revision == inputs.revision {
+                let complete = value.revision == inputs.revision
+                value.names = names
+                if complete {
                     value.known = known
-                    value.names = names
-                    value.pending = pending
                     value.directoryStamp = stamp
                     value.dirty = false
-                    value.revision += 1
+                } else {
+                    // An event invalidates cached candidates, not fair retry progress.
+                    value.known.removeAll()
+                    for name in names.sorted() where !pending.contains(name) {
+                        pending.append(name)
+                    }
+                    value.dirty = true
                 }
-                return CaseBaseline(candidates: Array(known.values), names: names, complete: true)
+                value.pending = pending
+                value.revision += 1
+                return CaseBaseline(candidates: Array(known.values), names: names, complete: complete)
             }
         }
 
@@ -378,13 +451,24 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
             }
         }
 
-        func attach(candidates: [AttachmentState.Candidate], to testCase: XCTestCase) {
-            deliver(candidates: candidates) { testCase.add($0.attachment()) }
+        func take(snapshot: LogIndex.CaseBaseline) -> [Excerpt] {
+            state.withLock { value in
+                guard !value.closed else { return [] }
+                return value.value.take(in: nil, candidates: snapshot.candidates, names: snapshot.names, complete: snapshot.complete)
+            }
+        }
+
+        func attach(snapshot: LogIndex.CaseBaseline, to testCase: XCTestCase) {
+            deliver(excerpts: take(snapshot: snapshot)) { testCase.add($0.attachment()) }
         }
 
         /// Test-support seam; real delivery remains on the observer's calling thread.
         func deliver(candidates: [AttachmentState.Candidate], delivery: (Excerpt) -> Void) {
-            for excerpt in take(candidates: candidates) {
+            deliver(excerpts: take(candidates: candidates), delivery: delivery)
+        }
+
+        private func deliver(excerpts: [Excerpt], delivery: (Excerpt) -> Void) {
+            for excerpt in excerpts {
                 // This is the delivery admission point. Close rejects subsequent
                 // admissions without waiting for callbacks already admitted here.
                 guard state.withLock({ !$0.closed }) else { return }
@@ -447,9 +531,12 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                              finalized: finalized)
         }
 
-        mutating func take(in directory: String?, candidates: [Candidate]? = nil) -> [Excerpt] {
+        mutating func take(in directory: String?, candidates: [Candidate]? = nil, names: Set<String>? = nil, complete: Bool = true) -> [Excerpt] {
             guard retainedBytes < Self.perCaseLimit else { return [] }
             let available = candidates ?? Self.candidates(in: directory)
+            if needsBaselineRecovery {
+                unresolvedBaselineNames.formUnion(names ?? Set(available.map { $0.file.lastPathComponent }))
+            }
             for candidate in available where needsBaselineRecovery || unresolvedBaselineNames.contains(candidate.file.lastPathComponent) {
                 // The old prefix could not be inspected at case start. Never
                 // attach unproven pre-case bytes; complete raw logs remain archived.
@@ -457,7 +544,7 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                 offsets[candidate.identity] = candidate.end
                 unresolvedBaselineNames.remove(candidate.file.lastPathComponent)
             }
-            if !available.isEmpty {
+            if complete {
                 needsBaselineRecovery = false
             }
             let candidates = available.filter { $0.end > (offsets[$0.identity] ?? 0) }.sorted {
@@ -518,7 +605,7 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
     func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) {
         guard let session = attachmentStates.withLock({ $0[ObjectIdentifier(testCase)] }) else { return }
         let index = logIndex.withLock { $0 }
-        session.attach(candidates: index?.snapshot() ?? [], to: testCase)
+        session.attach(snapshot: index?.caseSnapshot() ?? .init(candidates: [], names: [], complete: false), to: testCase)
     }
 
     func testCaseDidFinish(_ testCase: XCTestCase) {

@@ -12,6 +12,20 @@ private nonisolated struct InspectorActionViewport {
     func contains(_ action: CGRect) -> Bool {
         !action.isEmpty && frame.contains(action)
     }
+
+    func displacement(toContain action: CGRect) -> CGVector {
+        func correction(_ lower: CGFloat, _ upper: CGFloat, _ visibleLower: CGFloat, _ visibleUpper: CGFloat) -> CGFloat {
+            if lower < visibleLower {
+                return visibleLower - lower
+            }
+            if upper > visibleUpper {
+                return visibleUpper - upper
+            }
+            return 0
+        }
+        return CGVector(dx: correction(action.minX, action.maxX, frame.minX, frame.maxX),
+                        dy: correction(action.minY, action.maxY, frame.minY, frame.maxY))
+    }
 }
 
 @MainActor
@@ -36,6 +50,24 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(viewport.contains(CGRect(x: 2800, y: 30, width: 100, height: 26)))
         XCTAssertFalse(viewport.contains(CGRect(x: 0, y: 1520, width: 100, height: 26)))
         XCTAssertFalse(viewport.contains(.zero))
+    }
+
+    func testActionPositioningCorrectsOnlyClippedAxes() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        let cases: [(CGRect, CGVector)] = [
+            (CGRect(x: 100, y: 100, width: 100, height: 25), .zero),
+            (CGRect(x: -2, y: 100, width: 100, height: 25), CGVector(dx: 2, dy: 0)),
+            (CGRect(x: 950, y: 100, width: 100, height: 25), CGVector(dx: -50, dy: 0)),
+            (CGRect(x: 100, y: -5, width: 100, height: 25), CGVector(dx: 0, dy: 5)),
+            (CGRect(x: 100, y: 790, width: 100, height: 25), CGVector(dx: 0, dy: -15)),
+            (CGRect(x: -2, y: 790, width: 100, height: 25), CGVector(dx: 2, dy: -15)),
+        ]
+        for (action, expected) in cases {
+            let actual = viewport.displacement(toContain: action)
+            XCTAssertEqual(actual.dx, expected.dx)
+            XCTAssertEqual(actual.dy, expected.dy)
+            XCTAssertTrue(viewport.contains(action.offsetBy(dx: actual.dx, dy: actual.dy)))
+        }
     }
 
     override nonisolated func tearDown() {
@@ -436,13 +468,13 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             visibleFrame: XCTUnwrap(NSScreen.main).visibleFrame,
             primaryDisplayTop: XCTUnwrap(NSScreen.screens.first).frame.maxY
         )
-        XCTAssertTrue(action.exists)
+        try requireExists(action, timeout: 5)
         if !viewport.contains(action.frame) {
             // Move the action into view; window decoration need not land on an exact pixel.
-            let displacement = viewport.frame.midX - action.frame.midX
+            let displacement = viewport.displacement(toContain: action.frame)
             let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0))
                 .withOffset(CGVector(dx: 0, dy: 12))
-            titlebar.click(forDuration: 0.2, thenDragTo: titlebar.withOffset(CGVector(dx: displacement, dy: 0)))
+            titlebar.click(forDuration: 0.2, thenDragTo: titlebar.withOffset(displacement))
         }
         let positioned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             viewport.contains(action.frame) && action.isHittable

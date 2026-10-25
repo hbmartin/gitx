@@ -1369,6 +1369,18 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     report["failed"].append(failed)
         report["nativeRetirement"] = []
         report["nativeHandoffs"] = []
+        def native_admission_reason(paths, protected_reason):
+            # Refusal needs no cached authority; every accepted mutation still
+            # acquires its own current proof below.
+            if read_json(pending_path(root)) != pending:
+                return "newer commit queued"
+            if session.git(root, "rev-parse", "HEAD").strip() != pending["head"]:
+                return "commit-or-inputs-changed"
+            if report["discoveryErrors"]:
+                return "protection-discovery-incomplete"
+            if any(overlap(candidate, path) for candidate in paths for path in report["protectedPaths"]):
+                return protected_reason
+            return None
         for item in report.get("nativeSources", []):
             @contextlib.contextmanager
             def authorize_native_retirement():
@@ -1382,18 +1394,8 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                         raise session.NativeRetirementDeferred(reason)
                     yield
             def admit_native_retirement():
-                # Cheap refusal before source/archive I/O. This is not authority:
-                # every mutation still takes a fresh proof lease and full gate.
-                if read_json(pending_path(root)) != pending:
-                    return "newer commit queued"
-                if session.git(root, "rev-parse", "HEAD").strip() != pending["head"]:
-                    return "commit-or-inputs-changed"
-                if report["discoveryErrors"]:
-                    return "protection-discovery-incomplete"
-                source = pathlib.Path(item["owner"]["sourceDirectory"])
-                if any(overlap(source, path) for path in report["protectedPaths"]):
-                    return "protected native source"
-                return None
+                paths = (pathlib.Path(item["owner"]["sourceDirectory"]), session.native_completion_path(item["registration"]))
+                return native_admission_reason(paths, "protected native source")
             state, reason, registered = session.retire_registered_native_sources(
                 item["registration"], checkout=root, authorize=authorize_native_retirement,
                 admit=admit_native_retirement, retry_retained=retry_retained_native)
@@ -1405,15 +1407,18 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
             @contextlib.contextmanager
             def authorize_native_handoff():
                 with session.Leases(proof, owner, inherited=authenticated):
-                    reason = gate()
-                    if any(overlap(session.native_completion_path(item["registration"]), path) for path in report["protectedPaths"]):
-                        reason = reason or "protected native handoff"
+                    paths = (session.native_completion_path(item["registration"]),)
+                    reason = native_admission_reason(paths, "protected native handoff") or gate()
                     if reason:
                         raise session.NativeRetirementDeferred(reason)
                     yield
-            state, _, registered = session.retire_registered_native_sources(
+            state, reason, registered = session.retire_registered_native_sources(
                 item["registration"], checkout=root, authorize=authorize_native_handoff)
-            outcome = (registered or {}).get("handoffCleanup", {"state": "deferred", "reason": "retirement-unconfirmed"})
+            outcome = (registered or {}).get("handoffCleanup")
+            if not isinstance(outcome, dict):
+                failure = (registered or {}).get("retirementOutcome")
+                outcome = (failure if isinstance(failure, dict) and failure.get("state") in {"deferred", "retained"} else
+                           {"state": "deferred", "reason": reason or "retirement-unconfirmed"})
             report["nativeHandoffs"].append({"registration": item["registration"], **outcome})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
@@ -1425,12 +1430,17 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     changed = "newer commit queued"
                 changed = changed or removed_original_problem()
                 native_deferred = any(item["state"] not in {"retired", "retained"} for item in report["nativeRetirement"])
+                handoff_deferred = any(item["state"] not in {"removed", "absent", "retained"} for item in report["nativeHandoffs"])
                 report["status"] = "partial" if (report["skipped"] or report["failed"] or report["discoveryErrors"] or
-                                                 report["entryErrors"] or native_deferred or changed) else "complete"
+                                                 report["entryErrors"] or native_deferred or handoff_deferred or changed) else "complete"
                 if changed:
                     report["reason"] = changed
+                elif report["failed"]:
+                    report["reason"] = report["failed"][0]["reason"]
                 elif native_deferred:
                     report["reason"] = "native retirement deferred"
+                elif handoff_deferred:
+                    report["reason"] = "native handoff cleanup deferred"
                 if report["status"] == "complete" and read_json(pending_path(root)) != pending:
                     report.update(status="partial", reason="newer commit queued")
                 report["finishedAt"] = records.now()

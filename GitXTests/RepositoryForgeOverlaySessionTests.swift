@@ -1095,20 +1095,22 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         )
         let target = try ForgeRefreshTarget(authentication: .credential(credential), repository: repository)
         let recorder = ForgeApplicationRefreshRecorder()
+        let entered = expectation(description: "registration result awaits delivery")
+        let gate = ForgeRegistrationDeliveryGate(entered: entered)
         let coordinator = ForgeApplicationRefreshCoordinator(
             bindingProvider: nil,
             resolveTarget: { _ in nil },
             backgroundRefresh: { target, binding, reason in
                 await recorder.recordBackground(target: target, binding: binding, reason: reason)
             },
-            sleep: { _ in throw CancellationError() }
+            sleep: { _ in throw CancellationError() },
+            registrationDelivery: { await gate.hold() }
         )
         await coordinator.start()
-        let entered = expectation(description: "coordinator holds registration admission")
-        let release = DispatchSemaphore(value: 0)
-        let barrier = Task { await coordinator.holdRegistrationAdmission(entered: entered, release: release) }
-        defer { release.signal() }
-        await fulfillment(of: [entered], timeout: 1)
+        addTeardownBlock {
+            await gate.release()
+            await coordinator.invalidate()
+        }
 
         let reader = try OverlayReaderDouble(
             factsMode: .success(remote(facts(description: "Initial"))),
@@ -1130,12 +1132,16 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
             scheduler: OverlaySchedulerDouble(),
             networkMonitor: OverlayNetworkMonitorDouble()
         )
+        defer { session.invalidate() }
         session.start()
+        await fulfillment(of: [entered], timeout: 1)
         try await waitForFactsRequests(1, reader: reader)
+        let intervalWhileHeld = await coordinator.interval(for: target)
+        XCTAssertEqual(intervalWhileHeld, ForgeRefreshPolicy.openRepositoryInterval, "Held result delivery must leave coordinator queries responsive")
         session.invalidate()
-        release.signal()
-        let released = await barrier.value
-        XCTAssertTrue(released, "Registration must remain held until explicit release")
+        let admissions = await gate.admissionCount
+        XCTAssertEqual(admissions, 1)
+        await gate.release()
 
         // Registration leaves the bound target behind; only its cancelled client must disappear.
         let deadline = ContinuousClock.now + .seconds(1)
@@ -1396,11 +1402,33 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
     }
 }
 
-private extension ForgeApplicationRefreshCoordinator {
-    /// Hold only this actor's admission, leaving the session's main actor free to cancel.
-    func holdRegistrationAdmission(entered: XCTestExpectation, release: DispatchSemaphore) -> Bool {
+private actor ForgeRegistrationDeliveryGate {
+    private let entered: XCTestExpectation
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private(set) var admissionCount = 0
+
+    init(entered: XCTestExpectation) {
+        self.entered = entered
+    }
+
+    func hold() async {
+        admissionCount += 1
         entered.fulfill()
-        return release.wait(timeout: .now() + 1) == .success
+        await withCheckedContinuation { continuation in
+            if released {
+                continuation.resume()
+            } else {
+                continuations.append(continuation)
+            }
+        }
+    }
+
+    func release() {
+        released = true
+        let waiting = continuations
+        continuations.removeAll()
+        waiting.forEach { $0.resume() }
     }
 }
 

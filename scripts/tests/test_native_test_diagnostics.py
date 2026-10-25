@@ -43,22 +43,32 @@ if mode == "attachment-recovered-baseline" {
     try writer.close()
     precondition(attachments.take(candidates: [GitXManagedTestObserver.AttachmentState.inspect(file)!]).first?.data == tail)
     let index = GitXManagedTestObserver.LogIndex(directory: directory)!
+    let delayed = URL(fileURLWithPath: directory!).appendingPathComponent("GitX-43-b.stderr.log")
+    try Data("unproven-pre-case".utf8).write(to: delayed)
+    precondition(chmod(delayed.path, 0) == 0)
     precondition(chmod(directory!, 0) == 0)
     let failed = index.caseSnapshot()
     precondition(!failed.complete)
     let uncertain = GitXManagedTestObserver.CaseAttachments(candidates: failed.candidates, preexistingNames: failed.names, needsBaselineRecovery: true)
     precondition(chmod(directory!, 0o700) == 0)
-    precondition(uncertain.take(candidates: index.snapshot()).isEmpty)
+    precondition(uncertain.take(snapshot: index.caseSnapshot()).isEmpty)
+    precondition(chmod(delayed.path, 0o600) == 0)
+    precondition(uncertain.take(snapshot: index.caseSnapshot()).isEmpty, "a partial recovery cannot forget unreadable old names")
+    let delayedWriter = try FileHandle(forWritingTo: delayed)
+    try delayedWriter.seekToEnd()
+    try delayedWriter.write(contentsOf: tail)
+    try delayedWriter.close()
+    precondition(uncertain.take(snapshot: index.caseSnapshot()).first?.data == tail)
     let append = try FileHandle(forWritingTo: file)
     try append.seekToEnd()
     try append.write(contentsOf: tail)
     try append.close()
-    precondition(uncertain.take(candidates: index.snapshot()).first?.data == tail)
+    precondition(uncertain.take(snapshot: index.caseSnapshot()).first?.data == tail)
     index.close()
     checkpoint("recovered baseline excludes old bytes and retains exact new binary tail")
     exit(0)
 }
-if mode == "log-index-retry" {
+if mode == "log-index-retry" || mode == "log-index-churn" {
     let root = URL(fileURLWithPath: directory!)
     var files: [URL] = []
     for pid in 1 ... 21 {
@@ -67,9 +77,11 @@ if mode == "log-index-retry" {
         precondition(chmod(file.path, 0) == 0)
         files.append(file)
     }
-    let index = GitXManagedTestObserver.LogIndex(directory: directory)!
+    let interrupt = Mutex(false)
+    let index = GitXManagedTestObserver.LogIndex(directory: directory, invalidateSnapshot: { interrupt.withLock { $0 } })!
     precondition(index.snapshot().isEmpty)
     for file in files { precondition(chmod(file.path, 0o600) == 0) }
+    interrupt.withLock { $0 = mode == "log-index-churn" }
     var seen = Set<String>()
     var batches: [Int] = []
     for _ in 0 ..< 4 {
@@ -331,6 +343,14 @@ checkpoint("after-raw-write")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('retry recovered=21', result.stdout)
             print(json.dumps({'nativeRetryIndex': result.stdout.strip()}))
+
+    def test_transient_index_retry_rotation_survives_directory_churn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'log-index-churn'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('retry recovered=21', result.stdout)
+            print(json.dumps({'nativeRetryIndexChurn': result.stdout.strip()}))
 
     def test_attachment_close_does_not_wait_for_admitted_external_callbacks(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -300,6 +300,91 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertLessThanOrEqual(index.retryInspectionCount, 16)
     }
 
+    func testIncompleteBaselineRecoveryKeepsEveryUnreadablePreCaseName() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let readable = directory.appendingPathComponent("GitX-41-a.stderr.log")
+        let delayed = directory.appendingPathComponent("GitX-42-b.stderr.log")
+        try Data("old-a".utf8).write(to: readable)
+        try Data("old-b".utf8).write(to: delayed)
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(directory: directory.path))
+        defer { index.close() }
+        defer { _ = chmod(directory.path, 0o700); _ = chmod(delayed.path, 0o600) }
+        XCTAssertEqual(chmod(delayed.path, 0), 0)
+        XCTAssertEqual(chmod(directory.path, 0), 0)
+        let baseline = index.caseSnapshot()
+        XCTAssertFalse(baseline.complete)
+        let session = GitXManagedTestObserver.CaseAttachments(candidates: baseline.candidates, preexistingNames: baseline.names,
+                                                              needsBaselineRecovery: !baseline.complete)
+        defer { session.close() }
+        XCTAssertEqual(chmod(directory.path, 0o700), 0)
+        XCTAssertTrue(session.take(snapshot: index.caseSnapshot()).isEmpty)
+        XCTAssertEqual(chmod(delayed.path, 0o600), 0)
+        XCTAssertTrue(session.take(snapshot: index.caseSnapshot()).isEmpty, "Delayed inspection must not attach pre-case bytes")
+        let bytes = Data([0, 255, 65])
+        let writer = try FileHandle(forWritingTo: delayed)
+        try writer.seekToEnd()
+        try writer.write(contentsOf: bytes)
+        try writer.close()
+        XCTAssertEqual(session.take(snapshot: index.caseSnapshot()).first?.data, bytes)
+    }
+
+    func testLogIndexRetryRotationSurvivesEventsDuringEveryScan() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        var files: [URL] = []
+        defer { files.forEach { _ = chmod($0.path, 0o600) } }
+        for number in 1 ... 21 {
+            let file = directory.appendingPathComponent("GitX-\(number)-event.stderr.log")
+            try Data([UInt8(number)]).write(to: file)
+            XCTAssertEqual(chmod(file.path, 0), 0)
+            files.append(file)
+        }
+        let interrupt = Mutex(false)
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(directory: directory.path, invalidateSnapshot: { interrupt.withLock { $0 } }))
+        defer { index.close() }
+        XCTAssertTrue(index.snapshot().isEmpty)
+        files.forEach { XCTAssertEqual(chmod($0.path, 0o600), 0) }
+        interrupt.withLock { $0 = true }
+        var recovered = Set<String>()
+        for _ in 0 ..< 4 {
+            let before = index.retryInspectionCount
+            recovered.formUnion(index.snapshot().map(\.identity))
+            XCTAssertLessThanOrEqual(index.retryInspectionCount - before, 16)
+        }
+        XCTAssertEqual(recovered.count, files.count, "Directory churn must not replay only the first retry batch")
+    }
+
+    func testCaptureRetriesDiscardAbsentRecordsAndReconsiderChangedInvalidRecords() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let file = directory.appendingPathComponent("GitX-\(getpid())-record.stderr.log")
+        try Data([0, 255]).write(to: file)
+        let record = try GitXTestProgressRecords.write(["invalid": true], prefix: "capture", directory: directory.path)
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(directory: directory.path, invocationID: "fixture", verificationSession: "fixture", progressDirectory: nil))
+        defer { index.close() }
+        XCTAssertEqual(index.snapshot().first?.finalized, false)
+        let before = index.retryInspectionCount
+        for _ in 0 ..< 3 {
+            _ = index.snapshot()
+        }
+        XCTAssertEqual(index.retryInspectionCount, before, "Stable malformed records must not consume transient retries")
+        let repaired: [String: Any] = ["schemaVersion": 1, "event": "capture", "state": "captured", "filename": file.lastPathComponent,
+                                       "pid": getpid(), "invocationID": "fixture", "verificationSession": "fixture"]
+        try JSONSerialization.data(withJSONObject: repaired).write(to: record)
+        XCTAssertEqual(index.snapshot().first?.finalized, true)
+        let unreadable = try GitXTestProgressRecords.write(repaired, prefix: "capture", directory: directory.path)
+        XCTAssertEqual(chmod(unreadable.path, 0), 0)
+        _ = index.snapshot()
+        try FileManager.default.removeItem(at: unreadable)
+        let prior = index.retryInspectionCount
+        _ = index.snapshot()
+        XCTAssertEqual(index.retryInspectionCount, prior, "A successful listing must remove deleted pending records")
+    }
+
     func testAttachmentClosureDoesNotWaitForAdmittedDelivery() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
