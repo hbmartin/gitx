@@ -629,6 +629,93 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
                 self.assertEqual(json.loads(native.registration.read_text()), advanced)
                 self.assertEqual(source.read_bytes(), b'preserve-newer')
 
+    def test_source_ownership_snapshots_after_excluding_the_last_writer(self):
+        for append in (False, True):
+            with self.subTest(append=append), self.completed_native_fixture() as (native, source):
+                flock = session.fcntl.flock
+                inode = source.stat().st_ino
+                changed = False
+                def finish_writer(descriptor, operation):
+                    nonlocal changed
+                    if operation == fcntl.LOCK_EX | fcntl.LOCK_NB and os.fstat(descriptor).st_ino == inode and not changed:
+                        changed = True
+                        if append:
+                            with source.open('ab') as stream:
+                                stream.write(b'new bytes')
+                        else:
+                            info = source.stat()
+                            os.utime(source, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000))
+                    return flock(descriptor, operation)
+                with mock.patch.object(session.fcntl, 'flock', side_effect=finish_writer):
+                    state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertTrue(changed)
+                self.assertEqual(state, 'retained' if append else 'retired', reason)
+                self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+                if append:
+                    self.assertEqual(source.read_bytes(), b'finalization-\x00\xffnew bytes')
+
+    def test_registration_publish_parses_once_and_detects_external_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'record.json'
+            owner = {'kind': 'gitx-native-invocation', 'schemaVersion': 1, 'invocationID': 'fixture',
+                     'status': 'running', 'collectionComplete': False, 'files': []}
+            session.persist_native_registration(path, owner)
+            loads = session.json.loads
+            with mock.patch.object(session.json, 'loads', wraps=loads) as parses:
+                with session.NativeRegistration(path) as transaction:
+                    transaction.publish(dict(owner, marker=True))
+                self.assertEqual(parses.call_count, 1)
+            print(json.dumps({'registrationPublication': {'jsonParses': parses.call_count}}))
+            with session.NativeRegistration(path) as transaction:
+                advanced = dict(transaction.current, external=True)
+                session.atomic_json(path, advanced)
+                with self.assertRaises(session.NativeRegistrationChanged):
+                    transaction.publish(dict(transaction.current, external=False))
+            self.assertEqual(json.loads(path.read_text()), advanced)
+
+    def test_registered_retirement_selects_its_location_once(self):
+        with self.completed_native_fixture() as (native, _):
+            with mock.patch.object(session, 'native_retirement_location', wraps=session.native_retirement_location) as select:
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual(select.call_count, 1)
+
+    def test_handoff_replacement_during_authorization_is_not_removed(self):
+        with self.completed_native_fixture() as (native, _):
+            completion = session.native_completion_path(native.registration)
+            envelope = completion.read_bytes()
+            self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
+            completion.write_bytes(envelope)
+            audit = native.registration.read_bytes()
+            @contextlib.contextmanager
+            def replace_during_authorization():
+                session.atomic_json(completion, json.loads(envelope))
+                yield
+            outcome = session.cleanup_native_completion(native.registration, json.loads(audit), authorize=replace_during_authorization)
+            self.assertEqual(outcome.state, 'deferred')
+            self.assertTrue(completion.exists())
+            self.assertEqual(native.registration.read_bytes(), audit)
+
+    def test_handoff_validation_precedes_full_authorization(self):
+        for kind in ('absent', 'malformed', 'symlink'):
+            with self.subTest(kind=kind), self.completed_native_fixture() as (native, _):
+                completion = session.native_completion_path(native.registration)
+                envelope = completion.read_bytes()
+                state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired', reason)
+                if kind == 'malformed':
+                    completion.write_bytes(b'{bad')
+                elif kind == 'symlink':
+                    target = completion.with_name('foreign')
+                    target.write_bytes(envelope)
+                    completion.symlink_to(target)
+                @contextlib.contextmanager
+                def forbid_expensive_authorization():
+                    self.fail('Read-only refusal or absence required a full authorization')
+                    yield
+                outcome = session.cleanup_native_completion(native.registration, owner, authorize=forbid_expensive_authorization)
+                self.assertEqual(outcome.state, 'absent' if kind == 'absent' else 'retained')
+
     def test_registration_transactions_release_and_preserve_completed_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / 'NativeSources' / 'invocation.json'

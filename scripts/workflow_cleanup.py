@@ -1377,6 +1377,10 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     report["failed"].append(failed)
         report["nativeRetirement"] = []
         report["nativeHandoffs"] = []
+        def native_protection_reason(paths, protected_reason):
+            if any(overlap(candidate, path) for candidate in paths for path in report["protectedPaths"]):
+                return protected_reason
+            return None
         def native_admission_reason(paths, protected_reason):
             # Refusal needs no cached authority; every accepted mutation still
             # acquires its own current proof below.
@@ -1386,9 +1390,7 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                 return "commit-or-inputs-changed"
             if report["discoveryErrors"]:
                 return "protection-discovery-incomplete"
-            if any(overlap(candidate, path) for candidate in paths for path in report["protectedPaths"]):
-                return protected_reason
-            return None
+            return native_protection_reason(paths, protected_reason)
         for item in report.get("nativeSources", []):
             @contextlib.contextmanager
             def authorize_native_retirement():
@@ -1396,8 +1398,7 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     reason = gate()
                     source = pathlib.Path(item["owner"]["sourceDirectory"])
                     completion = session.native_completion_path(item["registration"])
-                    if any(overlap(candidate, path) for candidate in (source, completion) for path in report["protectedPaths"]):
-                        reason = reason or "protected native source"
+                    reason = reason or native_protection_reason((source, completion), "protected native source")
                     if reason:
                         raise session.NativeRetirementDeferred(reason)
                     yield
@@ -1412,16 +1413,17 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
             if registered and "handoffCleanup" in registered:
                 report["nativeHandoffs"].append({"registration": item["registration"], **registered["handoffCleanup"]})
         for item in report.get("nativeCompletions", []):
+            def admit_native_handoff():
+                return native_admission_reason((session.native_completion_path(item["registration"]),), "protected native handoff")
             @contextlib.contextmanager
             def authorize_native_handoff():
                 with session.Leases(proof, owner, inherited=authenticated):
-                    paths = (session.native_completion_path(item["registration"]),)
-                    reason = native_admission_reason(paths, "protected native handoff") or gate()
+                    reason = admit_native_handoff() or gate()
                     if reason:
                         raise session.NativeRetirementDeferred(reason)
                     yield
             state, reason, registered = session.retire_registered_native_sources(
-                item["registration"], checkout=root, authorize=authorize_native_handoff)
+                item["registration"], checkout=root, authorize=authorize_native_handoff, admit=admit_native_handoff)
             outcome = (registered or {}).get("handoffCleanup")
             if not isinstance(outcome, dict):
                 failure = (registered or {}).get("retirementOutcome")
