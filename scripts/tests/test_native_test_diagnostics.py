@@ -30,6 +30,44 @@ func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
 let environment = ProcessInfo.processInfo.environment
 let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
+if mode == "attachment-churn-baseline" {
+    let root = URL(fileURLWithPath: directory!)
+    let file = root.appendingPathComponent("GitX-41-proven.stderr.log")
+    let delayed = root.appendingPathComponent("GitX-42-delayed.stderr.log")
+    try Data("old".utf8).write(to: file)
+    try Data("unproven-old".utf8).write(to: delayed)
+    let initial = GitXManagedTestObserver.AttachmentState.inspect(file)!
+    let session = GitXManagedTestObserver.CaseAttachments(candidates: [initial], preexistingNames: [file.lastPathComponent, delayed.lastPathComponent], needsBaselineRecovery: true)
+    let writer = try FileHandle(forWritingTo: file)
+    try writer.seekToEnd()
+    for byte in [UInt8(0), 255, 65] {
+        try writer.write(contentsOf: Data([byte]))
+        let current = GitXManagedTestObserver.AttachmentState.inspect(file)!
+        let recovered = GitXManagedTestObserver.AttachmentState.inspect(delayed)!
+        let excerpts = session.take(snapshot: .init(candidates: [current, recovered], names: [file.lastPathComponent, delayed.lastPathComponent], complete: false))
+        precondition(excerpts.map(\.data) == [Data([byte])], "incomplete recovery lost proven post-case bytes")
+    }
+    try writer.close()
+    var unknown = GitXManagedTestObserver.AttachmentState(candidates: [], needsBaselineRecovery: true)
+    precondition(unknown.take(in: nil).isEmpty)
+    precondition(unknown.take(in: nil, candidates: [initial], names: [file.lastPathComponent], complete: true).isEmpty, "unknown discovery ended recovery")
+    session.close()
+    checkpoint("proven baselines retained each exact binary growth across incomplete issues")
+    exit(0)
+}
+if mode == "healthy-index-churn" {
+    let root = URL(fileURLWithPath: directory!)
+    for pid in 1 ... 33 { try Data([UInt8(pid)]).write(to: root.appendingPathComponent("GitX-\(pid)-healthy.stderr.log")) }
+    let index = GitXManagedTestObserver.LogIndex(directory: directory, invalidateSnapshot: { true })!
+    for _ in 0 ..< 5 {
+        let snapshot = index.caseSnapshot()
+        precondition(!snapshot.complete)
+        precondition(snapshot.candidates.count == 33, "directory churn hid healthy logs")
+    }
+    index.close()
+    checkpoint("all 33 healthy logs remain available during directory churn")
+    exit(0)
+}
 if mode == "attachment-recovered-baseline" {
     let file = URL(fileURLWithPath: directory!).appendingPathComponent("GitX-42-a.stderr.log")
     try Data("before-case".utf8).write(to: file)
@@ -328,6 +366,20 @@ checkpoint("after-raw-write")
                 if expected in line:
                     return
         self.fail(f"Missing checkpoint {expected!r}")
+
+    def test_proven_baselines_and_growth_survive_incomplete_discovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'attachment-churn-baseline'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('exact binary growth', result.stdout)
+
+    def test_all_healthy_logs_remain_available_during_churn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'healthy-index-churn'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('all 33 healthy logs', result.stdout)
 
     def test_recovered_inspection_never_includes_unvalidated_pre_case_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
