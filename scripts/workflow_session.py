@@ -857,8 +857,9 @@ NATIVE_CAPTURE_RECORD_NAME = re.compile(r'capture-[0-9]+-[A-Fa-f0-9-]+\.json')
 class NativeEvidenceError(OSError):
     """An inspected identity is invalid, rather than merely inaccessible."""
 
-    def __init__(self, message):
-        super().__init__(errno.EPERM, message)
+    def __init__(self, message, *, detail=None, error_number=errno.EPERM):
+        self.detail = detail
+        super().__init__(error_number, message)
 
 
 def open_owned_regular(path, *, directory=None, maximum=None, identity=None, flags=os.O_RDONLY):
@@ -1021,16 +1022,30 @@ class NativeControlLease:
             info = os.fstat(self.directory)
             if [info.st_dev, info.st_ino] != self.identity or info.st_uid != os.getuid():
                 raise NativeEvidenceError('Native control directory changed')
+            try:
+                existing = os.stat(self.path.name, dir_fd=self.directory, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                self.validate_control(existing)
             self.lock = os.open(self.path.name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                                 0o600, dir_fd=self.directory)
             info = os.fstat(self.lock)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
-                raise NativeEvidenceError('Invalid native control lock')
+            self.validate_control(info)
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return self
         except BaseException:
             self.__exit__(None, None, None)
             raise
+
+    @staticmethod
+    def validate_control(info):
+        detail = ('control-type' if not stat.S_ISREG(info.st_mode) else
+                  'control-owner' if info.st_uid != os.getuid() else
+                  'control-links' if info.st_nlink != 1 else
+                  'control-mode' if info.st_mode & 0o077 else None)
+        if detail:
+            raise NativeEvidenceError('Invalid native invocation control', detail=detail)
 
     def __exit__(self, *_):
         lock, directory = self.lock, self.directory
@@ -1120,7 +1135,8 @@ class NativeRegistrationSnapshot:
             self.current = transaction.current
 
     def publish(self, value):
-        with NativeRegistration(self.path, retry_retained=self.retry_retained) as transaction:
+        with native_retirement_boundary('registration', 'publish-registration'), \
+                NativeRegistration(self.path, retry_retained=self.retry_retained) as transaction:
             if transaction.identity != self.identity or transaction.current != self.current:
                 raise NativeRegistrationChanged()
             transaction.publish(value)
@@ -1147,16 +1163,31 @@ class NativeRetirementOutcome:
     origin: str = 'retirement'
     operation: str | None = None
     error_number: int | None = None
+    report_only: bool = False
+    validation_detail: str | None = None
 
     def metadata(self):
-        return {'state': self.state, 'reason': self.reason, 'origin': self.origin,
-                'operation': self.operation, 'errno': self.error_number}
+        result = {'state': self.state, 'reason': self.reason, 'origin': self.origin,
+                  'operation': self.operation, 'errno': self.error_number}
+        if self.report_only:
+            result.update(reportOnly=True, validationDetail=self.validation_detail)
+        return result
 
 
 class NativeRetirementFault(Exception):
     def __init__(self, outcome):
         self.outcome = outcome
         super().__init__(outcome.reason)
+
+
+def native_evidence_failure_state(origin):
+    """Retryability does not determine whether an outcome may be persisted."""
+    return 'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained'
+
+
+def native_outcome_is_publishable(outcome):
+    return not outcome.report_only and not (outcome.state == 'deferred' and
+                                           outcome.origin in {'authorization', 'registration', 'producer'})
 
 
 @contextlib.contextmanager
@@ -1174,8 +1205,10 @@ def native_retirement_boundary(origin, operation, *, evidence=False):
         reason = 'producer-lease-held' if origin in {'source', 'producer'} else origin + '-busy'
         raise NativeRetirementFault(NativeRetirementOutcome('deferred', reason, origin, operation, error.errno)) from error
     except NativeEvidenceError as error:
-        state = 'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained'
-        raise NativeRetirementFault(NativeRetirementOutcome(state, origin + '-invalid', origin, operation, error.errno)) from error
+        report_only = error.detail in {'control-type', 'control-owner', 'control-links', 'control-mode'}
+        state = 'retained' if report_only else native_evidence_failure_state(origin)
+        raise NativeRetirementFault(NativeRetirementOutcome(state, origin + '-invalid', origin, operation, error.errno,
+                                                          report_only, error.detail)) from error
     except OSError as error:
         suffix = ('missing' if error.errno in {errno.ENOENT, errno.ENOTDIR} else
                   'invalid' if error.errno == errno.ELOOP else
@@ -1730,7 +1763,7 @@ def publish_native_retirement_outcome(registration, outcome, authorize, *, locat
     owner = dict(registration.current)
     # Authorization and uncertain publications are diagnostic only. Never turn
     # them into sticky evidence or overwrite a record advanced by another writer.
-    if outcome.origin in {'authorization', 'registration', 'producer'} and outcome.state == 'deferred':
+    if not native_outcome_is_publishable(outcome):
         return dict(owner, retirementOutcome=outcome.metadata())
     with native_retirement_authorization(authorize):
         if outcome.state == 'retired' and location is not None:
@@ -1811,10 +1844,11 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
     try:
         checkout = pathlib.Path(checkout or ROOT)
         with native_retirement_boundary('registration', 'inspect-registration'):
-            read_native_object(path)
+            owner = read_native_object(path)
         retirement_path = pathlib.Path(path).with_name(pathlib.Path(path).name + '.retirement.lock')
         with NativeControlLease(retirement_path, boundary=lambda: native_retirement_boundary('registration', 'acquire-retirement-lease')):
-            registration = NativeRegistrationSnapshot(path, retry_retained=retry_retained)
+            with native_retirement_boundary('registration', 'open-registration-transaction'):
+                registration = NativeRegistrationSnapshot(path, retry_retained=retry_retained)
             owner = dict(registration.current)
             if owner.get('invocationID') != pathlib.Path(path).stem or owner.get('checkout') != str(checkout.resolve()):
                 raise ValueError('Native registration ownership changed')

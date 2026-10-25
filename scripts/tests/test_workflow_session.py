@@ -103,6 +103,50 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual(state, 'retained', reason)
                 self.assertNotEqual(after.get('retirementPhase'), 'retired')
 
+    def test_invalid_invocation_controls_are_report_only_and_repairable(self):
+        for suffix in ('.lock', '.retirement.lock'):
+            for kind in ('fifo', 'directory', 'symlink', 'mode', 'links'):
+                with self.subTest(suffix=suffix, kind=kind), self.completed_native_fixture() as (native, source):
+                    control = native.registration.with_name(native.registration.name + suffix)
+                    control.unlink(missing_ok=True)
+                    if kind == 'fifo':
+                        os.mkfifo(control, 0o600)
+                    elif kind == 'directory':
+                        control.mkdir()
+                    elif kind == 'symlink':
+                        control.symlink_to(source)
+                    else:
+                        control.write_bytes(b'')
+                        control.chmod(0o644 if kind == 'mode' else 0o600)
+                        if kind == 'links':
+                            os.link(control, control.with_name('unrelated-link'))
+                    before = native.registration.read_bytes()
+                    checkpoint = (native.root / 'native-owner.json').read_bytes()
+                    for _ in range(2):
+                        state, reason, owner = session.retire_registered_native_sources(native.registration)
+                        self.assertEqual(state, 'retained', reason)
+                        self.assertTrue(owner['retirementOutcome']['reportOnly'])
+                        self.assertEqual(native.registration.read_bytes(), before)
+                        self.assertEqual((native.root / 'native-owner.json').read_bytes(), checkpoint)
+                        self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+                    if kind == 'directory':
+                        control.rmdir()
+                    else:
+                        control.unlink()
+                    self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
+
+    def test_outcome_retryability_and_publication_are_independent(self):
+        for origin in ('authorization', 'registration', 'durability', 'producer', 'source', 'archive'):
+            for state in ('retained', 'deferred'):
+                with self.subTest(origin=origin, state=state):
+                    outcome = session.NativeRetirementOutcome(state, origin=origin)
+                    self.assertEqual(session.native_outcome_is_publishable(outcome),
+                                     not (state == 'deferred' and origin in {'authorization', 'registration', 'producer'}))
+                    report = session.NativeRetirementOutcome(state, origin=origin, report_only=True)
+                    self.assertFalse(session.native_outcome_is_publishable(report))
+            self.assertEqual(session.native_evidence_failure_state(origin),
+                             'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained')
+
     def test_registered_quarantine_recovery_preserves_archived_bytes(self):
         for phase in ('prepared', 'deleting'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
