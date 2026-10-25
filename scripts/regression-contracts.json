@@ -1823,7 +1823,8 @@
         "address-undefined",
         "thread-sanitizer",
         "analyze",
-        "static"
+        "static",
+        "performance"
       ],
       "tests": [
         {
