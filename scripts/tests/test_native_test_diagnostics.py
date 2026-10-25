@@ -30,6 +30,79 @@ func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
 let environment = ProcessInfo.processInfo.environment
 let directory = environment["GITX_TEST_STDERR_DIRECTORY"]
+if mode == "inspector-placement" {
+    let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+    let cases: [(CGRect, CGVector)] = [
+        (CGRect(x: 100, y: 100, width: 100, height: 25), .zero),
+        (CGRect(x: -2.25, y: 790.5, width: 100, height: 25), CGVector(dx: 10.25, dy: -23.5)),
+        (CGRect(x: 950.25, y: -5.5, width: 100, height: 25), CGVector(dx: -58.25, dy: 13.5)),
+        (CGRect(x: 0, y: 0, width: 100, height: 25), .zero),
+    ]
+    for (action, expected) in cases {
+        let result = viewport.displacement(toContain: action)
+        precondition(result.dx == expected.dx && result.dy == expected.dy, "clipped action needs an eight-point interior margin")
+        precondition(viewport.contains(action.offsetBy(dx: result.dx, dy: result.dy)))
+    }
+    checkpoint("fractional two-axis placement retains strict containment and interior margin")
+    exit(0)
+}
+if mode == "forge-registration-gate" {
+    let entered = XCTestExpectation(description: "first admission")
+    entered.assertForOverFulfill = true
+    let gate = ForgeRegistrationDeliveryGate(entered: entered)
+    Task {
+        let first = Task { await gate.hold() }
+        let second = Task { await gate.hold() }
+        let deadline = ContinuousClock.now + .seconds(1)
+        while await gate.admissionCount < 2 && ContinuousClock.now < deadline { await Task.yield() }
+        let count = await gate.admissionCount
+        precondition(count == 2)
+        await gate.release()
+        await first.value
+        await second.value
+        checkpoint("duplicate admissions counted without overfulfilling the first-entry signal")
+        exit(0)
+    }
+    dispatchMain()
+}
+if mode == "attachment-churn-baseline" {
+    let root = URL(fileURLWithPath: directory!)
+    let file = root.appendingPathComponent("GitX-41-proven.stderr.log")
+    let delayed = root.appendingPathComponent("GitX-42-delayed.stderr.log")
+    try Data("old".utf8).write(to: file)
+    try Data("unproven-old".utf8).write(to: delayed)
+    let initial = GitXManagedTestObserver.AttachmentState.inspect(file)!
+    let session = GitXManagedTestObserver.CaseAttachments(candidates: [initial], preexistingNames: [file.lastPathComponent, delayed.lastPathComponent], needsBaselineRecovery: true)
+    let writer = try FileHandle(forWritingTo: file)
+    try writer.seekToEnd()
+    for byte in [UInt8(0), 255, 65] {
+        try writer.write(contentsOf: Data([byte]))
+        let current = GitXManagedTestObserver.AttachmentState.inspect(file)!
+        let recovered = GitXManagedTestObserver.AttachmentState.inspect(delayed)!
+        let excerpts = session.take(snapshot: .init(candidates: [current, recovered], names: [file.lastPathComponent, delayed.lastPathComponent], complete: false))
+        precondition(excerpts.map(\.data) == [Data([byte])], "incomplete recovery lost proven post-case bytes")
+    }
+    try writer.close()
+    var unknown = GitXManagedTestObserver.AttachmentState(candidates: [], needsBaselineRecovery: true)
+    precondition(unknown.take(in: nil).isEmpty)
+    precondition(unknown.take(in: nil, candidates: [initial], names: [file.lastPathComponent], complete: true).isEmpty, "unknown discovery ended recovery")
+    session.close()
+    checkpoint("proven baselines retained each exact binary growth across incomplete issues")
+    exit(0)
+}
+if mode == "healthy-index-churn" {
+    let root = URL(fileURLWithPath: directory!)
+    for pid in 1 ... 33 { try Data([UInt8(pid)]).write(to: root.appendingPathComponent("GitX-\(pid)-healthy.stderr.log")) }
+    let index = GitXManagedTestObserver.LogIndex(directory: directory, invalidateSnapshot: { true })!
+    for _ in 0 ..< 5 {
+        let snapshot = index.caseSnapshot()
+        precondition(!snapshot.complete)
+        precondition(snapshot.candidates.count == 33, "directory churn hid healthy logs")
+    }
+    index.close()
+    checkpoint("all 33 healthy logs remain available during directory churn")
+    exit(0)
+}
 if mode == "attachment-recovered-baseline" {
     let file = URL(fileURLWithPath: directory!).appendingPathComponent("GitX-42-a.stderr.log")
     try Data("before-case".utf8).write(to: file)
@@ -281,6 +354,10 @@ let bytes = Array("raw-stderr-".utf8) + [0, 255] + Array("-end\nAddressSanitizer
 _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
 checkpoint("after-raw-write")
 ''')
+        viewport = (ROOT / "GitXUITests/Milestone2WorkflowUITests.swift").read_text().split("@MainActor", 1)[0]
+        forge = (ROOT / "GitXTests/RepositoryForgeOverlaySessionTests.swift").read_text()
+        gate = forge[forge.index("private actor ForgeRegistrationDeliveryGate"):forge.index("private actor OverlayReaderDouble")]
+        main.write_text(viewport + gate + main.read_text())
         sdk_platform = pathlib.Path(subprocess.check_output(["xcrun", "--show-sdk-platform-path"], text=True).strip())
         frameworks = sdk_platform / "Developer/Library/Frameworks"
         cls.required_runtime_paths = [frameworks.parent / "PrivateFrameworks", sdk_platform.parents[2] / "SharedFrameworks"]
@@ -328,6 +405,30 @@ checkpoint("after-raw-write")
                 if expected in line:
                     return
         self.fail(f"Missing checkpoint {expected!r}")
+
+    def test_actual_inspector_viewport_uses_interior_margin(self):
+        result = subprocess.run([self.executable, 'inspector-placement'], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('strict containment', result.stdout)
+
+    def test_actual_forge_gate_counts_duplicates_without_overfulfillment(self):
+        result = subprocess.run([self.executable, 'forge-registration-gate'], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('duplicate admissions counted', result.stdout)
+
+    def test_proven_baselines_and_growth_survive_incomplete_discovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'attachment-churn-baseline'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('exact binary growth', result.stdout)
+
+    def test_all_healthy_logs_remain_available_during_churn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([self.executable, 'healthy-index-churn'], env=self.environment(directory),
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('all 33 healthy logs', result.stdout)
 
     def test_recovered_inspection_never_includes_unvalidated_pre_case_bytes(self):
         with tempfile.TemporaryDirectory() as directory:

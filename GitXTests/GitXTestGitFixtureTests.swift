@@ -330,6 +330,60 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertEqual(session.take(snapshot: index.caseSnapshot()).first?.data, bytes)
     }
 
+    func testRecoveryPreservesProvenOffsetsAcrossIncompleteIssues() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let file = directory.appendingPathComponent("GitX-41-proven.stderr.log")
+        let delayed = directory.appendingPathComponent("GitX-42-delayed.stderr.log")
+        try Data("old".utf8).write(to: file)
+        try Data("unproven-old".utf8).write(to: delayed)
+        let initial = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(file))
+        let session = GitXManagedTestObserver.CaseAttachments(
+            candidates: [initial], preexistingNames: [file.lastPathComponent, delayed.lastPathComponent], needsBaselineRecovery: true
+        )
+        defer { session.close() }
+        let writer = try FileHandle(forWritingTo: file)
+        defer { try? writer.close() }
+        try writer.seekToEnd()
+        for byte in [UInt8(0), 255, 65] {
+            try writer.write(contentsOf: Data([byte]))
+            let current = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(file))
+            let recovered = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(delayed))
+            let excerpts = session.take(snapshot: .init(candidates: [current, recovered], names: [file.lastPathComponent, delayed.lastPathComponent], complete: false))
+            XCTAssertEqual(excerpts.map(\.data), [Data([byte])], "Recovery may establish unknown baselines only once")
+        }
+        XCTAssertTrue(session.take(snapshot: .init(candidates: [initial], names: [], complete: true)).isEmpty)
+    }
+
+    func testUnknownDiscoveryCannotEndBaselineRecovery() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        let file = directory.appendingPathComponent("GitX-42-old.stderr.log")
+        try Data("pre-case".utf8).write(to: file)
+        var state = GitXManagedTestObserver.AttachmentState(candidates: [], needsBaselineRecovery: true)
+        XCTAssertTrue(state.take(in: nil).isEmpty)
+        let candidate = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(file))
+        XCTAssertTrue(state.take(in: nil, candidates: [candidate], names: [file.lastPathComponent], complete: true).isEmpty)
+    }
+
+    func testDirectoryChurnKeepsEveryHealthyLogAvailable() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        directories.append(directory)
+        for pid in 1 ... 33 {
+            try Data([UInt8(pid)]).write(to: directory.appendingPathComponent("GitX-\(pid)-healthy.stderr.log"))
+        }
+        let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(directory: directory.path, invalidateSnapshot: { true }))
+        defer { index.close() }
+        for _ in 0 ..< 5 {
+            let snapshot = index.caseSnapshot()
+            XCTAssertFalse(snapshot.complete)
+            XCTAssertEqual(snapshot.candidates.count, 33, "Directory events cannot hide previously validated logs behind retry batches")
+        }
+    }
+
     func testLogIndexRetryRotationSurvivesEventsDuringEveryScan() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -16,10 +16,10 @@ private nonisolated struct InspectorActionViewport {
     func displacement(toContain action: CGRect) -> CGVector {
         func correction(_ lower: CGFloat, _ upper: CGFloat, _ visibleLower: CGFloat, _ visibleUpper: CGFloat) -> CGFloat {
             if lower < visibleLower {
-                return visibleLower - lower
+                return visibleLower + 8 - lower
             }
             if upper > visibleUpper {
-                return visibleUpper - upper
+                return visibleUpper - 8 - upper
             }
             return 0
         }
@@ -56,11 +56,14 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
         let cases: [(CGRect, CGVector)] = [
             (CGRect(x: 100, y: 100, width: 100, height: 25), .zero),
-            (CGRect(x: -2, y: 100, width: 100, height: 25), CGVector(dx: 2, dy: 0)),
-            (CGRect(x: 950, y: 100, width: 100, height: 25), CGVector(dx: -50, dy: 0)),
-            (CGRect(x: 100, y: -5, width: 100, height: 25), CGVector(dx: 0, dy: 5)),
-            (CGRect(x: 100, y: 790, width: 100, height: 25), CGVector(dx: 0, dy: -15)),
-            (CGRect(x: -2, y: 790, width: 100, height: 25), CGVector(dx: 2, dy: -15)),
+            (CGRect(x: -2, y: 100, width: 100, height: 25), CGVector(dx: 10, dy: 0)),
+            (CGRect(x: 950, y: 100, width: 100, height: 25), CGVector(dx: -58, dy: 0)),
+            (CGRect(x: 100, y: -5, width: 100, height: 25), CGVector(dx: 0, dy: 13)),
+            (CGRect(x: 100, y: 790, width: 100, height: 25), CGVector(dx: 0, dy: -23)),
+            (CGRect(x: -2, y: 790, width: 100, height: 25), CGVector(dx: 10, dy: -23)),
+            (CGRect(x: -2.25, y: 790.5, width: 100, height: 25), CGVector(dx: 10.25, dy: -23.5)),
+            (CGRect(x: 950.25, y: -5.5, width: 100, height: 25), CGVector(dx: -58.25, dy: 13.5)),
+            (CGRect(x: 0, y: 0, width: 100, height: 25), .zero),
         ]
         for (action, expected) in cases {
             let actual = viewport.displacement(toContain: action)

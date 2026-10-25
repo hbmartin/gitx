@@ -1157,6 +1157,32 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         let requests = await reader.factsRequestCount()
         XCTAssertEqual(requests, 1, "A late registration must not revive the invalidated session")
         await coordinator.invalidate()
+        let finalAdmissions = await gate.admissionCount
+        XCTAssertEqual(finalAdmissions, 1, "Drainage must not hide an additional registration admission")
+    }
+
+    func testRegistrationDeliveryGateSignalsOnlyFirstEntryAndCountsEveryAdmission() async {
+        let entered = expectation(description: "first registration admission")
+        let gate = ForgeRegistrationDeliveryGate(entered: entered)
+        let first = Task { await gate.hold() }
+        let second = Task { await gate.hold() }
+        addTeardownBlock {
+            await gate.release()
+            await first.value
+            await second.value
+        }
+        await fulfillment(of: [entered], timeout: 1)
+        let deadline = ContinuousClock.now + .seconds(1)
+        while await gate.admissionCount < 2, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        let admissions = await gate.admissionCount
+        XCTAssertEqual(admissions, 2)
+        await gate.release()
+        await first.value
+        await second.value
+        let drainedAdmissions = await gate.admissionCount
+        XCTAssertEqual(drainedAdmissions, 2)
     }
 
     private func makeSession(
@@ -1414,7 +1440,9 @@ private actor ForgeRegistrationDeliveryGate {
 
     func hold() async {
         admissionCount += 1
-        entered.fulfill()
+        if admissionCount == 1 {
+            entered.fulfill()
+        }
         await withCheckedContinuation { continuation in
             if released {
                 continuation.resume()

@@ -70,27 +70,94 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual((native.archive / source.name).read_bytes(), archived)
                 self.assertEqual(json.loads(native.registration.read_text())['retirementState'], 'retired')
 
-    def test_legacy_registered_quarantines_recover_without_phase(self):
+    def test_genuine_legacy_intact_quarantine_needs_no_new_metadata(self):
         for state in ('prepared', 'deferred'):
-            for contents in ('intact', 'partial', 'absent'):
+            with self.subTest(state=state), self.completed_native_fixture() as (native, source):
+                owner = json.loads(native.registration.read_text())
+                for field in ('retirementPhase', 'retirementParentIdentity', 'deletionProof'):
+                    owner.pop(field, None)
+                quarantine = native.root.with_name('.gitx-native-retired-' + 'b' * 32)
+                owner.update(retirementState=state, retirementPath=str(quarantine))
+                session.exclusive_native_rename(native.root, quarantine)
+                session.atomic_json(native.registration, owner)
+                state_after, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state_after, 'retired', reason)
+                self.assertFalse(quarantine.exists())
+                self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_legacy_registered_quarantines_recover_without_phase(self):
+        for state in ('prepared', 'deferred', 'retained'):
+            for contents in ('intact', 'partial', 'controls-only', 'log-missing', 'directory-missing', 'absent'):
                 with self.subTest(state=state, contents=contents), self.completed_native_fixture() as (native, source):
                     owner = json.loads(native.registration.read_text())
                     quarantine = native.root.with_name('.gitx-native-retired-' + 'a' * 32)
-                    owner.update(retirementState=state, retirementPath=str(quarantine),
-                                 retirementParentIdentity=session.native_directory_identity(native.root.parent))
-                    if contents == 'partial':
-                        owner['deletionProof'] = session.native_deletion_proof(native.root, owner)
+                    for field in ('retirementPhase', 'retirementParentIdentity', 'deletionProof'):
+                        owner.pop(field, None)
+                    owner.update(retirementState=state, retirementPath=str(quarantine))
                     session.exclusive_native_rename(native.root, quarantine)
                     if contents == 'partial':
                         (quarantine / 'invocation.lease').unlink()
                         (quarantine / 'native-owner.json').unlink()
+                    elif contents == 'controls-only':
+                        for folder in ('Stderr', 'Progress'):
+                            session.shutil.rmtree(quarantine / folder)
+                    elif contents == 'log-missing':
+                        (quarantine / 'Stderr' / source.name).unlink()
+                    elif contents == 'directory-missing':
+                        session.shutil.rmtree(quarantine / 'Stderr')
                     elif contents == 'absent':
                         session.shutil.rmtree(quarantine)
                     session.atomic_json(native.registration, owner)
-                    state_after, reason, _ = session.retire_registered_native_sources(native.registration)
+                    if state == 'retained':
+                        before = native.registration.read_bytes()
+                        with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('Default retained retry hashed evidence')):
+                            self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retained')
+                        self.assertEqual(native.registration.read_bytes(), before)
+                    state_after, reason, _ = session.retire_registered_native_sources(native.registration, retry_retained=state == 'retained')
                     self.assertEqual(state_after, 'retired', reason)
                     self.assertFalse(quarantine.exists())
                     self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_genuine_legacy_recovery_rejects_changed_evidence(self):
+        for variant in ('archive', 'identity', 'unexpected', 'replacement', 'original-reappeared'):
+            with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):
+                owner = json.loads(native.registration.read_text())
+                for field in ('retirementPhase', 'retirementParentIdentity', 'deletionProof'):
+                    owner.pop(field, None)
+                quarantine = native.root.with_name('.gitx-native-retired-' + 'c' * 32)
+                owner.update(retirementState='deferred', retirementPath=str(quarantine))
+                session.exclusive_native_rename(native.root, quarantine)
+                (quarantine / 'invocation.lease').unlink()
+                if variant == 'archive':
+                    (native.archive / source.name).write_bytes(b'changed archive')
+                elif variant == 'identity':
+                    owner['directoryIdentity'] = [0, 0]
+                elif variant == 'unexpected':
+                    (quarantine / 'unapproved').write_bytes(b'keep')
+                elif variant == 'replacement':
+                    path = quarantine / 'Stderr' / source.name
+                    saved = quarantine.parent / 'saved-log'
+                    path.rename(saved)
+                    path.write_bytes(saved.read_bytes())
+                else:
+                    native.root.mkdir()
+                session.atomic_json(native.registration, owner)
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retained', reason)
+                self.assertTrue(quarantine.exists())
+                self.assertTrue((quarantine / 'native-owner.json').exists())
+                self.assertEqual(session.retire_registered_native_sources(native.registration, retry_retained=True)[0], 'retained')
+                self.assertTrue(quarantine.exists())
+
+    def test_typed_invalid_evidence_respects_retryable_metadata_boundaries(self):
+        for origin in ('authorization', 'registration', 'durability', 'source', 'archive', 'producer'):
+            with self.subTest(origin=origin):
+                with self.assertRaises(session.NativeRetirementFault) as caught:
+                    with session.native_retirement_boundary(origin, 'injected-boundary', evidence=origin in {'source', 'archive'}):
+                        raise session.NativeEvidenceError('invalid inspected identity')
+                outcome = caught.exception.outcome
+                self.assertEqual(outcome.state, 'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained')
+                self.assertEqual((outcome.origin, outcome.operation, outcome.error_number), (origin, 'injected-boundary', errno.EPERM))
 
     def test_invalid_writer_inventory_is_retained_but_uncertain_access_is_deferred(self):
         for kind in ('fifo', 'directory', 'foreign-owner'):
@@ -568,6 +635,126 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
                 self.assertEqual(state, 'deferred')
                 self.assertEqual(json.loads(native.registration.read_text()), advanced)
                 self.assertEqual(source.read_bytes(), b'preserve-newer')
+
+    def test_source_ownership_snapshots_after_excluding_the_last_writer(self):
+        for phase in (None, 'prepared'):
+            for append in (False, True):
+                with self.subTest(phase=phase, append=append), self.completed_native_fixture() as (native, source):
+                    if phase:
+                        owner = json.loads(native.registration.read_text())
+                        owner.update(retirementPhase=phase, retirementState=phase,
+                                     retirementPath=str(native.root.with_name('.gitx-native-retired-' + 'd' * 32)))
+                        session.atomic_json(native.registration, owner)
+                    flock = session.fcntl.flock
+                    inode = source.stat().st_ino
+                    changed = False
+                    def finish_writer(descriptor, operation):
+                        nonlocal changed
+                        if operation == fcntl.LOCK_EX | fcntl.LOCK_NB and os.fstat(descriptor).st_ino == inode and not changed:
+                            changed = True
+                            if append:
+                                with source.open('ab') as stream:
+                                    stream.write(b'new bytes')
+                            else:
+                                info = source.stat()
+                                os.utime(source, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000))
+                        return flock(descriptor, operation)
+                    with mock.patch.object(session.fcntl, 'flock', side_effect=finish_writer):
+                        state, reason, _ = session.retire_registered_native_sources(native.registration)
+                    self.assertTrue(changed)
+                    self.assertEqual(state, 'retained' if append else 'retired', reason)
+                    self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+                    if append:
+                        self.assertEqual(source.read_bytes(), b'finalization-\x00\xffnew bytes')
+
+    def test_locked_source_path_replacement_survives_ordinary_and_prepared_retirement(self):
+        for phase in (None, 'prepared'):
+            with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
+                if phase:
+                    owner = json.loads(native.registration.read_text())
+                    owner.update(retirementPhase=phase, retirementState=phase,
+                                 retirementPath=str(native.root.with_name('.gitx-native-retired-' + 'e' * 32)))
+                    session.atomic_json(native.registration, owner)
+                flock = session.fcntl.flock
+                inode = source.stat().st_ino
+                replaced = False
+                def replace_before_lock(descriptor, operation):
+                    nonlocal replaced
+                    if operation == fcntl.LOCK_EX | fcntl.LOCK_NB and os.fstat(descriptor).st_ino == inode and not replaced:
+                        replaced = True
+                        source.rename(native.root.parent / 'saved-original')
+                        source.write_bytes(b'unapproved replacement bytes')
+                    return flock(descriptor, operation)
+                with mock.patch.object(session.fcntl, 'flock', side_effect=replace_before_lock):
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertTrue(replaced)
+                self.assertEqual(state, 'retained', reason)
+                self.assertEqual(source.read_bytes(), b'unapproved replacement bytes')
+                self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+                self.assertEqual(owner['retirementOutcome']['origin'], 'source')
+                self.assertEqual(owner['retirementOutcome']['errno'], errno.EPERM)
+
+    def test_registration_publish_parses_once_and_detects_external_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'record.json'
+            owner = {'kind': 'gitx-native-invocation', 'schemaVersion': 1, 'invocationID': 'fixture',
+                     'status': 'running', 'collectionComplete': False, 'files': []}
+            session.persist_native_registration(path, owner)
+            loads = session.json.loads
+            with mock.patch.object(session.json, 'loads', wraps=loads) as parses:
+                with session.NativeRegistration(path) as transaction:
+                    transaction.publish(dict(owner, marker=True))
+                self.assertEqual(parses.call_count, 1)
+            print(json.dumps({'registrationPublication': {'jsonParses': parses.call_count}}))
+            with session.NativeRegistration(path) as transaction:
+                advanced = dict(transaction.current, external=True)
+                session.atomic_json(path, advanced)
+                with self.assertRaises(session.NativeRegistrationChanged):
+                    transaction.publish(dict(transaction.current, external=False))
+            self.assertEqual(json.loads(path.read_text()), advanced)
+
+    def test_registered_retirement_selects_its_location_once(self):
+        with self.completed_native_fixture() as (native, _):
+            with mock.patch.object(session, 'native_retirement_location', wraps=session.native_retirement_location) as select:
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual(select.call_count, 1)
+
+    def test_handoff_replacement_during_authorization_is_not_removed(self):
+        with self.completed_native_fixture() as (native, _):
+            completion = session.native_completion_path(native.registration)
+            envelope = completion.read_bytes()
+            self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
+            completion.write_bytes(envelope)
+            audit = native.registration.read_bytes()
+            @contextlib.contextmanager
+            def replace_during_authorization():
+                session.atomic_json(completion, json.loads(envelope))
+                yield
+            outcome = session.cleanup_native_completion(native.registration, json.loads(audit), authorize=replace_during_authorization)
+            self.assertEqual(outcome.state, 'deferred')
+            self.assertTrue(completion.exists())
+            self.assertEqual(native.registration.read_bytes(), audit)
+
+    def test_handoff_validation_precedes_full_authorization(self):
+        for kind in ('absent', 'malformed', 'symlink'):
+            with self.subTest(kind=kind), self.completed_native_fixture() as (native, _):
+                completion = session.native_completion_path(native.registration)
+                envelope = completion.read_bytes()
+                state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired', reason)
+                if kind == 'malformed':
+                    completion.write_bytes(b'{bad')
+                elif kind == 'symlink':
+                    target = completion.with_name('foreign')
+                    target.write_bytes(envelope)
+                    completion.symlink_to(target)
+                @contextlib.contextmanager
+                def forbid_expensive_authorization():
+                    self.fail('Read-only refusal or absence required a full authorization')
+                    yield
+                outcome = session.cleanup_native_completion(native.registration, owner, authorize=forbid_expensive_authorization)
+                self.assertEqual(outcome.state, 'absent' if kind == 'absent' else 'retained')
 
     def test_registration_transactions_release_and_preserve_completed_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -396,16 +396,14 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                 value.retryInspections += retry.count
                 let complete = value.revision == inputs.revision
                 value.names = names
+                // The event invalidates directory discovery, not a successfully
+                // inspected file. Active candidates are revalidated next time;
+                // only failed inspections belong in the bounded retry queue.
+                value.known = known
                 if complete {
-                    value.known = known
                     value.directoryStamp = stamp
                     value.dirty = false
                 } else {
-                    // An event invalidates cached candidates, not fair retry progress.
-                    value.known.removeAll()
-                    for name in names.sorted() where !pending.contains(name) {
-                        pending.append(name)
-                    }
                     value.dirty = true
                 }
                 value.pending = pending
@@ -531,7 +529,7 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
                              finalized: finalized)
         }
 
-        mutating func take(in directory: String?, candidates: [Candidate]? = nil, names: Set<String>? = nil, complete: Bool = true) -> [Excerpt] {
+        mutating func take(in directory: String?, candidates: [Candidate]? = nil, names: Set<String>? = nil, complete: Bool = false) -> [Excerpt] {
             guard retainedBytes < Self.perCaseLimit else { return [] }
             let available = candidates ?? Self.candidates(in: directory)
             if needsBaselineRecovery {
@@ -540,8 +538,10 @@ final nonisolated class GitXManagedTestObserver: NSObject, XCTestObservation, Se
             for candidate in available where needsBaselineRecovery || unresolvedBaselineNames.contains(candidate.file.lastPathComponent) {
                 // The old prefix could not be inspected at case start. Never
                 // attach unproven pre-case bytes; complete raw logs remain archived.
-                baseline[candidate.identity] = candidate.end
-                offsets[candidate.identity] = candidate.end
+                if baseline[candidate.identity] == nil {
+                    baseline[candidate.identity] = candidate.end
+                    offsets[candidate.identity] = candidate.end
+                }
                 unresolvedBaselineNames.remove(candidate.file.lastPathComponent)
             }
             if complete {
