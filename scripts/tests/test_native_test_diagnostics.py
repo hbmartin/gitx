@@ -25,6 +25,7 @@ import Darwin
 import Foundation
 import OSLog
 import Synchronization
+import XCTest
 
 func checkpoint(_ text: String) { print(text); fflush(stdout) }
 let mode = CommandLine.arguments[1]
@@ -37,12 +38,17 @@ if mode == "inspector-placement" {
         (CGRect(x: -2.25, y: 790.5, width: 100, height: 25), CGVector(dx: 10.25, dy: -23.5)),
         (CGRect(x: 950.25, y: -5.5, width: 100, height: 25), CGVector(dx: -58.25, dy: 13.5)),
         (CGRect(x: 0, y: 0, width: 100, height: 25), .zero),
+        (CGRect(x: -2, y: -2, width: 995, height: 795), CGVector(dx: 4.5, dy: 4.5)),
+        (CGRect(x: -2, y: -2, width: 1000, height: 800), CGVector(dx: 2, dy: 2)),
     ]
     for (action, expected) in cases {
-        let result = viewport.displacement(toContain: action)
+        let result = viewport.displacement(toContain: action)!
         precondition(result.dx == expected.dx && result.dy == expected.dy, "clipped action needs an eight-point interior margin")
         precondition(viewport.contains(action.offsetBy(dx: result.dx, dy: result.dy)))
     }
+    precondition(viewport.displacement(toContain: CGRect(x: -2, y: 0, width: 1001, height: 25)) == nil)
+    precondition(viewport.displacement(toContain: CGRect(x: 0, y: -2, width: 25, height: 801)) == nil)
+    precondition(viewport.displacement(toContain: .zero) == nil)
     checkpoint("fractional two-axis placement retains strict containment and interior margin")
     exit(0)
 }
@@ -82,6 +88,16 @@ if mode == "attachment-churn-baseline" {
         let excerpts = session.take(snapshot: .init(candidates: [current, recovered], names: [file.lastPathComponent, delayed.lastPathComponent], complete: false))
         precondition(excerpts.map(\.data) == [Data([byte])], "incomplete recovery lost proven post-case bytes")
     }
+    let settled = GitXManagedTestObserver.AttachmentState.inspect(file)!
+    let recovered = GitXManagedTestObserver.AttachmentState.inspect(delayed)!
+    precondition(session.take(snapshot: .init(candidates: [settled, recovered], names: [file.lastPathComponent, delayed.lastPathComponent], complete: true)).isEmpty)
+    try writer.write(contentsOf: Data([128, 0]))
+    let fresh = root.appendingPathComponent("GitX-43-new.stderr.log")
+    try Data([255, 1]).write(to: fresh)
+    let grown = GitXManagedTestObserver.AttachmentState.inspect(file)!
+    let new = GitXManagedTestObserver.AttachmentState.inspect(fresh)!
+    let tail = session.take(snapshot: .init(candidates: [grown, recovered, new], names: [file.lastPathComponent, delayed.lastPathComponent, fresh.lastPathComponent], complete: true))
+    precondition(tail.map(\.data) == [Data([255, 1]), Data([128, 0])], "complete discovery must end recovery and retain exact growth")
     try writer.close()
     var unknown = GitXManagedTestObserver.AttachmentState(candidates: [], needsBaselineRecovery: true)
     precondition(unknown.take(in: nil).isEmpty)
@@ -354,10 +370,6 @@ let bytes = Array("raw-stderr-".utf8) + [0, 255] + Array("-end\nAddressSanitizer
 _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
 checkpoint("after-raw-write")
 ''')
-        viewport = (ROOT / "GitXUITests/Milestone2WorkflowUITests.swift").read_text().split("@MainActor", 1)[0]
-        forge = (ROOT / "GitXTests/RepositoryForgeOverlaySessionTests.swift").read_text()
-        gate = forge[forge.index("private actor ForgeRegistrationDeliveryGate"):forge.index("private actor OverlayReaderDouble")]
-        main.write_text(viewport + gate + main.read_text())
         sdk_platform = pathlib.Path(subprocess.check_output(["xcrun", "--show-sdk-platform-path"], text=True).strip())
         frameworks = sdk_platform / "Developer/Library/Frameworks"
         cls.required_runtime_paths = [frameworks.parent / "PrivateFrameworks", sdk_platform.parents[2] / "SharedFrameworks"]
@@ -368,7 +380,9 @@ checkpoint("after-raw-write")
                         "-Xlinker", "-rpath", "-Xlinker", str(libraries), "-F", str(frameworks),
                         "-Xlinker", "-rpath", "-Xlinker", str(frameworks), *runtime_arguments, "-D", "DEBUG", "-D", "GITX_APP_TARGET",
                         str(ROOT / "GitXTests/GitXTestGitEnvironment.swift"),
-                        str(ROOT / "GitXTests/GitXManagedTestObserver.swift"), str(main),
+                        str(ROOT / "GitXTests/GitXManagedTestObserver.swift"),
+                        str(ROOT / "GitXUITests/InspectorActionViewport.swift"),
+                        str(ROOT / "GitXTests/ForgeRegistrationDeliveryGate.swift"), str(main),
                         "-o", str(cls.executable)], capture_output=True, text=True)
         if compiled.returncode:
             raise RuntimeError(compiled.stderr)

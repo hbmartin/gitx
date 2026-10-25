@@ -465,6 +465,8 @@
 		C0DE88000000000000000032 /* WorktreePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE88000000000000000031 /* WorktreePresentationTests.swift */; };
 		FBFB6B67DFBB4AF8B4916F5F /* WorktreeAppKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DDF5AD278AE402E8D17B6FB /* WorktreeAppKitTests.swift */; };
 		B6547E1495BE465AA156AFAF /* WorktreeWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */; };
+		F4A48D69BD914A32A0D36395 /* InspectorActionViewport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB410853D8E493688875043 /* InspectorActionViewport.swift */; };
+		A737A36FF55A40128B79FB09 /* ForgeRegistrationDeliveryGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1198,6 +1200,8 @@
 		C0DE88000000000000000031 /* WorktreePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePresentationTests.swift; sourceTree = "<group>"; };
 		3DDF5AD278AE402E8D17B6FB /* WorktreeAppKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeAppKitTests.swift; sourceTree = "<group>"; };
 		73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeWorkflowUITests.swift; sourceTree = "<group>"; };
+		FCB410853D8E493688875043 /* InspectorActionViewport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorActionViewport.swift; sourceTree = "<group>"; };
+		49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRegistrationDeliveryGate.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1934,6 +1938,7 @@
 				C0D5B0000000000000000013 /* RepositoryStatusBarTests.swift */,
 				C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */,
 				C0D5C0000000000000000012 /* RepositoryForgeOverlaySessionTests.swift */,
+				49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */,
 			);
 			path = GitXTests;
 			sourceTree = "<group>";
@@ -1947,6 +1952,7 @@
 				D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */,
 				CC0000020000002 /* GitXScreenshotTests.m */,
 				F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */,
+				FCB410853D8E493688875043 /* InspectorActionViewport.swift */,
 				D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */,
 			);
 			path = GitXUITests;
@@ -2746,6 +2752,7 @@
 				C0D5B0000000000000000003 /* RepositoryStatusBarTests.swift in Sources */,
 				C0D5D0000000000000000003 /* HistoryForgeOverlayPresentationTests.swift in Sources */,
 				C0D5C0000000000000000003 /* RepositoryForgeOverlaySessionTests.swift in Sources */,
+				A737A36FF55A40128B79FB09 /* ForgeRegistrationDeliveryGate.swift in Sources */,
 				C0D5B0000000000000000004 /* RepositoryStatusBarPresentation.swift in Sources */,
 				C0D5B0000000000000000005 /* RepositoryStatusBarController.swift in Sources */,
 				C0D5C0000000000000000002 /* RepositoryForgeOverlaySession.swift in Sources */,
@@ -2767,6 +2774,7 @@
 				3010942C5817454DBC2FFB2D /* GitXManagedTestBootstrap.m in Sources */,
 				E416809E89064750A21724C2 /* GitXTestGitEnvironment.swift in Sources */,
 				F0F200000000000000000019 /* Milestone2WorkflowUITests.swift in Sources */,
+				F4A48D69BD914A32A0D36395 /* InspectorActionViewport.swift in Sources */,
 				D3A300000000000000000007 /* Milestone3WorkflowUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
