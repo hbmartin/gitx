@@ -1656,7 +1656,6 @@ def native_source_ownership(owner):
                     locked = locked_native_file_info(entry, descriptor)
                     relative = str(entry.relative_to(root))
                     ownership.files[relative] = descriptor, native_stat_snapshot(locked)
-                    ownership.inspect(root, relative)
         yield ownership
     finally:
         for descriptor in descriptors:
@@ -1774,18 +1773,11 @@ def publish_native_retirement_outcome(registration, outcome, authorize, *, locat
         with native_retirement_boundary('registration', 'publish-retirement-outcome'):
             registration.publish(owner)
         if outcome.state == 'retired':
-            owner = dict(owner, handoffCleanup=_cleanup_native_completion_authorized(registration.path, owner).metadata())
+            owner = dict(owner, handoffCleanup=cleanup_native_completion(registration.path, owner).metadata())
     return owner
 
 
 def cleanup_native_completion(path, owner, *, authorize=None):
-    try:
-        return _cleanup_native_completion_authorized(path, owner, authorize=authorize)
-    except NativeRetirementFault as error:
-        return error.outcome
-
-
-def _cleanup_native_completion_authorized(path, owner, *, authorize=None):
     """Remove only a proven duplicate; its outcome never changes source status."""
     completion = native_completion_path(path)
     directory = descriptor = None
@@ -1913,15 +1905,35 @@ def read_native_registration(path, root):
     return owner
 
 
+@contextlib.contextmanager
+def native_discovery_boundary(path, operation):
+    try:
+        yield
+    except OSError as error:
+        error.native_discovery_path = str(path)
+        error.native_discovery_operation = operation
+        raise
+
+
+def native_discovery_directory(path):
+    with native_discovery_boundary(path, 'inspect-native-directory'):
+        return native_directory_identity(path)
+
+
+def native_discovery_entries(path):
+    with native_discovery_boundary(path, 'enumerate-native-directory'):
+        return list(path.iterdir())
+
+
 def registered_native_sources(root=ROOT):
     """Discover only explicit registrations; never adopt historical fixture directories."""
     directory = verification_artifact_root(root) / 'NativeSources'
     try:
-        native_directory_identity(directory)
+        native_discovery_directory(directory)
     except FileNotFoundError:
         return []
     result = []
-    for path in directory.iterdir():
+    for path in native_discovery_entries(directory):
         if path.suffix != '.json':
             continue
         try:
@@ -1936,12 +1948,12 @@ def registered_native_completions(root=ROOT):
     """Only explicit retired audit records can identify older duplicate handoffs."""
     directory = verification_artifact_root(root) / 'NativeSources'
     try:
-        native_directory_identity(directory)
-        native_directory_identity(directory / 'Completions')
+        native_discovery_directory(directory)
+        native_discovery_directory(directory / 'Completions')
     except FileNotFoundError:
         return []
     result = []
-    for completion in (directory / 'Completions').iterdir():
+    for completion in native_discovery_entries(directory / 'Completions'):
         if completion.suffix != '.json':
             continue
         path = directory / completion.name

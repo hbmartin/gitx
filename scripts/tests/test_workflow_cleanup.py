@@ -330,6 +330,8 @@ class CleanupTests(unittest.TestCase):
                             with self.assertRaises(OSError) as caught:
                                 discover(self.root)
                         self.assertIs(caught.exception, error)
+                        self.assertEqual(error.native_discovery_path, str(target))
+                        self.assertEqual(error.native_discovery_operation, 'inspect-native-directory')
 
     def test_native_registration_discovery_propagates_directory_read_failures(self):
         with self.native_archive_waiting_for_retirement() as (native, _, _):
@@ -349,6 +351,8 @@ class CleanupTests(unittest.TestCase):
                             with self.assertRaises(OSError) as caught:
                                 discover(self.root)
                         self.assertIs(caught.exception, error)
+                        self.assertEqual(error.native_discovery_path, str(target))
+                        self.assertEqual(error.native_discovery_operation, 'enumerate-native-directory')
 
     def test_failed_native_source_discovery_keeps_cleanup_pending(self):
         self.assert_native_discovery_failure_preserves_cleanup('sources')
@@ -384,7 +388,9 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(preview['status'], 'preview')
             self.assertTrue(preview['discoveryErrors'])
             self.assertFalse(preview['diagnosticBytesComplete'])
-            self.assertTrue(any(str(error) == item['reason'] for item in report['discoveryErrors']))
+            self.assertTrue(any(str(error) == item['reason'] and item['path'] == str(target) and
+                                item['operation'] == 'inspect-native-directory' and item['errno'] == errno.EACCES
+                                for item in report['discoveryErrors']))
             self.assertEqual(cleanup.read_json(report['report'])['discoveryErrors'], report['discoveryErrors'])
             self.assertEqual(report['reclaimedBytes'], 0)
             self.assertTrue(old.exists())
