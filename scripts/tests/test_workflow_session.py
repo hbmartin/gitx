@@ -147,6 +147,86 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(session.native_evidence_failure_state(origin),
                              'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained')
 
+    def test_location_replacement_at_hash_and_authorization_boundaries(self):
+        for boundary in ('hash', 'authorize', 'rename', 'publish-deleting'):
+            for replacement in ('root', 'parent'):
+                with self.subTest(boundary=boundary, replacement=replacement), self.completed_native_fixture() as (native, source):
+                    changed = False
+                    def replace():
+                        nonlocal changed
+                        if changed:
+                            return
+                        changed = True
+                        if replacement == 'parent':
+                            parent = native.root.parent
+                            saved = parent.with_name('saved-parent')
+                            parent.rename(saved)
+                            parent.mkdir()
+                            # Preserve either the original or the renamed approved root.
+                            for child in list(saved.iterdir()):
+                                child.rename(parent / child.name)
+                        else:
+                            root = next(iter(native.root.parent.glob('.gitx-native-retired-*')), native.root)
+                            root.rename(root.with_name('saved-root'))
+                            root.mkdir()
+                            (root / 'keep').write_bytes(b'replacement')
+                    digest, rename, publish = session.descriptor_digest, session.exclusive_native_rename, session.NativeRegistrationSnapshot.publish
+                    def hashing(descriptor):
+                        result = digest(descriptor)
+                        if boundary == 'hash':
+                            replace()
+                        return result
+                    def renaming(*args, **kwargs):
+                        result = rename(*args, **kwargs)
+                        if boundary == 'rename':
+                            replace()
+                        return result
+                    def publishing(transaction, value):
+                        result = publish(transaction, value)
+                        if boundary == 'publish-deleting' and value.get('retirementPhase') == 'deleting':
+                            replace()
+                        return result
+                    @contextlib.contextmanager
+                    def authorize():
+                        if boundary == 'authorize':
+                            replace()
+                        yield
+                    with mock.patch.object(session, 'descriptor_digest', side_effect=hashing), \
+                            mock.patch.object(session, 'exclusive_native_rename', side_effect=renaming), \
+                            mock.patch.object(session.NativeRegistrationSnapshot, 'publish', new=publishing):
+                        state, reason, owner = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                    self.assertTrue(changed)
+                    self.assertEqual(state, 'retained', reason)
+                    self.assertNotEqual(owner.get('retirementPhase'), 'retired')
+                    self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+                    if replacement == 'root':
+                        self.assertTrue(any(path.name == 'keep' for path in native.root.parent.rglob('keep')))
+
+    def test_foreign_control_is_report_only_but_uncertain_access_is_retryable(self):
+        for condition in ('foreign-owner', 'access-denied'):
+            with self.subTest(condition=condition), self.completed_native_fixture() as (native, _):
+                control = native.registration.with_name(native.registration.name + '.retirement.lock')
+                before = native.registration.read_bytes()
+                inspect, opening = session.os.stat, session.os.open
+                def stat_control(path, *args, **kwargs):
+                    result = inspect(path, *args, **kwargs)
+                    if condition == 'foreign-owner' and path == control.name:
+                        return SimpleNamespace(st_mode=result.st_mode, st_uid=result.st_uid ^ 1, st_nlink=result.st_nlink)
+                    return result
+                def open_control(path, *args, **kwargs):
+                    if condition == 'access-denied' and path == control.name:
+                        raise PermissionError(errno.EACCES, 'injected uncertain control access')
+                    return opening(path, *args, **kwargs)
+                with mock.patch.object(session.os, 'stat', side_effect=stat_control), \
+                        mock.patch.object(session.os, 'open', side_effect=open_control):
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                outcome = owner['retirementOutcome']
+                self.assertEqual(state, 'retained' if condition == 'foreign-owner' else 'deferred', reason)
+                self.assertEqual(outcome.get('reportOnly', False), condition == 'foreign-owner')
+                self.assertEqual(outcome['operation'], 'acquire-retirement-lease')
+                self.assertEqual(outcome['errno'], errno.EPERM if condition == 'foreign-owner' else errno.EACCES)
+                self.assertEqual(native.registration.read_bytes(), before)
+
     def test_registered_quarantine_recovery_preserves_archived_bytes(self):
         for phase in ('prepared', 'deleting'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
