@@ -57,6 +57,52 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(owner['deletionProof']['parentIdentity'], owner['retirementParentIdentity'])
             self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
 
+    def test_retirement_rejects_parent_replacement_after_promotion(self):
+        with self.completed_native_fixture() as (native, source):
+            promote = session.promote_native_completion
+            original = native.registration.read_bytes()
+            def replace_parent(*args, **kwargs):
+                result = promote(*args, **kwargs)
+                parent = native.root.parent
+                saved = parent.with_name('saved-parent')
+                parent.rename(saved)
+                parent.mkdir()
+                (saved / native.root.name).rename(native.root)
+                return result
+            with mock.patch.object(session, 'promote_native_completion', side_effect=replace_parent):
+                state, reason, owner = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retained', reason)
+            self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+            self.assertNotIn('deletionProof', owner)
+            self.assertNotIn('retirementPath', owner)
+            self.assertEqual(owner['retirementOutcome']['origin'], 'source')
+            self.assertEqual(json.loads(original)['directoryIdentity'], owner['directoryIdentity'])
+
+    def test_absent_recovery_rechecks_paths_after_authorization(self):
+        for change in ('original', 'quarantine', 'parent'):
+            with self.subTest(change=change), self.completed_native_fixture() as (native, _):
+                owner = json.loads(native.registration.read_text())
+                quarantine = native.root.with_name('.gitx-native-retired-' + 'd' * 32)
+                owner.update(retirementState='deferred', retirementPhase='deleting', retirementPath=str(quarantine),
+                             retirementParentIdentity=session.native_directory_identity(native.root.parent))
+                session.shutil.rmtree(native.root)
+                session.atomic_json(native.registration, owner)
+                changed = False
+                @contextlib.contextmanager
+                def change_at_admission():
+                    nonlocal changed
+                    if not changed:
+                        changed = True
+                        if change == 'parent':
+                            native.root.parent.rename(native.root.parent.with_name('saved-parent'))
+                            native.root.parent.mkdir()
+                        else:
+                            (native.root if change == 'original' else quarantine).mkdir()
+                    yield
+                state, reason, after = session.retire_registered_native_sources(native.registration, authorize=change_at_admission)
+                self.assertEqual(state, 'retained', reason)
+                self.assertNotEqual(after.get('retirementPhase'), 'retired')
+
     def test_registered_quarantine_recovery_preserves_archived_bytes(self):
         for phase in ('prepared', 'deleting'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
