@@ -630,29 +630,62 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
                 self.assertEqual(source.read_bytes(), b'preserve-newer')
 
     def test_source_ownership_snapshots_after_excluding_the_last_writer(self):
-        for append in (False, True):
-            with self.subTest(append=append), self.completed_native_fixture() as (native, source):
+        for phase in (None, 'prepared'):
+            for append in (False, True):
+                with self.subTest(phase=phase, append=append), self.completed_native_fixture() as (native, source):
+                    if phase:
+                        owner = json.loads(native.registration.read_text())
+                        owner.update(retirementPhase=phase, retirementState=phase,
+                                     retirementPath=str(native.root.with_name('.gitx-native-retired-' + 'd' * 32)))
+                        session.atomic_json(native.registration, owner)
+                    flock = session.fcntl.flock
+                    inode = source.stat().st_ino
+                    changed = False
+                    def finish_writer(descriptor, operation):
+                        nonlocal changed
+                        if operation == fcntl.LOCK_EX | fcntl.LOCK_NB and os.fstat(descriptor).st_ino == inode and not changed:
+                            changed = True
+                            if append:
+                                with source.open('ab') as stream:
+                                    stream.write(b'new bytes')
+                            else:
+                                info = source.stat()
+                                os.utime(source, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000))
+                        return flock(descriptor, operation)
+                    with mock.patch.object(session.fcntl, 'flock', side_effect=finish_writer):
+                        state, reason, _ = session.retire_registered_native_sources(native.registration)
+                    self.assertTrue(changed)
+                    self.assertEqual(state, 'retained' if append else 'retired', reason)
+                    self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+                    if append:
+                        self.assertEqual(source.read_bytes(), b'finalization-\x00\xffnew bytes')
+
+    def test_locked_source_path_replacement_survives_ordinary_and_prepared_retirement(self):
+        for phase in (None, 'prepared'):
+            with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
+                if phase:
+                    owner = json.loads(native.registration.read_text())
+                    owner.update(retirementPhase=phase, retirementState=phase,
+                                 retirementPath=str(native.root.with_name('.gitx-native-retired-' + 'e' * 32)))
+                    session.atomic_json(native.registration, owner)
                 flock = session.fcntl.flock
                 inode = source.stat().st_ino
-                changed = False
-                def finish_writer(descriptor, operation):
-                    nonlocal changed
-                    if operation == fcntl.LOCK_EX | fcntl.LOCK_NB and os.fstat(descriptor).st_ino == inode and not changed:
-                        changed = True
-                        if append:
-                            with source.open('ab') as stream:
-                                stream.write(b'new bytes')
-                        else:
-                            info = source.stat()
-                            os.utime(source, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000))
+                replaced = False
+                def replace_before_lock(descriptor, operation):
+                    nonlocal replaced
+                    if operation == fcntl.LOCK_EX | fcntl.LOCK_NB and os.fstat(descriptor).st_ino == inode and not replaced:
+                        replaced = True
+                        source.rename(native.root.parent / 'saved-original')
+                        source.write_bytes(b'unapproved replacement bytes')
                     return flock(descriptor, operation)
-                with mock.patch.object(session.fcntl, 'flock', side_effect=finish_writer):
-                    state, reason, _ = session.retire_registered_native_sources(native.registration)
-                self.assertTrue(changed)
-                self.assertEqual(state, 'retained' if append else 'retired', reason)
+                with mock.patch.object(session.fcntl, 'flock', side_effect=replace_before_lock):
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                self.assertTrue(replaced)
+                self.assertEqual(state, 'retained', reason)
+                self.assertEqual(source.read_bytes(), b'unapproved replacement bytes')
                 self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
-                if append:
-                    self.assertEqual(source.read_bytes(), b'finalization-\x00\xffnew bytes')
+                self.assertEqual(owner['retirementOutcome']['origin'], 'source')
+                self.assertEqual(owner['retirementOutcome']['errno'], errno.EPERM)
 
     def test_registration_publish_parses_once_and_detects_external_replacement(self):
         with tempfile.TemporaryDirectory() as directory:

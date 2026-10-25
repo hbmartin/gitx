@@ -1228,6 +1228,15 @@ def native_stat_snapshot(info):
     return [info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode), info.st_uid, info.st_size, info.st_mtime_ns]
 
 
+def locked_native_file_info(path, descriptor):
+    """Snapshot only after exclusion, binding the open file to its current name."""
+    info = os.fstat(descriptor)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or
+            native_stat_snapshot(pathlib.Path(path).lstat()) != native_stat_snapshot(info)):
+        raise NativeEvidenceError('Owned source changed')
+    return info
+
+
 def native_deletion_proof(root, owner):
     """Capture every approved entry before deletion; directories may shrink on resume."""
     entries = {}
@@ -1280,6 +1289,7 @@ def upgrade_legacy_native_deletion(root, owner, descriptors):
         descriptor, info = open_owned_regular(path)
         descriptors.append(descriptor)
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        info = locked_native_file_info(path, descriptor)
         if relative in files:
             item = files[relative]
             if ([info.st_dev, info.st_ino] != item['identity'] or info.st_size != item['bytes'] or
@@ -1427,10 +1437,11 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None,
                 relative = item['folder'] + '/' + item['name']
                 expected.add(relative)
                 source, info = native_source_file(root, relative, evidence, descriptors)
-                if [info.st_dev, info.st_ino] != item['identity']:
-                    raise NativeEvidenceError('Native source identity changed')
                 if not source_owned:
                     fcntl.flock(source, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    info = locked_native_file_info(root / relative, source)
+                if [info.st_dev, info.st_ino] != item['identity']:
+                    raise NativeEvidenceError('Native source identity changed')
                 validated = evidence.get('sourceSnapshots', {}).get(relative) == native_stat_snapshot(info)
                 if (info.st_size != item['bytes'] or not validated and descriptor_digest(source) != item['sha256'] or
                         native_stat_snapshot(os.fstat(source)) != native_stat_snapshot(info)):
@@ -1570,10 +1581,7 @@ def native_source_ownership(owner):
                 with native_retirement_boundary('producer', 'acquire-file-lease'):
                     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 with native_retirement_boundary('source', 'snapshot-owned-writer', evidence=True):
-                    locked = os.fstat(descriptor)
-                    if (not stat.S_ISREG(locked.st_mode) or locked.st_uid != os.getuid() or
-                            (locked.st_dev, locked.st_ino) != (info.st_dev, info.st_ino)):
-                        raise NativeEvidenceError('Owned writer identity changed')
+                    locked = locked_native_file_info(entry, descriptor)
                     relative = str(entry.relative_to(root))
                     ownership.files[relative] = descriptor, native_stat_snapshot(locked)
                     ownership.inspect(root, relative)
