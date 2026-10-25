@@ -256,6 +256,44 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
                 self.assertEqual(owner['retirementOutcome']['operation'], boundary + '-completion' if boundary == 'promote' else 'repair-source-checkpoint')
 
+    def test_archive_changes_at_absent_completion_and_final_publication_are_protected(self):
+        for variant in ('absent-authorization', 'absent-publication', 'ordinary-publication', 'ordinary-directory'):
+            with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):
+                if variant.startswith('absent'):
+                    owner = json.loads(native.registration.read_text())
+                    quarantine = native.root.with_name('.gitx-native-retired-' + 'e' * 32)
+                    owner.update(retirementState='deferred', retirementPhase='deleting', retirementPath=str(quarantine),
+                                 retirementParentIdentity=session.native_directory_identity(native.root.parent))
+                    session.shutil.rmtree(native.root)
+                    session.atomic_json(native.registration, owner)
+                scopes = 0
+                trigger = {'absent-authorization': 1, 'absent-publication': 2, 'ordinary-publication': 3, 'ordinary-directory': 3}[variant]
+                @contextlib.contextmanager
+                def authorize():
+                    nonlocal scopes
+                    scopes += 1
+                    if scopes == trigger:
+                        if variant == 'ordinary-directory':
+                            saved = native.archive.with_name('saved-archive')
+                            native.archive.rename(saved)
+                            native.archive.mkdir()
+                            for child in list(saved.iterdir()):
+                                child.rename(native.archive / child.name)
+                        else:
+                            (native.archive / source.name).write_bytes(b'changed after archive validation')
+                    yield
+                state, reason, after = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                self.assertGreaterEqual(scopes, trigger)
+                self.assertEqual(state, 'retained', reason)
+                self.assertNotEqual(after.get('retirementPhase'), 'retired')
+                self.assertTrue(session.native_completion_path(native.registration).exists(), 'Invalid archive cannot retire its handoff')
+                self.assertEqual(after['retirementOutcome']['origin'], 'archive')
+                if variant != 'ordinary-directory':
+                    (native.archive / source.name).write_bytes(b'finalization-\x00\xff')
+                    with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('Default retained retry hashed evidence')):
+                        self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retained')
+                    self.assertEqual(session.retire_registered_native_sources(native.registration, retry_retained=True)[0], 'retired')
+
     def test_registered_quarantine_recovery_preserves_archived_bytes(self):
         for phase in ('prepared', 'deleting'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
