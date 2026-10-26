@@ -29,21 +29,7 @@ static NSString *gitPath = nil;
 
 + (NSString *)extractGitVersion:(NSString *)versionString
 {
-	// outputForCommand: returns nil when the binary fails to launch; firstMatchInString: would raise on nil.
-	if (versionString == nil)
-		return nil;
-
-	NSError *error;
-	NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"git version ([0-9.]+)"
-																		   options:0
-																			 error:&error];
-	NSTextCheckingResult *result = [regex firstMatchInString:versionString
-													 options:0
-													   range:NSMakeRange(0, versionString.length)];
-	if (result != nil && result.numberOfRanges == 2) {
-		return [versionString substringWithRange:[result rangeAtIndex:1]];
-	}
-	return nil;
+	return [PBGitBinaryDiscoveryPolicy extractGitVersion:versionString];
 }
 
 + (BOOL)acceptBinary:(NSString *)path
@@ -125,24 +111,9 @@ static NSString *gitPath = nil;
 	return gitPath;
 }
 
-static NSMutableArray *locations = nil;
-
 + (NSArray *)searchLocations
 {
-	if (!locations) {
-		locations = [[NSMutableArray alloc] initWithObjects:
-												@"/opt/homebrew/bin/git",
-												@"/opt/local/bin/git",
-												@"/sw/bin/git",
-												@"/opt/git/bin/git",
-												@"/usr/local/bin/git",
-												@"/usr/local/git/bin/git",
-												nil];
-
-		[locations addObject:[@"~/bin/git" stringByExpandingTildeInPath]];
-		[locations addObject:@"/usr/bin/git"];
-	}
-	return locations;
+	return PBGitBinaryDiscoveryPolicy.searchLocations;
 }
 
 + (NSString *)notFoundError

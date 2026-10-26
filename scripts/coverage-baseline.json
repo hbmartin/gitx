@@ -162,6 +162,7 @@
     "Classes/Views/RepositoryPullRequestReviewOverlayController.swift": 0.9282,
     "Classes/Views/StagingFileCellView.swift": 1.0,
     "Classes/git/CommitHeadExpectation.swift": 0.9838,
+    "Classes/git/GitBinaryDiscovery.swift": 0.9,
     "Classes/git/GitCommandRunning.swift": 1.0,
     "Classes/git/GitOutputFormatting.swift": 1.0,
     "Classes/git/IndexCommandRunning.swift": 1.0,

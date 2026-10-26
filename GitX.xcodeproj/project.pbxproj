@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		C0DE90260000000000000001 /* GitBinaryDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90260000000000000002 /* GitBinaryDiscovery.swift */; };
 		AB1020010000000000000001 /* SidebarLifecycleTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */; };
 		8D66D8FE296C4D12B236E789 /* HistoryIndexWriterObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */; };
 		E1AA5104C33F4D2AB7BB05AF /* GitXManagedTestBootstrap.m in Sources */ = {isa = PBXBuildFile; fileRef = A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */; };
@@ -704,6 +705,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0DE90260000000000000002 /* GitBinaryDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryDiscovery.swift; sourceTree = "<group>"; };
 		AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarLifecycleTestSupport.swift; sourceTree = "<group>"; };
 		FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryIndexWriterObservation.swift; sourceTree = "<group>"; };
 		A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = GitXManagedTestBootstrap.m; sourceTree = "<group>"; };
@@ -1612,6 +1614,7 @@
 				C0DE10000000000000000007 /* PBWorkingTree.h */,
 				C0DE10000000000000000008 /* PBWorkingTree.m */,
 				4A5D764E14A9A9CC00DF6C68 /* PBGitBinary.h */,
+				C0DE90260000000000000002 /* GitBinaryDiscovery.swift */,
 				4A5D764F14A9A9CC00DF6C68 /* PBGitBinary.m */,
 				4A5D765014A9A9CC00DF6C68 /* PBGitCommit.h */,
 				4A5D765114A9A9CC00DF6C68 /* PBGitCommit.m */,
@@ -2541,6 +2544,7 @@
 				4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */,
 				4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */,
 				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.swift in Sources */,
+				C0DE90260000000000000001 /* GitBinaryDiscovery.swift in Sources */,
 				4A5D76F414A9A9CC00DF6C68 /* PBGitBinary.m in Sources */,
 				C0DE90000000000000000021 /* GitXCommitCopier.swift in Sources */,
 				4A5D76F514A9A9CC00DF6C68 /* PBGitCommit.m in Sources */,
