@@ -857,8 +857,9 @@ NATIVE_CAPTURE_RECORD_NAME = re.compile(r'capture-[0-9]+-[A-Fa-f0-9-]+\.json')
 class NativeEvidenceError(OSError):
     """An inspected identity is invalid, rather than merely inaccessible."""
 
-    def __init__(self, message):
-        super().__init__(errno.EPERM, message)
+    def __init__(self, message, *, detail=None, error_number=errno.EPERM):
+        self.detail = detail
+        super().__init__(error_number, message)
 
 
 def open_owned_regular(path, *, directory=None, maximum=None, identity=None, flags=os.O_RDONLY):
@@ -1021,16 +1022,30 @@ class NativeControlLease:
             info = os.fstat(self.directory)
             if [info.st_dev, info.st_ino] != self.identity or info.st_uid != os.getuid():
                 raise NativeEvidenceError('Native control directory changed')
+            try:
+                existing = os.stat(self.path.name, dir_fd=self.directory, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                self.validate_control(existing)
             self.lock = os.open(self.path.name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                                 0o600, dir_fd=self.directory)
             info = os.fstat(self.lock)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
-                raise NativeEvidenceError('Invalid native control lock')
+            self.validate_control(info)
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return self
         except BaseException:
             self.__exit__(None, None, None)
             raise
+
+    @staticmethod
+    def validate_control(info):
+        detail = ('control-type' if not stat.S_ISREG(info.st_mode) else
+                  'control-owner' if info.st_uid != os.getuid() else
+                  'control-links' if info.st_nlink != 1 else
+                  'control-mode' if info.st_mode & 0o077 else None)
+        if detail:
+            raise NativeEvidenceError('Invalid native invocation control', detail=detail)
 
     def __exit__(self, *_):
         lock, directory = self.lock, self.directory
@@ -1120,7 +1135,8 @@ class NativeRegistrationSnapshot:
             self.current = transaction.current
 
     def publish(self, value):
-        with NativeRegistration(self.path, retry_retained=self.retry_retained) as transaction:
+        with native_retirement_boundary('registration', 'publish-registration'), \
+                NativeRegistration(self.path, retry_retained=self.retry_retained) as transaction:
             if transaction.identity != self.identity or transaction.current != self.current:
                 raise NativeRegistrationChanged()
             transaction.publish(value)
@@ -1147,16 +1163,31 @@ class NativeRetirementOutcome:
     origin: str = 'retirement'
     operation: str | None = None
     error_number: int | None = None
+    report_only: bool = False
+    validation_detail: str | None = None
 
     def metadata(self):
-        return {'state': self.state, 'reason': self.reason, 'origin': self.origin,
-                'operation': self.operation, 'errno': self.error_number}
+        result = {'state': self.state, 'reason': self.reason, 'origin': self.origin,
+                  'operation': self.operation, 'errno': self.error_number}
+        if self.report_only:
+            result.update(reportOnly=True, validationDetail=self.validation_detail)
+        return result
 
 
 class NativeRetirementFault(Exception):
     def __init__(self, outcome):
         self.outcome = outcome
         super().__init__(outcome.reason)
+
+
+def native_evidence_failure_state(origin):
+    """Retryability does not determine whether an outcome may be persisted."""
+    return 'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained'
+
+
+def native_outcome_is_publishable(outcome):
+    return not outcome.report_only and not (outcome.state == 'deferred' and
+                                           outcome.origin in {'authorization', 'registration', 'producer'})
 
 
 @contextlib.contextmanager
@@ -1174,8 +1205,10 @@ def native_retirement_boundary(origin, operation, *, evidence=False):
         reason = 'producer-lease-held' if origin in {'source', 'producer'} else origin + '-busy'
         raise NativeRetirementFault(NativeRetirementOutcome('deferred', reason, origin, operation, error.errno)) from error
     except NativeEvidenceError as error:
-        state = 'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained'
-        raise NativeRetirementFault(NativeRetirementOutcome(state, origin + '-invalid', origin, operation, error.errno)) from error
+        report_only = error.detail in {'control-type', 'control-owner', 'control-links', 'control-mode'}
+        state = 'retained' if report_only else native_evidence_failure_state(origin)
+        raise NativeRetirementFault(NativeRetirementOutcome(state, origin + '-invalid', origin, operation, error.errno,
+                                                          report_only, error.detail)) from error
     except OSError as error:
         suffix = ('missing' if error.errno in {errno.ENOENT, errno.ENOTDIR} else
                   'invalid' if error.errno == errno.ELOOP else
@@ -1205,6 +1238,8 @@ def validate_native_archive(owner, checkout, *, snapshots=None):
     identity = native_directory_identity(archive)
     if owner.get('archiveDirectoryIdentity', identity) != identity:
         raise ValueError('Native archive directory was replaced')
+    if snapshots is not None:
+        snapshots[''] = identity  # The empty name binds the archive directory itself.
     names = set()
     for item in owner['files']:
         name = item['name']
@@ -1237,7 +1272,7 @@ def locked_native_file_info(path, descriptor):
     return info
 
 
-def native_deletion_proof(root, owner):
+def native_deletion_proof(root, owner, *, parent_identity=None):
     """Capture every approved entry before deletion; directories may shrink on resume."""
     entries = {}
     for path in root.rglob('*'):
@@ -1246,7 +1281,7 @@ def native_deletion_proof(root, owner):
             raise ValueError('Invalid deletion entry')
         entries[str(path.relative_to(root))] = native_stat_snapshot(info)
     return {'schemaVersion': 1, 'rootIdentity': owner['directoryIdentity'],
-            'parentIdentity': native_directory_identity(root.parent), 'entries': entries}
+            'parentIdentity': list(parent_identity) if parent_identity is not None else native_directory_identity(root.parent), 'entries': entries}
 
 
 def validate_native_deletion(root, original, owner, *, allow_missing, operation):
@@ -1305,8 +1340,11 @@ def upgrade_legacy_native_deletion(root, owner, descriptors):
 
 
 def recheck_native_archive(archive, snapshots):
+    if archive.resolve() != archive:
+        raise NativeEvidenceError('Native archive path was redirected')
     for name, expected in snapshots.items():
-        if native_stat_snapshot((archive / name).lstat()) != expected:
+        current = native_stat_snapshot((archive / name).lstat()) if name else native_directory_identity(archive)
+        if current != expected:
             raise ValueError('Archive changed at retirement boundary')
 
 
@@ -1314,9 +1352,11 @@ def recheck_native_archive(archive, snapshots):
 class NativeRetirementLocation:
     original: pathlib.Path
     root: pathlib.Path
-    parent_identity: list
+    parent_identity: tuple
     phase: str | None
     absent: bool = False
+    root_identity: tuple = ()
+    prepared: pathlib.Path | None = None
 
     @property
     def recovering(self):
@@ -1342,7 +1382,7 @@ def native_retirement_location(owner, checkout, *, retry_retained=False):
                 if native_path_absent(prepared):
                     if not (owner.get('retirementPhase') in ('prepared', 'deleting', 'retired') or legacy_recovery):
                         raise NativeRetirementFault(NativeRetirementOutcome('retained', 'retirement-evidence-incomplete', 'source'))
-                    return NativeRetirementLocation(original, prepared, parent_identity, owner.get('retirementPhase'), True)
+                    return NativeRetirementLocation(original, prepared, tuple(parent_identity), owner.get('retirementPhase'), True, tuple(owner['directoryIdentity']), prepared)
                 root = prepared
             elif not native_path_absent(prepared):
                 raise NativeRetirementFault(NativeRetirementOutcome('retained', 'conflicting-retirement-paths', 'source'))
@@ -1356,7 +1396,27 @@ def native_retirement_location(owner, checkout, *, retry_retained=False):
         # Legacy rmtree could consume any subset, including only diagnostic
         # folders. Surviving controls do not establish an intact preparation.
         phase = 'deleting'
-    return NativeRetirementLocation(original, root, parent_identity, phase)
+    return NativeRetirementLocation(original, root, tuple(parent_identity), phase, False, tuple(owner['directoryIdentity']), prepared)
+
+
+def validate_native_location(location, *, root=None, absent=None, operation='revalidate-location'):
+    """Recheck one approved location; never refresh its expected identities."""
+    with native_retirement_boundary('source', operation, evidence=True):
+        selected = pathlib.Path(root) if root is not None else location.root
+        missing = location.absent if absent is None else absent
+        if (location.original.resolve() != location.original or selected.resolve() != selected or
+                tuple(native_directory_identity(location.original.parent)) != location.parent_identity or
+                selected.parent != location.original.parent):
+            raise NativeEvidenceError('Native retirement parent or canonical path changed')
+        if missing:
+            if not native_path_absent(location.original) or not native_path_absent(selected):
+                raise NativeEvidenceError('Native retirement paths reappeared')
+        elif (tuple(native_directory_identity(selected)) != location.root_identity or
+                selected != location.original and not native_path_absent(location.original)):
+            raise NativeEvidenceError('Native retirement root changed')
+        elif (selected == location.original and location.prepared is not None and
+              location.prepared != selected and not native_path_absent(location.prepared)):
+            raise NativeEvidenceError('Native retirement paths conflict')
 
 
 def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None, source_owned=False, evidence=None, location=None):
@@ -1366,11 +1426,17 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None,
     try:
         checkout = pathlib.Path(checkout or ROOT)
         location = location if location is not None else native_retirement_location(owner, checkout)
-        original, root, parent_identity = location.original, location.root, location.parent_identity
+        original, root, parent_identity = location.original, location.root, list(location.parent_identity)
+        validate_native_location(location)
         if location.absent:
+            archive_snapshots = {}
             with native_retirement_boundary('archive', 'validate-archive', evidence=True):
-                validate_native_archive(owner, checkout)
+                archive = validate_native_archive(owner, checkout, snapshots=archive_snapshots)
+            evidence.update(archive=archive, archiveSnapshots=archive_snapshots)
             with native_retirement_authorization(authorize):
+                validate_native_location(location, operation='complete-absent-recovery')
+                with native_retirement_boundary('archive', 'recheck-archive', evidence=True):
+                    recheck_native_archive(archive, archive_snapshots)
                 with native_retirement_boundary('durability', 'sync-retirement-parent'):
                     sync_native_directory(original.parent)
                 owner['retirementPhase'] = 'retired'
@@ -1383,12 +1449,16 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None,
             archive_snapshots = {}
             with native_retirement_boundary('archive', 'validate-archive', evidence=True):
                 archive = validate_native_archive(owner, checkout, snapshots=archive_snapshots)
+            evidence.update(archive=archive, archiveSnapshots=archive_snapshots)
             if not owner.get('deletionProof'):
                 with native_retirement_boundary('source', 'upgrade-legacy-deletion-proof', evidence=True):
                     legacy_proof = upgrade_legacy_native_deletion(root, owner, descriptors)
                 if persist is None:
                     return NativeRetirementOutcome('deferred', 'retirement-registration-required', 'registration')
                 with native_retirement_authorization(authorize):
+                    validate_native_location(location, operation='publish-legacy-proof')
+                    if tuple(legacy_proof['parentIdentity']) != location.parent_identity:
+                        raise NativeRetirementFault(NativeRetirementOutcome('retained', 'source-invalid', 'source', 'publish-legacy-proof'))
                     owner['deletionProof'] = legacy_proof
                     owner['retirementParentIdentity'] = parent_identity
                     with native_retirement_boundary('registration', 'publish-deleting-proof'):
@@ -1396,10 +1466,12 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None,
             with native_retirement_boundary('source', 'validate-deletion-proof', evidence=True):
                 validate_native_deletion(root, original, owner, allow_missing=True, operation='resume-deletion')
             with native_retirement_authorization(authorize):
+                validate_native_location(location, operation='resume-deletion')
                 with native_retirement_boundary('archive', 'recheck-archive', evidence=True):
                     recheck_native_archive(archive, archive_snapshots)
                 with native_retirement_boundary('source', 'resume-deletion', evidence=True):
                     validate_native_deletion(root, original, owner, allow_missing=True, operation='resume-deletion')
+                validate_native_location(location, operation='remove-quarantine')
                 with native_retirement_boundary('deletion', 'remove-quarantine'):
                     shutil.rmtree(root)
                 with native_retirement_boundary('durability', 'sync-retirement-parent'):
@@ -1421,6 +1493,7 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None,
                 recheck_native_archive(archive, archive_snapshots)
             else:
                 archive = validate_native_archive(owner, checkout, snapshots=archive_snapshots)
+        evidence.update(archive=archive, archiveSnapshots=archive_snapshots)
         with native_retirement_boundary('source', 'validate-inventory', evidence=True):
             manifest, _ = open_owned_regular(root / 'native-owner.json', maximum=1024 * 1024)
             descriptors.append(manifest)
@@ -1451,23 +1524,28 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None,
             actual = {str(path.relative_to(root)) for path in root.rglob('*') if str(path.relative_to(root)) not in directories}
             if actual != expected:
                 return NativeRetirementOutcome('retained', 'unexpected-source-content', 'source')
-            proof = native_deletion_proof(root, owner)
+            validate_native_location(location, operation='prepare-deletion-proof')
+            proof = native_deletion_proof(root, owner, parent_identity=location.parent_identity)
         if persist is None:
             return NativeRetirementOutcome('deferred', 'retirement-registration-required', 'registration')
         quarantine = root if root != original else root.with_name('.gitx-native-retired-' + uuid.uuid4().hex)
         if root == original:
             with native_retirement_authorization(authorize):
+                validate_native_location(location, operation='publish-prepared')
                 # No preparation fields escape a refused authorization.
                 owner.update(retirementPath=str(quarantine), retirementState='prepared', retirementPhase='prepared',
                              retirementParentIdentity=parent_identity)
                 with native_retirement_boundary('registration', 'publish-prepared'):
                     persist(owner)
                 with native_retirement_boundary('source', 'rename-quarantine', evidence=True):
+                    validate_native_location(location, operation='rename-quarantine')
                     exclusive_native_rename(root, quarantine, sync_parent=True)
+        validate_native_location(location, root=quarantine, operation='validate-quarantine')
         with native_retirement_boundary('source', 'validate-quarantine', evidence=True):
             owner['deletionProof'] = proof
             validate_native_deletion(quarantine, original, owner, allow_missing=False, operation='validate-quarantine')
         with native_retirement_authorization(authorize):
+            validate_native_location(location, root=quarantine, operation='delete-quarantine')
             with native_retirement_boundary('archive', 'recheck-archive', evidence=True):
                 recheck_native_archive(archive, archive_snapshots)
             with native_retirement_boundary('source', 'validate-quarantine', evidence=True):
@@ -1475,6 +1553,9 @@ def retire_native_sources(owner, *, checkout=None, persist=None, authorize=None,
             owner['retirementPhase'] = 'deleting'
             with native_retirement_boundary('registration', 'publish-deleting'):
                 persist(owner)
+            validate_native_location(location, root=quarantine, operation='remove-quarantine')
+            with native_retirement_boundary('source', 'validate-quarantine', evidence=True):
+                validate_native_deletion(quarantine, original, owner, allow_missing=False, operation='validate-quarantine')
             with native_retirement_boundary('deletion', 'remove-quarantine'):
                 shutil.rmtree(quarantine)
             with native_retirement_boundary('durability', 'sync-retirement-parent'):
@@ -1586,7 +1667,6 @@ def native_source_ownership(owner):
                     locked = locked_native_file_info(entry, descriptor)
                     relative = str(entry.relative_to(root))
                     ownership.files[relative] = descriptor, native_stat_snapshot(locked)
-                    ownership.inspect(root, relative)
         yield ownership
     finally:
         for descriptor in descriptors:
@@ -1668,12 +1748,14 @@ def promote_native_completion(registration, *, checkout, authorize, evidence):
     promoted.update({key: final[key] for key in NATIVE_FINAL_FIELDS if key in final})
     if promoted != prior:
         with native_retirement_authorization(authorize):
+            validate_native_location(evidence['location'], operation='promote-completion')
             with native_retirement_boundary('registration', 'promote-completion'):
                 registration.publish(promoted)
     # A publication failure after the authoritative ledger update is recoverable:
     # keep the immutable handoff until both checkpoints agree or retirement ends.
     if source_owner is None or source_owner == {} or source_owner.get('status') == 'running':
         with native_retirement_authorization(authorize):
+            validate_native_location(evidence['location'], operation='repair-source-checkpoint')
             with native_retirement_boundary('completion', 'repair-source-checkpoint'):
                 if native_directory_identity(root) != final['directoryIdentity']:
                     raise ValueError('Native source replaced before repair')
@@ -1687,31 +1769,29 @@ def promote_native_completion(registration, *, checkout, authorize, evidence):
                 sync_native_directory(root)
 
 
-def publish_native_retirement_outcome(registration, outcome, authorize):
+def publish_native_retirement_outcome(registration, outcome, authorize, *, location=None, evidence=None):
     owner = dict(registration.current)
     # Authorization and uncertain publications are diagnostic only. Never turn
     # them into sticky evidence or overwrite a record advanced by another writer.
-    if outcome.origin in {'authorization', 'registration', 'producer'} and outcome.state == 'deferred':
+    if not native_outcome_is_publishable(outcome):
         return dict(owner, retirementOutcome=outcome.metadata())
     with native_retirement_authorization(authorize):
+        if outcome.state == 'retired' and location is not None:
+            validate_native_location(location, root=owner.get('retirementPath', location.root), absent=True, operation='publish-retired')
+        if outcome.state == 'retired' and evidence is not None:
+            with native_retirement_boundary('archive', 'recheck-archive', evidence=True):
+                recheck_native_archive(evidence['archive'], evidence['archiveSnapshots'])
         owner.update(retirementState=outcome.state, retirementReason=outcome.reason, retirementOutcome=outcome.metadata())
         if outcome.state == 'retired':
             owner['retirementPhase'] = 'retired'
         with native_retirement_boundary('registration', 'publish-retirement-outcome'):
             registration.publish(owner)
         if outcome.state == 'retired':
-            owner = dict(owner, handoffCleanup=_cleanup_native_completion_authorized(registration.path, owner).metadata())
+            owner = dict(owner, handoffCleanup=cleanup_native_completion(registration.path, owner).metadata())
     return owner
 
 
 def cleanup_native_completion(path, owner, *, authorize=None):
-    try:
-        return _cleanup_native_completion_authorized(path, owner, authorize=authorize)
-    except NativeRetirementFault as error:
-        return error.outcome
-
-
-def _cleanup_native_completion_authorized(path, owner, *, authorize=None):
     """Remove only a proven duplicate; its outcome never changes source status."""
     completion = native_completion_path(path)
     directory = descriptor = None
@@ -1770,10 +1850,11 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
     try:
         checkout = pathlib.Path(checkout or ROOT)
         with native_retirement_boundary('registration', 'inspect-registration'):
-            read_native_object(path)
+            owner = read_native_object(path)
         retirement_path = pathlib.Path(path).with_name(pathlib.Path(path).name + '.retirement.lock')
         with NativeControlLease(retirement_path, boundary=lambda: native_retirement_boundary('registration', 'acquire-retirement-lease')):
-            registration = NativeRegistrationSnapshot(path, retry_retained=retry_retained)
+            with native_retirement_boundary('registration', 'open-registration-transaction'):
+                registration = NativeRegistrationSnapshot(path, retry_retained=retry_retained)
             owner = dict(registration.current)
             if owner.get('invocationID') != pathlib.Path(path).stem or owner.get('checkout') != str(checkout.resolve()):
                 raise ValueError('Native registration ownership changed')
@@ -1791,10 +1872,13 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
                 location = native_retirement_location(owner, checkout, retry_retained=retry_retained)
                 recovering = location.recovering
                 with (contextlib.nullcontext() if recovering else native_source_ownership(owner)) as ownership:
+                    validate_native_location(location, operation='owned-location')
                     evidence = {'sourceOwnership': ownership} if ownership else {}
+                    evidence['location'] = location
                     try:
                         if not recovering:
                             promote_native_completion(registration, checkout=checkout, authorize=authorize, evidence=evidence)
+                        validate_native_location(location, operation='post-promotion-location')
                         owner = dict(registration.current)
                         outcome = retire_native_sources(owner, checkout=checkout, persist=registration.publish,
                                                         authorize=authorize, source_owned=not recovering, evidence=evidence, location=location)
@@ -1806,7 +1890,7 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
                                 producer_state(registration.current.get('producer')) != 'abandoned' and
                                 outcome.origin not in {'authorization', 'registration'} and not evidence.get('logicalCompletion')):
                             outcome = NativeRetirementOutcome('deferred', 'completion-unconfirmed', 'producer', outcome.operation, outcome.error_number)
-                    owner = publish_native_retirement_outcome(registration, outcome, authorize)
+                    owner = publish_native_retirement_outcome(registration, outcome, authorize, location=location, evidence=evidence)
                     return outcome.state, outcome.reason, owner
             except NativeRetirementFault as error:
                 # Completed registrations can record protected missing/invalid
@@ -1835,15 +1919,35 @@ def read_native_registration(path, root):
     return owner
 
 
+@contextlib.contextmanager
+def native_discovery_boundary(path, operation):
+    try:
+        yield
+    except OSError as error:
+        error.native_discovery_path = str(path)
+        error.native_discovery_operation = operation
+        raise
+
+
+def native_discovery_directory(path):
+    with native_discovery_boundary(path, 'inspect-native-directory'):
+        return native_directory_identity(path)
+
+
+def native_discovery_entries(path):
+    with native_discovery_boundary(path, 'enumerate-native-directory'):
+        return list(path.iterdir())
+
+
 def registered_native_sources(root=ROOT):
     """Discover only explicit registrations; never adopt historical fixture directories."""
     directory = verification_artifact_root(root) / 'NativeSources'
     try:
-        native_directory_identity(directory)
+        native_discovery_directory(directory)
     except FileNotFoundError:
         return []
     result = []
-    for path in directory.iterdir():
+    for path in native_discovery_entries(directory):
         if path.suffix != '.json':
             continue
         try:
@@ -1858,12 +1962,12 @@ def registered_native_completions(root=ROOT):
     """Only explicit retired audit records can identify older duplicate handoffs."""
     directory = verification_artifact_root(root) / 'NativeSources'
     try:
-        native_directory_identity(directory)
-        native_directory_identity(directory / 'Completions')
+        native_discovery_directory(directory)
+        native_discovery_directory(directory / 'Completions')
     except FileNotFoundError:
         return []
     result = []
-    for completion in (directory / 'Completions').iterdir():
+    for completion in native_discovery_entries(directory / 'Completions'):
         if completion.suffix != '.json':
             continue
         path = directory / completion.name

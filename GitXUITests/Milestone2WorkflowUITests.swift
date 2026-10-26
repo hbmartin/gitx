@@ -1,33 +1,6 @@
 import AppKit
 import XCTest
 
-private nonisolated struct InspectorActionViewport {
-    let frame: CGRect
-
-    init(visibleFrame: CGRect, primaryDisplayTop: CGFloat) {
-        frame = CGRect(x: visibleFrame.minX, y: primaryDisplayTop - visibleFrame.maxY,
-                       width: visibleFrame.width, height: visibleFrame.height)
-    }
-
-    func contains(_ action: CGRect) -> Bool {
-        !action.isEmpty && frame.contains(action)
-    }
-
-    func displacement(toContain action: CGRect) -> CGVector {
-        func correction(_ lower: CGFloat, _ upper: CGFloat, _ visibleLower: CGFloat, _ visibleUpper: CGFloat) -> CGFloat {
-            if lower < visibleLower {
-                return visibleLower + 8 - lower
-            }
-            if upper > visibleUpper {
-                return visibleUpper - 8 - upper
-            }
-            return 0
-        }
-        return CGVector(dx: correction(action.minX, action.maxX, frame.minX, frame.maxX),
-                        dy: correction(action.minY, action.maxY, frame.minY, frame.maxY))
-    }
-}
-
 @MainActor
 // swift6-safety-justification: XCTest owns the test-case lifetime, while all mutable application and fixture state is confined to the main actor.
 final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
@@ -52,7 +25,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(viewport.contains(.zero))
     }
 
-    func testActionPositioningCorrectsOnlyClippedAxes() {
+    func testActionPositioningCorrectsOnlyClippedAxes() throws {
         let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
         let cases: [(CGRect, CGVector)] = [
             (CGRect(x: 100, y: 100, width: 100, height: 25), .zero),
@@ -64,9 +37,11 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             (CGRect(x: -2.25, y: 790.5, width: 100, height: 25), CGVector(dx: 10.25, dy: -23.5)),
             (CGRect(x: 950.25, y: -5.5, width: 100, height: 25), CGVector(dx: -58.25, dy: 13.5)),
             (CGRect(x: 0, y: 0, width: 100, height: 25), .zero),
+            (CGRect(x: -2, y: -2, width: 995, height: 795), CGVector(dx: 4.5, dy: 4.5)),
+            (CGRect(x: -2, y: -2, width: 1000, height: 800), CGVector(dx: 2, dy: 2)),
         ]
         for (action, expected) in cases {
-            let actual = viewport.displacement(toContain: action)
+            let actual = try XCTUnwrap(viewport.displacement(toContain: action))
             XCTAssertEqual(actual.dx, expected.dx)
             XCTAssertEqual(actual.dy, expected.dy)
             XCTAssertTrue(viewport.contains(action.offsetBy(dx: actual.dx, dy: actual.dy)))
@@ -465,6 +440,27 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         return app
     }
 
+    func testInspectorDisplacementCorrectsObservedClampingOnce() throws {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        let clipped = CGRect(x: -2.25, y: 790.5, width: 995, height: 25)
+        let first = try XCTUnwrap(viewport.displacement(toContain: clipped))
+        // Simulate a window manager applying less than the requested movement.
+        let observed = clipped.offsetBy(dx: first.dx / 4, dy: first.dy / 4)
+        XCTAssertFalse(viewport.contains(observed))
+        let correction = try XCTUnwrap(viewport.displacement(toContain: observed))
+        let final = observed.offsetBy(dx: correction.dx, dy: correction.dy)
+        XCTAssertTrue(viewport.contains(final))
+        let settled = try XCTUnwrap(viewport.displacement(toContain: final))
+        XCTAssertEqual(settled, .zero)
+    }
+
+    func testOversizedInspectorActionsHaveNoSafeDisplacement() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        XCTAssertNil(viewport.displacement(toContain: CGRect(x: -2, y: 0, width: 1001, height: 25)))
+        XCTAssertNil(viewport.displacement(toContain: CGRect(x: 0, y: -2, width: 25, height: 801)))
+        XCTAssertNil(viewport.displacement(toContain: .zero))
+    }
+
     private func positionWindowForInspectorAction(_ action: XCUIElement, in app: XCUIApplication) throws {
         let window = app.windows.firstMatch
         let viewport = try InspectorActionViewport(
@@ -472,9 +468,16 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             primaryDisplayTop: XCTUnwrap(NSScreen.screens.first).frame.maxY
         )
         try requireExists(action, timeout: 5)
-        if !viewport.contains(action.frame) {
-            // Move the action into view; window decoration need not land on an exact pixel.
-            let displacement = viewport.displacement(toContain: action.frame)
+        let deadline = Date().addingTimeInterval(5)
+        // Read back actual accessibility geometry after each drag. One further
+        // correction handles clamping without extending the positioning budget.
+        for _ in 0 ..< 2 {
+            guard !viewport.contains(action.frame), Date() < deadline else { break }
+            guard let displacement = viewport.displacement(toContain: action.frame) else {
+                retainDiagnosticScreenshot(named: "M2-Inspector-Oversized-Action", of: action, in: app)
+                XCTFail("Inspector action cannot fit inside the visible viewport: \(action.frame), \(viewport.frame)")
+                return
+            }
             let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0))
                 .withOffset(CGVector(dx: 0, dy: 12))
             titlebar.click(forDuration: 0.2, thenDragTo: titlebar.withOffset(displacement))
@@ -482,7 +485,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         let positioned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             viewport.contains(action.frame) && action.isHittable
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: max(0, deadline.timeIntervalSinceNow)), .completed)
     }
 
     private func openStagingView(in app: XCUIApplication, waitingFor element: XCUIElement) throws {

@@ -44,6 +44,27 @@ class CleanupTests(unittest.TestCase):
         finally:
             release()
 
+    def test_invalid_invocation_control_retention_does_not_block_unrelated_cleanup(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            control = native.registration.with_name(native.registration.name + '.retirement.lock')
+            control.unlink()
+            os.mkfifo(control, 0o600)
+            registration = native.registration.read_bytes()
+            cleanup.queue_commit(self.root)
+            report = cleanup.run_cleanup(self.root, self.valid_receipt())
+            self.assertEqual(report['status'], 'complete')
+            self.assertFalse(cleanup.pending_path(self.root).exists())
+            self.assertEqual(report['nativeRetirement'][0]['state'], 'retained')
+            self.assertTrue(report['nativeRetirement'][0]['outcome']['reportOnly'])
+            self.assertEqual(native.registration.read_bytes(), registration)
+            self.assertEqual(source.read_bytes(), b'archived-native-\x00\xff')
+            control.unlink()
+            cleanup.queue_commit(self.root)
+            repaired = cleanup.run_cleanup(self.root, self.valid_receipt())
+            self.assertEqual(repaired['status'], 'complete')
+            self.assertEqual(repaired['nativeRetirement'][0]['state'], 'retired')
+
     def test_deferred_native_retirement_keeps_cleanup_pending_until_the_lease_releases(self):
         with self.native_archive_waiting_for_retirement() as (native, source, release):
             original = source.read_bytes()
@@ -309,6 +330,8 @@ class CleanupTests(unittest.TestCase):
                             with self.assertRaises(OSError) as caught:
                                 discover(self.root)
                         self.assertIs(caught.exception, error)
+                        self.assertEqual(error.native_discovery_path, str(target))
+                        self.assertEqual(error.native_discovery_operation, 'inspect-native-directory')
 
     def test_native_registration_discovery_propagates_directory_read_failures(self):
         with self.native_archive_waiting_for_retirement() as (native, _, _):
@@ -328,6 +351,8 @@ class CleanupTests(unittest.TestCase):
                             with self.assertRaises(OSError) as caught:
                                 discover(self.root)
                         self.assertIs(caught.exception, error)
+                        self.assertEqual(error.native_discovery_path, str(target))
+                        self.assertEqual(error.native_discovery_operation, 'enumerate-native-directory')
 
     def test_failed_native_source_discovery_keeps_cleanup_pending(self):
         self.assert_native_discovery_failure_preserves_cleanup('sources')
@@ -363,7 +388,9 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(preview['status'], 'preview')
             self.assertTrue(preview['discoveryErrors'])
             self.assertFalse(preview['diagnosticBytesComplete'])
-            self.assertTrue(any(str(error) == item['reason'] for item in report['discoveryErrors']))
+            self.assertTrue(any(str(error) == item['reason'] and item['path'] == str(target) and
+                                item['operation'] == 'inspect-native-directory' and item['errno'] == errno.EACCES
+                                for item in report['discoveryErrors']))
             self.assertEqual(cleanup.read_json(report['report'])['discoveryErrors'], report['discoveryErrors'])
             self.assertEqual(report['reclaimedBytes'], 0)
             self.assertTrue(old.exists())

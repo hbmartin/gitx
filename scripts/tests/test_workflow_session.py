@@ -42,6 +42,258 @@ class WorkflowSessionTests(unittest.TestCase):
                     os.close(lease)
                 yield native, source
 
+    def test_retirement_controls_release_and_keep_persistent_inode(self):
+        with self.completed_native_fixture() as (native, source):
+            control = native.registration.with_name(native.registration.name + '.retirement.lock')
+            identity = session.native_stat_snapshot(control.stat())[:2]
+            with session.NativeControlLease(control):
+                with self.assertRaises(BlockingIOError):
+                    with session.NativeControlLease(control):
+                        self.fail('A second retirement acquired the same control')
+            with session.NativeControlLease(control):
+                self.assertEqual(session.native_stat_snapshot(control.stat())[:2], identity)
+            state, reason, owner = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual(owner['deletionProof']['parentIdentity'], owner['retirementParentIdentity'])
+            self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_retirement_rejects_parent_replacement_after_promotion(self):
+        with self.completed_native_fixture() as (native, source):
+            promote = session.promote_native_completion
+            original = native.registration.read_bytes()
+            def replace_parent(*args, **kwargs):
+                result = promote(*args, **kwargs)
+                parent = native.root.parent
+                saved = parent.with_name('saved-parent')
+                parent.rename(saved)
+                parent.mkdir()
+                (saved / native.root.name).rename(native.root)
+                return result
+            with mock.patch.object(session, 'promote_native_completion', side_effect=replace_parent):
+                state, reason, owner = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retained', reason)
+            self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+            self.assertNotIn('deletionProof', owner)
+            self.assertNotIn('retirementPath', owner)
+            self.assertEqual(owner['retirementOutcome']['origin'], 'source')
+            self.assertEqual(json.loads(original)['directoryIdentity'], owner['directoryIdentity'])
+
+    def test_absent_recovery_rechecks_paths_after_authorization(self):
+        for change in ('original', 'quarantine', 'parent'):
+            with self.subTest(change=change), self.completed_native_fixture() as (native, _):
+                owner = json.loads(native.registration.read_text())
+                quarantine = native.root.with_name('.gitx-native-retired-' + 'd' * 32)
+                owner.update(retirementState='deferred', retirementPhase='deleting', retirementPath=str(quarantine),
+                             retirementParentIdentity=session.native_directory_identity(native.root.parent))
+                session.shutil.rmtree(native.root)
+                session.atomic_json(native.registration, owner)
+                changed = False
+                @contextlib.contextmanager
+                def change_at_admission():
+                    nonlocal changed
+                    if not changed:
+                        changed = True
+                        if change == 'parent':
+                            native.root.parent.rename(native.root.parent.with_name('saved-parent'))
+                            native.root.parent.mkdir()
+                        else:
+                            (native.root if change == 'original' else quarantine).mkdir()
+                    yield
+                state, reason, after = session.retire_registered_native_sources(native.registration, authorize=change_at_admission)
+                self.assertEqual(state, 'retained', reason)
+                self.assertNotEqual(after.get('retirementPhase'), 'retired')
+
+    def test_invalid_invocation_controls_are_report_only_and_repairable(self):
+        for suffix in ('.lock', '.retirement.lock'):
+            for kind in ('fifo', 'directory', 'symlink', 'mode', 'links'):
+                with self.subTest(suffix=suffix, kind=kind), self.completed_native_fixture() as (native, source):
+                    control = native.registration.with_name(native.registration.name + suffix)
+                    control.unlink(missing_ok=True)
+                    if kind == 'fifo':
+                        os.mkfifo(control, 0o600)
+                    elif kind == 'directory':
+                        control.mkdir()
+                    elif kind == 'symlink':
+                        control.symlink_to(source)
+                    else:
+                        control.write_bytes(b'')
+                        control.chmod(0o644 if kind == 'mode' else 0o600)
+                        if kind == 'links':
+                            os.link(control, control.with_name('unrelated-link'))
+                    before = native.registration.read_bytes()
+                    checkpoint = (native.root / 'native-owner.json').read_bytes()
+                    for _ in range(2):
+                        state, reason, owner = session.retire_registered_native_sources(native.registration)
+                        self.assertEqual(state, 'retained', reason)
+                        self.assertTrue(owner['retirementOutcome']['reportOnly'])
+                        self.assertEqual(native.registration.read_bytes(), before)
+                        self.assertEqual((native.root / 'native-owner.json').read_bytes(), checkpoint)
+                        self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+                    if kind == 'directory':
+                        control.rmdir()
+                    else:
+                        control.unlink()
+                    self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
+
+    def test_outcome_retryability_and_publication_are_independent(self):
+        for origin in ('authorization', 'registration', 'durability', 'producer', 'source', 'archive'):
+            for state in ('retained', 'deferred'):
+                with self.subTest(origin=origin, state=state):
+                    outcome = session.NativeRetirementOutcome(state, origin=origin)
+                    self.assertEqual(session.native_outcome_is_publishable(outcome),
+                                     not (state == 'deferred' and origin in {'authorization', 'registration', 'producer'}))
+                    report = session.NativeRetirementOutcome(state, origin=origin, report_only=True)
+                    self.assertFalse(session.native_outcome_is_publishable(report))
+            self.assertEqual(session.native_evidence_failure_state(origin),
+                             'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained')
+
+    def test_location_replacement_at_hash_and_authorization_boundaries(self):
+        for boundary in ('hash', 'authorize', 'rename', 'publish-deleting'):
+            for replacement in ('root', 'parent'):
+                with self.subTest(boundary=boundary, replacement=replacement), self.completed_native_fixture() as (native, source):
+                    changed = False
+                    def replace():
+                        nonlocal changed
+                        if changed:
+                            return
+                        changed = True
+                        if replacement == 'parent':
+                            parent = native.root.parent
+                            saved = parent.with_name('saved-parent')
+                            parent.rename(saved)
+                            parent.mkdir()
+                            # Preserve either the original or the renamed approved root.
+                            for child in list(saved.iterdir()):
+                                child.rename(parent / child.name)
+                        else:
+                            root = next(iter(native.root.parent.glob('.gitx-native-retired-*')), native.root)
+                            root.rename(root.with_name('saved-root'))
+                            root.mkdir()
+                            (root / 'keep').write_bytes(b'replacement')
+                    digest, rename, publish = session.descriptor_digest, session.exclusive_native_rename, session.NativeRegistrationSnapshot.publish
+                    def hashing(descriptor):
+                        result = digest(descriptor)
+                        if boundary == 'hash':
+                            replace()
+                        return result
+                    def renaming(*args, **kwargs):
+                        result = rename(*args, **kwargs)
+                        if boundary == 'rename':
+                            replace()
+                        return result
+                    def publishing(transaction, value):
+                        result = publish(transaction, value)
+                        if boundary == 'publish-deleting' and value.get('retirementPhase') == 'deleting':
+                            replace()
+                        return result
+                    @contextlib.contextmanager
+                    def authorize():
+                        if boundary == 'authorize':
+                            replace()
+                        yield
+                    with mock.patch.object(session, 'descriptor_digest', side_effect=hashing), \
+                            mock.patch.object(session, 'exclusive_native_rename', side_effect=renaming), \
+                            mock.patch.object(session.NativeRegistrationSnapshot, 'publish', new=publishing):
+                        state, reason, owner = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                    self.assertTrue(changed)
+                    self.assertEqual(state, 'retained', reason)
+                    self.assertNotEqual(owner.get('retirementPhase'), 'retired')
+                    self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
+                    if replacement == 'root':
+                        self.assertTrue(any(path.name == 'keep' for path in native.root.parent.rglob('keep')))
+
+    def test_foreign_control_is_report_only_but_uncertain_access_is_retryable(self):
+        for condition in ('foreign-owner', 'access-denied'):
+            with self.subTest(condition=condition), self.completed_native_fixture() as (native, _):
+                control = native.registration.with_name(native.registration.name + '.retirement.lock')
+                before = native.registration.read_bytes()
+                inspect, opening = session.os.stat, session.os.open
+                def stat_control(path, *args, **kwargs):
+                    result = inspect(path, *args, **kwargs)
+                    if condition == 'foreign-owner' and path == control.name:
+                        return SimpleNamespace(st_mode=result.st_mode, st_uid=result.st_uid ^ 1, st_nlink=result.st_nlink)
+                    return result
+                def open_control(path, *args, **kwargs):
+                    if condition == 'access-denied' and path == control.name:
+                        raise PermissionError(errno.EACCES, 'injected uncertain control access')
+                    return opening(path, *args, **kwargs)
+                with mock.patch.object(session.os, 'stat', side_effect=stat_control), \
+                        mock.patch.object(session.os, 'open', side_effect=open_control):
+                    state, reason, owner = session.retire_registered_native_sources(native.registration)
+                outcome = owner['retirementOutcome']
+                self.assertEqual(state, 'retained' if condition == 'foreign-owner' else 'deferred', reason)
+                self.assertEqual(outcome.get('reportOnly', False), condition == 'foreign-owner')
+                self.assertEqual(outcome['operation'], 'acquire-retirement-lease')
+                self.assertEqual(outcome['errno'], errno.EPERM if condition == 'foreign-owner' else errno.EACCES)
+                self.assertEqual(native.registration.read_bytes(), before)
+
+    def test_promotion_writes_revalidate_the_selected_parent(self):
+        for boundary in ('promote', 'repair'):
+            with self.subTest(boundary=boundary), self.completed_native_fixture() as (native, source):
+                checkpoint = native.root / 'native-owner.json'
+                session.atomic_json(checkpoint, {})
+                if boundary == 'promote':
+                    prior = json.loads(native.registration.read_text())
+                    prior.update(status='running', collectionComplete=False, files=[])
+                    session.atomic_json(native.registration, prior)
+                changed = False
+                @contextlib.contextmanager
+                def authorize():
+                    nonlocal changed
+                    if not changed:
+                        changed = True
+                        parent = native.root.parent
+                        saved = parent.with_name('saved-parent')
+                        parent.rename(saved)
+                        parent.mkdir()
+                        (saved / native.root.name).rename(native.root)
+                    yield
+                state, reason, owner = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                self.assertTrue(changed)
+                self.assertEqual(state, 'retained', reason)
+                self.assertEqual(json.loads(checkpoint.read_text()), {}, 'Refused location cannot repair the reserved checkpoint')
+                self.assertEqual(owner['status'], 'running' if boundary == 'promote' else 'passed')
+                self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
+                self.assertEqual(owner['retirementOutcome']['operation'], boundary + '-completion' if boundary == 'promote' else 'repair-source-checkpoint')
+
+    def test_archive_changes_at_absent_completion_and_final_publication_are_protected(self):
+        for variant in ('absent-authorization', 'absent-publication', 'ordinary-publication', 'ordinary-directory'):
+            with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):
+                if variant.startswith('absent'):
+                    owner = json.loads(native.registration.read_text())
+                    quarantine = native.root.with_name('.gitx-native-retired-' + 'e' * 32)
+                    owner.update(retirementState='deferred', retirementPhase='deleting', retirementPath=str(quarantine),
+                                 retirementParentIdentity=session.native_directory_identity(native.root.parent))
+                    session.shutil.rmtree(native.root)
+                    session.atomic_json(native.registration, owner)
+                scopes = 0
+                trigger = {'absent-authorization': 1, 'absent-publication': 2, 'ordinary-publication': 3, 'ordinary-directory': 3}[variant]
+                @contextlib.contextmanager
+                def authorize():
+                    nonlocal scopes
+                    scopes += 1
+                    if scopes == trigger:
+                        if variant == 'ordinary-directory':
+                            saved = native.archive.with_name('saved-archive')
+                            native.archive.rename(saved)
+                            native.archive.mkdir()
+                            for child in list(saved.iterdir()):
+                                child.rename(native.archive / child.name)
+                        else:
+                            (native.archive / source.name).write_bytes(b'changed after archive validation')
+                    yield
+                state, reason, after = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                self.assertGreaterEqual(scopes, trigger)
+                self.assertEqual(state, 'retained', reason)
+                self.assertNotEqual(after.get('retirementPhase'), 'retired')
+                self.assertTrue(session.native_completion_path(native.registration).exists(), 'Invalid archive cannot retire its handoff')
+                self.assertEqual(after['retirementOutcome']['origin'], 'archive')
+                if variant != 'ordinary-directory':
+                    (native.archive / source.name).write_bytes(b'finalization-\x00\xff')
+                    with mock.patch.object(session, 'descriptor_digest', side_effect=AssertionError('Default retained retry hashed evidence')):
+                        self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retained')
+                    self.assertEqual(session.retire_registered_native_sources(native.registration, retry_retained=True)[0], 'retired')
+
     def test_registered_quarantine_recovery_preserves_archived_bytes(self):
         for phase in ('prepared', 'deleting'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):

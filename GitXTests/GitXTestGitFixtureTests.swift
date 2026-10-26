@@ -353,7 +353,17 @@ final class GitXTestGitFixtureTests: XCTestCase {
             let excerpts = session.take(snapshot: .init(candidates: [current, recovered], names: [file.lastPathComponent, delayed.lastPathComponent], complete: false))
             XCTAssertEqual(excerpts.map(\.data), [Data([byte])], "Recovery may establish unknown baselines only once")
         }
-        XCTAssertTrue(session.take(snapshot: .init(candidates: [initial], names: [], complete: true)).isEmpty)
+        let settled = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(file))
+        let recovered = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(delayed))
+        XCTAssertTrue(session.take(snapshot: .init(candidates: [settled, recovered], names: [file.lastPathComponent, delayed.lastPathComponent], complete: true)).isEmpty)
+        try writer.write(contentsOf: Data([128, 0]))
+        let newFile = directory.appendingPathComponent("GitX-43-new.stderr.log")
+        try Data([255, 1]).write(to: newFile)
+        let grown = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(file))
+        let new = try XCTUnwrap(GitXManagedTestObserver.AttachmentState.inspect(newFile))
+        let afterRecovery = session.take(snapshot: .init(candidates: [grown, recovered, new], names: [file.lastPathComponent, delayed.lastPathComponent, newFile.lastPathComponent], complete: true))
+        XCTAssertEqual(afterRecovery.map(\.data), [Data([255, 1]), Data([128, 0])], "Complete discovery must end recovery without resetting proven offsets")
+        XCTAssertTrue(session.take(snapshot: .init(candidates: [grown, recovered, new], names: [file.lastPathComponent, delayed.lastPathComponent, newFile.lastPathComponent], complete: true)).isEmpty)
     }
 
     func testUnknownDiscoveryCannotEndBaselineRecovery() throws {

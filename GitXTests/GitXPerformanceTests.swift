@@ -8,6 +8,56 @@ import XCTest
 /// correctness and sanitizer plans.
 @MainActor
 final class GitXPerformanceTests: XCTestCase {
+    func testNativeLogIndexActiveAndFinalizedScaling() throws {
+        for count in [1, 33, 128] {
+            for finalized in [false, true] {
+                for churn in [false, true] {
+                    let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-scaling-\(UUID())")
+                    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                    defer { try? FileManager.default.removeItem(at: root) }
+                    var files: [URL] = []
+                    for number in 0 ..< count {
+                        let file = root.appendingPathComponent("GitX-\(getpid())-\(number).stderr.log")
+                        try Data([UInt8(number)]).write(to: file)
+                        files.append(file)
+                        if finalized {
+                            _ = try GitXTestProgressRecords.write([
+                                "schemaVersion": 1, "event": "capture", "state": "captured", "filename": file.lastPathComponent,
+                                "pid": getpid(), "invocationID": "scaling", "verificationSession": "scaling",
+                            ], prefix: "capture", directory: root.path)
+                        }
+                    }
+                    let invalidate: (@Sendable () -> Bool)? = churn ? { @Sendable in true } : nil
+                    let index = try XCTUnwrap(GitXManagedTestObserver.LogIndex(
+                        directory: root.path, invocationID: "scaling", verificationSession: "scaling", progressDirectory: nil,
+                        invalidateSnapshot: invalidate
+                    ))
+                    defer { index.close() }
+                    XCTAssertEqual(index.snapshot().count, count)
+                    let before = index.inspectionCount
+                    var seen = 0
+                    var samples: [TimeInterval] = []
+                    // Fixture creation and the first inspection stay outside timing.
+                    for _ in 0 ..< 5 {
+                        samples.append(elapsed { seen += index.caseSnapshot().candidates.count })
+                    }
+                    XCTAssertEqual(seen, 5 * count)
+                    let inspections = index.inspectionCount - before
+                    XCTAssertEqual(inspections, finalized ? 0 : 5 * count)
+                    attachMeasurements("Native index count=\(count) finalized=\(finalized) churn=\(churn) inspections=\(inspections)", samples: samples)
+                    if !finalized {
+                        let first = try XCTUnwrap(files.first)
+                        let writer = try FileHandle(forWritingTo: first)
+                        defer { try? writer.close() }
+                        try writer.seekToEnd()
+                        try writer.write(contentsOf: Data([255, 0]))
+                        XCTAssertEqual(index.snapshot().first { $0.file == first }?.end, 3, "Every active log stays fresh, including beyond retry batch eight")
+                    }
+                }
+            }
+        }
+    }
+
     func testWorktreeEligibilityCanonicalResolutionCost() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("eligibility-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

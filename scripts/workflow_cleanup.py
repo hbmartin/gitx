@@ -523,7 +523,9 @@ def inventory(root, receipt=None, now=None):
         try:
             return discover(root)
         except OSError as error:
-            uncertain(artifact / "NativeSources", error)
+            uncertain(getattr(error, "native_discovery_path", artifact / "NativeSources"), error)
+            errors[-1].update(operation=getattr(error, "native_discovery_operation", "discover-native-registrations"),
+                              errno=error.errno)
             return []
     native_sources = native_registrations(session.registered_native_sources)
     native_completions = native_registrations(session.registered_native_completions)
