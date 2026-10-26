@@ -381,6 +381,18 @@ class DistributionTests(unittest.TestCase):
                 if "notary-log" in failure:
                     self.assertIn("Could not fetch", result.stderr)
 
+    def test_notarization_retries_the_same_submission_after_wait_and_status_transport_failures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = DistributionFixture(pathlib.Path(directory))
+            result = fixture.notarize("notary-retry")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            commands = fixture.commands
+            self.assertEqual(sum(command[:3] == ["xcrun", "notarytool", "submit"] for command in commands), 1)
+            waits = [command for command in commands if command[:3] == ["xcrun", "notarytool", "wait"]]
+            self.assertGreaterEqual(len(waits), 2)
+            self.assertTrue(all(command[3] == "12345678-1234-1234-1234-123456789abc" for command in waits))
+            self.assertTrue((fixture.root / "notary-logs/notary-info-1.stderr").exists())
+
     def test_screenshot_fallback_ignores_bundle_metadata_and_exports_only_png_data(self):
         extractor = load_script("extract_screenshots.py")
         with tempfile.TemporaryDirectory() as directory:

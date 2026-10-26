@@ -29,6 +29,7 @@
 		F2EDDDC9818A472B8EB5134A /* GitXManagedTestObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */; };
 		52326BB36A0C49D78A35193D /* GitXManagedTestObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */; };
 		F0BA93000000000000000001 /* WorktreeGitProxy.sh in Resources */ = {isa = PBXBuildFile; fileRef = F0BA93000000000000000002 /* WorktreeGitProxy.sh */; };
+		C0DE90260000000000000003 /* GitDiscoveryProxy.sh in Resources */ = {isa = PBXBuildFile; fileRef = C0DE90260000000000000004 /* GitDiscoveryProxy.sh */; };
 		C0D085A00000000000000001 /* GitXFixtureRepositoryPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */; };
 		C0D085A00000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */; };
 		C0DE90010000000000000001 /* StagingImageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90010000000000000002 /* StagingImageReader.swift */; };
@@ -712,6 +713,7 @@
 		A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = GitXManagedTestBootstrap.m; sourceTree = "<group>"; };
 		53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXManagedTestObserver.swift; sourceTree = "<group>"; };
 		F0BA93000000000000000002 /* WorktreeGitProxy.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = WorktreeGitProxy.sh; sourceTree = "<group>"; };
+		C0DE90260000000000000004 /* GitDiscoveryProxy.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = GitDiscoveryProxy.sh; sourceTree = "<group>"; };
 		C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXFixtureRepositoryPolicyTests.swift; sourceTree = "<group>"; };
 		C0DE90010000000000000002 /* StagingImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingImageReader.swift; sourceTree = "<group>"; };
 		8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFileIdentityTests.swift; sourceTree = "<group>"; };
@@ -1953,6 +1955,7 @@
 			isa = PBXGroup;
 			children = (
 				F0BA93000000000000000002 /* WorktreeGitProxy.sh */,
+				C0DE90260000000000000004 /* GitDiscoveryProxy.sh */,
 				D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */,
 				73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */,
 				D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */,
@@ -2283,6 +2286,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F0BA93000000000000000001 /* WorktreeGitProxy.sh in Resources */,
+				C0DE90260000000000000003 /* GitDiscoveryProxy.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

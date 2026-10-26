@@ -8,6 +8,9 @@
 //
 
 #import <XCTest/XCTest.h>
+#import <AppKit/AppKit.h>
+#import <fcntl.h>
+#import <sys/stat.h>
 #import "GitXUITests-Swift.h"
 
 // The app needs fixtures outside the runner's container, which macOS protects as another app's data.
@@ -321,6 +324,92 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 }
 
 // MARK: - Tests
+
+- (void)testFolderOpenRoutesOrdinaryDottedAndBareRepositoriesThroughLaunchServices
+{
+	[self prepareDefaultLaunchEnvironment];
+	NSString *ordinary = self.app.launchEnvironment[@"GITX_UITEST_REPO"];
+	NSString *dotted = [ordinary stringByAppendingString:@".repository"];
+	NSString *bare = [ordinary stringByAppendingString:@".git"];
+	[self.temporaryRepositoryPaths addObjectsFromArray:@[ dotted, bare ]];
+	XCTAssertTrue(([self runGit:@[ @"clone", @"--quiet", ordinary, dotted ] inDirectory:ordinary]));
+	XCTAssertTrue(([self runGit:@[ @"clone", @"--quiet", @"--bare", ordinary, bare ] inDirectory:ordinary]));
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow]);
+	[self selectHistoryForCurrentBranch];
+	NSURL *applicationURL = [[[NSBundle mainBundle].bundleURL URLByDeletingLastPathComponent] URLByAppendingPathComponent:@"Half Dark.app"];
+	XCTAssertTrue([[NSFileManager defaultManager] fileExistsAtPath:applicationURL.path]);
+	for (NSString *path in @[ ordinary, dotted, bare ]) {
+		NSURL *url = [NSURL fileURLWithPath:path isDirectory:YES];
+		XCUIElement *window = self.app.windows.firstMatch;
+		XCUIElement *closing = self.app.windows[window.label];
+		[window.buttons[XCUIIdentifierCloseWindow] click];
+		XCTNSPredicateExpectation *closed = [[XCTNSPredicateExpectation alloc]
+			initWithPredicate:[NSPredicate predicateWithFormat:@"exists == NO"]
+					   object:closing];
+		[self waitForExpectations:@[ closed ] timeout:10];
+		XCTestExpectation *delivered = [self expectationWithDescription:@"Folder delivered to the running application"];
+		[[NSWorkspace sharedWorkspace] openURLs:@[ url ]
+						   withApplicationAtURL:applicationURL
+								  configuration:[NSWorkspaceOpenConfiguration configuration]
+							  completionHandler:^(NSRunningApplication *application, NSError *error) {
+								  XCTAssertNil(error);
+								  XCTAssertNotNil(application);
+								  [delivered fulfill];
+							  }];
+		[self waitForExpectations:@[ delivered ] timeout:10];
+		XCTAssertTrue([self waitForWindow]);
+		[self selectHistoryForCurrentBranch];
+		[self saveWindowScreenshotNamed:[@"launch-services-folder-" stringByAppendingString:path.lastPathComponent]];
+	}
+}
+
+- (void)testSettingsRemainResponsiveWhileGitValidationWaits
+{
+	[self prepareDefaultLaunchEnvironment];
+	NSString *directory = self.app.launchEnvironment[@"GITX_UITEST_REPO"];
+	NSString *gate = [directory stringByAppendingPathComponent:@"git-validation.fifo"];
+	NSString *started = [directory stringByAppendingPathComponent:@"git-validation-started"];
+	NSString *released = [directory stringByAppendingPathComponent:@"git-validation-released"];
+	NSString *wrapper = [[NSBundle bundleForClass:self.class] pathForResource:@"GitDiscoveryProxy" ofType:@"sh"];
+	XCTAssertTrue([[NSFileManager defaultManager] isExecutableFileAtPath:wrapper]);
+	XCTAssertEqual(mkfifo(gate.fileSystemRepresentation, 0600), 0);
+	NSMutableDictionary *environment = self.app.launchEnvironment.mutableCopy;
+	environment[@"GITX_DISCOVERY_PROXY_GATE"] = gate;
+	environment[@"GITX_DISCOVERY_PROXY_STARTED"] = started;
+	environment[@"GITX_DISCOVERY_PROXY_RELEASE"] = released;
+	self.app.launchEnvironment = environment;
+	self.app.launchArguments = [self.app.launchArguments arrayByAddingObjectsFromArray:@[ @"-gitExecutable", wrapper ]];
+	[self.app launch];
+	XCTNSPredicateExpectation *probing = [[XCTNSPredicateExpectation alloc]
+		initWithPredicate:[NSPredicate predicateWithBlock:^BOOL(id object, NSDictionary *bindings) {
+			return [[NSFileManager defaultManager] fileExistsAtPath:started];
+		}]
+				   object:nil];
+	[self waitForExpectations:@[ probing ] timeout:10];
+	[self.app activate];
+	XCUIElement *applicationMenu = self.app.menuBars.menuBarItems[@"Half Dark"];
+	XCTAssertTrue([applicationMenu waitForExistenceWithTimeout:5]);
+	[applicationMenu click];
+	[self.app.menuItems[@"Settings…"] click];
+	XCUIElement *setting = self.app.checkBoxes[@"Watch for changes in repositories"];
+	XCTAssertTrue([setting waitForExistenceWithTimeout:5], @"The main queue should service Settings while validation is pending");
+	XCUIElement *panel = self.app.dialogs.firstMatch;
+	XCTAttachment *attachment = [XCTAttachment attachmentWithScreenshot:[panel.exists ? panel : setting screenshot]];
+	attachment.name = @"settings-responsive-during-git-validation";
+	attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
+	[self addAttachment:attachment];
+	[self.app typeKey:@"w" modifierFlags:XCUIKeyModifierCommand];
+	XCTAssertTrue([@"ready" writeToFile:released atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	int descriptor = open(gate.fileSystemRepresentation, O_WRONLY | O_NONBLOCK);
+	XCTAssertGreaterThanOrEqual(descriptor, 0, @"The validation probe should still be waiting for release");
+	NSFileHandle *writer = [[NSFileHandle alloc] initWithFileDescriptor:descriptor closeOnDealloc:YES];
+	[writer writeData:[@"ready\n" dataUsingEncoding:NSUTF8StringEncoding]];
+	[writer closeFile];
+	XCTAssertTrue([self waitForWindow]);
+	[self selectHistoryForCurrentBranch];
+	[self saveWindowScreenshotNamed:@"repository-open-after-git-validation"];
+}
 
 - (void)testMainWindowExists
 {

@@ -108,24 +108,11 @@ jobs:
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
           cp "$PP_PATH" "$PROFILE_DIR"
-      - name: Show openssl version
-        run: |
-          openssl version
-          # Remove stale configuration before uninstalling so Homebrew stays quiet.
-          rm -rf /usr/local/etc/openssl@1.1 /usr/local/etc/openssl@3
-          rm -rf /opt/homebrew/etc/openssl@1.1 /opt/homebrew/etc/openssl@3
-          brew uninstall --ignore-dependencies openssl
-          brew install openssl@3
-          openssl version
       - name: pre build
         run: cd External/objective-git && script/bootstrap && script/update_libgit2 && cd ../..
       - name: Show openssl version
         run: |
           openssl version
-      - name: Unlink openssl 3
-        run: |
-          brew unlink openssl@3
-          
       # Test (only on arm64 to avoid tripling CI time)
       - name: Run tests
         id: ui-tests

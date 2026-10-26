@@ -25,6 +25,8 @@
 			</array>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
+			<key>NSDocumentClass</key>
+			<string>PBGitRepositoryDocument</string>
 		</dict>
 		<dict>
 			<key>CFBundleTypeExtensions</key>
