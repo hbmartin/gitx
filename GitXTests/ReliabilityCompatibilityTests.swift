@@ -1,5 +1,4 @@
 import AppKit
-@testable import GitX
 import ObjectiveGit
 import XCTest
 
