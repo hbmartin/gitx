@@ -33,6 +33,27 @@ final class ReliabilityCompatibilityTests: XCTestCase {
         XCTAssertThrowsError(try PBTask.output(forCommand: "/usr/bin/false", arguments: nil))
     }
 
+    @MainActor func testDefaultContentRefreshPreservesItsRepositoryAndMountedView() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        _ = try GTRepository.initializeEmpty(atFileURL: directory, options: nil)
+        let repository = try PBGitRepository(url: directory)
+        let content = try XCTUnwrap(PBViewController(repository: repository, superController: nil))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let container = NSView(frame: view.frame)
+        container.addSubview(view)
+        content.view = view
+        content.status = "Ready"
+        content.isBusy = false
+        content.refresh(nil)
+        XCTAssertTrue(content.repository === repository)
+        XCTAssertTrue(content.view === view)
+        XCTAssertTrue(view.superview === container)
+        XCTAssertEqual(content.status, "Ready")
+        XCTAssertFalse(content.isBusy)
+        XCTAssertNil(content.firstResponder())
+    }
+
     @MainActor func testScriptedDiffUsesTheRepositoryAndPreservesThePatch() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
