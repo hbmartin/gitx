@@ -225,16 +225,16 @@ class CleanupTests(unittest.TestCase):
             print(json.dumps({'nativeCleanupGateMeasurement': {'invocations': 2, 'fullEligibilityCalls': len(durations),
                                                               'durationSeconds': durations}}))
 
-    def test_genuine_legacy_missing_controls_resume_through_cleanup(self):
+    def test_genuine_legacy_missing_controls_stay_protected_through_cleanup(self):
         self.assert_genuine_legacy_cleanup('controls-missing')
 
-    def test_genuine_legacy_surviving_controls_resume_through_cleanup(self):
+    def test_genuine_legacy_surviving_controls_do_not_prove_missing_diagnostics(self):
         self.assert_genuine_legacy_cleanup('controls-only')
 
-    def test_genuine_legacy_absent_quarantine_completes_cleanup(self):
+    def test_genuine_legacy_absent_quarantine_retains_evidence(self):
         self.assert_genuine_legacy_cleanup('absent')
 
-    def test_explicit_retry_recovers_a_previously_retained_legacy_quarantine(self):
+    def test_explicit_retry_preserves_an_ambiguous_legacy_quarantine(self):
         self.assert_genuine_legacy_cleanup('controls-missing', retained=True)
 
     def assert_genuine_legacy_cleanup(self, variant, retained=False):
@@ -265,8 +265,9 @@ class CleanupTests(unittest.TestCase):
                 cleanup.queue_commit(self.root)
             report = cleanup.run_cleanup(self.root, receipt, retry_retained_native=retained)
             self.assertEqual(report['status'], 'complete', report['nativeRetirement'])
-            self.assertEqual(report['nativeRetirement'][0]['state'], 'retired')
-            self.assertFalse(quarantine.exists())
+            self.assertEqual(report['nativeRetirement'][0]['state'], 'retained')
+            self.assertEqual(quarantine.exists(), variant != 'absent')
+            self.assertTrue(session.native_completion_path(native.registration).exists())
             self.assertFalse(cleanup.pending_path(self.root).exists())
             self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
 
@@ -738,7 +739,7 @@ else:
                     pathlib.Path(durable['retirementPath']).symlink_to(native.archive, target_is_directory=True)
                 session.atomic_json(native.registration, durable)
                 state, reason, _ = session.retire_registered_native_sources(native.registration, checkout=self.root)
-                self.assertEqual(state, 'retired' if variant == 'legacy' else 'retained', reason)
+                self.assertEqual(state, 'retained', reason)
                 self.assertTrue(native.archive.exists())
 
     def test_cleanup_recovers_registered_legacy_quarantines_without_phase(self):

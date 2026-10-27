@@ -21,6 +21,8 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+        AAB112000000000000000001 /* InspectorActionGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB112000000000000000003 /* InspectorActionGeometryTests.swift */; };
+        AAB112000000000000000002 /* InspectorActionViewport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB410853D8E493688875043 /* InspectorActionViewport.swift */; };
 		C0DE90260000000000000001 /* GitBinaryDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90260000000000000002 /* GitBinaryDiscovery.swift */; };
 		AB1020010000000000000001 /* SidebarLifecycleTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */; };
 		8D66D8FE296C4D12B236E789 /* HistoryIndexWriterObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */; };
@@ -707,6 +709,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+        AAB112000000000000000003 /* InspectorActionGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorActionGeometryTests.swift; sourceTree = "<group>"; };
 		C0DE90260000000000000002 /* GitBinaryDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryDiscovery.swift; sourceTree = "<group>"; };
 		AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarLifecycleTestSupport.swift; sourceTree = "<group>"; };
 		FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryIndexWriterObservation.swift; sourceTree = "<group>"; };
@@ -1898,6 +1901,7 @@
 				D3A400000000000000000101 /* Milestone2CompositionCoverageHarnessTests.swift */,
 				C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */,
 				C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */,
+                AAB112000000000000000003 /* InspectorActionGeometryTests.swift */,
 				FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */,
 				AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
@@ -2679,6 +2683,8 @@
 				D3A400000000000000000001 /* Milestone2CompositionCoverageHarnessTests.swift in Sources */,
 				C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */,
 				C0DECE000000000000000002 /* CommitMenuPresenterTests.swift in Sources */,
+                AAB112000000000000000001 /* InspectorActionGeometryTests.swift in Sources */,
+                AAB112000000000000000002 /* InspectorActionViewport.swift in Sources */,
 				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
 				C0DEC0000000000000000001 /* WindowControllerTests.m in Sources */,
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
