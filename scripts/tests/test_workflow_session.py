@@ -136,16 +136,24 @@ class WorkflowSessionTests(unittest.TestCase):
                     self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
 
     def test_outcome_retryability_and_publication_are_independent(self):
-        for origin in ('authorization', 'registration', 'durability', 'producer', 'source', 'archive'):
-            for state in ('retained', 'deferred'):
-                with self.subTest(origin=origin, state=state):
-                    outcome = session.NativeRetirementOutcome(state, origin=origin)
-                    self.assertEqual(session.native_outcome_is_publishable(outcome),
-                                     not (state == 'deferred' and origin in {'authorization', 'registration', 'producer'}))
-                    report = session.NativeRetirementOutcome(state, origin=origin, report_only=True)
-                    self.assertFalse(session.native_outcome_is_publishable(report))
-            self.assertEqual(session.native_evidence_failure_state(origin),
-                             'deferred' if origin in {'authorization', 'registration', 'durability'} else 'retained')
+        cases = [
+            ('authorization', 'deferred', False), ('registration', 'deferred', False),
+            ('durability', 'deferred', True), ('producer', 'retained', False),
+            ('source', 'retained', True), ('archive', 'retained', True),
+        ]
+        for origin, failure_state, deferred_publishable in cases:
+            with self.subTest(origin=origin):
+                self.assertEqual(session.native_evidence_failure_state(origin), failure_state)
+                self.assertEqual(session.native_outcome_is_publishable(
+                    session.NativeRetirementOutcome('deferred', origin=origin)), deferred_publishable)
+                self.assertTrue(session.native_outcome_is_publishable(
+                    session.NativeRetirementOutcome('retained', origin=origin)))
+                self.assertFalse(session.native_outcome_is_publishable(
+                    session.NativeRetirementOutcome('retained', origin=origin, report_only=True)))
+
+    def test_native_evidence_error_preserves_errno(self):
+        error = session.NativeEvidenceError('identity refused', detail='future-detail', error_number=errno.ESTALE)
+        self.assertEqual((error.errno, error.detail), (errno.ESTALE, 'future-detail'))
 
     def test_location_replacement_at_hash_and_authorization_boundaries(self):
         for boundary in ('hash', 'authorize', 'rename', 'publish-deleting'):
