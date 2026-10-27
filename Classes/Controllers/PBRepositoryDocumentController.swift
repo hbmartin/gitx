@@ -82,6 +82,8 @@ class PBRepositoryDocumentController: NSDocumentController {
     static let opensDidSettleNotification = Notification.Name("PBRepositoryDocumentControllerOpensDidSettle")
 
     private let openState = RepositoryDocumentOpenStateModel()
+    /// AppKit owns construction; the executable-discovery boundary can be supplied before opening.
+    var gitDiscovery = GitBinaryDiscovery.shared
 
     @objc var hasPendingOpens: Bool {
         openState.hasPendingOpens
@@ -125,6 +127,25 @@ class PBRepositoryDocumentController: NSDocumentController {
     ) {
         openState.beginOpen()
         NSLog("[RepositoryOpening] Opening %@; pending=%ld", url.path, openState.pendingOpenCount)
+        if gitDiscovery.isReady {
+            openValidatedDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler)
+        } else {
+            gitDiscovery.whenAvailable { [self] _, error in
+                if let error {
+                    finishOpenAccounting()
+                    completionHandler(nil, false, error)
+                } else {
+                    openValidatedDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler)
+                }
+            }
+        }
+    }
+
+    private func openValidatedDocument(
+        withContentsOf url: URL,
+        display displayDocument: Bool,
+        completionHandler: @escaping (NSDocument?, Bool, (any Error)?) -> Void
+    ) {
         super.openDocument(withContentsOf: url, display: displayDocument) { [weak self] document, alreadyOpen, error in
             guard let self else {
                 completionHandler(document, alreadyOpen, error)

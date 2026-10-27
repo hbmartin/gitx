@@ -122,7 +122,9 @@ void usage(char const *programName)
 
 void version_info(void)
 {
-	NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString *)kCFBundleVersionKey];
+	NSString *bundlePath = GitXApplicationBundlePathForToolPath(executablePath());
+	NSBundle *bundle = bundlePath ? [NSBundle bundleWithPath:bundlePath] : NSBundle.mainBundle;
+	NSString *version = [bundle objectForInfoDictionaryKey:(NSString *)kCFBundleVersionKey];
 	printf("Half Dark version %s\n", [version UTF8String]);
 	exit(1);
 }

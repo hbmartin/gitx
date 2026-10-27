@@ -62,6 +62,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 @property BOOL outputReaderStopped;
 @property BOOL outputDrainScheduled;
 @property BOOL outputDrainExpired;
+@property BOOL ordinaryDrainFinished;
 @property BOOL diagnosticLeaderReleased;
 @property BOOL diagnosticDrainScheduled;
 @property BOOL diagnosticDrainFinished;
@@ -85,6 +86,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 - (void)stopOutputReaderAndCloseWhenSafe;
 - (void)stopErrorReaderAndCloseWhenSafe;
 - (void)scheduleOutputDrainAfterTaskExit;
+- (void)finishOrdinaryDrainWhenSafe;
 - (void)scheduleDiagnosticDrainAfterDelay:(NSTimeInterval)delay;
 - (void)releaseDiagnosticLeaderWhenReadersFinish;
 - (void)deliverReaderBlock:(dispatch_block_t)block;
@@ -431,6 +433,27 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 	if (closeNow) [outputHandle closeFile];
 }
 
+- (void)finishOrdinaryDrainWhenSafe
+{
+	if (self.diagnosticCapture || !self.outputDrainExpired || self.operationFinished) return;
+	@synchronized(self) {
+		if (self.outputReadsInFlight || self.errorReadsInFlight) return;
+	}
+	if (!self.ordinaryDrainFinished) {
+		self.ordinaryDrainFinished = YES;
+		// A readability callback may not have started before the grace expires.
+		// Save the finite buffered snapshot before either descriptor is closed.
+		(void)[self drainBufferedHandle:self.outputPipe.fileHandleForReading output:YES];
+		(void)[self drainBufferedHandle:self.errorPipe.fileHandleForReading output:NO];
+		self.outputFinished = YES;
+		self.errorFinished = YES;
+		[self stopOutputReaderAndCloseWhenSafe];
+		[self stopErrorReaderAndCloseWhenSafe];
+		NSLog(@"[GitX] Preserved buffered task output at the ordinary drain deadline");
+	}
+	[self finishIfReady];
+}
+
 - (void)scheduleOutputDrainAfterTaskExit
 {
 	if (self.diagnosticCapture) {
@@ -448,18 +471,12 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 
 		@synchronized(self) {
 			self.outputDrainExpired = YES;
+			self.outputReaderStopped = YES;
+			self.errorReaderStopped = YES;
 		}
-		[self stopOutputReaderAndCloseWhenSafe];
-		[self stopErrorReaderAndCloseWhenSafe];
-		NSUInteger readsInFlight;
-		NSUInteger errorReadsInFlight;
-		@synchronized(self) {
-			readsInFlight = self.outputReadsInFlight;
-			errorReadsInFlight = self.errorReadsInFlight;
-		}
-		if (readsInFlight == 0) self.outputFinished = YES;
-		if (errorReadsInFlight == 0) self.errorFinished = YES;
-		[self finishIfReady];
+		self.outputPipe.fileHandleForReading.readabilityHandler = nil;
+		self.errorPipe.fileHandleForReading.readabilityHandler = nil;
+		[self finishOrdinaryDrainWhenSafe];
 	});
 }
 
@@ -510,13 +527,11 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 				if (strongSelf.diagnosticCapture) [strongSelf stopOutputReaderAndCloseWhenSafe];
 				[strongSelf finishIfReady];
 			}
-			if (shouldFinishAfterDrain && !strongSelf.outputFinished) {
+			if (shouldFinishAfterDrain) {
 				if (strongSelf.diagnosticCapture)
 					[strongSelf finishDiagnosticDrainWhenSafe];
-				else {
-					strongSelf.outputFinished = YES;
-					[strongSelf finishIfReady];
-				}
+				else
+					[strongSelf finishOrdinaryDrainWhenSafe];
 			}
 			if (closeOutputHandle) [handle closeFile];
 			// Forced errors can stop readers while a nonempty chunk is already
@@ -564,13 +579,11 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 				if (strongSelf.diagnosticCapture) [strongSelf stopErrorReaderAndCloseWhenSafe];
 				[strongSelf finishIfReady];
 			}
-			if (shouldFinishAfterDrain && !strongSelf.errorFinished) {
+			if (shouldFinishAfterDrain) {
 				if (strongSelf.diagnosticCapture)
 					[strongSelf finishDiagnosticDrainWhenSafe];
-				else {
-					strongSelf.errorFinished = YES;
-					[strongSelf finishIfReady];
-				}
+				else
+					[strongSelf finishOrdinaryDrainWhenSafe];
 			}
 			if (closeErrorHandle) [handle closeFile];
 			if (strongSelf.diagnosticCapture) {

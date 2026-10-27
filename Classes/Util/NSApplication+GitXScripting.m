@@ -32,17 +32,22 @@
 	NSArray *diffOptions = command.arguments[@"diffOptions"];
 
 	diffOptions = [@[ @"diff", @"--no-ext-diff" ] arrayByAddingObjectsFromArray:diffOptions];
-
-	NSError *error = nil;
-	NSString *diffOutput = [PBTask outputForCommand:[PBGitBinary path] arguments:diffOptions inDirectory:repositoryURL.path error:&error];
-	if (!diffOutput) {
-		// if there is an error diffOutput should have the error output from git
-		NSLog(@"Invalid diff command: %@", error);
-		return;
-	}
-
-	PBDiffWindowController *diffController = [[PBDiffWindowController alloc] initWithDiff:diffOutput];
-	[diffController showWindow:self];
+	[PBGitBinary whenAvailable:^(NSString *path, NSError *discoveryError) {
+		if (!path) {
+			NSLog(@"Unable to run scripted diff: %@", discoveryError);
+			return;
+		}
+		PBTask *task = [PBTask taskWithLaunchPath:path arguments:diffOptions inDirectory:repositoryURL.path];
+		[task performTaskWithCompletionHandler:^(NSData *output, NSError *error) {
+			NSString *diffOutput = output ? [[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding] : nil;
+			if (!diffOutput) {
+				NSLog(@"Invalid diff command: %@", error);
+				return;
+			}
+			PBDiffWindowController *diffController = [[PBDiffWindowController alloc] initWithDiff:diffOutput];
+			[diffController showWindow:self];
+		}];
+	}];
 }
 
 - (void)initRepositoryScriptCommand:(NSScriptCommand *)command

@@ -1834,6 +1834,27 @@
           "oracle": "Compare complete bytes from slow finite readers."
         },
         {
+          "source": "GitXTests/PBTaskLifecycleTests.swift",
+          "identifier": "GitXTests/PBTaskLifecycleTests/testOrdinaryDeadlineDrainPreservesBufferedBytesBeforeTheFirstReaderCallback",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "At the ordinary drain deadline, preserve exact stdout and stderr bytes even when no readability callback has started, then finish both streams."
+        },
+        {
+          "source": "GitXTests/PBTaskLifecycleTests.swift",
+          "identifier": "GitXTests/PBTaskLifecycleTests/testExpiredErrorEOFDrainsOutputThatNeverReceivedAReadCallback",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "An in-flight stderr EOF after deadline must complete the remaining stdout drain rather than strand completion."
+        },
+        {
+          "source": "GitXTests/PBTaskLifecycleTests.swift",
+          "identifier": "GitXTests/PBTaskLifecycleTests/testConcurrentCommandsKeepEveryOutputAndDeliverEachCompletionOnce",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Run 400 concurrent short tasks, compare each complete output and require one callback for every task."
+        },
+        {
           "source": "GitXTests/PBTaskDiagnosticCaptureTests.swift",
           "identifier": "GitXTests/PBTaskDiagnosticCaptureTests/testProductionDrainPreservesDescendantOutputReleasedAfterLeaderExit",
           "role": "boundary",

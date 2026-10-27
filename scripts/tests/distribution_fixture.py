@@ -48,10 +48,23 @@ elif tool == "xcrun":
         if failure == "notary-malformed": print("not-json")
         elif failure == "notary-empty": pass
         else:
-            result = {"status": "Invalid" if "notary-invalid" in failure else "Accepted"}
-            if failure != "notary-missing-id": result["id"] = "fixture-submission"
+            pending = failure in ("notary-retry", "notary-timeout", "notary-bad-info", "notary-rejected")
+            result = {"status": "In Progress" if pending else "Invalid" if "notary-invalid" in failure else "Accepted"}
+            if failure != "notary-missing-id": result["id"] = "12345678-1234-1234-1234-123456789abc"
             print(json.dumps(result))
         if "notary-transport" in failure: sys.exit(21)
+    elif args[:2] == ["notarytool", "wait"]:
+        print("The wait connection ended early")
+        sys.exit(23)
+    elif args[:2] == ["notarytool", "info"]:
+        counter = root / "notary-info-count"
+        attempt = int(counter.read_text()) + 1 if counter.exists() else 1
+        counter.write_text(str(attempt))
+        if failure == "notary-retry" and attempt == 1: sys.exit(24)
+        if failure == "notary-bad-info": print("not-json")
+        else:
+            status = "In Progress" if failure == "notary-timeout" else "Rejected" if failure == "notary-rejected" else "Accepted"
+            print(json.dumps({"id": args[2], "status": status}))
     elif args[:2] == ["notarytool", "log"]:
         if "notary-log" in failure: sys.exit(22)
         pathlib.Path(args[-1]).write_text(json.dumps({"issues": [{"message": "fixture diagnostic"}]}))
@@ -149,7 +162,7 @@ class DistributionFixture:
         (root / "scripts").mkdir()
         (root / "GitX.xcworkspace").mkdir()
         shutil.copy2(ROOT / "mise-tasks/release", root / "mise-tasks/release")
-        for name in ("package_distribution.sh", "verify_distribution_app.sh", "distribution_artifact_names.sh", "notarize_distribution.sh"):
+        for name in ("package_distribution.sh", "verify_distribution_app.sh", "distribution_artifact_names.sh", "notarize_distribution.sh", "notarize_distribution.py"):
             if (ROOT / "scripts" / name).exists():
                 shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
         (root / "scripts/verification_support.py").write_text('print("/fixture/Developer")\n')
@@ -199,7 +212,8 @@ class DistributionFixture:
         archive.write_bytes(b"fixture")
         environment = dict(self.environment, GITX_DISTRIBUTION_FAIL=failure,
                            APPLE_ID="fixture", TEAM_ID="fixture", APPLE_PASSWORD="fixture",
-                           PYTHONOPTIMIZE="1" if optimized else "")
+                           PYTHONOPTIMIZE="1" if optimized else "",
+                           GITX_NOTARIZATION_TIMEOUT_SECONDS="3", GITX_NOTARIZATION_POLL_SECONDS="1")
         return subprocess.run([self.root / "scripts/notarize_distribution.sh", archive, self.root / "notary-logs"],
                               env=environment, capture_output=True, text=True, timeout=30)
 

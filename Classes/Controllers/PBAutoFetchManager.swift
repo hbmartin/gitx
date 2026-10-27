@@ -15,6 +15,17 @@ private let autoFetchRetryMaximumInterval: TimeInterval = 15 * 60
 @objc(PBAutoFetchManager)
 nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     private static let singleton = PBAutoFetchManager()
+    private let gitDiscovery: GitBinaryDiscovery
+
+    override init() {
+        gitDiscovery = .shared
+        super.init()
+    }
+
+    init(gitDiscovery: GitBinaryDiscovery) {
+        self.gitDiscovery = gitDiscovery
+        super.init()
+    }
 
     private var timer: Timer?
     private let fetchQueue = DispatchQueue(label: "com.gitx.autofetch")
@@ -188,6 +199,14 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     @MainActor @objc(evaluateRepositoriesForImmediateFetch:)
     dynamic func evaluateRepositoriesForImmediateFetch(_ immediate: Bool) {
         guard PBGitDefaults.autoFetchScope() != .none else { return }
+        if !gitDiscovery.isReady {
+            let waitingGeneration = currentGeneration()
+            gitDiscovery.whenAvailable { [weak self] path, _ in
+                guard let self, path != nil, waitingGeneration == currentGeneration() else { return }
+                evaluateRepositoriesForImmediateFetch(immediate)
+            }
+            return
+        }
         let now = Date()
         for (key, url) in candidateRepositoryURLs() {
             guard inFlightRepositories[key] == nil else { continue }

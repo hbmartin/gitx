@@ -12,12 +12,17 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+extern NSNotificationName const PBGitBinaryDidChangeNotification;
+typedef void(NS_SWIFT_UI_ACTOR NS_SWIFT_SENDABLE ^ PBGitBinaryAvailabilityHandler)(NSString *_Nullable path, NSError *_Nullable error);
+
 @interface PBGitBinary : NSObject
 
 + (nullable NSString *)path;
 + (nullable NSString *)version;
 + (NSArray<NSString *> *)searchLocations;
 + (NSString *)notFoundError;
+/// Coalesces discovery and delivers exactly once on the main queue after validation settles.
++ (void)whenAvailable:(PBGitBinaryAvailabilityHandler)completion NS_SWIFT_NAME(whenAvailable(_:));
 @end
 
 NS_ASSUME_NONNULL_END

@@ -150,6 +150,20 @@ __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 + (BOOL)acceptBinary:(nullable NSString *)path;
 @end
 
+static NSUInteger PBBinaryVersionProbeCount;
+@interface PBBinaryVersionCacheProbe : PBGitBinary
+@end
+@implementation PBBinaryVersionCacheProbe
++ (void)initialize
+{
+}
++ (NSString *)versionForPath:(NSString *)path
+{
+	PBBinaryVersionProbeCount++;
+	return @"2.50.1";
+}
+@end
+
 @interface PBGitCommit (GitXCoreTests)
 @property (nonatomic, readonly) NSString *dateString;
 - (BOOL)isOnSameBranchAs:(nullable PBGitCommit *)otherCommit;
@@ -157,40 +171,6 @@ __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 
 @interface PBGitCommit (GitXCoreGraphTests)
 - (void)setParents:(NSArray<GTOID *> *)parents;
-@end
-
-static NSUInteger PBBinaryRecoveryAcceptedAttempt;
-static NSUInteger PBBinaryRecoveryAttempt;
-static NSUInteger PBBinaryRecoveryAlertCount;
-static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
-
-// Exercise the existing +initialize body without allowing Objective-C to run
-// it implicitly for this test subclass or changing the actual selected binary.
-@interface PBBinaryRecoveryProbe : PBGitBinary
-@end
-
-@implementation PBBinaryRecoveryProbe
-+ (void)initialize
-{
-}
-+ (BOOL)acceptBinary:(nullable NSString *)path
-{
-	[PBBinaryRecoveryCandidates addObject:path ?: @"<nil>"];
-	PBBinaryRecoveryAttempt++;
-	return PBBinaryRecoveryAttempt == PBBinaryRecoveryAcceptedAttempt;
-}
-@end
-
-@interface NSAlert (PBBinaryRecoveryTests)
-- (NSModalResponse)pb_recovery_runModal;
-@end
-
-@implementation NSAlert (PBBinaryRecoveryTests)
-- (NSModalResponse)pb_recovery_runModal
-{
-	PBBinaryRecoveryAlertCount++;
-	return NSModalResponseOK;
-}
 @end
 
 @interface PBCommitRecoveryRepository : PBGitRepository
@@ -701,61 +681,12 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 @implementation GitXRefAndRevisionTests
 
-- (void)testGitBinaryInitializationSearchAndInvalidPreferenceRemainCharacterized
+- (void)testGitVersionGetterUsesTheValidatedCacheWithoutLaunchingAnotherProbe
 {
-	NSString *originalPath = PBGitBinary.path;
-	id originalPreference = [NSUserDefaults.standardUserDefaults objectForKey:@"gitExecutable"];
-	const char *environmentPath = getenv("GIT_PATH");
-	NSString *originalEnvironment = environmentPath ? [NSString stringWithUTF8String:environmentPath] : nil;
-	Method alertMethod = class_getInstanceMethod(NSAlert.class, @selector(runModal));
-	Method replacement = class_getInstanceMethod(NSAlert.class, @selector(pb_recovery_runModal));
-	method_exchangeImplementations(alertMethod, replacement);
-	@try {
-		// Invalid custom preference reaches its alert, then the explicit
-		// environment candidate; the remaining scenarios cover each fallback.
-		[NSUserDefaults.standardUserDefaults setObject:@"/invalid/custom/git" forKey:@"gitExecutable"];
-		setenv("GIT_PATH", "/explicit/environment/git", 1);
-		PBBinaryRecoveryCandidates = [NSMutableArray array];
-		PBBinaryRecoveryAttempt = 0;
-		PBBinaryRecoveryAcceptedAttempt = 2;
-		PBBinaryRecoveryAlertCount = 0;
-		IMP initialize = class_getMethodImplementation(object_getClass(PBGitBinary.class), @selector(initialize));
-		((void (*)(id, SEL))initialize)(PBBinaryRecoveryProbe.class, @selector(initialize));
-		XCTAssertEqualObjects(PBBinaryRecoveryCandidates, (@[ @"/invalid/custom/git", @"/explicit/environment/git" ]));
-		XCTAssertEqual(PBBinaryRecoveryAlertCount, 1U);
-
-		PBBinaryRecoveryCandidates = [NSMutableArray array];
-		PBBinaryRecoveryAttempt = 0;
-		PBBinaryRecoveryAcceptedAttempt = 1;
-		((void (*)(id, SEL))initialize)(PBBinaryRecoveryProbe.class, @selector(initialize));
-		XCTAssertEqual(PBBinaryRecoveryCandidates.count, 1U);
-
-		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"gitExecutable"];
-		unsetenv("GIT_PATH");
-		for (NSNumber *acceptedAttempt in @[ @1, @2, @(PBGitBinary.searchLocations.count + 2), @0 ]) {
-			PBBinaryRecoveryCandidates = [NSMutableArray array];
-			PBBinaryRecoveryAttempt = 0;
-			PBBinaryRecoveryAcceptedAttempt = acceptedAttempt.unsignedIntegerValue;
-			((void (*)(id, SEL))initialize)(PBBinaryRecoveryProbe.class, @selector(initialize));
-			if (acceptedAttempt.unsignedIntegerValue > 0) {
-				XCTAssertEqual(PBBinaryRecoveryCandidates.count, acceptedAttempt.unsignedIntegerValue);
-			} else {
-				XCTAssertEqual(PBBinaryRecoveryCandidates.count, PBGitBinary.searchLocations.count + 2);
-			}
-		}
-	} @finally {
-		method_exchangeImplementations(alertMethod, replacement);
-		if (originalPreference)
-			[NSUserDefaults.standardUserDefaults setObject:originalPreference forKey:@"gitExecutable"];
-		else
-			[NSUserDefaults.standardUserDefaults removeObjectForKey:@"gitExecutable"];
-		if (originalEnvironment)
-			setenv("GIT_PATH", originalEnvironment.UTF8String, 1);
-		else
-			unsetenv("GIT_PATH");
-		XCTAssertTrue([PBGitBinary acceptBinary:originalPath]);
-		PBBinaryRecoveryCandidates = nil;
-	}
+	(void)PBGitBinary.path;
+	PBBinaryVersionProbeCount = 0;
+	XCTAssertNotNil(PBBinaryVersionCacheProbe.version);
+	XCTAssertEqual(PBBinaryVersionProbeCount, 0U);
 }
 
 - (void)testGitBinaryRejectsOldMalformedAndFailingExecutablesWithoutReplacingAcceptedPath

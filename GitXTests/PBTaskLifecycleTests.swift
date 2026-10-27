@@ -2,6 +2,45 @@ import Darwin
 import XCTest
 
 final class PBTaskLifecycleTests: XCTestCase {
+    func testConcurrentCommandsKeepEveryOutputAndDeliverEachCompletionOnce() {
+        let completed = expectation(description: "All 400 command outputs")
+        completed.expectedFulfillmentCount = 400
+        completed.assertForOverFulfill = true
+        let queue = DispatchQueue(label: "org.gitx.tests.concurrent-command-results")
+        let tasks = (0 ..< 400).map { index in
+            let text = "command-\(index)"
+            let task = PBTask(launchPath: "/usr/bin/printf", arguments: [text], inDirectory: nil)
+            task.perform(on: queue) { data, error in
+                XCTAssertNil(error)
+                XCTAssertEqual(data, Data(text.utf8))
+                completed.fulfill()
+            }
+            return task
+        }
+        wait(for: [completed], timeout: 60)
+        withExtendedLifetime(tasks) {}
+    }
+
+    func testOrdinaryDeadlineDrainPreservesBufferedBytesBeforeTheFirstReaderCallback() throws {
+        let task = PBTask(launchPath: "/usr/bin/true", arguments: [], inDirectory: nil)
+        let output = Pipe()
+        let error = Pipe()
+        task.setValue(output, forKey: "outputPipe")
+        task.setValue(error, forKey: "errorPipe")
+        task.setValue(false, forKey: "errorFinished")
+        try output.fileHandleForWriting.write(contentsOf: Data("buffered output".utf8))
+        try error.fileHandleForWriting.write(contentsOf: Data("buffered error".utf8))
+        try output.fileHandleForWriting.close()
+        try error.fileHandleForWriting.close()
+        task.perform(NSSelectorFromString("scheduleOutputDrainAfterTaskExit"))
+        let drained = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (task.value(forKey: "outputFinished") as? Bool) == true && (task.value(forKey: "errorFinished") as? Bool) == true
+        }, object: nil)
+        wait(for: [drained], timeout: 2)
+        XCTAssertEqual(task.value(forKey: "standardOutputBuffer") as? Data, Data("buffered output".utf8))
+        XCTAssertEqual(task.value(forKey: "standardErrorBuffer") as? Data, Data("buffered error".utf8))
+    }
+
     func testAddingForceKillToAGracefulRequestKeepsItsEarlierTerminationDeadline() {
         var schedule = PBChildProcessTerminationSchedule()
         schedule.mergeRequest(
@@ -199,6 +238,26 @@ final class PBTaskLifecycleTests: XCTestCase {
         outputPipe.fileHandleForReading.readabilityHandler = nil
         try outputPipe.fileHandleForWriting.close()
         try outputPipe.fileHandleForReading.close()
+    }
+
+    func testExpiredErrorEOFDrainsOutputThatNeverReceivedAReadCallback() throws {
+        let task = PBTask(launchPath: "/usr/bin/true", arguments: [], inDirectory: nil)
+        let output = Pipe()
+        let error = Pipe()
+        task.setValue(output, forKey: "outputPipe")
+        task.setValue(error, forKey: "errorPipe")
+        task.setValue(false, forKey: "errorFinished")
+        task.setValue(true, forKey: "outputDrainExpired")
+        try output.fileHandleForWriting.write(contentsOf: Data("buffered before error EOF".utf8))
+        try output.fileHandleForWriting.close()
+        task.perform(NSSelectorFromString("configureErrorReader"))
+        try error.fileHandleForWriting.close()
+        let drained = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (task.value(forKey: "outputFinished") as? Bool) == true
+                && (task.value(forKey: "errorFinished") as? Bool) == true
+        }, object: nil)
+        wait(for: [drained], timeout: 2)
+        XCTAssertEqual(task.value(forKey: "standardOutputBuffer") as? Data, Data("buffered before error EOF".utf8))
     }
 
     func testExpiredErrorDrainFinishesAfterInFlightReadCompletes() throws {

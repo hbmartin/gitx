@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		C0DE90260000000000000001 /* GitBinaryDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90260000000000000002 /* GitBinaryDiscovery.swift */; };
 		AB1020010000000000000001 /* SidebarLifecycleTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */; };
 		8D66D8FE296C4D12B236E789 /* HistoryIndexWriterObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */; };
 		E1AA5104C33F4D2AB7BB05AF /* GitXManagedTestBootstrap.m in Sources */ = {isa = PBXBuildFile; fileRef = A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */; };
@@ -28,6 +29,7 @@
 		F2EDDDC9818A472B8EB5134A /* GitXManagedTestObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */; };
 		52326BB36A0C49D78A35193D /* GitXManagedTestObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */; };
 		F0BA93000000000000000001 /* WorktreeGitProxy.sh in Resources */ = {isa = PBXBuildFile; fileRef = F0BA93000000000000000002 /* WorktreeGitProxy.sh */; };
+		C0DE90260000000000000003 /* GitDiscoveryProxy.sh in Resources */ = {isa = PBXBuildFile; fileRef = C0DE90260000000000000004 /* GitDiscoveryProxy.sh */; };
 		C0D085A00000000000000001 /* GitXFixtureRepositoryPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */; };
 		C0D085A00000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */; };
 		C0DE90010000000000000001 /* StagingImageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90010000000000000002 /* StagingImageReader.swift */; };
@@ -421,6 +423,7 @@
 		C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */; };
 		C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */; };
 		C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE81000000000000000002 /* GitBinaryTests.swift */; };
+		C0DE90260000000000000005 /* ReliabilityCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90260000000000000006 /* ReliabilityCompatibilityTests.swift */; };
 		C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */; };
 		C0DE84000000000000000001 /* StagingDiffPaneControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
@@ -704,11 +707,13 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0DE90260000000000000002 /* GitBinaryDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryDiscovery.swift; sourceTree = "<group>"; };
 		AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarLifecycleTestSupport.swift; sourceTree = "<group>"; };
 		FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryIndexWriterObservation.swift; sourceTree = "<group>"; };
 		A57EDD0D21754349A7D903BA /* GitXManagedTestBootstrap.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = GitXManagedTestBootstrap.m; sourceTree = "<group>"; };
 		53CE19FFF752432AAB662E19 /* GitXManagedTestObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXManagedTestObserver.swift; sourceTree = "<group>"; };
 		F0BA93000000000000000002 /* WorktreeGitProxy.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = WorktreeGitProxy.sh; sourceTree = "<group>"; };
+		C0DE90260000000000000004 /* GitDiscoveryProxy.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = GitDiscoveryProxy.sh; sourceTree = "<group>"; };
 		C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXFixtureRepositoryPolicyTests.swift; sourceTree = "<group>"; };
 		C0DE90010000000000000002 /* StagingImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingImageReader.swift; sourceTree = "<group>"; };
 		8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFileIdentityTests.swift; sourceTree = "<group>"; };
@@ -1160,6 +1165,7 @@
 		C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBChildProcessOwnerTests.swift; sourceTree = "<group>"; };
 		C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFlowRevisionProviderTests.swift; sourceTree = "<group>"; };
 		C0DE81000000000000000002 /* GitBinaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryTests.swift; sourceTree = "<group>"; };
+		C0DE90260000000000000006 /* ReliabilityCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReliabilityCompatibilityTests.swift; sourceTree = "<group>"; };
 		C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffLoadCoordinatorTests.swift; sourceTree = "<group>"; };
 		C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffPaneControllerTests.swift; sourceTree = "<group>"; };
 		CC0000020000002 /* GitXScreenshotTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXScreenshotTests.m; sourceTree = "<group>"; };
@@ -1612,6 +1618,7 @@
 				C0DE10000000000000000007 /* PBWorkingTree.h */,
 				C0DE10000000000000000008 /* PBWorkingTree.m */,
 				4A5D764E14A9A9CC00DF6C68 /* PBGitBinary.h */,
+				C0DE90260000000000000002 /* GitBinaryDiscovery.swift */,
 				4A5D764F14A9A9CC00DF6C68 /* PBGitBinary.m */,
 				4A5D765014A9A9CC00DF6C68 /* PBGitCommit.h */,
 				4A5D765114A9A9CC00DF6C68 /* PBGitCommit.m */,
@@ -1913,6 +1920,7 @@
 				C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */,
 				C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */,
 				C0DE81000000000000000002 /* GitBinaryTests.swift */,
+				C0DE90260000000000000006 /* ReliabilityCompatibilityTests.swift */,
 				C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */,
 				C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */,
 				C01400000000000000000014 /* CommitProgressSheetControllerTests.swift */,
@@ -1947,6 +1955,7 @@
 			isa = PBXGroup;
 			children = (
 				F0BA93000000000000000002 /* WorktreeGitProxy.sh */,
+				C0DE90260000000000000004 /* GitDiscoveryProxy.sh */,
 				D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */,
 				73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */,
 				D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */,
@@ -2277,6 +2286,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F0BA93000000000000000001 /* WorktreeGitProxy.sh in Resources */,
+				C0DE90260000000000000003 /* GitDiscoveryProxy.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2541,6 +2551,7 @@
 				4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */,
 				4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */,
 				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.swift in Sources */,
+				C0DE90260000000000000001 /* GitBinaryDiscovery.swift in Sources */,
 				4A5D76F414A9A9CC00DF6C68 /* PBGitBinary.m in Sources */,
 				C0DE90000000000000000021 /* GitXCommitCopier.swift in Sources */,
 				4A5D76F514A9A9CC00DF6C68 /* PBGitCommit.m in Sources */,
@@ -2696,6 +2707,7 @@
 				C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */,
 				C0DEB1000000000000000003 /* PBChildProcessOwner.swift in Sources */,
 				C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */,
+				C0DE90260000000000000005 /* ReliabilityCompatibilityTests.swift in Sources */,
 				C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */,
 				C0DE84000000000000000001 /* StagingDiffPaneControllerTests.swift in Sources */,
 				C0DE83000000000000000002 /* StagingDiffLoadCoordinator.swift in Sources */,
