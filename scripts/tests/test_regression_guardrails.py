@@ -60,6 +60,15 @@ class RegressionGuardrailTests(unittest.TestCase):
             "identifier": "GitXTests/ContractTests/testNormal", "role": "valid", "oracle": "Observe publication"}]}]}
         self.context = Context(self.root)
 
+    def test_task_changes_do_not_inherit_inspector_ui_requirements(self):
+        catalogue = json.loads((ROOT / 'scripts/regression-contracts.json').read_text())['contracts']
+        for path in ('Classes/Util/PBTask.m', 'GitXTests/InspectorActionGeometryTests.swift'):
+            selected = guard.select_contracts(catalogue, [path])
+            self.assertNotIn('ui', guard.required_checks([path], selected))
+        selected = guard.select_contracts(catalogue, ['GitXUITests/InspectorActionViewport.swift'])
+        self.assertEqual({item['id'] for item in selected}, {'GEOMETRY-001', 'INSPECTOR-001'})
+        self.assertIn('ui', guard.required_checks(['GitXUITests/InspectorActionViewport.swift'], selected))
+
     def git(self, *arguments):
         return subprocess.check_output(["git", "-C", str(self.root), *arguments], text=True)
 

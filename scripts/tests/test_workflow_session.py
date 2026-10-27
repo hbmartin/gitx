@@ -42,7 +42,7 @@ class WorkflowSessionTests(unittest.TestCase):
                     os.close(lease)
                 yield native, source
 
-    def test_actual_publication_failures_preserve_phase_and_errno(self):
+    def test_publication_boundary_preserves_snapshot_phase_and_errno(self):
         for phase in ('publish-prepared', 'publish-deleting', 'promote-completion'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
                 snapshot = session.NativeRegistrationSnapshot(native.registration)
@@ -179,13 +179,13 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(native.registration.read_bytes(), before)
             self.assertTrue(source.exists())
 
-    def test_one_final_quarantine_inventory_and_no_descriptor_leaks(self):
+    def test_inventory_precedes_publication_and_deletion_without_descriptor_leaks(self):
         with self.completed_native_fixture() as (native, _):
             before = len(os.listdir('/dev/fd'))
             validate = session.validate_native_deletion
             with mock.patch.object(session, 'validate_native_deletion', wraps=validate) as inventory:
                 self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
-            self.assertEqual(inventory.call_count, 1)
+            self.assertEqual([call.kwargs['allow_missing'] for call in inventory.call_args_list], [False, True])
             self.assertEqual(len(os.listdir('/dev/fd')), before)
 
     def test_registration_transaction_failures_keep_real_phase_labels(self):
@@ -578,12 +578,13 @@ class WorkflowSessionTests(unittest.TestCase):
         for variant in ('absent-authorization', 'absent-publication', 'ordinary-publication', 'ordinary-directory'):
             with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):
                 if variant.startswith('absent'):
-                    owner = json.loads(native.registration.read_text())
-                    quarantine = native.root.with_name('.gitx-native-retired-' + 'e' * 32)
-                    owner.update(retirementState='deferred', retirementPhase='deleting', retirementPath=str(quarantine),
-                                 retirementParentIdentity=session.native_directory_identity(native.root.parent))
-                    session.shutil.rmtree(native.root)
-                    session.atomic_json(native.registration, owner)
+                    publish = session.NativeRegistration.publish
+                    def interrupt_final(transaction, value):
+                        if value.get('retirementState') == 'retired':
+                            raise OSError(errno.ENOSPC, 'interrupted final publication')
+                        return publish(transaction, value)
+                    with mock.patch.object(session.NativeRegistration, 'publish', new=interrupt_final):
+                        self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'deferred')
                 scopes = 0
                 trigger = {'absent-authorization': 1, 'absent-publication': 2, 'ordinary-publication': 3, 'ordinary-directory': 3}[variant]
                 @contextlib.contextmanager
@@ -684,8 +685,8 @@ class WorkflowSessionTests(unittest.TestCase):
                             self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retained')
                         self.assertEqual(native.registration.read_bytes(), before)
                     state_after, reason, _ = session.retire_registered_native_sources(native.registration, retry_retained=state == 'retained')
-                    self.assertEqual(state_after, 'retired', reason)
-                    self.assertFalse(quarantine.exists())
+                    self.assertEqual(state_after, 'retired' if contents == 'intact' else 'retained', reason)
+                    self.assertEqual(quarantine.exists(), contents not in ('intact', 'absent'))
                     self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
 
     def test_genuine_legacy_recovery_rejects_changed_evidence(self):
@@ -783,7 +784,7 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
             self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
 
-    def test_post_removal_sync_permission_failure_is_retryable_without_manual_retry(self):
+    def test_uncertified_removed_tree_stays_protected_after_sync_failure(self):
         for code in (errno.EACCES, errno.EPERM):
             with self.subTest(errno=code), self.completed_native_fixture() as (native, source):
                 sync = session.os.fsync
@@ -800,14 +801,11 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertEqual(state, 'deferred', reason)
                 self.assertEqual(owner['retirementPhase'], 'deleting')
                 self.assertEqual(owner['retirementOutcome']['operation'], 'sync-retirement-parent')
-                calls = []
-                path_sync = session.sync_native_directory
-                def record_sync(path):
-                    calls.append(pathlib.Path(path)); return path_sync(path)
-                with mock.patch.object(session, 'sync_native_directory', side_effect=record_sync):
-                    state, reason, _ = session.retire_registered_native_sources(native.registration)
-                self.assertEqual(state, 'retired', reason)
-                self.assertIn(native.root.parent, calls)
+                self.assertNotIn('retirementCompletion', owner)
+                for retry in (False, True):
+                    state, reason, _ = session.retire_registered_native_sources(native.registration, retry_retained=retry)
+                    self.assertEqual(state, 'retained', reason)
+                    self.assertTrue(session.native_completion_path(native.registration).exists())
                 self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
 
     def test_missing_registration_does_not_create_retirement_controls(self):
@@ -1645,7 +1643,7 @@ while True:
                 source.write_bytes(b'keep')
                 rename = cleanup.rename_exclusive if use_cleanup else session.exclusive_native_rename
                 syscall = mock.Mock(return_value=-1)
-                library = SimpleNamespace(renamex_np=syscall)
+                library = SimpleNamespace(renameatx_np=syscall)
                 with mock.patch.object(session.sys, 'platform', 'darwin'), \
                         mock.patch.object(session.ctypes, 'CDLL', return_value=library), \
                         mock.patch.object(session.ctypes, 'get_errno', return_value=errno.ENOTSUP):
@@ -2901,6 +2899,7 @@ native.close()
                         native.close()
                     owner = json.loads(native.registration.read_text())
                     owner.pop('deletionProof')
+                    owner.pop('retirementValidation', None)
                     session.atomic_json(native.registration, owner)
                     quarantine = pathlib.Path(owner['retirementPath'])
                     if variant == 'missing-controls':
@@ -2909,14 +2908,15 @@ native.close()
                     elif variant != 'valid':
                         session.atomic_json(quarantine / 'native-owner.json', variant)
                     state, reason, recovered = session.retire_registered_native_sources(native.registration)
-                    if variant in ('valid', 'missing-controls'):
+                    if variant == 'valid':
                         self.assertEqual(state, 'retired', reason)
                         self.assertFalse(quarantine.exists())
                     else:
-                        self.assertEqual((state, reason), ('retained', 'source-invalid'))
+                        self.assertEqual(state, 'retained', reason)
                         self.assertEqual(recovered['retirementOutcome']['operation'], 'upgrade-legacy-deletion-proof')
                         self.assertEqual((quarantine / 'Stderr' / source.name).read_bytes(), contents)
-                        self.assertEqual(json.loads((quarantine / 'native-owner.json').read_text()), variant)
+                        if variant != 'missing-controls':
+                            self.assertEqual(json.loads((quarantine / 'native-owner.json').read_text()), variant)
                     self.assertEqual((native.archive / source.name).read_bytes(), contents)
 
     def test_finalization_rejects_malformed_or_redirected_evidence_without_deletion(self):
