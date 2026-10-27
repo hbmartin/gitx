@@ -42,6 +42,294 @@ class WorkflowSessionTests(unittest.TestCase):
                     os.close(lease)
                 yield native, source
 
+    def test_actual_publication_failures_preserve_phase_and_errno(self):
+        for phase in ('publish-prepared', 'publish-deleting', 'promote-completion'):
+            with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
+                snapshot = session.NativeRegistrationSnapshot(native.registration)
+                before = native.registration.read_bytes()
+                with mock.patch.object(session.NativeRegistration, 'publish', side_effect=PermissionError(errno.EACCES, 'publisher denied')):
+                    with self.assertRaises(session.NativeRetirementFault) as caught:
+                        with session.native_retirement_boundary('registration', phase):
+                            snapshot.publish(snapshot.current)
+                self.assertEqual(caught.exception.outcome.operation, phase)
+                self.assertEqual(caught.exception.outcome.error_number, errno.EACCES)
+                self.assertEqual(caught.exception.outcome.state, 'deferred')
+                self.assertEqual(native.registration.read_bytes(), before)
+                self.assertTrue(source.exists())
+
+    def test_completed_deletion_survives_parent_disappearance_before_publication(self):
+        with self.completed_native_fixture() as (native, _):
+            validate = session.validate_native_location
+            vanished = False
+            def remove_parent(location, **kwargs):
+                nonlocal vanished
+                if kwargs.get('operation') == 'publish-retired' and not vanished:
+                    vanished = True
+                    location.original.parent.rmdir()
+                return validate(location, **kwargs)
+            with mock.patch.object(session, 'validate_native_location', side_effect=remove_parent):
+                state, reason, owner = session.retire_registered_native_sources(native.registration)
+            self.assertTrue(vanished)
+            self.assertEqual(state, 'retired', reason)
+            self.assertFalse(session.native_completion_path(native.registration).exists())
+            self.assertEqual(owner['retirementPhase'], 'retired')
+
+    def test_substitutions_inside_rename_and_unlink_preserve_replacement_trees(self):
+        for boundary in ('rename', 'unlink', 'rmdir'):
+            for target in ('root', 'parent'):
+                for kind in ('directory', 'symlink'):
+                    with self.subTest(boundary=boundary, target=target, kind=kind), self.completed_native_fixture() as (native, _):
+                        changed = False
+                        replacement = native.root.parent.parent / 'replacement'
+                        replacement.mkdir()
+                        sentinel = replacement / 'keep'
+                        sentinel.write_bytes(b'foreign data')
+                        rename, unlink, rmdir = session.exclusive_native_rename_at, session.os.unlink, session.os.rmdir
+                        def substitute():
+                            nonlocal changed
+                            if changed:
+                                return
+                            changed = True
+                            selected = native.root if native.root.exists() else next(native.root.parent.glob('.gitx-native-retired-*'))
+                            entry = selected if target == 'root' else selected.parent
+                            saved = entry.with_name('saved-approved-' + target)
+                            entry.rename(saved)
+                            if kind == 'symlink':
+                                entry.symlink_to(replacement, target_is_directory=True)
+                            else:
+                                entry.mkdir()
+                                if target == 'parent':
+                                    foreign = entry / selected.name
+                                    foreign.mkdir()
+                                    (foreign / 'keep').write_bytes(b'foreign data')
+                                else:
+                                    (entry / 'keep').write_bytes(b'foreign data')
+                        def renaming(*args, **kwargs):
+                            if boundary == 'rename':
+                                substitute()
+                            return rename(*args, **kwargs)
+                        def unlinking(*args, **kwargs):
+                            if boundary == 'unlink' and kwargs.get('dir_fd') is not None:
+                                substitute()
+                            return unlink(*args, **kwargs)
+                        def removing(name, *args, **kwargs):
+                            if boundary == 'rmdir' and str(name).startswith('.gitx-native-retired-'):
+                                substitute()
+                            return rmdir(name, *args, **kwargs)
+                        with mock.patch.object(session, 'exclusive_native_rename_at', side_effect=renaming), \
+                                mock.patch.object(session.os, 'unlink', side_effect=unlinking), \
+                                mock.patch.object(session.os, 'rmdir', side_effect=removing):
+                            state, reason, owner = session.retire_registered_native_sources(native.registration)
+                        self.assertTrue(changed)
+                        self.assertNotEqual(state, 'retired', reason)
+                        self.assertNotEqual(owner.get('retirementPhase'), 'retired')
+                        self.assertEqual(sentinel.read_bytes(), b'foreign data')
+                        if kind == 'directory':
+                            self.assertTrue(list(native.root.parent.rglob('keep')))
+
+    def test_missing_parent_recovery_requires_durable_proof_and_unchanged_archive(self):
+        for variant in ('valid', 'proof-missing', 'parent-proof', 'root-proof', 'entries', 'phase', 'archive', 'reappeared', 'retained'):
+            with self.subTest(variant=variant), self.completed_native_fixture() as (native, source):
+                with mock.patch.object(session.os, 'fsync', wraps=session.os.fsync) as sync:
+                    publish = session.NativeRegistration.publish
+                    def interrupt_final(transaction, value):
+                        if value.get('retirementState') == 'retired':
+                            raise OSError(errno.ENOSPC, 'final publication interrupted')
+                        return publish(transaction, value)
+                    with mock.patch.object(session.NativeRegistration, 'publish', new=interrupt_final):
+                        state, _, _ = session.retire_registered_native_sources(native.registration)
+                    self.assertEqual(state, 'deferred')
+                    self.assertTrue(sync.called)
+                owner = json.loads(native.registration.read_text())
+                self.assertEqual(owner['retirementPhase'], 'deleting')
+                native.root.parent.rmdir()
+                if variant == 'proof-missing':
+                    owner.pop('deletionProof')
+                elif variant == 'parent-proof':
+                    owner['deletionProof']['parentIdentity'][1] += 1
+                elif variant == 'root-proof':
+                    owner['deletionProof']['rootIdentity'][1] += 1
+                elif variant == 'entries':
+                    owner['deletionProof']['entries'] = {'../escape': [1, 2, 32768, os.getuid(), 0, 0]}
+                elif variant == 'phase':
+                    owner['retirementPhase'] = 'prepared'
+                elif variant == 'archive':
+                    (native.archive / source.name).write_bytes(b'changed')
+                elif variant == 'reappeared':
+                    native.root.mkdir(parents=True)
+                    (native.root / 'keep').write_bytes(b'foreign data')
+                elif variant == 'retained':
+                    owner['retirementState'] = 'retained'
+                session.atomic_json(native.registration, owner)
+                state, reason, after = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retired' if variant == 'valid' else 'retained', reason)
+                self.assertEqual(session.native_completion_path(native.registration).exists(), variant != 'valid')
+                if variant == 'retained':
+                    self.assertEqual(session.retire_registered_native_sources(native.registration, retry_retained=True)[0], 'retired')
+
+    def test_typed_invalid_control_does_not_depend_on_detail_vocabulary(self):
+        with self.completed_native_fixture() as (native, source):
+            before = native.registration.read_bytes()
+            with mock.patch.object(session.NativeControlLease, 'validate_control', side_effect=
+                                   session.NativeInvalidControlError('new invariant', detail='future-control-invariant')):
+                state, reason, owner = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retained', reason)
+            self.assertTrue(owner['retirementOutcome']['reportOnly'])
+            self.assertEqual(owner['retirementOutcome']['validationDetail'], 'future-control-invariant')
+            self.assertEqual(native.registration.read_bytes(), before)
+            self.assertTrue(source.exists())
+
+    def test_one_final_quarantine_inventory_and_no_descriptor_leaks(self):
+        with self.completed_native_fixture() as (native, _):
+            before = len(os.listdir('/dev/fd'))
+            validate = session.validate_native_deletion
+            with mock.patch.object(session, 'validate_native_deletion', wraps=validate) as inventory:
+                self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
+            self.assertEqual(inventory.call_count, 1)
+            self.assertEqual(len(os.listdir('/dev/fd')), before)
+
+    def test_registration_transaction_failures_keep_real_phase_labels(self):
+        for phase in ('publish-prepared', 'publish-deleting', 'promote-completion'):
+            for code in (errno.EACCES, errno.EBUSY):
+                with self.subTest(phase=phase, code=code), self.completed_native_fixture() as (native, source):
+                    if phase == 'promote-completion':
+                        owner = json.loads(native.registration.read_text())
+                        owner.update(status='running', collectionComplete=False, files=[])
+                        session.atomic_json(native.registration, owner)
+                    publish = session.NativeRegistration.publish
+                    def refuse(transaction, value):
+                        selected = ('publish-deleting' if value.get('retirementPhase') == 'deleting' else
+                                    'publish-prepared' if value.get('retirementPhase') == 'prepared' else 'promote-completion')
+                        if selected == phase:
+                            raise OSError(code, 'transaction refused')
+                        return publish(transaction, value)
+                    with mock.patch.object(session.NativeRegistration, 'publish', new=refuse):
+                        state, reason, after = session.retire_registered_native_sources(native.registration)
+                    self.assertEqual(state, 'deferred', reason)
+                    self.assertEqual(after['retirementOutcome']['origin'], 'registration')
+                    self.assertEqual(after['retirementOutcome']['operation'], phase)
+                    self.assertEqual(after['retirementOutcome']['errno'], code)
+                    self.assertNotEqual(json.loads(native.registration.read_text()).get('retirementState'), 'retained')
+                    selected_source = native.root if native.root.exists() else pathlib.Path(after['retirementPath'])
+                    self.assertEqual((selected_source / 'Stderr' / source.name).read_bytes(), b'finalization-\x00\xff')
+
+    def test_descriptor_rename_is_exclusive_validates_names_and_refuses_unsupported_platforms(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / 'source').mkdir()
+            (root / 'target').mkdir()
+            descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with self.assertRaises(FileExistsError):
+                    session.exclusive_native_rename_at(descriptor, 'source', 'target')
+                self.assertTrue((root / 'source').exists())
+                for name in ('', '.', '..', '../escape', '/absolute', 'nul\x00name'):
+                    with self.subTest(name=name), self.assertRaises(session.NativeEvidenceError):
+                        session.exclusive_native_rename_at(descriptor, name, 'unused')
+                with mock.patch.object(session.ctypes, 'CDLL', return_value=SimpleNamespace()):
+                    with self.assertRaises(session.ExclusiveRenameUnavailable):
+                        session.exclusive_native_rename_at(descriptor, 'source', 'unused')
+                self.assertTrue((root / 'source').exists())
+                session.exclusive_native_rename_at(descriptor, 'source', 'renamed')
+                self.assertTrue((root / 'renamed').is_dir())
+            finally:
+                os.close(descriptor)
+
+    def test_pinned_parent_is_flushed_after_its_path_disappears(self):
+        with self.completed_native_fixture() as (native, _):
+            parent_identity = session.native_directory_identity(native.root.parent)
+            rmdir, sync = session.os.rmdir, session.os.fsync
+            flushed = []
+            def remove(name, *args, **kwargs):
+                result = rmdir(name, *args, **kwargs)
+                if str(name).startswith('.gitx-native-retired-'):
+                    native.root.parent.rmdir()
+                return result
+            def flush(descriptor):
+                info = os.fstat(descriptor)
+                if [info.st_dev, info.st_ino] == parent_identity and not native.root.parent.exists():
+                    flushed.append(descriptor)
+                return sync(descriptor)
+            with mock.patch.object(session.os, 'rmdir', side_effect=remove), mock.patch.object(session.os, 'fsync', side_effect=flush):
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+            self.assertEqual(state, 'retired', reason)
+            self.assertEqual(len(flushed), 1)
+
+    def test_subdirectory_substitution_during_unlink_never_traverses_replacement(self):
+        for kind in ('directory', 'symlink'):
+            with self.subTest(kind=kind), self.completed_native_fixture() as (native, source):
+                unlink = session.os.unlink
+                substituted = False
+                sentinel = native.root.parent.parent / 'foreign'
+                sentinel.mkdir()
+                (sentinel / 'keep').write_bytes(b'foreign')
+                def replace(name, *args, **kwargs):
+                    nonlocal substituted
+                    if name == source.name and kwargs.get('dir_fd') is not None and not substituted:
+                        substituted = True
+                        quarantine = next(native.root.parent.glob('.gitx-native-retired-*'))
+                        folder = quarantine / 'Stderr'
+                        folder.rename(quarantine / 'saved-stderr')
+                        if kind == 'symlink':
+                            folder.symlink_to(sentinel, target_is_directory=True)
+                        else:
+                            folder.mkdir()
+                            (folder / 'keep').write_bytes(b'foreign')
+                    return unlink(name, *args, **kwargs)
+                before = len(os.listdir('/dev/fd'))
+                with mock.patch.object(session.os, 'unlink', side_effect=replace):
+                    state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertTrue(substituted)
+                self.assertEqual(state, 'retained', reason)
+                self.assertEqual((sentinel / 'keep').read_bytes(), b'foreign')
+                self.assertEqual(len(os.listdir('/dev/fd')), before)
+
+    def test_ownership_rejection_is_an_inspection_failure(self):
+        with self.completed_native_fixture() as (native, source):
+            owner = json.loads(native.registration.read_text())
+            owner['invocationID'] = 'another-invocation'
+            session.atomic_json(native.registration, owner)
+            before = native.registration.read_bytes()
+            state, reason, after = session.retire_registered_native_sources(native.registration)
+            self.assertEqual((state, reason), ('deferred', 'registration-invalid'))
+            self.assertEqual(after['retirementOutcome']['operation'], 'inspect-registration')
+            self.assertEqual(native.registration.read_bytes(), before)
+            self.assertTrue(source.exists())
+
+    def test_missing_parent_recovery_protects_reappearing_sources_and_flush_failures(self):
+        for variant in ('source', 'quarantine', 'symlink', 'permission', 'io-error'):
+            with self.subTest(variant=variant), self.completed_native_fixture() as (native, _):
+                publish = session.NativeRegistration.publish
+                def interrupt_final(transaction, value):
+                    if value.get('retirementState') == 'retired':
+                        raise OSError(errno.ENOSPC, 'interrupted final publication')
+                    return publish(transaction, value)
+                with mock.patch.object(session.NativeRegistration, 'publish', new=interrupt_final):
+                    self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'deferred')
+                owner = json.loads(native.registration.read_text())
+                native.root.parent.rmdir()
+                ancestor_identity = session.native_directory_identity(native.root.parent.parent)
+                sync = session.os.fsync
+                def flush(descriptor):
+                    info = os.fstat(descriptor)
+                    if variant in ('permission', 'io-error') and [info.st_dev, info.st_ino] == ancestor_identity:
+                        raise OSError(errno.EACCES if variant == 'permission' else errno.EIO, 'ancestor flush refused')
+                    return sync(descriptor)
+                @contextlib.contextmanager
+                def authorize():
+                    if variant in ('source', 'quarantine') and not native.root.parent.exists():
+                        selected = native.root if variant == 'source' else pathlib.Path(owner['retirementPath'])
+                        selected.mkdir(parents=True)
+                        (selected / 'keep').write_bytes(b'foreign')
+                    elif variant == 'symlink' and not native.root.parent.exists():
+                        native.root.parent.symlink_to(native.archive, target_is_directory=True)
+                    yield
+                with mock.patch.object(session.os, 'fsync', side_effect=flush):
+                    state, reason, after = session.retire_registered_native_sources(native.registration, authorize=authorize)
+                self.assertIn(state, ('retained', 'deferred'), reason)
+                self.assertNotEqual(after.get('retirementPhase'), 'retired')
+                self.assertTrue(session.native_completion_path(native.registration).exists())
+
     def test_retirement_controls_release_and_keep_persistent_inode(self):
         with self.completed_native_fixture() as (native, source):
             control = native.registration.with_name(native.registration.name + '.retirement.lock')
@@ -178,7 +466,7 @@ class WorkflowSessionTests(unittest.TestCase):
                             root.rename(root.with_name('saved-root'))
                             root.mkdir()
                             (root / 'keep').write_bytes(b'replacement')
-                    digest, rename, publish = session.descriptor_digest, session.exclusive_native_rename, session.NativeRegistrationSnapshot.publish
+                    digest, rename, publish = session.descriptor_digest, session.exclusive_native_rename_at, session.NativeRegistrationSnapshot.publish
                     def hashing(descriptor):
                         result = digest(descriptor)
                         if boundary == 'hash':
@@ -200,7 +488,7 @@ class WorkflowSessionTests(unittest.TestCase):
                             replace()
                         yield
                     with mock.patch.object(session, 'descriptor_digest', side_effect=hashing), \
-                            mock.patch.object(session, 'exclusive_native_rename', side_effect=renaming), \
+                            mock.patch.object(session, 'exclusive_native_rename_at', side_effect=renaming), \
                             mock.patch.object(session.NativeRegistrationSnapshot, 'publish', new=publishing):
                         state, reason, owner = session.retire_registered_native_sources(native.registration, authorize=authorize)
                     self.assertTrue(changed)
@@ -311,13 +599,13 @@ class WorkflowSessionTests(unittest.TestCase):
                     if phase == 'prepared' and value.get('retirementPhase') == 'deleting':
                         raise OSError(errno.ENOSPC, 'characterization publication interrupted')
                     return publish(registration, value)
-                remove = session.shutil.rmtree
+                remove = session.remove_native_quarantine
                 def interrupt_removal(path, *args, **kwargs):
                     if phase == 'deleting' and pathlib.Path(path).name.startswith('.gitx-native-retired-'):
                         raise OSError(errno.EINTR, 'characterization removal interrupted')
                     return remove(path, *args, **kwargs)
                 with mock.patch.object(session.NativeRegistrationSnapshot, 'publish', new=interrupt_publication), \
-                        mock.patch.object(session.shutil, 'rmtree', side_effect=interrupt_removal):
+                        mock.patch.object(session, 'remove_native_quarantine', side_effect=interrupt_removal):
                     state, reason, owner = session.retire_registered_native_sources(native.registration)
                 self.assertEqual(state, 'deferred', reason)
                 self.assertEqual(owner['retirementPhase'], phase)
@@ -476,21 +764,24 @@ class WorkflowSessionTests(unittest.TestCase):
     def test_post_removal_sync_permission_failure_is_retryable_without_manual_retry(self):
         for code in (errno.EACCES, errno.EPERM):
             with self.subTest(errno=code), self.completed_native_fixture() as (native, source):
-                sync = session.sync_native_directory
-                def fail_removed_parent(path):
-                    if pathlib.Path(path) == native.root.parent and not native.root.exists():
+                sync = session.os.fsync
+                parent_identity = session.native_directory_identity(native.root.parent)
+                def fail_removed_parent(descriptor):
+                    info = os.fstat(descriptor)
+                    if [info.st_dev, info.st_ino] == parent_identity and not native.root.exists():
                         quarantine = list(native.root.parent.glob('.gitx-native-retired-*'))
                         if not quarantine:
                             raise OSError(code, 'removed parent sync failed')
-                    return sync(path)
-                with mock.patch.object(session, 'sync_native_directory', side_effect=fail_removed_parent):
+                    return sync(descriptor)
+                with mock.patch.object(session.os, 'fsync', side_effect=fail_removed_parent):
                     state, reason, owner = session.retire_registered_native_sources(native.registration)
                 self.assertEqual(state, 'deferred', reason)
                 self.assertEqual(owner['retirementPhase'], 'deleting')
                 self.assertEqual(owner['retirementOutcome']['operation'], 'sync-retirement-parent')
                 calls = []
+                path_sync = session.sync_native_directory
                 def record_sync(path):
-                    calls.append(pathlib.Path(path)); return sync(path)
+                    calls.append(pathlib.Path(path)); return path_sync(path)
                 with mock.patch.object(session, 'sync_native_directory', side_effect=record_sync):
                     state, reason, _ = session.retire_registered_native_sources(native.registration)
                 self.assertEqual(state, 'retired', reason)
@@ -829,7 +1120,7 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
     def test_permanent_deletion_permissions_require_explicit_repaired_retry(self):
         for code in (errno.EACCES, errno.EPERM):
             with self.subTest(errno=code), self.completed_native_fixture() as (native, source):
-                with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError(code, 'manual-repair')):
+                with mock.patch.object(session, 'remove_native_quarantine', side_effect=OSError(code, 'manual-repair')):
                     state, reason, result = session.retire_registered_native_sources(native.registration)
                 self.assertEqual((state, reason), ('retained', 'deletion-unavailable'))
                 self.assertEqual(result['retirementOutcome']['errno'], code)
@@ -854,13 +1145,13 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
                         native.close()
                     finally:
                         os.close(lease)
-                    original = session.descriptor_digest if boundary == 'hash' else session.shutil.rmtree
+                    original = session.descriptor_digest if boundary == 'hash' else session.remove_native_quarantine
                     observations = []
                     def inspect(*args, **kwargs):
                         with session.NativeRegistration(native.registration) as transaction:
                             observations.append(transaction.current['status'])
                         return original(*args, **kwargs)
-                    owner, method = (session, 'descriptor_digest') if boundary == 'hash' else (session.shutil, 'rmtree')
+                    owner, method = (session, 'descriptor_digest') if boundary == 'hash' else (session, 'remove_native_quarantine')
                     with mock.patch.object(owner, method, side_effect=inspect):
                         state, reason, _ = session.retire_registered_native_sources(native.registration)
                     self.assertEqual(state, 'retired', reason)
@@ -2498,11 +2789,11 @@ import workflow_session as session
 root = pathlib.Path(sys.argv[1]); session.ROOT = root
 native = session.NativeTestDiagnostics(root / 'cache', root / 'artifacts/verification/run/Logs/Native', 'session', ['bundle'], True)
 (native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'complete-before-kill')
-def interrupted(path):
+def interrupted(path, *args, **kwargs):
     (path / 'invocation.lease').unlink()
     os.write(int(sys.argv[2]), (str(native.registration) + '\n').encode())
     os.read(int(sys.argv[3]), 1)
-session.shutil.rmtree = interrupted
+session.remove_native_quarantine = interrupted
 native.close()
 """
             gate_reader, gate_writer = os.pipe()
@@ -2533,7 +2824,7 @@ native.close()
                     native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
                     source = native.stderr_directory / 'GitX-42-a.stderr.log'
                     source.write_bytes(b'original')
-                    with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError(errno.EIO, 'interrupted')):
+                    with mock.patch.object(session, 'remove_native_quarantine', side_effect=OSError(errno.EIO, 'interrupted')):
                         native.close()
                     owner = json.loads(native.registration.read_text())
                     quarantine = pathlib.Path(owner['retirementPath'])
@@ -2563,12 +2854,12 @@ native.close()
                     source = native.stderr_directory / 'GitX-42-a.stderr.log'
                     source.write_bytes(b'archived-\x00\xff')
                     remove = session.shutil.rmtree
-                    def partial(path):
+                    def partial(path, *args, **kwargs):
                         for name in ('invocation.lease', 'native-owner.json', 'Stderr', 'Progress') if removed == 'all' else (removed,):
                             entry = path / name
                             remove(entry) if entry.is_dir() else entry.unlink()
                         raise OSError(errno.EIO, 'partial-delete')
-                    with mock.patch.object(session.shutil, 'rmtree', side_effect=partial):
+                    with mock.patch.object(session, 'remove_native_quarantine', side_effect=partial):
                         native.close()
                     state, reason, _ = session.retire_registered_native_sources(native.registration)
                     self.assertEqual(state, 'retired', reason)
@@ -2584,7 +2875,7 @@ native.close()
                     source = native.stderr_directory / 'GitX-42-a.stderr.log'
                     contents = b'legacy-archive-\x00\xff'
                     source.write_bytes(contents)
-                    with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError(errno.EIO, 'legacy-partial')):
+                    with mock.patch.object(session, 'remove_native_quarantine', side_effect=OSError(errno.EIO, 'legacy-partial')):
                         native.close()
                     owner = json.loads(native.registration.read_text())
                     owner.pop('deletionProof')
@@ -2658,7 +2949,7 @@ native.close()
             with mock.patch.object(session, 'ROOT', root):
                 native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
                 (native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'keep')
-                with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError(errno.EIO, 'partial')):
+                with mock.patch.object(session, 'remove_native_quarantine', side_effect=OSError(errno.EIO, 'partial')):
                     native.close()
                 owner = json.loads(native.registration.read_text())
                 owner['deletionProof']['entries'] = []
@@ -2712,10 +3003,10 @@ native.close()
                 native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
                 source = native.stderr_directory / 'GitX-42-a.stderr.log'
                 source.write_bytes(b'keep-archive-\x00\xff')
-                def partial_removal(path):
+                def partial_removal(path, *args, **kwargs):
                     (path / 'invocation.lease').unlink()
                     raise OSError(errno.EIO, 'fixture-after-first-unlink')
-                with mock.patch.object(session.shutil, 'rmtree', side_effect=partial_removal):
+                with mock.patch.object(session, 'remove_native_quarantine', side_effect=partial_removal):
                     native.close()
                 durable = json.loads(native.registration.read_text())
                 self.assertEqual(durable['retirementPhase'], 'deleting')
@@ -2751,7 +3042,7 @@ native.close()
             with mock.patch.object(session, 'ROOT', root):
                 native = session.NativeTestDiagnostics(root / 'cache', output.parent / 'Native', 'session', ['bundle'], True)
                 (native.stderr_directory / 'GitX-42-a.stderr.log').write_bytes(b'retained')
-                with mock.patch.object(session.shutil, 'rmtree', side_effect=OSError('interrupted-removal')):
+                with mock.patch.object(session, 'remove_native_quarantine', side_effect=OSError('interrupted-removal')):
                     native.close()
                 owner = json.loads(native.registration.read_text())
                 self.assertTrue(pathlib.Path(owner['retirementPath']).exists())
@@ -2775,8 +3066,9 @@ native.close()
                 owner = json.loads(native.registration.read_text())
                 def replace_after_validation(value):
                     session.atomic_json(native.registration, value)
-                    source.unlink()
-                    source.write_bytes(b'preserve-new-source')
+                    if source.exists():
+                        source.unlink()
+                        source.write_bytes(b'preserve-new-source')
                 outcome = session.retire_native_sources(owner, persist=replace_after_validation)
                 state, reason = outcome.state, outcome.reason
                 self.assertEqual((state, reason), ('retained', 'source-changed-during-retirement'))

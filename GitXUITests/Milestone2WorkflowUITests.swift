@@ -461,31 +461,88 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(viewport.displacement(toContain: .zero))
     }
 
+    func testInspectorGeometryWaitsForLayoutAndRejectsOversizedControls() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        var wait = InspectorActionGeometryWait(viewport: viewport, startedAt: 0)
+        XCTAssertEqual(wait.observe(exists: false, frame: .zero, at: 0), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: .zero, at: 1), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: CGRect(x: CGFloat.infinity, y: 0, width: 100, height: 25), at: 2), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: CGRect(x: 0, y: 0, width: 100, height: 25), at: 4), .ready)
+        var oversized = InspectorActionGeometryWait(viewport: viewport, startedAt: 0)
+        XCTAssertEqual(oversized.observe(exists: true, frame: CGRect(x: 0, y: 0, width: 1001, height: 25), at: 1), .oversized)
+    }
+
+    func testInspectorSettlingIgnoresStaleAndTransientGeometry() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        let initial = CGRect(x: -20, y: 100, width: 100, height: 25)
+        let partial = initial.offsetBy(dx: 5, dy: 0)
+        let final = initial.offsetBy(dx: 28, dy: 0)
+        var wait = InspectorActionGeometryWait(viewport: viewport, startedAt: 12, afterDragFrom: initial)
+        XCTAssertEqual(wait.observe(exists: true, frame: initial, at: 12), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: initial, at: 13), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: partial, at: 14), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: final, at: 15), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: final, at: 16), .ready)
+        XCTAssertTrue(viewport.contains(final))
+    }
+
+    func testInspectorSettlingClampedMovementAndIndependentTimeouts() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        let initial = CGRect(x: -20, y: 100, width: 100, height: 25)
+        let clamped = initial.offsetBy(dx: 5, dy: 0)
+        var first = InspectorActionGeometryWait(viewport: viewport, startedAt: 20, afterDragFrom: initial)
+        XCTAssertEqual(first.observe(exists: true, frame: clamped, at: 24), .waiting)
+        XCTAssertEqual(first.observe(exists: true, frame: clamped, at: 24.9), .ready)
+        XCTAssertFalse(viewport.contains(clamped))
+        var second = InspectorActionGeometryWait(viewport: viewport, startedAt: 40, afterDragFrom: clamped)
+        XCTAssertEqual(second.observe(exists: true, frame: clamped, at: 44.9), .waiting)
+        XCTAssertEqual(second.observe(exists: true, frame: clamped, at: 45), .timedOut)
+        var delayed = InspectorActionGeometryWait(viewport: viewport, startedAt: 50)
+        XCTAssertEqual(delayed.observe(exists: true, frame: .zero, at: 55), .timedOut)
+    }
+
     private func positionWindowForInspectorAction(_ action: XCUIElement, in app: XCUIApplication) throws {
         let window = app.windows.firstMatch
         let viewport = try InspectorActionViewport(
             visibleFrame: XCTUnwrap(NSScreen.main).visibleFrame,
             primaryDisplayTop: XCTUnwrap(NSScreen.screens.first).frame.maxY
         )
-        try requireExists(action, timeout: 5)
-        let deadline = Date().addingTimeInterval(5)
-        // Read back actual accessibility geometry after each drag. One further
-        // correction handles clamping without extending the positioning budget.
-        for _ in 0 ..< 2 {
-            guard !viewport.contains(action.frame), Date() < deadline else { break }
-            guard let displacement = viewport.displacement(toContain: action.frame) else {
-                retainDiagnosticScreenshot(named: "M2-Inspector-Oversized-Action", of: action, in: app)
-                XCTFail("Inspector action cannot fit inside the visible viewport: \(action.frame), \(viewport.frame)")
-                return
+        func geometry(afterDragFrom initial: CGRect? = nil) throws -> CGRect {
+            var policy = InspectorActionGeometryWait(viewport: viewport, startedAt: ProcessInfo.processInfo.systemUptime,
+                                                     afterDragFrom: initial)
+            var observation = InspectorActionGeometryWait.Observation.waiting
+            var frame = CGRect.zero
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let exists = action.exists
+                frame = exists ? action.frame : .zero
+                observation = policy.observe(exists: exists, frame: frame, at: ProcessInfo.processInfo.systemUptime)
+                return observation != .waiting
+            }, object: nil)
+            let result = XCTWaiter.wait(for: [ready], timeout: InspectorActionGeometryWait.timeout)
+            guard result == .completed, observation == .ready else {
+                retainDiagnosticScreenshot(named: "M2-Inspector-Geometry-Failure", of: action, in: app)
+                XCTFail("Inspector geometry did not become ready: \(observation), action: \(frame), viewport: \(viewport.frame)")
+                throw NSError(domain: "InspectorGeometry", code: 1)
             }
+            return frame
+        }
+        var frame = try geometry()
+        for _ in 0 ..< 2 {
+            guard !viewport.contains(frame) else { break }
+            let displacement = try XCTUnwrap(viewport.displacement(toContain: frame))
             let titlebar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0))
                 .withOffset(CGVector(dx: 0, dy: 12))
             titlebar.click(forDuration: 0.2, thenDragTo: titlebar.withOffset(displacement))
+            frame = try geometry(afterDragFrom: frame)
         }
         let positioned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            viewport.contains(action.frame) && action.isHittable
+            action.exists && viewport.contains(action.frame) && action.isHittable
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: max(0, deadline.timeIntervalSinceNow)), .completed)
+        let result = XCTWaiter.wait(for: [positioned], timeout: InspectorActionGeometryWait.timeout)
+        if result != .completed {
+            retainDiagnosticScreenshot(named: "M2-Inspector-Containment-Failure", of: action, in: app)
+        }
+        XCTAssertEqual(result, .completed)
     }
 
     private func openStagingView(in app: XCUIApplication, waitingFor element: XCUIElement) throws {
