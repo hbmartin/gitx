@@ -1452,7 +1452,7 @@ class NativeRetirementDirectories:
             os.rmdir(name, dir_fd=parent)
         except OSError as error:
             if error.errno in {errno.ENOTEMPTY, errno.ENOTDIR, errno.EEXIST}:
-                raise NativeEvidenceError('Native quarantine entry changed') from error
+                raise NativeEvidenceError('Native quarantine entry changed', error_number=error.errno) from error
             raise
 
     def __exit__(self, *_):

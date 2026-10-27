@@ -342,6 +342,16 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(native.registration.read_bytes(), before)
             self.assertTrue(source.exists())
 
+    def test_quarantine_conflicts_preserve_syscall_errno(self):
+        for code in (errno.ENOTEMPTY, errno.ENOTDIR, errno.EEXIST):
+            with self.subTest(errno=code), mock.patch.object(session.os, 'rmdir', side_effect=OSError(code, 'entry substituted')):
+                with self.assertRaises(session.NativeRetirementFault) as caught:
+                    with session.native_retirement_boundary('deletion', 'remove-quarantine', evidence=True):
+                        session.NativeRetirementDirectories.remove_directory_entry(42, 'quarantine')
+                self.assertEqual(caught.exception.outcome.state, 'retained')
+                self.assertEqual(caught.exception.outcome.error_number, code)
+                self.assertEqual(caught.exception.outcome.operation, 'remove-quarantine')
+
     def test_retirement_controls_release_and_keep_persistent_inode(self):
         with self.completed_native_fixture() as (native, source):
             control = native.registration.with_name(native.registration.name + '.retirement.lock')
