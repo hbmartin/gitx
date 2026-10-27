@@ -230,14 +230,21 @@ class RetirementCheckpointTests(unittest.TestCase):
             self.assertEqual(len(flushed), 1)
 
     def test_recovery_metadata_and_flush_errors_defer_without_sticky_registration(self):
-        for boundary in ('inspect', 'flush'):
+        for boundary in ('canonical', 'inspect', 'flush'):
             for code in (errno.EACCES, errno.EIO):
                 with self.subTest(boundary=boundary, errno=code), self.completed() as (native, _):
                     self.interrupt(native, final=True)
                     native.root.parent.rmdir()
                     before = native.registration.read_bytes()
                     ancestor = native.root.parent.parent.stat().st_ino
-                    if boundary == 'inspect':
+                    if boundary == 'canonical':
+                        resolve = pathlib.Path.resolve
+                        def unavailable(path, *args, **kwargs):
+                            if path == native.root:
+                                raise OSError(code, 'canonical inspection refused')
+                            return resolve(path, *args, **kwargs)
+                        context = mock.patch.object(pathlib.Path, 'resolve', new=unavailable)
+                    elif boundary == 'inspect':
                         inspect = session.native_path_absent
                         def unavailable(path):
                             if pathlib.Path(path) == native.root:
@@ -317,14 +324,14 @@ class RetirementCheckpointTests(unittest.TestCase):
             self.assertTrue(session.native_completion_path(native.registration).exists())
 
     def test_completed_recovery_rejects_nondirectory_or_redirected_parent(self):
-        for kind in ('file', 'symlink'):
+        for kind in ('file', 'symlink', 'symlink-loop'):
             with self.subTest(kind=kind), self.completed() as (native, _):
                 self.interrupt(native, final=True)
                 native.root.parent.rmdir()
                 if kind == 'file':
                     native.root.parent.write_bytes(b'foreign parent')
                 else:
-                    native.root.parent.symlink_to(native.archive, target_is_directory=True)
+                    native.root.parent.symlink_to(native.root.parent if kind == 'symlink-loop' else native.archive, target_is_directory=True)
                 state, reason, _ = session.retire_registered_native_sources(native.registration)
                 self.assertEqual(state, 'retained', reason)
                 self.assertTrue(session.native_completion_path(native.registration).exists())

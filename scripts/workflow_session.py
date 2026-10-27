@@ -1594,6 +1594,8 @@ def validate_native_absence(location, owner):
             pass
     except NativeEvidenceError:
         raise
+    except RuntimeError as error:
+        raise NativeEvidenceError('Native retirement path was redirected', error_number=errno.ELOOP) from error
     except OSError as error:
         if error.errno in (errno.ENOTDIR, errno.ELOOP):
             raise NativeEvidenceError('Native retirement parent was replaced', error_number=error.errno) from error
@@ -1645,7 +1647,8 @@ def native_retirement_location(owner, checkout, *, retry_retained=False):
         original = pathlib.Path(owner['sourceDirectory'])
         root = original
         prepared = pathlib.Path(owner.get('retirementPath', str(original)))
-        if not original.is_absolute() or original.resolve() != original or original.is_symlink():
+        if (not original.is_absolute() or 'retirementCompletion' not in owner and
+                (original.resolve() != original or original.is_symlink())):
             raise NativeRetirementFault(NativeRetirementOutcome('retained', 'invalid-source-path', 'source'))
         if prepared != original and not native_retirement_path_matches(original, prepared):
             raise NativeRetirementFault(NativeRetirementOutcome('retained', 'invalid-retirement-path', 'source'))
