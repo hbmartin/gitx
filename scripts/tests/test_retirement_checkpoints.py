@@ -315,3 +315,16 @@ class RetirementCheckpointTests(unittest.TestCase):
             self.assertTrue(moved[0].is_dir())
             self.assertNotIn('retirementCompletion', after)
             self.assertTrue(session.native_completion_path(native.registration).exists())
+
+    def test_completed_recovery_rejects_nondirectory_or_redirected_parent(self):
+        for kind in ('file', 'symlink'):
+            with self.subTest(kind=kind), self.completed() as (native, _):
+                self.interrupt(native, final=True)
+                native.root.parent.rmdir()
+                if kind == 'file':
+                    native.root.parent.write_bytes(b'foreign parent')
+                else:
+                    native.root.parent.symlink_to(native.archive, target_is_directory=True)
+                state, reason, _ = session.retire_registered_native_sources(native.registration)
+                self.assertEqual(state, 'retained', reason)
+                self.assertTrue(session.native_completion_path(native.registration).exists())

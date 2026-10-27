@@ -1595,6 +1595,8 @@ def validate_native_absence(location, owner):
     except NativeEvidenceError:
         raise
     except OSError as error:
+        if error.errno in (errno.ENOTDIR, errno.ELOOP):
+            raise NativeEvidenceError('Native retirement parent was replaced', error_number=error.errno) from error
         raise NativeRetirementFault(NativeRetirementOutcome('deferred', 'durability-unproven', 'durability',
                                                           'inspect-retirement-absence', error.errno)) from error
 
