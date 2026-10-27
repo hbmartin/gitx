@@ -58,7 +58,6 @@ nonisolated struct InspectorActionGeometryWait {
             previous = nil
             return .waiting
         }
-        guard viewport.displacement(toContain: frame) != nil else { return .oversized }
         if let initial = afterDragFrom {
             guard frame != initial else {
                 previous = nil
@@ -66,8 +65,8 @@ nonisolated struct InspectorActionGeometryWait {
             }
             let settled = previous == frame
             previous = frame
-            return settled ? .ready : .waiting
+            guard settled else { return .waiting }
         }
-        return .ready
+        return viewport.displacement(toContain: frame) == nil ? .oversized : .ready
     }
 }

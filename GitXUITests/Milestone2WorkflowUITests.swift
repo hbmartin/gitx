@@ -480,6 +480,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         var wait = InspectorActionGeometryWait(viewport: viewport, startedAt: 12, afterDragFrom: initial)
         XCTAssertEqual(wait.observe(exists: true, frame: initial, at: 12), .waiting)
         XCTAssertEqual(wait.observe(exists: true, frame: initial, at: 13), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: CGRect(x: 0, y: 0, width: 1001, height: 25), at: 13.5), .waiting)
         XCTAssertEqual(wait.observe(exists: true, frame: partial, at: 14), .waiting)
         XCTAssertEqual(wait.observe(exists: true, frame: final, at: 15), .waiting)
         XCTAssertEqual(wait.observe(exists: true, frame: final, at: 16), .ready)

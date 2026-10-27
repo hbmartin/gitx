@@ -59,6 +59,7 @@ if mode == "inspector-placement" {
     var settling = InspectorActionGeometryWait(viewport: viewport, startedAt: 20, afterDragFrom: initial)
     precondition(settling.observe(exists: true, frame: initial, at: 20) == .waiting)
     precondition(settling.observe(exists: true, frame: initial, at: 21) == .waiting)
+    precondition(settling.observe(exists: true, frame: CGRect(x: 0, y: 0, width: 1001, height: 25), at: 22) == .waiting)
     precondition(settling.observe(exists: true, frame: clamped, at: 23) == .waiting)
     precondition(settling.observe(exists: true, frame: clamped, at: 24) == .ready)
     var timeout = InspectorActionGeometryWait(viewport: viewport, startedAt: 40, afterDragFrom: clamped)
