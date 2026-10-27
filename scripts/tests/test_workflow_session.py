@@ -330,6 +330,18 @@ class WorkflowSessionTests(unittest.TestCase):
                 self.assertNotEqual(after.get('retirementPhase'), 'retired')
                 self.assertTrue(session.native_completion_path(native.registration).exists())
 
+    def test_unexpected_retirement_exception_preserves_registration_and_real_errno(self):
+        with self.completed_native_fixture() as (native, source):
+            before = native.registration.read_bytes()
+            with mock.patch.object(session, 'retire_native_sources', side_effect=OSError(errno.EIO, 'unexpected retirement error')):
+                state, reason, after = session.retire_registered_native_sources(native.registration)
+            self.assertEqual((state, reason), ('deferred', 'retirement-unproven'))
+            self.assertEqual(after['retirementOutcome']['origin'], 'retirement')
+            self.assertEqual(after['retirementOutcome']['operation'], 'retire-registered-sources')
+            self.assertEqual(after['retirementOutcome']['errno'], errno.EIO)
+            self.assertEqual(native.registration.read_bytes(), before)
+            self.assertTrue(source.exists())
+
     def test_retirement_controls_release_and_keep_persistent_inode(self):
         with self.completed_native_fixture() as (native, source):
             control = native.registration.with_name(native.registration.name + '.retirement.lock')

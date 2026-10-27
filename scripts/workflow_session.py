@@ -2121,6 +2121,12 @@ def retire_registered_native_sources(path, *, checkout=None, authorize=None, adm
                 raise
     except NativeRetirementFault as error:
         return error.outcome.state, error.outcome.reason, dict(owner or {}, retirementOutcome=error.outcome.metadata())
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        # Unexpected infrastructure failures have no proven publication boundary.
+        # Keep registration bytes untouched; never label them as a held writer.
+        outcome = NativeRetirementOutcome('deferred', 'retirement-unproven', 'retirement',
+                                          'retire-registered-sources', getattr(error, 'errno', None))
+        return outcome.state, outcome.reason, dict(owner or {}, retirementOutcome=outcome.metadata())
 
 
 def read_native_registration(path, root):
