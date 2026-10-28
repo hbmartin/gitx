@@ -576,7 +576,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         var restoredSharedSelection = true
         defer { try? removeFixture(removeFiles: restoredSharedSelection) }
         let original = try XCTUnwrap(GitBinaryDiscovery.shared.currentSelection)
-        let replacement = directory.appendingPathComponent("replacement-git")
+        // Preserve the basename required by Apple's Git tool shim.
+        let replacement = directory.appendingPathComponent("git")
         try FileManager.default.createSymbolicLink(at: replacement, withDestinationURL: URL(fileURLWithPath: original.path))
         document.removeWindowController(window)
         document.makeWindowControllers()

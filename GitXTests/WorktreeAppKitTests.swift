@@ -3228,6 +3228,11 @@ final class WorktreeAppKitTests: XCTestCase {
             let metadata = try registrationMetadata(administrative)
             let repository = try RepositoryTestGitRepository(url: fixture.main)
             let gate = PruneTaskGate(fixture: fixture)
+            // A valid older Git models capability loss without a rejected-
+            // preference warning sheet competing with the consent under test.
+            let olderGit = fixture.root.appendingPathComponent("older-git")
+            try "#!/bin/sh\nfor arg in \"$@\"; do\nif [ \"$arg\" = --version ]; then echo 'git version 2.47.9'; exit 0; fi\ndone\nexec /usr/bin/git \"$@\"\n".write(to: olderGit, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: olderGit.path)
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
@@ -3237,11 +3242,13 @@ final class WorktreeAppKitTests: XCTestCase {
             try FileManager.default.removeItem(at: fixture.linked)
             controller.pruneWorktrees(nil)
             let sheet = try await waitForSheet(in: window, containing: "Prune")
-            defaults.set(fixture.root.appendingPathComponent("unavailable-git").path, forKey: "gitExecutable")
+            gate.executable = olderGit.path
+            defaults.set(olderGit.path, forKey: "gitExecutable")
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
             await waitUntil { !service.isSupported }
             XCTAssertTrue(window.attachedSheet === sheet)
             if restoreBeforeConfirmation {
+                gate.executable = "/usr/bin/git"
                 defaults.set("/usr/bin/git", forKey: "gitExecutable")
                 NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
                 await waitUntil { service.isSupported }
@@ -3255,6 +3262,7 @@ final class WorktreeAppKitTests: XCTestCase {
             window.endSheet(errorSheet, returnCode: .alertFirstButtonReturn)
             await waitUntil { window.attachedSheet == nil }
             if !restoreBeforeConfirmation {
+                gate.executable = "/usr/bin/git"
                 defaults.set("/usr/bin/git", forKey: "gitExecutable")
                 NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
                 await waitUntil { service.isSupported }
@@ -3435,6 +3443,7 @@ final class WorktreeAppKitTests: XCTestCase {
     private final class PruneTaskGate {
         let fixture: Fixture
         let report = DeferredPruneReportTask()
+        var executable = "/usr/bin/git"
         var holdNextReport = false
         private var commands: [[String]] = []
 
@@ -3456,7 +3465,7 @@ final class WorktreeAppKitTests: XCTestCase {
                 holdNextReport = false
                 return report
             }
-            let task = PBTask(launchPath: "/usr/bin/git", arguments: ["--git-dir=" + fixture.main.appendingPathComponent(".git").path] + arguments, inDirectory: fixture.main.path)
+            let task = PBTask(launchPath: executable, arguments: ["--git-dir=" + fixture.main.appendingPathComponent(".git").path] + arguments, inDirectory: fixture.main.path)
             GitXTestGitFixture.prepare(task)
             return task
         }

@@ -10,7 +10,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private var explicitlyAssignedRepository: PBGitRepository?
     private var focusRefreshCoordinator: RepositoryFocusRefreshCoordinator?
-    var gitDiscovery = GitBinaryDiscovery.shared
+    final var gitDiscovery = GitBinaryDiscovery.shared
     private(set) final var gitLoaderSelection: GitBinarySelection?
     private var gitLoaderOwnerActive = false
     private var actionContextResolver: RepositoryActionContextResolver?
