@@ -529,6 +529,7 @@ def inventory(root, receipt=None, now=None):
             return []
     native_sources = native_registrations(session.registered_native_sources)
     native_completions = native_registrations(session.registered_native_completions)
+    native_containers = native_registrations(session.registered_native_containers)
     if receipt:
         protected[pathlib.Path(receipt).resolve().parent] = "current successful verification"
     ledger = metadata(records.common_directory(root) / "ledger.json", {"items": {}})
@@ -912,8 +913,11 @@ def inventory(root, receipt=None, now=None):
                                "reason": "retained native evidence" if owner.get("retirementState") == "retained" else
                                          "complete archive awaiting validation" if owner.get("collectionComplete") else "protected incomplete native archive",
                                "owner": owner} for path, owner in native_sources],
-            "nativeCompletions": [{"registration": str(path), "paths": [str(session.native_completion_path(path))]}
-                                  for path, _ in native_completions],
+            "nativeCompletions": [{"registration": str(path), "paths": [str(session.native_completion_path(path))], "owner": owner}
+                                  for path, owner in native_completions],
+            "nativeContainerCandidates": [{"registration": str(path), "owner": owner,
+                                           "paths": [owner['sourceDirectory'], owner['retirementPath']]}
+                                          for path, owner in native_containers],
             "candidates": selected, "retained": retained, "discoveryErrors": errors, "entryErrors": entry_errors,
             "accountingErrors": accounting_errors, "protectionToken": token, "protectionReferrers": referrers,
             "protectedPaths": [str(p) for p in protected],
@@ -1379,6 +1383,8 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     report["failed"].append(failed)
         report["nativeRetirement"] = []
         report["nativeHandoffs"] = []
+        report["nativeContainers"] = []
+        completed_containers = set()
         def native_protection_reason(paths, protected_reason):
             if any(overlap(candidate, path) for candidate in paths for path in report["protectedPaths"]):
                 return protected_reason
@@ -1400,7 +1406,9 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     reason = gate()
                     source = pathlib.Path(item["owner"]["sourceDirectory"])
                     completion = session.native_completion_path(item["registration"])
-                    reason = reason or native_protection_reason((source, completion), "protected native source")
+                    paths = (source, completion, pathlib.Path(item["owner"].get("retirementPath", source)),
+                             session.native_container_path(item["registration"]))
+                    reason = reason or native_protection_reason(paths, "protected native source")
                     if reason:
                         raise session.NativeRetirementDeferred(reason)
                     yield
@@ -1414,9 +1422,16 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                                                "outcome": (registered or {}).get("retirementOutcome")})
             if registered and "handoffCleanup" in registered:
                 report["nativeHandoffs"].append({"registration": item["registration"], **registered["handoffCleanup"]})
+            if registered and "containerCleanup" in registered:
+                report["nativeContainers"].append({"registration": item["registration"], **registered["containerCleanup"]})
+                completed_containers.add(item["registration"])
         for item in report.get("nativeCompletions", []):
             def admit_native_handoff():
-                return native_admission_reason((session.native_completion_path(item["registration"]),), "protected native handoff")
+                paths = (session.native_completion_path(item["registration"]), session.native_container_path(item["registration"]))
+                if "owner" in item:
+                    paths += (pathlib.Path(item["owner"]["sourceDirectory"]),
+                              pathlib.Path(item["owner"].get("retirementPath", item["owner"]["sourceDirectory"])))
+                return native_admission_reason(paths, "protected native handoff")
             @contextlib.contextmanager
             def authorize_native_handoff():
                 with session.Leases(proof, owner, inherited=authenticated):
@@ -1425,13 +1440,40 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                         raise session.NativeRetirementDeferred(reason)
                     yield
             state, reason, registered = session.retire_registered_native_sources(
-                item["registration"], checkout=root, authorize=authorize_native_handoff, admit=admit_native_handoff)
+                item["registration"], checkout=root, authorize=authorize_native_handoff, admit=admit_native_handoff,
+                retry_retained=retry_retained_native)
             outcome = (registered or {}).get("handoffCleanup")
             if not isinstance(outcome, dict):
                 failure = (registered or {}).get("retirementOutcome")
                 outcome = (failure if isinstance(failure, dict) and failure.get("state") in {"deferred", "retained"} else
                            {"state": "deferred", "reason": reason or "retirement-unconfirmed"})
             report["nativeHandoffs"].append({"registration": item["registration"], **outcome})
+            if registered and "containerCleanup" in registered:
+                report["nativeContainers"].append({"registration": item["registration"], **registered["containerCleanup"]})
+                completed_containers.add(item["registration"])
+        for item in report.get("nativeContainerCandidates", []):
+            if item["registration"] in completed_containers:
+                continue
+            paths = tuple(pathlib.Path(path) for path in item["paths"]) + (
+                session.native_container_path(item["registration"]), session.native_completion_path(item["registration"]))
+            def admit_native_container():
+                return native_admission_reason(paths, "protected native container")
+            @contextlib.contextmanager
+            def authorize_native_container():
+                with session.Leases(proof, owner, inherited=authenticated):
+                    reason = admit_native_container() or gate()
+                    if reason:
+                        raise session.NativeRetirementDeferred(reason)
+                    yield
+            _, reason, registered = session.retire_registered_native_sources(
+                item["registration"], checkout=root, authorize=authorize_native_container, admit=admit_native_container,
+                retry_retained=retry_retained_native)
+            outcome = (registered or {}).get("containerCleanup") or (registered or {}).get("retirementOutcome")
+            if not isinstance(outcome, dict):
+                outcome = {"state": "deferred", "reason": reason or "container-cleanup-unconfirmed"}
+            report["nativeContainers"].append({"registration": item["registration"], **outcome})
+            if registered and "handoffCleanup" in registered:
+                report["nativeHandoffs"].append({"registration": item["registration"], **registered["handoffCleanup"]})
         reports = directory / "reports"
         output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
         saved = False
@@ -1443,8 +1485,9 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                 changed = changed or removed_original_problem()
                 native_deferred = any(item["state"] not in {"retired", "retained"} for item in report["nativeRetirement"])
                 handoff_deferred = any(item["state"] not in {"removed", "absent", "retained"} for item in report["nativeHandoffs"])
+                container_deferred = any(item["state"] not in {"removed", "retained"} for item in report["nativeContainers"])
                 report["status"] = "partial" if (report["skipped"] or report["failed"] or report["discoveryErrors"] or
-                                                 report["entryErrors"] or native_deferred or handoff_deferred or changed) else "complete"
+                                                 report["entryErrors"] or native_deferred or handoff_deferred or container_deferred or changed) else "complete"
                 if changed:
                     report["reason"] = changed
                 elif report["failed"]:
@@ -1453,6 +1496,8 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
                     report["reason"] = "native retirement deferred"
                 elif handoff_deferred:
                     report["reason"] = "native handoff cleanup deferred"
+                elif container_deferred:
+                    report["reason"] = "native container cleanup deferred"
                 if report["status"] == "complete" and read_json(pending_path(root)) != pending:
                     report.update(status="partial", reason="newer commit queued")
                 report["finishedAt"] = records.now()

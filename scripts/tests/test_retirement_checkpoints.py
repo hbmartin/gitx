@@ -29,6 +29,11 @@ class RetirementCheckpointTests(unittest.TestCase):
         self.assertEqual(result[0], 'deferred', result[1])
         return json.loads(native.registration.read_text())
 
+    def legacy_completion(self, native):
+        """Frozen v1 evidence: an old writer removed the root before final publication."""
+        self.interrupt(native, final=True)
+        return fixtures.WorkflowSessionTests().legacy_completed_registration(native)
+
     def test_moved_unfinished_parent_or_root_never_retires(self):
         for target in ('parent', 'root'):
             with self.subTest(target=target), self.completed() as (native, source):
@@ -54,12 +59,12 @@ class RetirementCheckpointTests(unittest.TestCase):
             with mock.patch.object(session.NativeRegistration, 'publish', new=observe):
                 state, reason, after = session.retire_registered_native_sources(native.registration)
             self.assertEqual(state, 'retired', reason)
-            phases = [(item['retirementPhase'], 'retirementValidation' in item, 'retirementCompletion' in item) for item in writes]
+            phases = [(item['retirementPhase'], 'retirementValidation' in item, 'retirementContents' in item) for item in writes]
             self.assertEqual(phases, [('prepared', False, False), ('deleting', True, False), ('deleting', True, True), ('retired', True, True)])
-            for field in ('retirementValidation', 'retirementCompletion'):
+            for field in ('retirementValidation', 'retirementContents'):
                 self.assertEqual(after[field]['schemaVersion'], 1)
                 self.assertEqual(len(after[field]['evidenceSHA256']), 64)
-            self.assertEqual(after['retirementValidation']['evidenceSHA256'], after['retirementCompletion']['evidenceSHA256'])
+            self.assertEqual(after['retirementValidation']['evidenceSHA256'], after['retirementContents']['evidenceSHA256'])
 
     def test_loss_before_deleting_publication_cannot_gain_a_validation_checkpoint(self):
         with self.completed() as (native, source):
@@ -98,7 +103,7 @@ class RetirementCheckpointTests(unittest.TestCase):
     def test_completed_deletion_recovers_missing_or_recreated_parent(self):
         for recreate in (False, True):
             with self.subTest(recreate=recreate), self.completed() as (native, _):
-                owner = self.interrupt(native, final=True)
+                owner = self.legacy_completion(native)
                 self.assertIn('retirementCompletion', owner)
                 native.root.parent.rmdir()
                 if recreate:
@@ -137,12 +142,12 @@ class RetirementCheckpointTests(unittest.TestCase):
                 self.assertEqual((state, reason), ('retained', 'unexpected-source-content'))
                 self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
 
-    def test_completion_publication_failures_preserve_phase_errno_and_handoff(self):
+    def test_content_publication_failures_preserve_phase_errno_handoff_and_empty_root(self):
         for code in (errno.EACCES, errno.EBUSY):
             with self.subTest(errno=code), self.completed() as (native, _):
                 publish = session.NativeRegistration.publish
                 def refuse(transaction, value):
-                    if 'retirementCompletion' in value:
+                    if 'retirementContents' in value:
                         raise OSError(code, 'completion publisher refused')
                     return publish(transaction, value)
                 with mock.patch.object(session.NativeRegistration, 'publish', new=refuse):
@@ -150,36 +155,37 @@ class RetirementCheckpointTests(unittest.TestCase):
                 self.assertEqual(state, 'deferred', reason)
                 outcome = after['retirementOutcome']
                 self.assertEqual((outcome['origin'], outcome['operation'], outcome['errno']),
-                                 ('registration', 'publish-deletion-completion', code))
+                                 ('registration', 'publish-retirement-contents', code))
                 durable = json.loads(native.registration.read_text())
                 self.assertIn('retirementValidation', durable)
-                self.assertNotIn('retirementCompletion', durable)
+                self.assertNotIn('retirementContents', durable)
                 self.assertTrue(session.native_completion_path(native.registration).exists())
-                self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retained')
+                self.assertEqual(list(pathlib.Path(durable['retirementPath']).iterdir()), [])
+                self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
 
-    def test_completion_checkpoint_requires_real_removal_and_pinned_parent_flush(self):
+    def test_content_checkpoint_requires_real_draining_and_pinned_root_flush(self):
         for boundary in ('remove', 'flush'):
             with self.subTest(boundary=boundary), self.completed() as (native, _):
                 if boundary == 'remove':
                     context = mock.patch.object(session, 'remove_native_quarantine', return_value=None)
                 else:
                     flush = os.fsync
-                    parent = native.root.parent.stat().st_ino
+                    root = native.root.stat().st_ino
                     def refused(descriptor):
-                        if os.fstat(descriptor).st_ino == parent and not list(native.root.parent.iterdir()):
-                            raise OSError(errno.EIO, 'pinned parent flush refused')
+                        if os.fstat(descriptor).st_ino == root and not os.listdir(descriptor):
+                            raise OSError(errno.EIO, 'pinned root flush refused')
                         return flush(descriptor)
                     context = mock.patch.object(session.os, 'fsync', side_effect=refused)
                 with context:
                     state, reason, after = session.retire_registered_native_sources(native.registration)
                 self.assertEqual(state, 'deferred', reason)
-                self.assertNotIn('retirementCompletion', json.loads(native.registration.read_text()))
+                self.assertNotIn('retirementContents', json.loads(native.registration.read_text()))
                 self.assertTrue(session.native_completion_path(native.registration).exists())
 
     def test_completion_checkpoint_binds_manifest_identity_and_path(self):
         for field in ('retirementPath', 'retirementParentIdentity', 'directoryIdentity', 'files', 'deletionProof', 'retirementValidation', 'retirementCompletion'):
             with self.subTest(field=field), self.completed() as (native, _):
-                owner = self.interrupt(native, final=True)
+                owner = self.legacy_completion(native)
                 if field == 'retirementPath':
                     owner[field] = str(pathlib.Path(owner[field]).with_name('.gitx-native-retired-' + 'f' * 32))
                 elif field in ('retirementParentIdentity', 'directoryIdentity'):
@@ -197,7 +203,7 @@ class RetirementCheckpointTests(unittest.TestCase):
 
     def test_checkpoint_publications_cannot_drop_or_change_certificates(self):
         with self.completed() as (native, _):
-            self.interrupt(native, final=True)
+            self.legacy_completion(native)
             before = native.registration.read_bytes()
             for field in ('retirementValidation', 'retirementCompletion'):
                 for change in ('drop', 'replace', 'manifest'):
@@ -215,7 +221,7 @@ class RetirementCheckpointTests(unittest.TestCase):
 
     def test_recovery_uses_one_final_surviving_directory_flush(self):
         with self.completed() as (native, _):
-            self.interrupt(native, final=True)
+            self.legacy_completion(native)
             native.root.parent.rmdir()
             ancestor = native.root.parent.parent.stat().st_ino
             flushed = []
@@ -233,7 +239,7 @@ class RetirementCheckpointTests(unittest.TestCase):
         for boundary in ('canonical', 'inspect', 'flush'):
             for code in (errno.EACCES, errno.EIO):
                 with self.subTest(boundary=boundary, errno=code), self.completed() as (native, _):
-                    self.interrupt(native, final=True)
+                    self.legacy_completion(native)
                     native.root.parent.rmdir()
                     before = native.registration.read_bytes()
                     ancestor = native.root.parent.parent.stat().st_ino
@@ -266,7 +272,7 @@ class RetirementCheckpointTests(unittest.TestCase):
 
     def test_root_owned_surviving_ancestor_can_establish_absence(self):
         with self.completed() as (native, _):
-            owner = self.interrupt(native, final=True)
+            owner = self.legacy_completion(native)
             # Isolate the durability policy using a nonexistent child of a real
             # root-owned ancestor; no source deletion or system mutation occurs.
             original = pathlib.Path('/private/tmp') / ('gitx-absent-' + native.invocation) / 'cache' / native.root.name
@@ -282,7 +288,7 @@ class RetirementCheckpointTests(unittest.TestCase):
             flush.assert_called_once()
 
     def test_actual_atomic_publication_faults_keep_production_phase_and_errno(self):
-        for phase in ('publish-prepared', 'publish-deleting', 'publish-deletion-completion', 'promote-completion'):
+        for phase in ('publish-prepared', 'publish-deleting', 'publish-retirement-contents', 'promote-completion'):
             with self.subTest(phase=phase), self.completed() as (native, _):
                 if phase == 'promote-completion':
                     owner = json.loads(native.registration.read_text())
@@ -291,7 +297,7 @@ class RetirementCheckpointTests(unittest.TestCase):
                 atomic = session.atomic_json
                 def fail(path, value):
                     if pathlib.Path(path) == native.registration:
-                        selected = ('publish-deletion-completion' if 'retirementCompletion' in value else
+                        selected = ('publish-retirement-contents' if 'retirementContents' in value else
                                     'publish-deleting' if value.get('retirementPhase') == 'deleting' else
                                     'publish-prepared' if value.get('retirementPhase') == 'prepared' else 'promote-completion')
                         if selected == phase:
@@ -318,15 +324,17 @@ class RetirementCheckpointTests(unittest.TestCase):
                 return rmdir(name, *args, **kwargs)
             with mock.patch.object(session.os, 'rmdir', side_effect=replace):
                 state, reason, after = session.retire_registered_native_sources(native.registration)
-            self.assertEqual(state, 'retained', reason)
+            self.assertEqual(state, 'retired', reason)
             self.assertTrue(moved[0].is_dir())
+            self.assertEqual(after['containerCleanup']['state'], 'retained')
+            self.assertIn('retirementContents', after)
             self.assertNotIn('retirementCompletion', after)
-            self.assertTrue(session.native_completion_path(native.registration).exists())
+            self.assertFalse(session.native_completion_path(native.registration).exists())
 
     def test_completed_recovery_rejects_nondirectory_or_redirected_parent(self):
         for kind in ('file', 'symlink', 'symlink-loop'):
             with self.subTest(kind=kind), self.completed() as (native, _):
-                self.interrupt(native, final=True)
+                self.legacy_completion(native)
                 native.root.parent.rmdir()
                 if kind == 'file':
                     native.root.parent.write_bytes(b'foreign parent')

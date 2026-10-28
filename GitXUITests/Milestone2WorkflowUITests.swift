@@ -457,10 +457,11 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
                 observation = policy.observe(exists: exists, frame: frame, at: ProcessInfo.processInfo.systemUptime)
                 return observation != .waiting
             }, object: nil)
-            let result = XCTWaiter.wait(for: [ready], timeout: InspectorActionGeometryWait.timeout)
+            let result = XCTWaiter.wait(for: [ready], timeout: max(0, policy.deadline - ProcessInfo.processInfo.systemUptime))
+            observation = policy.finish(timedOut: result == .timedOut, at: ProcessInfo.processInfo.systemUptime)
             guard result == .completed, observation == .ready else {
                 retainDiagnosticScreenshot(named: "M2-Inspector-Geometry-Failure", of: action, in: app)
-                XCTFail("Inspector geometry did not become ready: \(observation), action: \(frame), viewport: \(viewport.frame)")
+                XCTFail("Inspector geometry did not become ready: \(observation), waiter: \(result), reason: \(policy.lastReason.rawValue), last frame: \(policy.lastFrame), action: \(frame), viewport: \(viewport.frame)")
                 throw Milestone2UIError.elementUnavailable
             }
             return frame

@@ -42,6 +42,15 @@ class WorkflowSessionTests(unittest.TestCase):
                     os.close(lease)
                 yield native, source
 
+    def legacy_completed_registration(self, native):
+        """Emulate a v1 writer that removed its root before its final publish."""
+        owner = json.loads(native.registration.read_text())
+        session.shutil.rmtree(owner['retirementPath'])
+        session.sync_native_directory(native.root.parent)
+        owner['retirementCompletion'] = owner.pop('retirementContents')
+        session.atomic_json(native.registration, owner)
+        return owner
+
     def test_publication_boundary_preserves_snapshot_phase_and_errno(self):
         for phase in ('publish-prepared', 'publish-deleting', 'promote-completion'):
             with self.subTest(phase=phase), self.completed_native_fixture() as (native, source):
@@ -59,6 +68,14 @@ class WorkflowSessionTests(unittest.TestCase):
 
     def test_completed_deletion_survives_parent_disappearance_before_publication(self):
         with self.completed_native_fixture() as (native, _):
+            publish = session.NativeRegistration.publish
+            def interrupt_final(transaction, value):
+                if value.get('retirementState') == 'retired':
+                    raise OSError(errno.ENOSPC, 'legacy final publication interrupted')
+                return publish(transaction, value)
+            with mock.patch.object(session.NativeRegistration, 'publish', new=interrupt_final):
+                self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'deferred')
+            self.legacy_completed_registration(native)
             validate = session.validate_native_location
             vanished = False
             def remove_parent(location, **kwargs):
@@ -121,8 +138,13 @@ class WorkflowSessionTests(unittest.TestCase):
                                 mock.patch.object(session.os, 'rmdir', side_effect=removing):
                             state, reason, owner = session.retire_registered_native_sources(native.registration)
                         self.assertTrue(changed)
-                        self.assertNotEqual(state, 'retired', reason)
-                        self.assertNotEqual(owner.get('retirementPhase'), 'retired')
+                        if boundary == 'rmdir':
+                            self.assertEqual(state, 'retired', reason)
+                            self.assertEqual(owner['containerCleanup']['state'], 'retained')
+                            self.assertIn('retirementContents', owner)
+                        else:
+                            self.assertNotEqual(state, 'retired', reason)
+                            self.assertNotEqual(owner.get('retirementPhase'), 'retired')
                         self.assertEqual(sentinel.read_bytes(), b'foreign data')
                         if kind == 'directory':
                             self.assertTrue(list(native.root.parent.rglob('keep')))
@@ -140,6 +162,7 @@ class WorkflowSessionTests(unittest.TestCase):
                         state, _, _ = session.retire_registered_native_sources(native.registration)
                     self.assertEqual(state, 'deferred')
                     self.assertTrue(sync.called)
+                self.legacy_completed_registration(native)
                 owner = json.loads(native.registration.read_text())
                 self.assertEqual(owner['retirementPhase'], 'deleting')
                 native.root.parent.rmdir()
@@ -306,6 +329,7 @@ class WorkflowSessionTests(unittest.TestCase):
                     return publish(transaction, value)
                 with mock.patch.object(session.NativeRegistration, 'publish', new=interrupt_final):
                     self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'deferred')
+                self.legacy_completed_registration(native)
                 owner = json.loads(native.registration.read_text())
                 native.root.parent.rmdir()
                 ancestor_identity = session.native_directory_identity(native.root.parent.parent)
@@ -784,7 +808,7 @@ class WorkflowSessionTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), b'finalization-\x00\xff')
             self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
 
-    def test_uncertified_removed_tree_stays_protected_after_sync_failure(self):
+    def test_content_retirement_survives_container_sync_failure_without_fabricating_removal(self):
         for code in (errno.EACCES, errno.EPERM):
             with self.subTest(errno=code), self.completed_native_fixture() as (native, source):
                 sync = session.os.fsync
@@ -798,14 +822,17 @@ class WorkflowSessionTests(unittest.TestCase):
                     return sync(descriptor)
                 with mock.patch.object(session.os, 'fsync', side_effect=fail_removed_parent):
                     state, reason, owner = session.retire_registered_native_sources(native.registration)
-                self.assertEqual(state, 'deferred', reason)
-                self.assertEqual(owner['retirementPhase'], 'deleting')
-                self.assertEqual(owner['retirementOutcome']['operation'], 'sync-retirement-parent')
+                self.assertEqual(state, 'retired', reason)
+                self.assertEqual(owner['retirementPhase'], 'retired')
+                self.assertEqual(owner['containerCleanup']['operation'], 'sync-container-parent')
+                self.assertEqual(owner['containerCleanup']['state'], 'deferred')
+                self.assertIn('retirementContents', owner)
                 self.assertNotIn('retirementCompletion', owner)
                 for retry in (False, True):
-                    state, reason, _ = session.retire_registered_native_sources(native.registration, retry_retained=retry)
-                    self.assertEqual(state, 'retained', reason)
-                    self.assertTrue(session.native_completion_path(native.registration).exists())
+                    state, reason, after = session.retire_registered_native_sources(native.registration, retry_retained=retry)
+                    self.assertEqual(state, 'retired', reason)
+                    self.assertEqual(after['containerCleanup']['reason'], 'empty-container-location-unproven')
+                    self.assertFalse(session.native_completion_path(native.registration).exists())
                 self.assertEqual((native.archive / source.name).read_bytes(), b'finalization-\x00\xff')
 
     def test_missing_registration_does_not_create_retirement_controls(self):
@@ -962,11 +989,15 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
             print(json.dumps({'handoffCounts': {'before': 1, 'after': len(list(completion.parent.glob('*.json')))}}))
 
     def test_redundant_handoff_cleanup_is_authorized_and_independent_of_source_status(self):
-        for refusal in ('authorization', 'unlink', 'symlink', 'malformed', 'source-reappeared'):
+        for refusal in ('authorization', 'unlink', 'symlink', 'malformed', 'source-reappeared', 'legacy-source-reappeared'):
             with self.subTest(refusal=refusal), self.completed_native_fixture() as (native, _):
                 completion = session.native_completion_path(native.registration)
                 envelope = json.loads(completion.read_text())
                 self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
+                if refusal == 'legacy-source-reappeared':
+                    legacy = json.loads(native.registration.read_text())
+                    legacy['retirementCompletion'] = legacy.pop('retirementContents')
+                    session.atomic_json(native.registration, legacy)
                 session.atomic_json(completion, envelope)
                 audit = native.registration.read_bytes()
                 @contextlib.contextmanager
@@ -981,7 +1012,7 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
                     completion.symlink_to(foreign)
                 elif refusal == 'malformed':
                     session.atomic_json(completion, [])
-                elif refusal == 'source-reappeared':
+                elif refusal in ('source-reappeared', 'legacy-source-reappeared'):
                     native.root.mkdir()
                 unlink = session.os.unlink
                 def refuse_unlink(path, *args, **kwargs):
@@ -992,8 +1023,13 @@ print(json.dumps({'diagnosticFiles': 130, 'sourceOpens': source_opens, 'peakDesc
                     state, _, owner = session.retire_registered_native_sources(native.registration, authorize=authorize)
                 self.assertEqual(state, 'retired')
                 self.assertEqual(native.registration.read_bytes(), audit)
-                self.assertTrue(completion.exists())
-                self.assertIn(owner['handoffCleanup']['state'], {'deferred', 'retained'})
+                if refusal == 'source-reappeared':
+                    self.assertFalse(completion.exists())
+                    self.assertEqual(owner['handoffCleanup']['state'], 'removed')
+                    self.assertTrue(native.root.is_dir())
+                else:
+                    self.assertTrue(completion.exists())
+                    self.assertIn(owner['handoffCleanup']['state'], {'deferred', 'retained'})
                 if refusal == 'authorization':
                     self.assertEqual(owner['handoffCleanup']['reason'], 'newer commit queued')
                 if refusal == 'unlink':
@@ -3071,6 +3107,9 @@ native.close()
                 outcome = session.retire_native_sources(owner, persist=lambda value: session.atomic_json(native.registration, value))
                 state = outcome.state
                 self.assertEqual(state, 'retired')
+                self.assertIn('retirementContents', owner)
+                self.assertEqual(list(pathlib.Path(owner['retirementPath']).iterdir()), [])
+                self.assertEqual(session.retire_registered_native_sources(native.registration)[0], 'retired')
                 self.assertFalse(pathlib.Path(owner['retirementPath']).exists())
 
     def test_native_retirement_rechecks_source_after_registered_rename_boundary(self):
