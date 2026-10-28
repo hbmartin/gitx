@@ -318,8 +318,186 @@ final class GitBinaryTests: XCTestCase {
     }
 
     func testDiscoveryVersionAndFallbackErrorRemainAvailable() {
+        let ready = expectation(description: "The shared facade has finished initial discovery")
+        PBGitBinary.whenAvailable { path, error in
+            XCTAssertNotNil(path)
+            XCTAssertNil(error)
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 10)
         XCTAssertFalse(PBGitBinary.searchLocations().isEmpty)
         XCTAssertNotNil(PBGitBinary.version())
         XCTAssertFalse(PBGitBinary.notFoundError().isEmpty)
+    }
+}
+
+/// Characterizes the Objective-C document before extracting its scripting decisions.
+@MainActor
+final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
+    private final class WindowProbe: GitX.PBGitWindowController {
+        var actions: [String] = []
+        override func showUncommittedChanges(_: Any?) {
+            actions.append("commit")
+        }
+
+        override func showHistoryView(_: Any?) {
+            actions.append("history")
+        }
+
+        override func showWindow(_: Any?) {
+            actions.append("show")
+        }
+
+        override func setHistorySearch(_ text: String, mode: PBHistorySearchMode) {
+            actions.append("search:\(text):\(mode.rawValue)")
+        }
+    }
+
+    private var directory: URL!
+    private var document: PBGitRepositoryDocument!
+    private var window: WindowProbe!
+
+    private func prepareFixture() throws {
+        let ready = expectation(description: "Validated Git before document characterization")
+        PBGitBinary.whenAvailable { path, error in
+            XCTAssertNotNil(path)
+            XCTAssertNil(error)
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 10)
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try GitXTestGitFixture.run(["init", "--initial-branch=main"], in: directory)
+        try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "fixture"], in: directory)
+        try GitXTestGitFixture.run(["branch", "topic"], in: directory)
+        document = try PBGitRepositoryDocument(contentsOf: directory, ofType: PBGitRepositoryDocumentType)
+        window = WindowProbe(window: NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
+                                              styleMask: [.titled], backing: .buffered, defer: false))
+        document.addWindowController(window)
+    }
+
+    private func removeFixture() throws {
+        document?.repository.revisionList?.cleanup()
+        document?.repository.revisionList = nil
+        document?.close()
+        document = nil
+        window = nil
+        if let directory {
+            try FileManager.default.removeItem(at: directory)
+        }
+        directory = nil
+    }
+
+    func testSupportedOptionsPreserveViewsFiltersAndRevisionArguments() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        for option in ["-c", "--commit"] {
+            apply([option])
+            XCTAssertEqual(window.actions.last, "commit")
+        }
+        for (option, filter) in [("--all", 0), ("--local", 1), ("--branch", 2)] {
+            apply([option])
+            XCTAssertEqual(document.repository.currentBranchFilter, filter)
+            XCTAssertEqual(window.actions.last, "history")
+        }
+        apply(["topic"])
+        XCTAssertEqual(document.repository.currentBranch?.description, "topic")
+        apply(["--max-count=7", "HEAD"])
+        XCTAssertEqual(document.repository.currentBranch?.parameters as? [String], ["--max-count=7", "HEAD"])
+        let count = window.actions.count
+        apply([])
+        _ = document.perform(NSSelectorFromString("handleRevListArguments:"), with: [])
+        XCTAssertEqual(window.actions.count, count)
+    }
+
+    func testDocumentActionsAndPresentationRemainWired() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        XCTAssertFalse(document.isDocumentEdited)
+        XCTAssertTrue(document.displayName.contains("branch: main"))
+        XCTAssertTrue(document.windowController() === window)
+        document.showUncommittedChanges(self)
+        document.showHistoryView(self)
+        document.selectRevisionSpecifier(PBGitRevSpecifier(parameters: ["HEAD"]))
+        XCTAssertEqual(window.actions, ["commit", "history", "history"])
+        document.showWindows()
+        XCTAssertEqual(window.actions.last, "show")
+        XCTAssertEqual(window.window?.title, document.displayName)
+        document.removeWindowController(window)
+        XCTAssertNil(document.windowController())
+        document.makeWindowControllers()
+        XCTAssertEqual(document.windowControllers.count, 1)
+    }
+
+    func testSynchronousScriptContextOnlyAppliesToItsOwnRepository() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let descriptions = try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "Standard Suite"))
+        let description = try XCTUnwrap(descriptions["open"])
+        let command = NSScriptCommand(commandDescription: description)
+        command.arguments = ["openOptions": ["--commit"]]
+        for parameter: Any in try ["not a URL", directory.appendingPathComponent("missing"), XCTUnwrap(directory)] {
+            let previous = window.actions.filter { $0 == "commit" }.count
+            command.directParameter = parameter
+            let method = try XCTUnwrap(class_getClassMethod(NSScriptCommand.self, NSSelectorFromString("currentCommand")))
+            let original = method_getImplementation(method)
+            let replacement: @convention(block) (AnyObject) -> NSScriptCommand? = { _ in command }
+            let implementation = imp_implementationWithBlock(replacement)
+            method_setImplementation(method, implementation)
+            document.showWindows()
+            method_setImplementation(method, original)
+            imp_removeBlock(implementation)
+            XCTAssertEqual(window.actions.filter { $0 == "commit" }.count - previous, parameter as? URL == directory ? 1 : 0)
+        }
+    }
+
+    func testSearchCommandAndFilePresenterCallbacks() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let descriptions = try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "Standard Suite"))
+        let command = try NSScriptCommand(commandDescription: XCTUnwrap(descriptions["open"]))
+        command.arguments = [:]
+        document.find(inModeScriptCommand: command)
+        XCTAssertTrue(window.actions.isEmpty)
+        command.arguments = ["searchString": "needle", "inMode": 0]
+        document.find(inModeScriptCommand: command)
+        XCTAssertEqual(window.actions.first, "history")
+        XCTAssertTrue(window.actions.last?.hasPrefix("search:needle:") == true)
+        let removed = expectation(description: "File-presenter deletion acknowledges closure")
+        document.accommodatePresentedItemDeletion { error in
+            XCTAssertNil(error)
+            removed.fulfill()
+        }
+        wait(for: [removed], timeout: 5)
+        document.presentedItemDidMove(to: directory.appendingPathComponent("moved"))
+        let moved = expectation(description: "File-presenter move drains on main queue")
+        DispatchQueue.main.async { moved.fulfill() }
+        wait(for: [moved], timeout: 5)
+    }
+
+    func testReadRejectsShallowAndNonDirectoryInputsWithoutChangingTheirBytes() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let file = directory.appendingPathComponent("ordinary-file")
+        try Data("keep".utf8).write(to: file)
+        XCTAssertThrowsError(try PBGitRepositoryDocument(contentsOf: file, ofType: PBGitRepositoryDocumentType))
+        XCTAssertEqual(try Data(contentsOf: file), Data("keep".utf8))
+        let malformed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: malformed, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: malformed) }
+        XCTAssertThrowsError(try PBGitRepositoryDocument(contentsOf: malformed, ofType: PBGitRepositoryDocumentType))
+        let head = try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput
+        let shallow = directory.appendingPathComponent(".git/shallow")
+        try head.write(to: shallow, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try PBGitRepositoryDocument(contentsOf: directory, ofType: PBGitRepositoryDocumentType)) { error in
+            XCTAssertFalse((error as NSError).localizedRecoveryOptions?.isEmpty ?? true)
+        }
+        XCTAssertEqual(try String(contentsOf: shallow, encoding: .utf8), head)
+        document.applyGitXOpenArguments(nil)
+        XCTAssertTrue(window.actions.isEmpty)
+    }
+
+    private func apply(_ arguments: [String]) {
+        document.applyGitXOpenArguments(arguments)
     }
 }
