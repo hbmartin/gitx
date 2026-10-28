@@ -603,6 +603,16 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let delivered = expectation(description: "Closed-window notification drains")
         DispatchQueue.main.async { delivered.fulfill() }
         wait(for: [delivered], timeout: 3)
+        // A notification already queued off-main may arrive after observer removal.
+        let lateCallback = expectation(description: "Late background notification returns")
+        DispatchQueue.global().async {
+            actual.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+            lateCallback.fulfill()
+        }
+        wait(for: [lateCallback], timeout: 3)
+        let lateDelivery = expectation(description: "Late loader update drains on main")
+        DispatchQueue.main.async { lateDelivery.fulfill() }
+        wait(for: [lateDelivery], timeout: 3)
         XCTAssertEqual(actual.gitLoaderSelection?.path, replacement.path, "A closed owner must not recreate loaders")
     }
 
