@@ -91,16 +91,18 @@ def notarize(archive, directory, environment, *, run=subprocess.run, now=time.mo
             if status in ("Invalid", "Rejected"):
                 raise NotarizationError(f"Notarization finished with status {status}")
             remaining = deadline - now()
-            if remaining <= 0:
-                raise NotarizationError(f"Notarization was not accepted within {timeout} seconds")
-            attempt += 1
-            print(f"[gitx-notary] Waiting for {identifier}, attempt {attempt}")
-            invoke(["wait", identifier, "--timeout", f"{max(1, int(min(1200, remaining)))}s"],
-                   f"notary-wait-{attempt}", remaining)
-            remaining = deadline - now()
-            if remaining <= 0:
-                raise NotarizationError(f"Notarization was not accepted within {timeout} seconds")
-            information = invoke(["info", identifier, "--output-format", "json"], f"notary-info-{attempt}", remaining)
+            if remaining > 0:
+                attempt += 1
+                print(f"[gitx-notary] Waiting for {identifier}, attempt {attempt}")
+                invoke(["wait", identifier, "--timeout", f"{max(1, int(min(1200, remaining)))}s"],
+                       f"notary-wait-{attempt}", remaining)
+                remaining = deadline - now()
+            final_check = remaining <= 0
+            if final_check:
+                print(f"[gitx-notary] Confirming final status for {identifier}")
+            information = invoke(["info", identifier, "--output-format", "json"],
+                                 "notary-info-final" if final_check else f"notary-info-{attempt}",
+                                 30 if final_check else remaining)
             if information.returncode == 0:
                 result = response(information.stdout)
                 if submission_identifier(result) != identifier:
@@ -110,6 +112,8 @@ def notarize(archive, directory, environment, *, run=subprocess.run, now=time.mo
                     raise NotarizationError("Unknown notarization status")
                 if status in ("Accepted", "Invalid", "Rejected"):
                     continue
+            if final_check:
+                raise NotarizationError(f"Notarization was not accepted within {timeout} seconds")
             remaining = deadline - now()
             if remaining > 0:
                 sleep(min(interval, remaining))
