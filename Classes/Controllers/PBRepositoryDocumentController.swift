@@ -125,45 +125,75 @@ class PBRepositoryDocumentController: NSDocumentController {
         display displayDocument: Bool,
         completionHandler: @escaping (NSDocument?, Bool, (any Error)?) -> Void
     ) {
+        let intent = RepositoryDocumentOpenIntent(command: NSScriptCommand.current())
         openState.beginOpen()
         NSLog("[RepositoryOpening] Opening %@; pending=%ld", url.path, openState.pendingOpenCount)
-        if gitDiscovery.isReady {
-            openValidatedDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler)
+        if let existing = existingDocument(for: url) {
+            finishOpening(existing, alreadyOpen: true, error: nil, url: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
+        } else if gitDiscovery.isReady {
+            openValidatedDocument(withContentsOf: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
         } else {
-            gitDiscovery.whenAvailable { [self] _, error in
+            gitDiscovery.start(retryingFailure: true)
+            gitDiscovery.whenSelectionAvailable { [self] _, error in
                 if let error {
-                    finishOpenAccounting()
-                    completionHandler(nil, false, error)
+                    finishOpening(nil, alreadyOpen: false, error: error, url: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
                 } else {
-                    openValidatedDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler)
+                    openValidatedDocument(withContentsOf: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
                 }
             }
+        }
+    }
+
+    private func existingDocument(for url: URL) -> NSDocument? {
+        if let existing = document(for: url) {
+            return existing
+        }
+        guard let gitURL = PBRepositoryFinder.gitDir(for: url)?.standardizedFileURL.resolvingSymlinksInPath() else { return nil }
+        return documents.compactMap { $0 as? PBGitRepositoryDocument }.first {
+            $0.repository.gitURL()?.standardizedFileURL.resolvingSymlinksInPath() == gitURL
         }
     }
 
     private func openValidatedDocument(
         withContentsOf url: URL,
         display displayDocument: Bool,
+        intent: RepositoryDocumentOpenIntent,
         completionHandler: @escaping (NSDocument?, Bool, (any Error)?) -> Void
     ) {
-        super.openDocument(withContentsOf: url, display: displayDocument) { [weak self] document, alreadyOpen, error in
-            guard let self else {
-                completionHandler(document, alreadyOpen, error)
-                return
-            }
-            if let document {
-                let repositoryURL = (document.fileURL ?? url).standardizedFileURL
-                openState.finishOpen(successfulURL: repositoryURL)
-                RecentRepositoryStore.shared.record(repositoryURL)
-                WelcomeWindowController.closeIfShown()
-                NSLog("[RepositoryOpening] Opened %@", repositoryURL.path)
-            } else {
-                openState.finishOpen()
-                NSLog("[RepositoryOpening] Open failed for %@: %@", url.path, error?.localizedDescription ?? "cancelled")
-            }
-            didUpdateOpenState()
-            completionHandler(document, alreadyOpen, error)
+        // AppKit opens without displaying so the request is attached before showWindows.
+        super.openDocument(withContentsOf: url, display: false) { [self] document, alreadyOpen, error in
+            finishOpening(document, alreadyOpen: alreadyOpen, error: error, url: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
         }
+    }
+
+    private func finishOpening(
+        _ document: NSDocument?, alreadyOpen: Bool, error: (any Error)?, url: URL,
+        display: Bool, intent: RepositoryDocumentOpenIntent,
+        completionHandler: (NSDocument?, Bool, (any Error)?) -> Void
+    ) {
+        if let document {
+            if let repositoryDocument = document as? PBGitRepositoryDocument,
+               let arguments = intent.arguments(for: repositoryDocument)
+            {
+                RepositoryDocumentScripting.enqueue(arguments, for: repositoryDocument)
+            }
+            if display {
+                if document.windowControllers.isEmpty {
+                    document.makeWindowControllers()
+                }
+                document.showWindows()
+            }
+            let repositoryURL = (document.fileURL ?? url).standardizedFileURL
+            openState.finishOpen(successfulURL: repositoryURL)
+            RecentRepositoryStore.shared.record(repositoryURL)
+            WelcomeWindowController.closeIfShown()
+            NSLog("[RepositoryOpening] Opened %@; reused=%d", repositoryURL.path, alreadyOpen)
+        } else {
+            openState.finishOpen()
+            NSLog("[RepositoryOpening] Open failed for %@: %@", url.path, error?.localizedDescription ?? "cancelled")
+        }
+        didUpdateOpenState()
+        completionHandler(document, alreadyOpen, error)
     }
 
     private func finishOpenAccounting() {

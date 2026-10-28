@@ -22,6 +22,7 @@ class NotarizationTests(unittest.TestCase):
                                 GITX_NOTARIZATION_TIMEOUT_SECONDS="4", GITX_NOTARIZATION_POLL_SECONDS="1")
         self.clock = 0
         self.commands = []
+        self.command_timeouts = []
         self.initial = {"id": self.identifier}
         self.information = [(0, {"id": self.identifier, "status": "Accepted"})]
         self.submit_status = 0
@@ -30,6 +31,7 @@ class NotarizationTests(unittest.TestCase):
 
     def run_command(self, command, **options):
         self.commands.append(command)
+        self.command_timeouts.append((command[2], options["timeout"]))
         self.assertGreater(options["timeout"], 0)
         operation = command[2]
         if operation == "log":
@@ -79,10 +81,57 @@ class NotarizationTests(unittest.TestCase):
 
     def test_process_timeout_retains_partial_bytes_and_stops_waiting(self):
         self.wait_timeout = True
+        self.information = [(0, {"id": self.identifier, "status": "In Progress"})]
         with self.assertRaisesRegex(self.module.NotarizationError, "within 4 seconds"):
             self.perform()
         self.assertEqual((self.directory / "notary-wait-1.json").read_text(), "interrupted")
         self.assertEqual((self.directory / "notary-wait-1.stderr").read_text(), "transport")
+
+    def test_acceptance_at_deadline_gets_one_bounded_final_check_without_resubmission(self):
+        self.wait_timeout = True
+        self.perform()
+        self.assertEqual([command[2] for command in self.commands], ["submit", "wait", "info", "log"])
+        self.assertEqual(self.command_timeouts[-2], ("info", 30))
+        self.assertTrue((self.directory / "notary-info-final.json").exists())
+        self.assertEqual(self.clock, 4)
+
+    def test_final_check_validates_terminal_status_identity_and_transport(self):
+        for status, value, expected in [
+            (0, {"id": self.identifier, "status": "Rejected"}, "Rejected"),
+            (0, {"id": self.identifier, "status": "Invalid"}, "Invalid"),
+            (0, {"id": self.identifier, "status": "In Progress"}, "within 4 seconds"),
+            (0, "malformed", "Malformed"),
+            (0, {"id": "87654321-1234-1234-1234-123456789abc", "status": "Accepted"}, "different submission"),
+            (24, "transport failure", "within 4 seconds"),
+        ]:
+            with self.subTest(value=value):
+                self.clock = 0
+                self.commands.clear()
+                self.command_timeouts.clear()
+                self.wait_timeout = True
+                self.information = [(status, value)]
+                with self.assertRaisesRegex(self.module.NotarizationError, expected):
+                    self.perform()
+                self.assertEqual([command[2] for command in self.commands], ["submit", "wait", "info", "log"])
+                self.assertEqual(self.command_timeouts[-2], ("info", 30))
+
+    def test_final_info_timeout_retains_partial_evidence_and_never_repeats_confirmation(self):
+        self.wait_timeout = True
+        def run(command, **options):
+            if command[2] == "info":
+                self.commands.append(command)
+                self.command_timeouts.append(("info", options["timeout"]))
+                self.clock += options["timeout"]
+                raise subprocess.TimeoutExpired(command, options["timeout"], output=b"partial status", stderr=b"network")
+            return self.run_command(command, **options)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(self.module.NotarizationError, "within 4 seconds"):
+                self.module.notarize("fixture.zip", self.directory, self.environment,
+                                     run=run, now=lambda: self.clock, sleep=self.sleep)
+        self.assertEqual([command[2] for command in self.commands], ["submit", "wait", "info", "log"])
+        self.assertEqual(self.clock, 34)
+        self.assertEqual((self.directory / "notary-info-final.json").read_text(), "partial status")
+        self.assertEqual((self.directory / "notary-info-final.stderr").read_text(), "network")
 
     def test_terminal_rejections_fetch_diagnostics(self):
         for status in ("Invalid", "Rejected"):

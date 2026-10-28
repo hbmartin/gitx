@@ -10,6 +10,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private var explicitlyAssignedRepository: PBGitRepository?
     private var focusRefreshCoordinator: RepositoryFocusRefreshCoordinator?
+    var gitDiscovery = GitBinaryDiscovery.shared
+    private(set) final var gitLoaderSelection: GitBinarySelection?
+    private var gitLoaderOwnerActive = false
     private var actionContextResolver: RepositoryActionContextResolver?
     private var remoteActionCoordinator: RepositoryRemoteActionCoordinator?
     final var pullRequestUIController: RepositoryPullRequestUIController?
@@ -161,10 +164,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func ensureFocusRefreshCoordinator() {
-        guard focusRefreshCoordinator == nil, let repository else { return }
+        guard focusRefreshCoordinator == nil, let repository,
+              let selection = gitLoaderSelection ?? gitDiscovery.currentSelection else { return }
+        gitLoaderSelection = selection
         focusRefreshCoordinator = RepositoryFocusRefreshCoordinator(
             repository: repository,
-            gitExecutablePath: PBGitBinary.path() ?? ""
+            gitExecutablePath: selection.path
         ) { [weak self] in
             guard let self else { return }
             self.refreshLocalRepositoryContent()
@@ -211,6 +216,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc public dynamic func windowWillClose(_ notification: Notification) {
         // Cancellation can synchronously deliver a pending operation's result.
         invalidateWorktreePresentation()
+        gitLoaderOwnerActive = false
         NotificationCenter.default.removeObserver(self)
         focusRefreshCoordinator?.cancel()
         worktreeObservations.removeAll()
@@ -366,6 +372,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     override open func windowDidLoad() {
         super.windowDidLoad()
+        gitLoaderOwnerActive = true
         ForgeDeepLinkApplicationRouter.shared.installIfNeeded()
         ensureActionCoordinators()
         ensureFocusRefreshCoordinator()
@@ -400,6 +407,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             name: NSApplication.didBecomeActiveNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(self, selector: #selector(gitBinaryDidChange(_:)),
+                                               name: .PBGitBinaryDidChange, object: nil)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(refreshPreferenceDidChange(_:)),
@@ -443,6 +452,32 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         ensureFocusRefreshCoordinator()
         focusRefreshCoordinator?.applicationDidBecomeActive()
         repositoryForgeOverlaySession?.requestRefresh(reason: .applicationActivated)
+    }
+
+    @objc nonisolated func gitBinaryDidChange(_: Notification) {
+        if Thread.isMainThread {
+            // swift6-safety-justification: The thread check establishes main-actor ownership for the Objective-C notification.
+            MainActor.assumeIsolated { applyActiveGitSelection() }
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.applyActiveGitSelection() }
+        }
+    }
+
+    private func applyActiveGitSelection() {
+        guard gitLoaderOwnerActive else { return }
+        guard let selection = gitDiscovery.currentSelection, selection != gitLoaderSelection else { return }
+        focusRefreshCoordinator?.cancel()
+        focusRefreshCoordinator = nil
+        repositoryLocalStatusLoader?.cancel()
+        repositoryLocalStatusLoader = nil
+        gitLoaderSelection = selection
+        repositoryLocalStatusSnapshot = .unavailable
+        ensureFocusRefreshCoordinator()
+        focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
+        installRepositoryLocalStatusLoader(selection: selection)
+        repositoryLocalStatusLoader?.refresh()
+        updateStatus()
+        NSLog("[GitX] Replaced repository Git loaders with %@", selection.path)
     }
 
     @objc(forgeApplicationAvailabilityDidChange:)
@@ -1021,7 +1056,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func installRepositoryStatusBar() {
-        guard let splitView, let contentView = window?.contentView, let repository else { return }
+        guard let splitView, let contentView = window?.contentView, repository != nil else { return }
         let controller = RepositoryStatusBarController(splitView: splitView, contentView: contentView)
         controller.presentationDidChange = { [weak self] presentation in
             self?.repositoryToolbarController?.updateForgeDiagnostic(
@@ -1031,16 +1066,23 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         repositoryStatusBarController = controller
         controller.install(visible: ApplicationSettings.repositoryStatusBarVisible)
+        if let selection = gitLoaderSelection ?? gitDiscovery.currentSelection {
+            installRepositoryLocalStatusLoader(selection: selection)
+        }
+        if let repositoryForgeOverlaySession {
+            controller.bind(to: repositoryForgeOverlaySession)
+        }
+    }
+
+    private func installRepositoryLocalStatusLoader(selection: GitBinarySelection) {
+        guard let repository else { return }
         repositoryLocalStatusLoader = RepositoryLocalStatusLoader(
             repository: repository,
-            gitExecutablePath: PBGitBinary.path() ?? ""
+            gitExecutablePath: selection.path
         ) { [weak self] snapshot in
             guard let self else { return }
             self.repositoryLocalStatusSnapshot = snapshot
             self.updateStatus()
-        }
-        if let repositoryForgeOverlaySession {
-            controller.bind(to: repositoryForgeOverlaySession)
         }
     }
 

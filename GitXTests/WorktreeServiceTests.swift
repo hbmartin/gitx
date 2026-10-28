@@ -372,6 +372,7 @@ private final class WorktreeMutationFixture {
         for request in services.flatMap({ $0.tasks.requests }) {
             request.task.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }
+        guard GitBinaryTestIsolation.prepareToRemove(root) else { return }
         try? FileManager.default.removeItem(at: root)
     }
 }
@@ -440,6 +441,7 @@ private final class WorktreeFacadeFixture {
         for request in services.flatMap({ $0.tasks.requests }) {
             request.task.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }
+        guard GitBinaryTestIsolation.prepareToRemove(root) else { return }
         try? FileManager.default.removeItem(at: root)
     }
 }
@@ -865,7 +867,9 @@ final class WorktreeServiceTests: XCTestCase {
         defer {
             defaults.set(previous, forKey: "gitExecutable")
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-            try? FileManager.default.removeItem(at: proxy)
+            if GitBinaryTestIsolation.prepareToRemove(proxy) {
+                try? FileManager.default.removeItem(at: proxy)
+            }
         }
         try "#!/bin/sh\nexec /usr/bin/git \"$@\"\n".write(to: proxy, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: proxy.path)
@@ -1265,7 +1269,9 @@ final class WorktreeServiceTests: XCTestCase {
         defer {
             defaults.set(previous, forKey: "gitExecutable")
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-            try? FileManager.default.removeItem(at: proxy)
+            if GitBinaryTestIsolation.prepareToRemove(proxy) {
+                try? FileManager.default.removeItem(at: proxy)
+            }
         }
         try "#!/bin/sh\nexec /usr/bin/git \"$@\"\n".write(to: proxy, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: proxy.path)
@@ -6207,6 +6213,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         }
 
         func cleanup() {
+            guard GitBinaryTestIsolation.prepareToRemove(root) else { return }
             try? FileManager.default.removeItem(at: root)
         }
     }

@@ -2715,6 +2715,145 @@
           "oracle": "Approve the exact ref, activate the actual checkout control and observe the named branch transition with retained screenshots."
         }
       ]
+    },
+    {
+      "id": "GIT-001",
+      "family": "Bounded Git discovery and immutable executable selection",
+      "invariant": "Only validated current preferences replace the active Git snapshot; deadlines settle every caller and each auto-fetch operation uses one injected executable.",
+      "rootCause": "Stale discovery publication clears usable state, unbounded probes strand consumers, and global path reads split an injected operation.",
+      "sourcePaths": [
+        "Classes/git/GitBinaryDiscovery.swift",
+        "Classes/git/GitDiscoveryProbe.swift",
+        "Classes/git/PBGitBinary.h",
+        "Classes/git/PBGitBinary.m",
+        "Classes/Controllers/PBAutoFetchManager.swift",
+        "GitXTests/GitBinaryTestIsolation.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testActiveSelectionRemainsAvailableWhileAValidReplacementWaits",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Read the old path and version during blocked replacement, then require the new validated snapshot."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testExternalPreferenceChangeDuringAnAbortedSearchCannotClearTheCache",
+          "role": "failure",
+          "check": "correctness",
+          "oracle": "Mutate the actual preference provider inside the probe and require the previously validated selection to survive."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testPreferenceSupersessionDoesNotRenewAnExistingAvailabilityDeadline",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance the independent clock to the original second-30 deadline despite a preference change at second 29."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/AutoFetchGitSelectionTests/testActualFetchCommandsKeepTheirInjectedSelectionAfterItChanges",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Run real Git wrapper executables and compare the command log with the captured old selection after injected discovery changes."
+        },
+        {
+          "source": "GitXTests/GitBinaryTestIsolation.swift",
+          "identifier": "GitXTests/GitBinaryTestIsolationTests/testSharedSelectionIsRestoredBeforeAnOwnedExecutableCanBeRemoved",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Publish an owned executable through the actual shared facade, authorize fixture removal, and require a validated stable selection while all owned bytes remain present."
+        }
+      ]
+    },
+    {
+      "id": "OPEN-001",
+      "family": "Captured scripting intent and existing document reuse",
+      "invariant": "Deferred opens carry copied options to their matching document exactly once, and already-open documents remain usable without discovery.",
+      "rootCause": "Reading the ambient scripting command after deferral loses options; placing readiness before AppKit lookup blocks existing windows.",
+      "sourcePaths": [
+        "Classes/Controllers/PBRepositoryDocumentController.swift",
+        "Classes/Controllers/PBGitRepositoryDocument.m",
+        "Classes/Controllers/RepositoryDocumentScripting.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "thread-sanitizer",
+        "ui"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testDeferredOpenPreservesItsScriptingOptionsAfterTheCommandEnds",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "End the actual scripting-command scope before releasing discovery, then require commit view exactly once across two showWindows calls."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAlreadyOpenRepositoryAndAliasBypassUnavailableDiscovery",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Open the registered URL and a symlink alias with an unavailable discovery and require the same document with zero probes."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testBranchFiltersConsumeOnlyTheFlagAndPreserveFollowingRevisions",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Compare actual document filters and ordered revision parameters with literal expected values for all three filter flags."
+        },
+        {
+          "source": "GitXUITests/GitXScreenshotTests.m",
+          "identifier": "GitXUITests/GitXScreenshotTests/testFolderOpenRoutesOrdinaryDottedAndBareRepositoriesThroughLaunchServices",
+          "role": "valid",
+          "check": "ui",
+          "oracle": "Deliver ordinary, dotted and bare repository folders to the real application and wait for repository windows."
+        }
+      ]
+    },
+    {
+      "id": "GIT-002",
+      "family": "Responsive Git warnings and window executable refresh",
+      "invariant": "Git preference warnings never block readiness or main-queue work, and live repository loaders follow active selection changes.",
+      "rootCause": "Modal warnings delay queued work and immutable loaders retain obsolete executable paths after Settings changes.",
+      "sourcePaths": [
+        "Classes/git/GitBinaryDiscoveryPresenter.swift",
+        "Classes/Controllers/PBGitWindowController.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "ui",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitDiscoveryPresentationTests/testWarningWaitsForAWindowAndNeverBlocksReadinessOrMainQueueWork",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Queue a rejected preference without a window, present it when a parent arrives, and require an independent main-queue heartbeat before dismissal."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testOpenWindowReplacesItsGitLoadersAndIgnoresChangesAfterClose",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Load a real window, publish a different validated executable, and require snapshot replacement only while the owner is open."
+        },
+        {
+          "source": "GitXUITests/GitXScreenshotTests.m",
+          "identifier": "GitXUITests/GitXScreenshotTests/testSettingsRemainResponsiveDuringGitValidationAndFallback",
+          "role": "valid",
+          "check": "ui",
+          "oracle": "Open real Settings while a Git probe stalls, release or time out that owned probe, and require a repository window with unchanged Git status."
+        }
+      ]
     }
   ]
 }

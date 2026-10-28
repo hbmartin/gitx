@@ -513,7 +513,6 @@ static NSString *PBWindowLastMessage;
 static NSString *PBWindowLastInfo;
 static NSString *PBWindowLastTerminalCommand;
 static NSURL *PBWindowLastTerminalDirectory;
-static atomic_ulong PBWindowMissingGitPathRequestCount;
 static atomic_bool PBWindowUseSnapshotTaskFake;
 static NSData *PBWindowSnapshotData;
 static NSError *PBWindowSnapshotError;
@@ -797,18 +796,6 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowWorkspaceRevealCount++;
 }
 
-@end
-
-@interface PBGitBinary (WindowMissingExecutableTests)
-+ (nullable NSString *)pb_window_missingGitExecutablePath;
-@end
-
-@implementation PBGitBinary (WindowMissingExecutableTests)
-+ (nullable NSString *)pb_window_missingGitExecutablePath
-{
-	atomic_fetch_add_explicit(&PBWindowMissingGitPathRequestCount, 1, memory_order_relaxed);
-	return nil;
-}
 @end
 
 @interface NSDocumentController (WindowControllerTests)
@@ -1943,27 +1930,6 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertNil(controller.historyViewController);
 	[window orderOut:nil];
 	[window close];
-}
-
-- (void)testRepositoryWindowConstructsItsRefreshAndStatusCoordinatorsWithoutAGitExecutable
-{
-	PBGitRepositoryDocument *document = [PBGitRepositoryDocument new];
-	[document setValue:self.repository forKey:@"_repository"];
-	PBGitWindowController *controller = [PBGitWindowController new];
-	controller.document = document;
-	atomic_store_explicit(&PBWindowMissingGitPathRequestCount, 0, memory_order_relaxed);
-	PBSwapClassMethods(PBGitBinary.class, @selector(path), @selector(pb_window_missingGitExecutablePath));
-	@try {
-		XCTAssertNoThrow([controller window]);
-		XCTAssertTrue(controller.isWindowLoaded);
-		XCTAssertNotNil(controller.historyViewController);
-		XCTAssertEqualObjects(controller.window.representedURL, self.repository.workingDirectoryURL);
-		XCTAssertGreaterThanOrEqual(atomic_load_explicit(&PBWindowMissingGitPathRequestCount, memory_order_relaxed), 2U, @"both local coordinators accept missing executable discovery");
-	} @finally {
-		PBSwapClassMethods(PBGitBinary.class, @selector(path), @selector(pb_window_missingGitExecutablePath));
-		[controller.window orderOut:nil];
-		[controller.window close];
-	}
 }
 
 - (void)testContentStatusRefreshAndViewRoutingWithProgrammaticCollaborators

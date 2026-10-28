@@ -681,6 +681,18 @@ static NSUInteger PBBinaryVersionProbeCount;
 
 @implementation GitXRefAndRevisionTests
 
+- (void)setUp
+{
+	[super setUp];
+	XCTestExpectation *ready = [self expectationWithDescription:@"Validated shared Git before facade tests"];
+	[PBGitBinary whenAvailable:^(NSString *path, NSError *error) {
+		XCTAssertNotNil(path);
+		XCTAssertNil(error);
+		[ready fulfill];
+	}];
+	[self waitForExpectations:@[ ready ] timeout:10];
+}
+
 - (void)testGitVersionGetterUsesTheValidatedCacheWithoutLaunchingAnotherProbe
 {
 	(void)PBGitBinary.path;
@@ -708,8 +720,10 @@ static NSUInteger PBBinaryVersionProbeCount;
 		XCTAssertTrue([@"not executable" writeToURL:nonexecutable atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
 		XCTAssertNil([PBGitBinary versionForPath:nonexecutable.path]);
 	} @finally {
-		XCTAssertTrue([PBGitBinary acceptBinary:originalPath]);
-		[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+		BOOL restored = [PBGitBinary acceptBinary:originalPath];
+		XCTAssertTrue(restored);
+		XCTAssertEqualObjects(PBGitBinary.path, originalPath);
+		if (restored) [NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
 	}
 }
 
@@ -729,8 +743,10 @@ static NSUInteger PBBinaryVersionProbeCount;
 			XCTAssertEqualObjects(PBGitBinary.path, executable.path);
 		}
 	} @finally {
-		XCTAssertTrue([PBGitBinary acceptBinary:originalPath]);
-		[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+		BOOL restored = [PBGitBinary acceptBinary:originalPath];
+		XCTAssertTrue(restored);
+		XCTAssertEqualObjects(PBGitBinary.path, originalPath);
+		if (restored) [NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
 	}
 }
 

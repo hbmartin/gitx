@@ -21,6 +21,11 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		C0DE90340000000000000001 /* GitBinaryTestIsolation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90340000000000000002 /* GitBinaryTestIsolation.swift */; };
+		C0DE90330000000000000001 /* RepositoryDocumentScripting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90330000000000000002 /* RepositoryDocumentScripting.swift */; };
+		C0DE90320000000000000001 /* GitBinaryReliabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90320000000000000002 /* GitBinaryReliabilityTests.swift */; };
+		C0DE90310000000000000001 /* GitBinaryDiscoveryPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90310000000000000002 /* GitBinaryDiscoveryPresenter.swift */; };
+		C0DE90300000000000000001 /* GitDiscoveryProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90300000000000000002 /* GitDiscoveryProbe.swift */; };
         AAB112000000000000000001 /* InspectorActionGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB112000000000000000003 /* InspectorActionGeometryTests.swift */; };
         AAB112000000000000000002 /* InspectorActionViewport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB410853D8E493688875043 /* InspectorActionViewport.swift */; };
 		C0DE90260000000000000001 /* GitBinaryDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90260000000000000002 /* GitBinaryDiscovery.swift */; };
@@ -709,6 +714,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0DE90340000000000000002 /* GitBinaryTestIsolation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryTestIsolation.swift; sourceTree = "<group>"; };
+		C0DE90330000000000000002 /* RepositoryDocumentScripting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryDocumentScripting.swift; sourceTree = "<group>"; };
+		C0DE90320000000000000002 /* GitBinaryReliabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryReliabilityTests.swift; sourceTree = "<group>"; };
+		C0DE90310000000000000002 /* GitBinaryDiscoveryPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryDiscoveryPresenter.swift; sourceTree = "<group>"; };
+		C0DE90300000000000000002 /* GitDiscoveryProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitDiscoveryProbe.swift; sourceTree = "<group>"; };
         AAB112000000000000000003 /* InspectorActionGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorActionGeometryTests.swift; sourceTree = "<group>"; };
 		C0DE90260000000000000002 /* GitBinaryDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryDiscovery.swift; sourceTree = "<group>"; };
 		AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarLifecycleTestSupport.swift; sourceTree = "<group>"; };
@@ -1592,6 +1602,7 @@
 				4A5D763A14A9A9CC00DF6C68 /* PBPrefsWindowController.h */,
 				4A5D763B14A9A9CC00DF6C68 /* PBPrefsWindowController.m */,
 				4A5D763F14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift */,
+				C0DE90330000000000000002 /* RepositoryDocumentScripting.swift */,
 				4A5D764014A9A9CC00DF6C68 /* PBServicesController.h */,
 				4A5D764114A9A9CC00DF6C68 /* PBServicesController.m */,
 				4A5D764214A9A9CC00DF6C68 /* PBViewController.h */,
@@ -1622,6 +1633,8 @@
 				C0DE10000000000000000008 /* PBWorkingTree.m */,
 				4A5D764E14A9A9CC00DF6C68 /* PBGitBinary.h */,
 				C0DE90260000000000000002 /* GitBinaryDiscovery.swift */,
+				C0DE90310000000000000002 /* GitBinaryDiscoveryPresenter.swift */,
+				C0DE90300000000000000002 /* GitDiscoveryProbe.swift */,
 				4A5D764F14A9A9CC00DF6C68 /* PBGitBinary.m */,
 				4A5D765014A9A9CC00DF6C68 /* PBGitCommit.h */,
 				4A5D765114A9A9CC00DF6C68 /* PBGitCommit.m */,
@@ -1924,6 +1937,8 @@
 				C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */,
 				C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */,
 				C0DE81000000000000000002 /* GitBinaryTests.swift */,
+				C0DE90320000000000000002 /* GitBinaryReliabilityTests.swift */,
+				C0DE90340000000000000002 /* GitBinaryTestIsolation.swift */,
 				C0DE90260000000000000006 /* ReliabilityCompatibilityTests.swift */,
 				C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */,
 				C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */,
@@ -2550,12 +2565,15 @@
 				4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */,
 				6C4855C81D57DCFC0027A7B4 /* PBTerminalUtil.m in Sources */,
 				4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift in Sources */,
+				C0DE90330000000000000001 /* RepositoryDocumentScripting.swift in Sources */,
 				4A5D76EE14A9A9CC00DF6C68 /* PBServicesController.m in Sources */,
 				4A5D76EF14A9A9CC00DF6C68 /* PBViewController.m in Sources */,
 				4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */,
 				4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */,
 				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.swift in Sources */,
 				C0DE90260000000000000001 /* GitBinaryDiscovery.swift in Sources */,
+				C0DE90310000000000000001 /* GitBinaryDiscoveryPresenter.swift in Sources */,
+				C0DE90300000000000000001 /* GitDiscoveryProbe.swift in Sources */,
 				4A5D76F414A9A9CC00DF6C68 /* PBGitBinary.m in Sources */,
 				C0DE90000000000000000021 /* GitXCommitCopier.swift in Sources */,
 				4A5D76F514A9A9CC00DF6C68 /* PBGitCommit.m in Sources */,
@@ -2713,6 +2731,8 @@
 				C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */,
 				C0DEB1000000000000000003 /* PBChildProcessOwner.swift in Sources */,
 				C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */,
+				C0DE90320000000000000001 /* GitBinaryReliabilityTests.swift in Sources */,
+				C0DE90340000000000000001 /* GitBinaryTestIsolation.swift in Sources */,
 				C0DE90260000000000000005 /* ReliabilityCompatibilityTests.swift in Sources */,
 				C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */,
 				C0DE84000000000000000001 /* StagingDiffPaneControllerTests.swift in Sources */,
