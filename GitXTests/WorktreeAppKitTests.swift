@@ -3602,6 +3602,7 @@ final class WorktreeAppKitTests: XCTestCase {
         }
 
         func cleanup() {
+            guard GitBinaryTestIsolation.prepareToRemove(root) else { return }
             try? FileManager.default.removeItem(at: root)
         }
     }

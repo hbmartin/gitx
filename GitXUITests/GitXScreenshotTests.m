@@ -11,6 +11,7 @@
 #import <AppKit/AppKit.h>
 #import <fcntl.h>
 #import <sys/stat.h>
+#import <unistd.h>
 #import "GitXUITests-Swift.h"
 
 // The app needs fixtures outside the runner's container, which macOS protects as another app's data.
@@ -48,6 +49,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 @interface GitXScreenshotTests : XCTestCase
 @property (nonatomic, strong) XCUIApplication *app;
 @property (nonatomic, strong) NSMutableArray<NSString *> *temporaryRepositoryPaths;
+@property (nonatomic, copy, nullable) void (^releaseGitValidation)(void);
 - (NSString *)makeDirtyRepositoryFixture;
 - (void)prepareDefaultLaunchEnvironment;
 - (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
@@ -90,6 +92,8 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 
 - (void)tearDown
 {
+	if (self.releaseGitValidation) self.releaseGitValidation();
+	self.releaseGitValidation = nil;
 	[self.app terminate];
 	for (NSString *path in self.temporaryRepositoryPaths) {
 		[[NSFileManager defaultManager] removeItemAtPath:path error:nil];
@@ -364,17 +368,35 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	}
 }
 
-- (void)testSettingsRemainResponsiveWhileGitValidationWaits
+// Reuses this Objective-C class's private launch, fixture and screenshot lifecycle helpers.
+- (void)testSettingsRemainResponsiveDuringGitValidationAndFallback
 {
 	[self prepareDefaultLaunchEnvironment];
-	NSString *directory = self.app.launchEnvironment[@"GITX_UITEST_REPO"];
+	NSString *repository = self.app.launchEnvironment[@"GITX_UITEST_REPO"];
+	NSString *statusBefore = [self gitOutput:@[ @"status", @"--porcelain" ] inDirectory:repository];
+	NSString *directory = [GitXUIFixtureRoot stringByAppendingPathComponent:
+												 [NSString stringWithFormat:@"git-discovery-controls-%@", NSUUID.UUID.UUIDString]];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:NULL]);
+	[self.temporaryRepositoryPaths addObject:directory];
 	NSString *gate = [directory stringByAppendingPathComponent:@"git-validation.fifo"];
 	NSString *started = [directory stringByAppendingPathComponent:@"git-validation-started"];
 	NSString *released = [directory stringByAppendingPathComponent:@"git-validation-released"];
 	NSString *wrapper = [[NSBundle bundleForClass:self.class] pathForResource:@"GitDiscoveryProxy" ofType:@"sh"];
 	XCTAssertTrue([[NSFileManager defaultManager] isExecutableFileAtPath:wrapper]);
 	XCTAssertEqual(mkfifo(gate.fileSystemRepresentation, 0600), 0);
+	self.releaseGitValidation = ^{
+		[@"ready" writeToFile:released atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+		int descriptor = open(gate.fileSystemRepresentation, O_WRONLY | O_NONBLOCK);
+		// A bounded probe may already have timed out and closed its reader.
+		if (descriptor >= 0) {
+			fcntl(descriptor, F_SETNOSIGPIPE, 1);
+			(void)write(descriptor, "ready\n", 6);
+			close(descriptor);
+		}
+	};
+	XCTAssertEqualObjects(([self gitOutput:@[ @"status", @"--porcelain" ] inDirectory:repository]), statusBefore);
 	NSMutableDictionary *environment = self.app.launchEnvironment.mutableCopy;
+	environment[@"GIT_PATH"] = @"/usr/bin/git"; // Deterministic fallback after the configured probe expires.
 	environment[@"GITX_DISCOVERY_PROXY_GATE"] = gate;
 	environment[@"GITX_DISCOVERY_PROXY_STARTED"] = started;
 	environment[@"GITX_DISCOVERY_PROXY_RELEASE"] = released;
@@ -394,21 +416,30 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	[self.app.menuItems[@"Settings…"] click];
 	XCUIElement *setting = self.app.checkBoxes[@"Watch for changes in repositories"];
 	XCTAssertTrue([setting waitForExistenceWithTimeout:5], @"The main queue should service Settings while validation is pending");
-	XCUIElement *panel = self.app.dialogs.firstMatch;
+	XCUIElement *panel = [self.app.dialogs containingType:XCUIElementTypeCheckBox identifier:@"Watch for changes in repositories"].firstMatch;
+	if (!panel.exists) panel = [self.app.windows containingType:XCUIElementTypeCheckBox identifier:@"Watch for changes in repositories"].firstMatch;
 	XCTAttachment *attachment = [XCTAttachment attachmentWithScreenshot:[panel.exists ? panel : setting screenshot]];
 	attachment.name = @"settings-responsive-during-git-validation";
 	attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
 	[self addAttachment:attachment];
-	[self.app typeKey:@"w" modifierFlags:XCUIKeyModifierCommand];
-	XCTAssertTrue([@"ready" writeToFile:released atomically:YES encoding:NSUTF8StringEncoding error:nil]);
-	int descriptor = open(gate.fileSystemRepresentation, O_WRONLY | O_NONBLOCK);
-	XCTAssertGreaterThanOrEqual(descriptor, 0, @"The validation probe should still be waiting for release");
-	NSFileHandle *writer = [[NSFileHandle alloc] initWithFileDescriptor:descriptor closeOnDealloc:YES];
-	[writer writeData:[@"ready\n" dataUsingEncoding:NSUTF8StringEncoding]];
-	[writer closeFile];
+	// Leave the configured probe blocked: its independent deadline must settle discovery.
+	XCUIElement *warning = self.app.sheets.buttons[@"OK"];
+	XCTAssertTrue([warning waitForExistenceWithTimeout:10], @"A timed-out preference should produce a nonblocking warning sheet");
+	if (warning.exists) {
+		XCTAttachment *warningAttachment = [XCTAttachment attachmentWithScreenshot:self.app.sheets.firstMatch.screenshot];
+		warningAttachment.name = @"git-discovery-rejected-preference-warning";
+		warningAttachment.lifetime = XCTAttachmentLifetimeKeepAlways;
+		[self addAttachment:warningAttachment];
+		[warning click];
+	}
+	self.releaseGitValidation();
+	XCUIElement *close = panel.buttons[XCUIIdentifierCloseWindow];
+	XCTAssertTrue(close.exists, @"Close the Settings owner explicitly");
+	if (close.exists) [close click];
 	XCTAssertTrue([self waitForWindow]);
 	[self selectHistoryForCurrentBranch];
 	[self saveWindowScreenshotNamed:@"repository-open-after-git-validation"];
+	XCTAssertEqualObjects(([self gitOutput:@[ @"status", @"--porcelain" ] inDirectory:repository]), statusBefore);
 }
 
 - (void)testMainWindowExists

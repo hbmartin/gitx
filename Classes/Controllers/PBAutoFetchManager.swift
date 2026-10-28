@@ -8,6 +8,35 @@ private let autoFetchTimerResolution: TimeInterval = 30
 private let autoFetchRetryBaseInterval: TimeInterval = 60
 private let autoFetchRetryMaximumInterval: TimeInterval = 15 * 60
 
+private nonisolated enum AutoFetchExecutionContext {
+    @TaskLocal static var selection: GitBinarySelection?
+}
+
+/// One discovery waiter belongs to one manager lifecycle; immediate requests dominate timer requests.
+nonisolated struct AutoFetchDiscoveryWaitState {
+    private var pending: (generation: UInt, immediate: Bool)?
+
+    mutating func mergeIfWaiting(generation: UInt, immediate: Bool) -> Bool {
+        guard let current = pending, current.generation == generation else { return false }
+        pending = (generation, current.immediate || immediate)
+        return true
+    }
+
+    mutating func begin(generation: UInt, immediate: Bool) {
+        pending = (generation, immediate)
+    }
+
+    mutating func finish(generation: UInt) -> Bool? {
+        guard let pending, pending.generation == generation else { return nil }
+        self.pending = nil
+        return pending.immediate
+    }
+
+    mutating func cancel() {
+        pending = nil
+    }
+}
+
 /// Coordinates unattended remote refreshes for the repositories selected by
 /// the global auto-fetch preference. Failures retry with bounded exponential
 /// backoff independently for each repository.
@@ -27,6 +56,7 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
         super.init()
     }
 
+    @MainActor private var discoveryWait = AutoFetchDiscoveryWaitState()
     private var timer: Timer?
     private let fetchQueue = DispatchQueue(label: "com.gitx.autofetch")
     @objc private dynamic var nextFetchDates = NSMutableDictionary()
@@ -94,6 +124,7 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
 
     @MainActor
     private func stop(immediately: Bool) {
+        discoveryWait.cancel()
         let tasks = invalidateCurrentGeneration()
         inFlightRepositories.removeAllObjects()
         if immediately {
@@ -199,14 +230,24 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     @MainActor @objc(evaluateRepositoriesForImmediateFetch:)
     dynamic func evaluateRepositoriesForImmediateFetch(_ immediate: Bool) {
         guard PBGitDefaults.autoFetchScope() != .none else { return }
-        if !gitDiscovery.isReady {
-            let waitingGeneration = currentGeneration()
-            gitDiscovery.whenAvailable { [weak self] path, _ in
-                guard let self, path != nil, waitingGeneration == currentGeneration() else { return }
-                evaluateRepositoriesForImmediateFetch(immediate)
+        let waitingGeneration = currentGeneration()
+        if discoveryWait.mergeIfWaiting(generation: waitingGeneration, immediate: immediate) {
+            return
+        }
+        guard let selection = gitDiscovery.currentSelection else {
+            discoveryWait.begin(generation: waitingGeneration, immediate: immediate)
+            gitDiscovery.whenSelectionAvailable { [weak self] selection, _ in
+                guard let self, let immediate = discoveryWait.finish(generation: waitingGeneration),
+                      waitingGeneration == currentGeneration(), let selection,
+                      PBGitDefaults.autoFetchScope() != .none else { return }
+                evaluateRepositories(immediate: immediate, selection: selection)
             }
             return
         }
+        evaluateRepositories(immediate: immediate, selection: selection)
+    }
+
+    @MainActor private func evaluateRepositories(immediate: Bool, selection: GitBinarySelection) {
         let now = Date()
         for (key, url) in candidateRepositoryURLs() {
             guard inFlightRepositories[key] == nil else { continue }
@@ -216,7 +257,9 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
             let scheduledGeneration = currentGeneration()
             inFlightRepositories[key] = NSNumber(value: scheduledGeneration)
             fetchQueue.async { [self] in
-                fetchRepository(at: url, key: key, generation: scheduledGeneration)
+                AutoFetchExecutionContext.$selection.withValue(selection) {
+                    fetchRepository(at: url, key: key, generation: scheduledGeneration)
+                }
             }
         }
     }
@@ -225,7 +268,7 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     dynamic func task(forRepositoryURL url: URL, arguments: [String]) -> PBTask {
         let task = PBTask(
             // An unavailable executable must produce the ordinary task launch error.
-            launchPath: PBGitBinary.path() ?? "",
+            launchPath: (AutoFetchExecutionContext.selection ?? gitDiscovery.currentSelection)?.path ?? "",
             arguments: arguments,
             inDirectory: url.path
         )
@@ -315,6 +358,13 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
 
     @objc(fetchRepositoryAtURL:key:generation:)
     dynamic func fetchRepository(at url: URL, key: String, generation: UInt) {
+        let selection = AutoFetchExecutionContext.selection ?? gitDiscovery.currentSelection
+        AutoFetchExecutionContext.$selection.withValue(selection) {
+            performFetch(at: url, key: key, generation: generation)
+        }
+    }
+
+    private func performFetch(at url: URL, key: String, generation: UInt) {
         defer {
             DispatchQueue.main.async { [self] in
                 completeInFlightRepository(key: key, generation: generation)

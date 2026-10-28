@@ -115,6 +115,13 @@ final class GitBinaryTests: XCTestCase {
     }
 
     @MainActor func testRepositoryOpenResumesAfterValidation() throws {
+        let sharedReady = expectation(description: "The document facade is ready independently of the injected gate")
+        PBGitBinary.whenAvailable { path, error in
+            XCTAssertNotNil(path)
+            XCTAssertNil(error)
+            sharedReady.fulfill()
+        }
+        wait(for: [sharedReady], timeout: 35)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -173,21 +180,22 @@ final class GitBinaryTests: XCTestCase {
         XCTAssertFalse(discovery.isReady)
     }
 
-    func testReadySnapshotIsInvalidatedAsSoonAsThePreferenceChanges() {
+    func testActiveSnapshotStaysReadyWhileANewPreferenceIsValidated() {
         let probe = Probe(preference: "/old", outputs: ["/old": "git version 2.50.1", "/new": "git version 2.51.0"])
-        let discovery = probe.discovery()
+        let completed = expectation(description: "New preference is validated")
+        let discovery = GitBinaryDiscovery(preference: { probe.state.withLock { $0.preference } }, environment: [:],
+                                           output: { probe.output($0, $1) }, notify: { selection, _ in
+                                               if selection?.path == "/new" {
+                                                   completed.fulfill()
+                                               }
+                                           })
         XCTAssertTrue(discovery.accept("/old"))
         XCTAssertTrue(discovery.isReady)
         probe.state.withLock { $0.preference = "/new" }
-        XCTAssertFalse(discovery.isReady)
-        let completed = expectation(description: "New preference is validated")
-        discovery.whenAvailable { path, error in
-            XCTAssertEqual(path, "/new")
-            XCTAssertNil(error)
-            completed.fulfill()
-        }
-        wait(for: [completed], timeout: 3)
         XCTAssertTrue(discovery.isReady)
+        discovery.start()
+        wait(for: [completed], timeout: 3)
+        XCTAssertEqual(discovery.path, "/new")
         let cached = expectation(description: "Ready callers receive the cached path")
         discovery.whenAvailable { path, error in
             XCTAssertEqual(path, "/new")
@@ -233,22 +241,28 @@ final class GitBinaryTests: XCTestCase {
         XCTAssertEqual(discovery.path, "/old", "A failed explicit selection keeps the validated snapshot")
     }
 
-    func testPreferenceChangesDuringPublicationRevalidateBeforeDeliveringWaiters() {
+    func testAvailabilityDeliveryKeepsItsSnapshotWhenPublicationRequestsAnotherPreference() {
         let probe = Probe(preference: "/old", outputs: ["/old": "git version 2.50.1", "/new": "git version 2.51.0"])
+        let replaced = expectation(description: "Following validation publishes the new preference")
         let discovery = GitBinaryDiscovery(preference: { probe.state.withLock { $0.preference } }, environment: [:],
                                            output: { probe.output($0, $1) }, locations: [], notify: { selection, _ in
                                                if selection?.path == "/old" {
                                                    probe.state.withLock { $0.preference = "/new" }
                                                }
+                                               if selection?.path == "/new" {
+                                                   replaced.fulfill()
+                                               }
                                            })
-        let completed = expectation(description: "Delivery follows the preference changed by publication")
+        let completed = expectation(description: "Availability delivers its immutable validated snapshot")
         completed.assertForOverFulfill = true
         discovery.whenAvailable { path, error in
-            XCTAssertEqual(path, "/new")
+            XCTAssertEqual(path, "/old")
             XCTAssertNil(error)
             completed.fulfill()
         }
         wait(for: [completed], timeout: 3)
+        discovery.start()
+        wait(for: [replaced], timeout: 3)
         XCTAssertEqual(discovery.version, "2.51.0")
     }
 
@@ -376,14 +390,18 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         document.addWindowController(window)
     }
 
-    private func removeFixture() throws {
+    private func removeFixture(removeFiles: Bool = true) throws {
         document?.repository.revisionList?.cleanup()
         document?.repository.revisionList = nil
         document?.close()
         document = nil
         window = nil
         if let directory {
-            try FileManager.default.removeItem(at: directory)
+            if removeFiles {
+                try FileManager.default.removeItem(at: directory)
+            } else {
+                NSLog("[GitDiscoveryTests] Retaining fixture until shared executable restoration succeeds: %@", directory.path)
+            }
         }
         directory = nil
     }
@@ -410,6 +428,18 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(window.actions.count, count)
     }
 
+    func testBranchFiltersConsumeOnlyTheFlagAndPreserveFollowingRevisions() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        for (option, filter) in [("--all", 0), ("--local", 1), ("--branch", 2)] {
+            apply([option, "topic"])
+            XCTAssertEqual(document.repository.currentBranchFilter, filter)
+            XCTAssertEqual(document.repository.currentBranch?.description, "topic")
+            apply([option, "--max-count=7", "HEAD"])
+            XCTAssertEqual(document.repository.currentBranch?.parameters as? [String], ["--max-count=7", "HEAD"])
+        }
+    }
+
     func testDocumentActionsAndPresentationRemainWired() throws {
         try prepareFixture()
         defer { try? removeFixture() }
@@ -429,7 +459,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(document.windowControllers.count, 1)
     }
 
-    func testSynchronousScriptContextOnlyAppliesToItsOwnRepository() throws {
+    func testCapturedScriptContextOnlyAppliesToItsOwnRepository() throws {
         try prepareFixture()
         defer { try? removeFixture() }
         let descriptions = try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "Standard Suite"))
@@ -439,16 +469,140 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         for parameter: Any in try ["not a URL", directory.appendingPathComponent("missing"), XCTUnwrap(directory)] {
             let previous = window.actions.filter { $0 == "commit" }.count
             command.directParameter = parameter
-            let method = try XCTUnwrap(class_getClassMethod(NSScriptCommand.self, NSSelectorFromString("currentCommand")))
-            let original = method_getImplementation(method)
-            let replacement: @convention(block) (AnyObject) -> NSScriptCommand? = { _ in command }
-            let implementation = imp_implementationWithBlock(replacement)
-            method_setImplementation(method, implementation)
+            let intent = RepositoryDocumentOpenIntent(command: command)
+            if let arguments = intent.arguments(for: document) {
+                RepositoryDocumentScripting.enqueue(arguments, for: document)
+            }
             document.showWindows()
-            method_setImplementation(method, original)
-            imp_removeBlock(implementation)
             XCTAssertEqual(window.actions.filter { $0 == "commit" }.count - previous, parameter as? URL == directory ? 1 : 0)
         }
+    }
+
+    func testDeferredOpenPreservesItsScriptingOptionsAfterTheCommandEnds() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let controller = GitX.PBRepositoryDocumentController()
+        let release = DispatchSemaphore(value: 0)
+        controller.gitDiscovery = GitBinaryDiscovery(preference: { "/usr/bin/git" }, environment: [:], output: { _, _ in
+            _ = release.wait(timeout: .now() + 10)
+            return "git version 2.50.1"
+        })
+        let descriptions = try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "Standard Suite"))
+        let command = try NSScriptCommand(commandDescription: XCTUnwrap(descriptions["open"]))
+        command.directParameter = directory
+        command.arguments = ["openOptions": ["--commit"]]
+        let method = try XCTUnwrap(class_getClassMethod(NSScriptCommand.self, NSSelectorFromString("currentCommand")))
+        let original = method_getImplementation(method)
+        let replacement: @convention(block) (AnyObject) -> NSScriptCommand? = { _ in command }
+        let implementation = imp_implementationWithBlock(replacement)
+        method_setImplementation(method, implementation)
+        let opened = expectation(description: "Deferred open consumes its captured options")
+        controller.openDocument(withContentsOf: directory, display: false) { incoming, _, error in
+            XCTAssertNil(error)
+            if let incoming = incoming as? PBGitRepositoryDocument {
+                let probe = WindowProbe(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false))
+                incoming.addWindowController(probe)
+                incoming.showWindows()
+                XCTAssertEqual(probe.actions.filter { $0 == "commit" }, ["commit"])
+                incoming.showWindows()
+                XCTAssertEqual(probe.actions.filter { $0 == "commit" }, ["commit"], "A captured open is consumed exactly once")
+                incoming.repository.revisionList?.cleanup()
+                incoming.repository.revisionList = nil
+                incoming.close()
+            } else {
+                XCTFail("Expected a repository document")
+            }
+            opened.fulfill()
+        }
+        method_setImplementation(method, original)
+        imp_removeBlock(implementation)
+        release.signal()
+        wait(for: [opened], timeout: 5)
+    }
+
+    func testAlreadyOpenRepositoryAndAliasBypassUnavailableDiscovery() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let controller = GitX.PBRepositoryDocumentController()
+        controller.addDocument(document)
+        defer { controller.removeDocument(document) }
+        let calls = Mutex(0)
+        controller.gitDiscovery = GitBinaryDiscovery(preference: { nil }, environment: [:], output: { _, _ in calls.withLock { $0 += 1 }; return nil })
+        let alias = directory.appendingPathComponent("repository-alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
+        for url in try [XCTUnwrap(directory), alias] {
+            let completed = expectation(description: "Existing document is reused without Git discovery")
+            controller.openDocument(withContentsOf: url, display: false) { incoming, alreadyOpen, error in
+                XCTAssertTrue(incoming === self.document)
+                XCTAssertTrue(alreadyOpen)
+                XCTAssertNil(error)
+                XCTAssertFalse(controller.hasPendingOpens)
+                completed.fulfill()
+            }
+            wait(for: [completed], timeout: 3)
+        }
+        XCTAssertEqual(calls.withLock { $0 }, 0)
+        XCTAssertTrue(window.actions.isEmpty, "display=false must not present the existing document")
+    }
+
+    func testQueuedRequestsRemainPerDocumentAndAreDiscardedOnClose() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let otherURL = directory.appendingPathComponent("other")
+        try FileManager.default.createDirectory(at: otherURL, withIntermediateDirectories: true)
+        _ = try GitXTestGitFixture.run(["init"], in: otherURL)
+        let other = try PBGitRepositoryDocument(contentsOf: otherURL, ofType: PBGitRepositoryDocumentType)
+        let probe = WindowProbe(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false))
+        other.addWindowController(probe)
+        defer { other.repository.revisionList?.cleanup(); other.repository.revisionList = nil; other.close() }
+        RepositoryDocumentScripting.enqueue(["--commit"], for: document)
+        RepositoryDocumentScripting.enqueue(["--all"], for: other)
+        RepositoryDocumentScripting.enqueue(["--local"], for: document)
+        other.showWindows()
+        XCTAssertEqual(probe.actions, ["history", "show"])
+        XCTAssertTrue(window.actions.isEmpty)
+        document.showWindows()
+        XCTAssertEqual(window.actions, ["commit", "history", "show"])
+        document.showWindows()
+        XCTAssertEqual(window.actions, ["commit", "history", "show", "show"])
+        RepositoryDocumentScripting.enqueue(["--commit"], for: other)
+        other.close()
+        other.showWindows()
+        XCTAssertEqual(probe.actions.filter { $0 == "commit" }.count, 0)
+    }
+
+    func testOpenWindowReplacesItsGitLoadersAndIgnoresChangesAfterClose() throws {
+        try prepareFixture()
+        var restoredSharedSelection = true
+        defer { try? removeFixture(removeFiles: restoredSharedSelection) }
+        let original = try XCTUnwrap(GitBinaryDiscovery.shared.currentSelection)
+        let replacement = directory.appendingPathComponent("replacement-git")
+        try FileManager.default.createSymbolicLink(at: replacement, withDestinationURL: URL(fileURLWithPath: original.path))
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        _ = actual.window
+        XCTAssertEqual(actual.gitLoaderSelection, original)
+        defer {
+            let restored = PBGitBinary.accept(original.path)
+            XCTAssertTrue(restored)
+            XCTAssertEqual(PBGitBinary.path(), original.path)
+            let deliveredRestoration = expectation(description: "Restoration notification drains before fixture deletion")
+            DispatchQueue.main.async { deliveredRestoration.fulfill() }
+            wait(for: [deliveredRestoration], timeout: 3)
+            restoredSharedSelection = restored && PBGitBinary.path() == original.path
+        }
+        let accepted = PBGitBinary.accept(replacement.path)
+        restoredSharedSelection = !accepted
+        XCTAssertTrue(accepted)
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.gitLoaderSelection?.path == replacement.path }, object: nil)
+        wait(for: [changed], timeout: 5)
+        actual.close()
+        XCTAssertTrue(PBGitBinary.accept(original.path))
+        let delivered = expectation(description: "Closed-window notification drains")
+        DispatchQueue.main.async { delivered.fulfill() }
+        wait(for: [delivered], timeout: 3)
+        XCTAssertEqual(actual.gitLoaderSelection?.path, replacement.path, "A closed owner must not recreate loaders")
     }
 
     func testSearchCommandAndFilePresenterCallbacks() throws {
@@ -495,6 +649,137 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: shallow, encoding: .utf8), head)
         document.applyGitXOpenArguments(nil)
         XCTAssertTrue(window.actions.isEmpty)
+    }
+
+    func testOverlappingColdOpensKeepCopiedOptionsWithTheirOwnRepositories() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let other = directory.appendingPathComponent("overlapping")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        _ = try GitXTestGitFixture.run(["init", "--initial-branch=main"], in: other)
+        _ = try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "other"], in: other)
+        _ = try GitXTestGitFixture.run(["branch", "topic"], in: other)
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let controller = GitX.PBRepositoryDocumentController()
+        controller.gitDiscovery = GitBinaryDiscovery(preference: { "/usr/bin/git" }, environment: [:], output: { _, _ in
+            _ = release.wait(timeout: .now() + 10)
+            return "git version 2.50.1"
+        })
+        let descriptions = try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "Standard Suite"))
+        let description = try XCTUnwrap(descriptions["open"])
+        let completed = expectation(description: "Both captured requests open their matching repository")
+        completed.expectedFulfillmentCount = 2
+        completed.assertForOverFulfill = true
+        for (url, options) in try [(XCTUnwrap(directory), ["--commit"]), (other, ["--branch", "topic"])] {
+            let command = NSScriptCommand(commandDescription: description)
+            command.directParameter = url
+            let mutable = NSMutableArray(array: options)
+            command.arguments = ["openOptions": mutable]
+            try withCurrentCommand(command) {
+                controller.openDocument(withContentsOf: url, display: false) { incoming, _, error in
+                    XCTAssertNil(error)
+                    if let incoming = incoming as? PBGitRepositoryDocument {
+                        let probe = WindowProbe(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false))
+                        incoming.addWindowController(probe)
+                        XCTAssertTrue(probe.actions.isEmpty, "Delayed display keeps the request queued")
+                        incoming.showWindows()
+                        if url == other {
+                            XCTAssertEqual(incoming.repository.currentBranchFilter, 2)
+                            XCTAssertEqual(incoming.repository.currentBranch?.description, "topic")
+                            XCTAssertFalse(probe.actions.contains("commit"))
+                        } else {
+                            XCTAssertEqual(probe.actions, ["commit", "show"])
+                        }
+                        incoming.repository.revisionList?.cleanup()
+                        incoming.repository.revisionList = nil
+                        incoming.close()
+                        controller.removeDocument(incoming)
+                    } else {
+                        XCTFail("Expected a repository document")
+                    }
+                    completed.fulfill()
+                }
+            }
+            mutable.removeAllObjects()
+            mutable.add("--all")
+        }
+        release.signal()
+        wait(for: [completed], timeout: 5)
+        XCTAssertFalse(controller.hasPendingOpens)
+    }
+
+    func testExplicitOpenRetriesACompletedColdDiscoveryFailure() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let works = Mutex(false)
+        let controller = GitX.PBRepositoryDocumentController()
+        controller.gitDiscovery = GitBinaryDiscovery(preference: { "/usr/bin/git" }, environment: [:], output: { path, _ in
+            works.withLock { $0 && path == "/usr/bin/git" ? "git version 2.50.1" : nil }
+        }, locations: [])
+        let failed = expectation(description: "Cold failure releases the pending open")
+        controller.openDocument(withContentsOf: directory, display: false) { incoming, _, error in
+            XCTAssertNil(incoming)
+            XCTAssertNotNil(error)
+            XCTAssertFalse(controller.hasPendingOpens)
+            failed.fulfill()
+        }
+        wait(for: [failed], timeout: 3)
+        works.withLock { $0 = true }
+        let retried = expectation(description: "A later explicit open retries the same preference")
+        controller.openDocument(withContentsOf: directory, display: false) { incoming, _, error in
+            XCTAssertNotNil(incoming)
+            XCTAssertNil(error)
+            incoming?.close()
+            if let incoming {
+                controller.removeDocument(incoming)
+            }
+            retried.fulfill()
+        }
+        wait(for: [retried], timeout: 5)
+        XCTAssertFalse(controller.hasPendingOpens)
+    }
+
+    func testWindowDefersGitLoadersUntilItsIsolatedDiscoverySucceeds() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let discovery = GitBinaryDiscovery(preference: { "/usr/bin/git" }, environment: [:], output: { _, _ in
+            _ = release.wait(timeout: .now() + 10)
+            return "git version 2.50.1"
+        }, notify: { _, _ in NotificationCenter.default.post(name: .PBGitBinaryDidChange, object: nil) })
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        actual.gitDiscovery = discovery
+        _ = actual.window
+        XCTAssertNotNil(actual.historyViewController)
+        XCTAssertEqual(actual.window?.representedURL, document.repository.workingDirectoryURL())
+        XCTAssertNil(actual.gitLoaderSelection)
+        let ready = expectation(description: "The isolated selection becomes available")
+        discovery.whenAvailable { _, error in XCTAssertNil(error); ready.fulfill() }
+        release.signal()
+        wait(for: [ready], timeout: 3)
+        let installed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.gitLoaderSelection?.path == "/usr/bin/git" }, object: nil)
+        wait(for: [installed], timeout: 3)
+        actual.close()
+        let background = expectation(description: "A background notification reaches a closed owner safely")
+        DispatchQueue.global().async {
+            NotificationCenter.default.post(name: .PBGitBinaryDidChange, object: nil)
+            DispatchQueue.main.async { background.fulfill() }
+        }
+        wait(for: [background], timeout: 3)
+    }
+
+    private func withCurrentCommand(_ command: NSScriptCommand, body: () -> Void) throws {
+        let method = try XCTUnwrap(class_getClassMethod(NSScriptCommand.self, NSSelectorFromString("currentCommand")))
+        let original = method_getImplementation(method)
+        let replacement: @convention(block) (AnyObject) -> NSScriptCommand? = { _ in command }
+        let implementation = imp_implementationWithBlock(replacement)
+        method_setImplementation(method, implementation)
+        defer { method_setImplementation(method, original); imp_removeBlock(implementation) }
+        body()
     }
 
     private func apply(_ arguments: [String]) {

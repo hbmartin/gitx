@@ -13,10 +13,10 @@
 #import "PBGitRevSpecifier.h"
 #import "PBGitBinary.h"
 #import "GitXScriptingConstants.h"
-#import "PBRepositoryFinder.h"
 #import "PBGitDefaults.h"
 #import "PBOpenShallowRepositoryErrorRecoveryAttempter.h"
 #import "PBError.h"
+#import "GitX-Swift.h"
 
 NSString *PBGitRepositoryDocumentType = @"Git Repository";
 
@@ -25,7 +25,7 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 - (BOOL)readFromURL:(NSURL *)absoluteURL ofType:(NSString *)typeName error:(NSError **)outError
 {
 	if (![PBGitBinary path]) {
-		return PBReturnError(outError, @"Unable to find git", [PBGitBinary notFoundError], nil);
+		return PBReturnError(outError, PBGitBinaryDiscoveryPolicy.failureDescription, [PBGitBinary notFoundError], nil);
 	}
 
 	NSNumber *isDirectory;
@@ -60,6 +60,7 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 
 - (void)close
 {
+	[PBRepositoryDocumentScripting discardPendingForDocument:self];
 	/* FIXME: Check that this deallocs the repo */
 	//	[revisionList cleanup];
 
@@ -121,21 +122,7 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 
 - (void)showWindows
 {
-	NSScriptCommand *command = [NSScriptCommand currentCommand];
-
-	if (command) {
-		// Check if `gitx` has provided some arguments
-		NSURL *repoURL = [command directParameter];
-
-		// on app launch there may be many repositories opening, so double check that this is the right repo
-		if (repoURL && [repoURL isKindOfClass:[NSURL class]]) {
-			repoURL = [PBRepositoryFinder gitDirForURL:repoURL];
-			if ([repoURL isEqual:_repository.gitURL]) {
-				NSArray *arguments = command.arguments[@"openOptions"];
-				[self handleGitXScriptingArguments:arguments];
-			}
-		}
-	}
+	[PBRepositoryDocumentScripting applyPendingToDocument:self];
 
 	[[[self windowController] window] setTitle:[self displayName]];
 
@@ -170,47 +157,20 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 	[self.windowController showHistoryView:self];
 }
 
-- (void)handleBranchFilterEventForFilter:(PBGitXBranchFilterType)filter additionalArguments:(NSArray *)arguments
+- (void)handleGitXScriptingArguments:(NSArray<NSString *> *)arguments
 {
-	self.repository.currentBranchFilter = filter;
-	[self.windowController showHistoryView:self];
-
-	// treat any additional arguments as a rev-list specifier
-	if ([arguments count] > 1) {
-		arguments = [arguments subarrayWithRange:NSMakeRange(1, arguments.count)];
-		[self handleRevListArguments:arguments];
-	}
-}
-
-- (void)handleGitXScriptingArguments:(NSArray *)arguments
-{
-	if (![arguments count])
+	PBRepositoryScriptOpenOptions *options = [[PBRepositoryScriptOpenOptions alloc] initWithArguments:arguments];
+	if (options.isEmpty)
 		return;
-
-	NSString *firstArgument = [arguments objectAtIndex:0];
-
-	if ([firstArgument isEqualToString:@"-c"] || [firstArgument isEqualToString:@"--commit"]) {
+	if (options.showsCommit) {
 		[self.windowController showUncommittedChanges:self];
 		return;
 	}
-
-	if ([firstArgument isEqualToString:@"--all"]) {
-		[self handleBranchFilterEventForFilter:kGitXAllBranchesFilter additionalArguments:arguments];
-		return;
+	if (options.branchFilter) {
+		self.repository.currentBranchFilter = options.branchFilter.integerValue;
+		[self.windowController showHistoryView:self];
 	}
-
-	if ([firstArgument isEqualToString:@"--local"]) {
-		[self handleBranchFilterEventForFilter:kGitXLocalRemoteBranchesFilter additionalArguments:arguments];
-		return;
-	}
-
-	if ([firstArgument isEqualToString:@"--branch"]) {
-		[self handleBranchFilterEventForFilter:kGitXSelectedBranchFilter additionalArguments:arguments];
-		return;
-	}
-
-	// if the argument is not a known command then treat it as a rev-list specifier
-	[self handleRevListArguments:arguments];
+	[self handleRevListArguments:options.revisionArguments];
 }
 
 // for the scripting bridge

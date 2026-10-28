@@ -383,7 +383,9 @@ import XCTest
                         XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
                         service.repair(confirmedPreview: preview) { renewed, error in
                             XCTAssertNil(renewed, "Unchanged final evidence must use the explicitly approved scope")
-                            if error == nil, renewed == nil { completed += 1 }
+                            if error == nil, renewed == nil {
+                                completed += 1
+                            }
                             failure = error as NSError?
                             done.fulfill()
                         }
@@ -2587,6 +2589,7 @@ import XCTest
             }
 
             func removeFiles() {
+                guard GitBinaryTestIsolation.prepareToRemove(root) else { return }
                 try? FileManager.default.removeItem(at: root)
             }
         }

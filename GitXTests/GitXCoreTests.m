@@ -9,7 +9,6 @@
 #import "PBChangedFile.h"
 #import "PBGraphCellInfo.h"
 #import "PBGitBinary.h"
-#import "PBGitRepositoryDocument.h"
 #import "PBGitCommit.h"
 #import "PBGitDefaults.h"
 #import "PBGitGrapher.h"
@@ -684,23 +683,14 @@ static NSUInteger PBBinaryVersionProbeCount;
 
 - (void)setUp
 {
-    [super setUp];
-    XCTestExpectation *ready = [self expectationWithDescription:@"Validated shared Git before facade tests"];
-    [PBGitBinary whenAvailable:^(NSString *path, NSError *error) {
-        XCTAssertNotNil(path);
-        XCTAssertNil(error);
-        [ready fulfill];
-    }];
-    [self waitForExpectations:@[ ready ] timeout:10];
-}
-
-// Objective-C is required to characterize the legacy parser's exception boundary.
-- (void)testBranchFilterWithAdditionalArgumentsCurrentlyRaisesRangeException
-{
-    PBGitRepositoryDocument *document = [PBGitRepositoryDocument new];
-    for (NSString *option in @[ @"--all", @"--local", @"--branch" ]) {
-        XCTAssertThrowsSpecificNamed(([document handleGitXScriptingArguments:@[ option, @"topic" ]]), NSException, NSRangeException);
-    }
+	[super setUp];
+	XCTestExpectation *ready = [self expectationWithDescription:@"Validated shared Git before facade tests"];
+	[PBGitBinary whenAvailable:^(NSString *path, NSError *error) {
+		XCTAssertNotNil(path);
+		XCTAssertNil(error);
+		[ready fulfill];
+	}];
+	[self waitForExpectations:@[ ready ] timeout:10];
 }
 
 - (void)testGitVersionGetterUsesTheValidatedCacheWithoutLaunchingAnotherProbe
@@ -730,10 +720,10 @@ static NSUInteger PBBinaryVersionProbeCount;
 		XCTAssertTrue([@"not executable" writeToURL:nonexecutable atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
 		XCTAssertNil([PBGitBinary versionForPath:nonexecutable.path]);
 	} @finally {
-        BOOL restored = [PBGitBinary acceptBinary:originalPath];
-        XCTAssertTrue(restored);
-        XCTAssertEqualObjects(PBGitBinary.path, originalPath);
-        if (restored) [NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+		BOOL restored = [PBGitBinary acceptBinary:originalPath];
+		XCTAssertTrue(restored);
+		XCTAssertEqualObjects(PBGitBinary.path, originalPath);
+		if (restored) [NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
 	}
 }
 
@@ -753,10 +743,10 @@ static NSUInteger PBBinaryVersionProbeCount;
 			XCTAssertEqualObjects(PBGitBinary.path, executable.path);
 		}
 	} @finally {
-        BOOL restored = [PBGitBinary acceptBinary:originalPath];
-        XCTAssertTrue(restored);
-        XCTAssertEqualObjects(PBGitBinary.path, originalPath);
-        if (restored) [NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+		BOOL restored = [PBGitBinary acceptBinary:originalPath];
+		XCTAssertTrue(restored);
+		XCTAssertEqualObjects(PBGitBinary.path, originalPath);
+		if (restored) [NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
 	}
 }
 

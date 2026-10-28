@@ -2,6 +2,7 @@
 #import "PBGitBinary.h"
 #import "GitX-Swift.h"
 
+NSString *const PBGitMinimumVersion = @MIN_GIT_VERSION;
 NSNotificationName const PBGitBinaryDidChangeNotification = @"PBGitBinaryDidChangeNotification";
 
 @implementation PBGitBinary
@@ -40,14 +41,7 @@ NSNotificationName const PBGitBinaryDidChangeNotification = @"PBGitBinaryDidChan
 
 + (NSString *)notFoundError
 {
-	NSString *searchPathsString = [[PBGitBinary searchLocations] componentsJoinedByString:@"\n\t"];
-	return [NSString stringWithFormat:
-						 NSLocalizedString(
-							 @"Could not find a git binary version " MIN_GIT_VERSION " or higher.\n"
-							 @"Please make sure there is a git binary in one of the following locations:"
-							 @"\n\n\t%@",
-							 @"Error message when no git client can be found."),
-						 searchPathsString];
+	return [PBGitBinaryDiscoveryPolicy failureReason:[PBGitBinary searchLocations]];
 }
 
 @end
