@@ -115,6 +115,24 @@ class NotarizationTests(unittest.TestCase):
                 self.assertEqual([command[2] for command in self.commands], ["submit", "wait", "info", "log"])
                 self.assertEqual(self.command_timeouts[-2], ("info", 30))
 
+    def test_final_info_timeout_retains_partial_evidence_and_never_repeats_confirmation(self):
+        self.wait_timeout = True
+        def run(command, **options):
+            if command[2] == "info":
+                self.commands.append(command)
+                self.command_timeouts.append(("info", options["timeout"]))
+                self.clock += options["timeout"]
+                raise subprocess.TimeoutExpired(command, options["timeout"], output=b"partial status", stderr=b"network")
+            return self.run_command(command, **options)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(self.module.NotarizationError, "within 4 seconds"):
+                self.module.notarize("fixture.zip", self.directory, self.environment,
+                                     run=run, now=lambda: self.clock, sleep=self.sleep)
+        self.assertEqual([command[2] for command in self.commands], ["submit", "wait", "info", "log"])
+        self.assertEqual(self.clock, 34)
+        self.assertEqual((self.directory / "notary-info-final.json").read_text(), "partial status")
+        self.assertEqual((self.directory / "notary-info-final.stderr").read_text(), "network")
+
     def test_terminal_rejections_fetch_diagnostics(self):
         for status in ("Invalid", "Rejected"):
             with self.subTest(status=status):
