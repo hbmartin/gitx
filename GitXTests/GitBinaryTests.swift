@@ -819,6 +819,31 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         try verifyDeferredLoaderInstallation(activationBeforeNotification: false)
     }
 
+    func testInstalledRepositoryNotificationsRefreshRenderedStatus() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let previousRefresh = UserDefaults.standard.object(forKey: "PBRefreshOnApplicationFocus")
+        UserDefaults.standard.set(false, forKey: "PBRefreshOnApplicationFocus")
+        defer { UserDefaults.standard.set(previousRefresh, forKey: "PBRefreshOnApplicationFocus") }
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        _ = actual.window
+        defer { actual.close() }
+        waitForBranch("main", in: actual)
+
+        try Data("pending\n".utf8).write(to: directory.appendingPathComponent("pending.txt"), options: .atomic)
+        NotificationCenter.default.post(name: Notification.Name(PBGitIndexIndexUpdated), object: document.repository.index)
+        let dirty = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.localStatusText("GitX.RepositoryStatusBar.LocalCounts", in: actual.window?.contentView)?.contains("1 untracked") == true
+        }, object: nil)
+        wait(for: [dirty], timeout: 5)
+
+        try GitXTestGitFixture.run(["checkout", "topic"], in: directory)
+        NotificationCenter.default.post(name: .repositoryRemoteOperationDidSucceed, object: document.repository, userInfo: ["operation": "push"])
+        waitForBranch("topic", in: actual)
+    }
+
     func testActivationBeforeSelectionNotificationInstallsBothLoadersAndRendersStatus() throws {
         try verifyDeferredLoaderInstallation(activationBeforeNotification: true)
     }
@@ -1019,11 +1044,15 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     private func localBranch(in view: NSView?) -> String? {
+        localStatusText("GitX.RepositoryStatusBar.LocalBranch", in: view)
+    }
+
+    private func localStatusText(_ identifier: String, in view: NSView?) -> String? {
         guard let view else { return nil }
-        if view.accessibilityIdentifier() == "GitX.RepositoryStatusBar.LocalBranch" {
+        if view.accessibilityIdentifier() == identifier {
             return (view as? NSTextField)?.stringValue
         }
-        return view.subviews.lazy.compactMap { self.localBranch(in: $0) }.first
+        return view.subviews.lazy.compactMap { self.localStatusText(identifier, in: $0) }.first
     }
 
     private func withCurrentCommand(_ command: NSScriptCommand, body: () -> Void) throws {
