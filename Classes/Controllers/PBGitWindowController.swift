@@ -1,6 +1,34 @@
 import AppKit
 import ForgeKit
 
+/// A selection is installed only when both repository-scoped loaders exist.
+nonisolated struct RepositoryGitLoaderLifecycle {
+    struct Identity: Equatable {
+        let repository: ObjectIdentifier
+        let selection: GitBinarySelection
+    }
+
+    private(set) var generation: UInt64 = 0
+    private(set) var installed: Identity?
+
+    func requiresInstallation(_ identity: Identity, hasFocus: Bool, hasStatus: Bool) -> Bool {
+        installed != identity || !hasFocus || !hasStatus
+    }
+
+    mutating func invalidate() {
+        generation &+= 1
+        installed = nil
+    }
+
+    mutating func didInstall(_ identity: Identity) {
+        installed = identity
+    }
+
+    func accepts(generation: UInt64, identity: Identity) -> Bool {
+        self.generation == generation && installed == identity
+    }
+}
+
 /// Owns the repository window's AppKit wiring while routing decisions to focused coordinators.
 @objc(PBGitWindowController)
 open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation { // swiftlint:disable:this type_body_length
@@ -12,7 +40,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var focusRefreshCoordinator: RepositoryFocusRefreshCoordinator?
     final var gitDiscovery = GitBinaryDiscovery.shared
     private(set) final var gitLoaderSelection: GitBinarySelection?
-    private var gitLoaderOwnerActive = false
+    private var gitLoaderOwnerActive = true
+    private var gitLoaderLifecycle = RepositoryGitLoaderLifecycle()
     private var actionContextResolver: RepositoryActionContextResolver?
     private var remoteActionCoordinator: RepositoryRemoteActionCoordinator?
     final var pullRequestUIController: RepositoryPullRequestUIController?
@@ -68,6 +97,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             let previous = super.isWindowLoaded ? super.window : nil
             if previous !== newValue {
                 invalidateWorktreePresentation()
+                invalidateGitLoaders()
             }
             super.window = newValue
         }
@@ -76,10 +106,15 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     override open var document: AnyObject? {
         get { super.document }
         set {
-            if super.document !== newValue {
+            let changed = super.document !== newValue
+            if changed {
                 invalidateWorktreePresentation()
+                invalidateGitLoaders()
             }
             super.document = newValue
+            if changed {
+                reconcileGitLoaders()
+            }
         }
     }
 
@@ -92,10 +127,15 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         get { (document as? PBGitRepositoryDocument)?.repository ?? explicitlyAssignedRepository }
         set {
             let incoming = (document as? PBGitRepositoryDocument)?.repository ?? newValue
-            if repository !== incoming {
+            let changed = repository !== incoming
+            if changed {
                 invalidateWorktreePresentation()
+                invalidateGitLoaders()
             }
             explicitlyAssignedRepository = newValue
+            if changed {
+                reconcileGitLoaders()
+            }
         }
     }
 
@@ -163,17 +203,44 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
-    private func ensureFocusRefreshCoordinator() {
-        guard focusRefreshCoordinator == nil, let repository,
-              let selection = gitLoaderSelection ?? gitDiscovery.currentSelection else { return }
-        gitLoaderSelection = selection
-        focusRefreshCoordinator = RepositoryFocusRefreshCoordinator(
-            repository: repository,
-            gitExecutablePath: selection.path
-        ) { [weak self] in
-            guard let self else { return }
+    private final func invalidateGitLoaders() {
+        // Revoke callback authority before either cancellation can deliver a result.
+        gitLoaderLifecycle.invalidate()
+        focusRefreshCoordinator?.cancel()
+        repositoryLocalStatusLoader?.cancel()
+        focusRefreshCoordinator = nil
+        repositoryLocalStatusLoader = nil
+        repositoryLocalStatusSnapshot = .unavailable
+        NSLog("[GitX] Invalidated Git loader generation %llu", gitLoaderLifecycle.generation)
+    }
+
+    private final func acceptsGitLoaderResult(generation: UInt64, identity: RepositoryGitLoaderLifecycle.Identity) -> Bool {
+        guard gitLoaderOwnerActive, let repository else { return false }
+        return ObjectIdentifier(repository) == identity.repository && gitDiscovery.currentSelection == identity.selection &&
+            gitLoaderLifecycle.accepts(generation: generation, identity: identity)
+    }
+
+    private final func reconcileGitLoaders() {
+        guard gitLoaderOwnerActive, isWindowLoaded, let repository, let selection = gitDiscovery.currentSelection else { return }
+        let identity = RepositoryGitLoaderLifecycle.Identity(repository: ObjectIdentifier(repository), selection: selection)
+        guard gitLoaderLifecycle.requiresInstallation(identity, hasFocus: focusRefreshCoordinator != nil, hasStatus: repositoryLocalStatusLoader != nil) else { return }
+        invalidateGitLoaders()
+        let generation = gitLoaderLifecycle.generation
+        focusRefreshCoordinator = RepositoryFocusRefreshCoordinator(repository: repository, gitExecutablePath: selection.path) { [weak self] in
+            guard let self, self.acceptsGitLoaderResult(generation: generation, identity: identity) else { return }
             self.refreshLocalRepositoryContent()
         }
+        repositoryLocalStatusLoader = RepositoryLocalStatusLoader(repository: repository, gitExecutablePath: selection.path) { [weak self] snapshot in
+            guard let self, self.acceptsGitLoaderResult(generation: generation, identity: identity) else { return }
+            self.repositoryLocalStatusSnapshot = snapshot
+            self.updateStatus()
+        }
+        gitLoaderLifecycle.didInstall(identity)
+        gitLoaderSelection = selection
+        NSLog("[GitX] Installed both Git loaders generation %llu, repository %@, executable %@", generation, String(describing: identity.repository), selection.path)
+        focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
+        repositoryLocalStatusLoader?.refresh()
+        updateStatus()
     }
 
     private func installWorktreeObservations() {
@@ -218,7 +285,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         invalidateWorktreePresentation()
         gitLoaderOwnerActive = false
         NotificationCenter.default.removeObserver(self)
-        focusRefreshCoordinator?.cancel()
+        invalidateGitLoaders()
         worktreeObservations.removeAll()
         sidebarViewController?.closeView()
         repository?.cancelWorktreeDiscovery()
@@ -230,10 +297,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         pullRequestUIController = nil
         repositoryStatusBarController?.invalidate()
         repositoryForgeOverlaySession?.invalidate()
-        repositoryLocalStatusLoader?.cancel()
         repositoryStatusBarController = nil
         repositoryForgeOverlaySession = nil
-        repositoryLocalStatusLoader = nil
         repositoryToolbarController = nil
         #if DEBUG
             milestone2UITestHarness = nil
@@ -375,7 +440,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         gitLoaderOwnerActive = true
         ForgeDeepLinkApplicationRouter.shared.installIfNeeded()
         ensureActionCoordinators()
-        ensureFocusRefreshCoordinator()
+        reconcileGitLoaders()
         installWorktreeObservations()
         window?.setFrameUsingName("GitX")
         window?.representedURL = repository?.workingDirectoryURL()
@@ -444,12 +509,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             milestone2UITestHarness = Milestone2UITestHarness.installIfRequested(for: self)
             milestone3UITestHarness = Milestone3UITestHarness.installIfRequested(for: self)
         #endif
-        repositoryLocalStatusLoader?.refresh()
     }
 
     @objc(applicationDidBecomeActive:)
     dynamic func applicationDidBecomeActive(_ notification: Notification) {
-        ensureFocusRefreshCoordinator()
+        reconcileGitLoaders()
         focusRefreshCoordinator?.applicationDidBecomeActive()
         repositoryForgeOverlaySession?.requestRefresh(reason: .applicationActivated)
     }
@@ -457,27 +521,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc nonisolated func gitBinaryDidChange(_: Notification) {
         if Thread.isMainThread {
             // swift6-safety-justification: The thread check establishes main-actor ownership for the Objective-C notification.
-            MainActor.assumeIsolated { applyActiveGitSelection() }
+            MainActor.assumeIsolated { reconcileGitLoaders() }
         } else {
-            DispatchQueue.main.async { [weak self] in self?.applyActiveGitSelection() }
+            DispatchQueue.main.async { [weak self] in self?.reconcileGitLoaders() }
         }
-    }
-
-    private func applyActiveGitSelection() {
-        guard gitLoaderOwnerActive else { return }
-        guard let selection = gitDiscovery.currentSelection, selection != gitLoaderSelection else { return }
-        focusRefreshCoordinator?.cancel()
-        focusRefreshCoordinator = nil
-        repositoryLocalStatusLoader?.cancel()
-        repositoryLocalStatusLoader = nil
-        gitLoaderSelection = selection
-        repositoryLocalStatusSnapshot = .unavailable
-        ensureFocusRefreshCoordinator()
-        focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
-        installRepositoryLocalStatusLoader(selection: selection)
-        repositoryLocalStatusLoader?.refresh()
-        updateStatus()
-        NSLog("[GitX] Replaced repository Git loaders with %@", selection.path)
     }
 
     @objc(forgeApplicationAvailabilityDidChange:)
@@ -502,14 +549,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func applyRefreshPreferences() {
-        ensureFocusRefreshCoordinator()
+        reconcileGitLoaders()
         focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
         repositoryStatusBarController?.setVisible(ApplicationSettings.repositoryStatusBarVisible)
         updateToolbarForgeDiagnostic()
     }
 
     @objc dynamic func refreshIfRepositoryChangedSinceLastActivation() {
-        ensureFocusRefreshCoordinator()
+        reconcileGitLoaders()
         focusRefreshCoordinator?.applicationDidBecomeActive()
     }
 
@@ -1066,23 +1113,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         repositoryStatusBarController = controller
         controller.install(visible: ApplicationSettings.repositoryStatusBarVisible)
-        if let selection = gitLoaderSelection ?? gitDiscovery.currentSelection {
-            installRepositoryLocalStatusLoader(selection: selection)
-        }
+        updateStatus()
         if let repositoryForgeOverlaySession {
             controller.bind(to: repositoryForgeOverlaySession)
-        }
-    }
-
-    private func installRepositoryLocalStatusLoader(selection: GitBinarySelection) {
-        guard let repository else { return }
-        repositoryLocalStatusLoader = RepositoryLocalStatusLoader(
-            repository: repository,
-            gitExecutablePath: selection.path
-        ) { [weak self] snapshot in
-            guard let self else { return }
-            self.repositoryLocalStatusSnapshot = snapshot
-            self.updateStatus()
         }
     }
 

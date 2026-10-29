@@ -52,6 +52,88 @@ final class GitBinaryReliabilityTests: XCTestCase {
         }
     }
 
+    func testFailureLocationsContainOnlyNormalizedNonemptyExecutablesInAttemptOrder() {
+        let calls = Mutex<[String]>([])
+        let logs = Mutex<[String]>([])
+        let discovery = GitBinaryDiscovery(preference: { "/configured git\r\n" }, environment: ["GIT_PATH": "\r\n"], output: { path, arguments in
+            calls.withLock { $0.append(path + " " + arguments.joined(separator: " ")) }
+            return path == "/usr/bin/which" || path == "/usr/bin/xcrun" ? "/looked up/git\r\n" : nil
+        }, locations: ["", "/configured git", "/known/git\n", "/known/git", "\r\n"], log: { message in logs.withLock { $0.append(message) } })
+        let finished = expectation(description: "Exhaustion lists executable candidates, never lookup tools")
+        discovery.whenAvailable { path, error in
+            XCTAssertNil(path)
+            XCTAssertEqual(error?.localizedFailureReason, "Could not find a git binary version 1.6.0 or higher.\nPlease make sure there is a git binary in one of the following locations:\n\n\t/configured git\n\t/looked up/git\n\t/known/git")
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 3)
+        let attempts = calls.withLock { $0 }
+        XCTAssertFalse(attempts.contains(" --version"), "Known empty candidates must never be launched")
+        XCTAssertTrue(attempts.contains("/usr/bin/which git"))
+        XCTAssertTrue(attempts.contains("/usr/bin/xcrun -f git"))
+        XCTAssertTrue(logs.withLock { $0.contains("[GitDiscovery] Attempt /usr/bin/which arguments=[\"git\"]") })
+        XCTAssertTrue(logs.withLock { $0.contains("[GitDiscovery] Attempt /usr/bin/xcrun arguments=[\"-f\", \"git\"]") })
+        XCTAssertTrue(attempts.contains("/configured git --version"), "Literal filename spaces survive normalization")
+    }
+
+    func testCancelledCurrentQueuedProbeAdvancesWhenOwnedWorkersAreReleased() {
+        let clock = Clock()
+        let occupied = expectation(description: "Both owned workers are blocked")
+        occupied.expectedFulfillmentCount = 2
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let calls = Mutex<[String]>([])
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            calls.withLock { $0.append(path) }
+            if path.hasPrefix("/occupied") {
+                occupied.fulfill(); _ = release.wait(timeout: .now() + 10)
+            }
+            return .init(output: { path == "/healthy" ? "git version 2.50.1" : nil }, cancel: {})
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+        }
+        wait(for: [occupied], timeout: 3)
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/healthy"], timing: clock.timing, runner: runner)
+        let available = expectation(description: "A cancelled current attempt advances, rather than stranding discovery")
+        available.assertForOverFulfill = true
+        discovery.whenAvailable { path, error in XCTAssertEqual(path, "/healthy"); XCTAssertNil(error); available.fulfill() }
+        clock.elapse(4)
+        // Replacing the runner's one pending request cancels the current discovery probe.
+        runner.run(path: "/interloper", arguments: [], timeout: 100) { _ in }
+        release.signal(); release.signal()
+        wait(for: [available], timeout: 3)
+        clock.advance(30)
+        let drained = expectation(description: "Expired timers cannot deliver a second callback")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 3)
+        XCTAssertEqual(calls.withLock { $0.filter { $0 == "/healthy" }.count }, 1)
+    }
+
+    func testCancelledCurrentQueuedProbeDoesNotRenewTheAvailabilityDeadline() {
+        let clock = Clock()
+        let occupied = expectation(description: "Both worker slots remain owned")
+        occupied.expectedFulfillmentCount = 2
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { _, _, _ in
+            occupied.fulfill(); _ = release.wait(timeout: .now() + 10)
+            return .init(output: { nil }, cancel: {})
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+        }
+        wait(for: [occupied], timeout: 3)
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/healthy"], timing: clock.timing, runner: runner)
+        let expired = expectation(description: "Cancellation preserves the original thirty-second deadline")
+        expired.assertForOverFulfill = true
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 2); expired.fulfill() }
+        clock.elapse(29)
+        runner.run(path: "/interloper", arguments: [], timeout: 100) { _ in }
+        clock.advance(1)
+        wait(for: [expired], timeout: 3)
+        XCTAssertNil(discovery.currentSelection)
+    }
+
     func testColdAvailabilityCallbacksKeepTheirRequestOrder() {
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
@@ -468,6 +550,73 @@ final class GitDiscoveryPresentationTests: XCTestCase {
         presenter.invalidateWarning()
     }
 
+    func testInterruptedWarningsRecurAndStaleCompletionsCannotAcknowledgeANewerPresentation() {
+        let center = NotificationCenter()
+        let parent = ParentWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        var completions: [(NSApplication.ModalResponse) -> Void] = []
+        let presenter = GitBinaryDiscoveryPresenter(center: center, windows: { [parent] }, presentSheet: { _, _, complete in completions.append(complete) })
+        let selection = GitBinarySelection(path: "/validated", version: "2.50.1")
+        presenter.publish(selection: selection, rejected: "/invalid")
+        XCTAssertEqual(completions.count, 1)
+        presenter.invalidateWarning()
+        presenter.publish(selection: selection, rejected: "/invalid")
+        XCTAssertEqual(completions.count, 2, "Programmatic dismissal must not acknowledge a warning")
+        guard completions.count == 2 else { return }
+        completions[0](.alertFirstButtonReturn)
+        presenter.publish(selection: selection, rejected: "/different")
+        XCTAssertEqual(completions.count, 3)
+        completions[1](.abort)
+        center.post(name: NSWindow.didBecomeKeyNotification, object: parent)
+        XCTAssertEqual(completions.count, 3, "A stale completion must not clear the active presentation")
+        completions[2](.alertFirstButtonReturn)
+        presenter.invalidateWarning()
+        presenter.publish(selection: selection, rejected: "/different")
+        XCTAssertEqual(completions.count, 3, "An acknowledged unchanged warning stays deduplicated across revalidation")
+        presenter.publish(selection: selection, rejected: nil)
+        presenter.publish(selection: selection, rejected: "/different")
+        XCTAssertEqual(completions.count, 4, "Successful validation clears acknowledgement")
+        presenter.invalidateWarning()
+    }
+
+    func testAbortedPresentationWaitsForAnAvailableOwnerAndCanRecur() {
+        let center = NotificationCenter()
+        let parent = ParentWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        var completions: [(NSApplication.ModalResponse) -> Void] = []
+        let presenter = GitBinaryDiscoveryPresenter(center: center, windows: { [parent] }, presentSheet: { _, _, complete in completions.append(complete) })
+        presenter.publish(selection: nil, rejected: "/invalid")
+        XCTAssertEqual(completions.count, 1)
+        parent.available = false
+        completions[0](.abort)
+        center.post(name: NSWindow.didBecomeMainNotification, object: parent)
+        XCTAssertEqual(completions.count, 1)
+        parent.available = true
+        center.post(name: NSWindow.didBecomeMainNotification, object: parent)
+        XCTAssertEqual(completions.count, 2, "Aborted presentation remains unacknowledged")
+        presenter.invalidateWarning()
+    }
+
+    func testSharedPresentationSuppressesHostedTestsWhileExplicitInstancesRemainEnabled() {
+        XCTAssertFalse(GitDiscoveryWarningPolicy.shouldPresentAutomatically(environment: ["XCTestConfigurationFilePath": "/hosted.xctestconfiguration"]))
+        XCTAssertTrue(GitDiscoveryWarningPolicy.shouldPresentAutomatically(environment: [:]))
+        XCTAssertTrue(GitDiscoveryWarningPolicy.shouldPresentAutomatically(environment: ["GITX_UITEST_REPO": "/fixture"]))
+        XCTAssertFalse(GitBinaryDiscoveryPresenter.shared.automaticPresentationEnabled)
+        let center = NotificationCenter()
+        let parent = ParentWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        let changes = Mutex(0)
+        let observer = center.addObserver(forName: .PBGitBinaryDidChange, object: nil, queue: nil) { _ in changes.withLock { $0 += 1 } }
+        defer { center.removeObserver(observer) }
+        let disabled = GitBinaryDiscoveryPresenter(center: center, windows: { [parent] }, automaticPresentationEnabled: false,
+                                                   presentSheet: { _, _, _ in XCTFail("Hosted-test suppression must not present sheets") })
+        disabled.publish(selection: GitBinarySelection(path: "/validated", version: "2.50.1"), rejected: "/invalid")
+        center.post(name: NSWindow.didBecomeKeyNotification, object: parent)
+        XCTAssertEqual(changes.withLock { $0 }, 1, "Sheet suppression must preserve discovery notifications")
+        var presented = false
+        let explicit = GitBinaryDiscoveryPresenter(center: center, windows: { [parent] }, presentSheet: { _, _, _ in presented = true })
+        explicit.publish(selection: nil, rejected: "/invalid")
+        XCTAssertTrue(presented, "Explicit instances retain real injectable presentation in hosted tests")
+        explicit.invalidateWarning()
+    }
+
     func testAvailabilityCallbacksRunBeforeAnIndependentWarningObserver() {
         let order = Mutex<[String]>([])
         let completed = expectation(description: "Availability and notification both finish")
@@ -623,5 +772,52 @@ final class RepositoryScriptOpenPolicyTests: XCTestCase {
             XCTAssertEqual(result.revisions, revisions)
         }
         XCTAssertTrue(RepositoryScriptOpenOptionsBridge(arguments: nil).isEmpty)
+    }
+}
+
+final class RepositoryGitLoaderLifecycleTests: XCTestCase {
+    func testInstallationRequiresBothLoadersAndRejectsReplacedGenerationsAndRepositories() {
+        let firstOwner = NSObject()
+        let secondOwner = NSObject()
+        let first = RepositoryGitLoaderLifecycle.Identity(repository: ObjectIdentifier(firstOwner), selection: .init(path: "/first", version: "2.50.1"))
+        let second = RepositoryGitLoaderLifecycle.Identity(repository: ObjectIdentifier(secondOwner), selection: first.selection)
+        let replacement = RepositoryGitLoaderLifecycle.Identity(repository: first.repository, selection: .init(path: "/second", version: "2.51.0"))
+        var policy = RepositoryGitLoaderLifecycle()
+        XCTAssertTrue(policy.requiresInstallation(first, hasFocus: true, hasStatus: true))
+        policy.didInstall(first)
+        let original = policy.generation
+        XCTAssertFalse(policy.requiresInstallation(first, hasFocus: true, hasStatus: true))
+        XCTAssertTrue(policy.requiresInstallation(first, hasFocus: false, hasStatus: true))
+        XCTAssertTrue(policy.requiresInstallation(first, hasFocus: true, hasStatus: false))
+        XCTAssertTrue(policy.requiresInstallation(second, hasFocus: true, hasStatus: true))
+        XCTAssertTrue(policy.requiresInstallation(replacement, hasFocus: true, hasStatus: true))
+        XCTAssertTrue(policy.accepts(generation: original, identity: first))
+        XCTAssertFalse(policy.accepts(generation: original, identity: second))
+        policy.invalidate()
+        XCTAssertFalse(policy.accepts(generation: original, identity: first))
+        policy.didInstall(replacement)
+        XCTAssertFalse(policy.accepts(generation: original, identity: replacement))
+        XCTAssertTrue(policy.accepts(generation: policy.generation, identity: replacement))
+    }
+}
+
+@MainActor
+final class RepositoryGitDirectoryIdentityTests: XCTestCase {
+    func testOneDecisionReusesSuccessfulAndMissingLookupsButANewDecisionRevalidates() {
+        let root = URL(fileURLWithPath: "/fixture/repository")
+        let missing = URL(fileURLWithPath: "/fixture/missing")
+        var calls: [URL] = []
+        var gitDirectory = root.appendingPathComponent(".git")
+        var decision = RepositoryGitDirectoryIdentity { url in calls.append(url); return url == root ? gitDirectory : nil }
+        XCTAssertEqual(decision.discover(for: root), gitDirectory)
+        gitDirectory = root.appendingPathComponent("replacement.git")
+        XCTAssertEqual(decision.discover(for: root), root.appendingPathComponent(".git"))
+        XCTAssertNil(decision.discover(for: missing))
+        XCTAssertNil(decision.discover(for: missing))
+        XCTAssertEqual(calls, [root, missing])
+        var afterWait = RepositoryGitDirectoryIdentity { url in calls.append(url); return gitDirectory }
+        XCTAssertEqual(afterWait.discover(for: root), gitDirectory)
+        XCTAssertEqual(calls, [root, missing, root])
+        XCTAssertNil(RepositoryGitDirectoryIdentity.normalized(nil))
     }
 }

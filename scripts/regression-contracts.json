@@ -2744,7 +2744,7 @@
     {
       "id": "GIT-001",
       "family": "Bounded Git discovery and immutable executable selection",
-      "invariant": "Only validated current preferences replace the active Git snapshot; deadlines settle every caller and each auto-fetch operation uses one injected executable.",
+      "invariant": "Only validated current preferences replace the active Git snapshot; deadlines settle every caller, current probe cancellation advances within the original budget, diagnostics list executable candidates, and each auto-fetch operation uses one injected executable.",
       "rootCause": "Stale discovery publication clears usable state, unbounded probes strand consumers, and global path reads split an injected operation.",
       "sourcePaths": [
         "Classes/git/GitBinaryDiscovery.swift",
@@ -2793,13 +2793,34 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Publish an owned executable through the actual shared facade, authorize fixture removal, and require a validated stable selection while all owned bytes remain present."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testFailureLocationsContainOnlyNormalizedNonemptyExecutablesInAttemptOrder",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Compare the literal executable-location error and helper-attempt logs, preserving spaces and skipping empty launch candidates."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testCancelledCurrentQueuedProbeAdvancesWhenOwnedWorkersAreReleased",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Occupy both real runner slots, replace the current queued probe, release the workers, and require one healthy fallback callback."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testCancelledCurrentQueuedProbeDoesNotRenewTheAvailabilityDeadline",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Cancel a queued current probe at second 29 and require exactly one timeout at the original second-30 deadline."
         }
       ]
     },
     {
       "id": "OPEN-001",
       "family": "Captured scripting intent and existing document reuse",
-      "invariant": "Deferred opens carry copied options to their matching document exactly once, and already-open documents remain usable without discovery.",
+      "invariant": "Deferred opens carry copied options to their matching document exactly once, and existing documents are reused before discovery and again after its asynchronous completion, including worktree-root and Git-directory aliases.",
       "rootCause": "Reading the ambient scripting command after deferral loses options; placing readiness before AppKit lookup blocks existing windows.",
       "sourcePaths": [
         "Classes/Controllers/PBRepositoryDocumentController.swift",
@@ -2839,13 +2860,20 @@
           "role": "valid",
           "check": "ui",
           "oracle": "Deliver ordinary, dotted and bare repository folders to the real application and wait for repository windows."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testDocumentRegisteredDuringDiscoveryIsReusedBeforeSuccessOrFailure",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Register a worktree-root document during overlapping .git opens; require reuse despite discovery failure, balanced accounting and exactly-once delayed scripting options."
         }
       ]
     },
     {
       "id": "GIT-002",
       "family": "Responsive Git warnings and window executable refresh",
-      "invariant": "Git preference warnings never block readiness or main-queue work, and live repository loaders follow active selection changes.",
+      "invariant": "Warnings never block readiness or main-queue work and only acknowledged unchanged warnings are deduplicated; each live repository window installs focus and status loaders together for one selection and owner generation.",
       "rootCause": "Modal warnings delay queued work and immutable loaders retain obsolete executable paths after Settings changes.",
       "sourcePaths": [
         "Classes/git/GitBinaryDiscoveryPresenter.swift",
@@ -2877,6 +2905,48 @@
           "role": "valid",
           "check": "ui",
           "oracle": "Open real Settings while a Git probe stalls, release or time out that owned probe, and require a repository window with unchanged Git status."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitDiscoveryPresentationTests/testInterruptedWarningsRecurAndStaleCompletionsCannotAcknowledgeANewerPresentation",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Interrupt a visible warning, require recurrence, deliver stale completions, and compare presentation counts before and after actual acknowledgement."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitDiscoveryPresentationTests/testAbortedPresentationWaitsForAnAvailableOwnerAndCanRecur",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Abort without acknowledgement, remove the parent, then require a new presentation when the parent becomes available."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitDiscoveryPresentationTests/testSharedPresentationSuppressesHostedTestsWhileExplicitInstancesRemainEnabled",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Require hosted shared-sheet suppression with selection notifications intact, injectable explicit presentation enabled, and launched-UI policy enabled."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testActivationBeforeSelectionNotificationInstallsBothLoadersAndRendersStatus",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold selection notification delivery, deliver activation first, then require the actual status command and rendered branch."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testLoaderReplacementAndRepositoryChangeRenderOnlyTheCurrentOwner",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Use real wrapper command logs and rendered branches across executable and repository replacement, then reject closed-owner activation."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testReplacedStatusTaskCannotPublishItsLateOutput",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold real old Git status output past cancellation and new status rendering, then release and reap the old process without changing the displayed branch."
         }
       ]
     }

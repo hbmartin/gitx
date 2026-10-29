@@ -4504,6 +4504,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             waitForCondition { fileList.stagedFileCount == 1 },
             "the dragged staged file lands in the unstaged list"
         )
+        XCTAssertTrue(waitForCondition {
+            fileList.unstagedTable.numberOfRows == 1
+                && (unstaged.arrangedObjects as? [PBChangedFile])?.count == 1
+        }, "the returned unstaged row is ready before focusing it")
+        coordinator.focusTable(fileList.unstagedTable)
+        XCTAssertTrue(waitForCondition {
+            (unstaged.selectedObjects as? [PBChangedFile])?.count == 1
+        }, "the staging toggle requires an observable unstaged selection")
 
         waitForIndexUpdate {
             coordinator.toggleStaging(for: fileList.unstagedTable)

@@ -38,7 +38,6 @@ nonisolated enum GitBinaryDiscoveryOutcome: Sendable {
     case success(GitBinarySelection)
     case exhausted
     case timedOut
-    case cancelled
 }
 
 /// The active selection outlives preference validation. Only successful validation replaces it.
@@ -122,6 +121,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
     private let notify: @MainActor @Sendable (GitBinarySelection?, String?) -> Void
     private let validationStarted: @MainActor @Sendable () -> Void
     private let selectionDidChange: @MainActor @Sendable (GitBinarySelection?) -> Void
+    private let log: @Sendable (String) -> Void
     private let totalBudget: TimeInterval
     private let probeBudget: TimeInterval
 
@@ -129,6 +129,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
          output: Output? = nil, locations: [String] = GitBinaryDiscoveryPolicy.searchLocations,
          timing: GitDiscoveryTiming = .live, totalBudget: TimeInterval = 30, probeBudget: TimeInterval = 5,
          runner: GitDiscoveryProbeRunner? = nil,
+         log: @escaping @Sendable (String) -> Void = { NSLog("%@", $0) },
          validationStarted: @escaping @MainActor @Sendable () -> Void = {},
          selectionDidChange: @escaping @MainActor @Sendable (GitBinarySelection?) -> Void = { _ in },
          notify: @escaping @MainActor @Sendable (GitBinarySelection?, String?) -> Void = { _, _ in })
@@ -139,6 +140,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
         self.timing = timing
         self.totalBudget = totalBudget
         self.probeBudget = probeBudget
+        self.log = log
         self.notify = notify
         self.validationStarted = validationStarted
         self.selectionDidChange = selectionDidChange
@@ -209,7 +211,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
                 validationStarted()
             }
         }
-        NSLog("[GitDiscovery] Starting validation generation %lu", generation)
+        log("[GitDiscovery] Starting validation generation \(generation)")
         timing.schedule(totalBudget) { [self] in finish(.timedOut, generation: generation) }
         advance(generation)
     }
@@ -250,7 +252,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
 
     private func candidates(preference requested: String?, hasSelection: Bool) -> [Candidate] {
         var result: [Candidate] = []
-        if let requested, !requested.isEmpty {
+        if let requested, !GitOutputFormatting.normalizedExecutableCandidate(requested).isEmpty {
             result.append(.executable(requested))
             if hasSelection {
                 return result
@@ -262,7 +264,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
         result.append(.lookup("/usr/bin/which", ["git"]))
         result += locations.map(Candidate.executable)
         result.append(.lookup("/usr/bin/xcrun", ["-f", "git"]))
-        return result
+        return result.filter { !$0.path.isEmpty }
     }
 
     private func advance(_ generation: UInt) {
@@ -274,7 +276,9 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
             let id = UUID()
             search.probeID = id
             search.probe = nil
-            search.paths.append(candidate.path)
+            if case .executable = candidate, !search.paths.contains(candidate.path) {
+                search.paths.append(candidate.path)
+            }
             state.search = search
             return (candidate, id, min(probeBudget, search.deadline - timing.now()))
         }
@@ -283,6 +287,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
             finish(timedOut ? .timedOut : .exhausted, generation: generation)
             return
         }
+        log("[GitDiscovery] Attempt \(candidate.path) arguments=\(candidate.arguments)")
         let request = runner.run(path: candidate.path, arguments: candidate.arguments, timeout: budget) { [self] result in
             handle(result, candidate: candidate, generation: generation, probeID: id)
         }
@@ -297,16 +302,18 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
     }
 
     private func handle(_ result: GitDiscoveryProbeResult, candidate: Candidate, generation: UInt, probeID: UUID) {
-        guard state.withLock({ $0.search?.generation == generation && $0.search?.probeID == probeID }) else { return }
+        guard state.withLock({ $0.search?.generation == generation && $0.search?.probeID == probeID }) else {
+            log("[GitDiscovery] Ignoring superseded probe for \(candidate.path), generation \(generation)")
+            return
+        }
         if preference() != state.withLock({ $0.search?.preference }) {
             start(); return
         }
         if case .cancelled = result {
-            NSLog("[GitDiscovery] Cancelled probe for %@", candidate.path)
-            return
+            log("[GitDiscovery] Current probe cancelled for \(candidate.path); advancing generation \(generation) within its original deadline")
         }
         if case .timedOut = result {
-            NSLog("[GitDiscovery] Probe timed out for %@", candidate.path)
+            log("[GitDiscovery] Probe timed out for \(candidate.path)")
             state.withLock { state in
                 if state.search?.generation == generation {
                     state.search?.probeTimedOut = true
@@ -361,7 +368,6 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
                 rejected = search.rejected
             case .exhausted, .timedOut:
                 rejected = search.preference.flatMap { $0.isEmpty ? nil : $0 } ?? (state.selection == nil ? nil : "")
-            case .cancelled: return nil
             }
             state.outcome = final
             state.attemptedPaths = search.paths
@@ -398,11 +404,11 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
 
     private func validatedSelection(path: String, output: String?) -> GitBinarySelection? {
         guard let version = GitBinaryDiscoveryPolicy.extractGitVersion(output) else {
-            NSLog("[GitDiscovery] Missing or malformed version for %@", path)
+            log("[GitDiscovery] Missing or malformed version for \(path)")
             return nil
         }
         guard version.compare(PBGitMinimumVersion, options: .numeric) != .orderedAscending else {
-            NSLog("[GitDiscovery] %@ has only version %@; minimum is %@", path, version, PBGitMinimumVersion)
+            log("[GitDiscovery] \(path) has only version \(version); minimum is \(PBGitMinimumVersion)")
             return nil
         }
         return GitBinarySelection(path: GitOutputFormatting.normalizedExecutableCandidate(path), version: version)
