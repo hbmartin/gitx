@@ -754,9 +754,16 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     func testWindowDefersGitLoadersUntilItsIsolatedDiscoverySucceeds() throws {
         try prepareFixture()
         defer { try? removeFixture() }
+        let controls = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: controls, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: controls) }
+        let executable = controls.appendingPathComponent("git")
+        let commands = controls.appendingPathComponent("commands")
+        try "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '\(commands.path)'\nexec /usr/bin/git \"$@\"\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
-        let discovery = GitBinaryDiscovery(preference: { "/usr/bin/git" }, environment: [:], output: { _, _ in
+        let discovery = GitBinaryDiscovery(preference: { executable.path }, environment: [:], output: { _, _ in
             _ = release.wait(timeout: .now() + 10)
             return "git version 2.50.1"
         }, notify: { _, _ in NotificationCenter.default.post(name: .PBGitBinaryDidChange, object: nil) })
@@ -772,8 +779,13 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         discovery.whenAvailable { _, error in XCTAssertNil(error); ready.fulfill() }
         release.signal()
         wait(for: [ready], timeout: 3)
-        let installed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.gitLoaderSelection?.path == "/usr/bin/git" }, object: nil)
+        let installed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.gitLoaderSelection?.path == executable.path }, object: nil)
         wait(for: [installed], timeout: 3)
+        let rendered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.localBranch(in: actual.window?.contentView) == "main"
+        }, object: nil)
+        wait(for: [rendered], timeout: 5)
+        XCTAssertTrue(try String(contentsOf: commands, encoding: .utf8).contains("status --porcelain=v2 --branch -z --untracked-files=normal"))
         actual.close()
         let background = expectation(description: "A background notification reaches a closed owner safely")
         DispatchQueue.global().async {
@@ -781,6 +793,14 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
             DispatchQueue.main.async { background.fulfill() }
         }
         wait(for: [background], timeout: 3)
+    }
+
+    private func localBranch(in view: NSView?) -> String? {
+        guard let view else { return nil }
+        if view.accessibilityIdentifier() == "GitX.RepositoryStatusBar.LocalBranch" {
+            return (view as? NSTextField)?.stringValue
+        }
+        return view.subviews.lazy.compactMap { self.localBranch(in: $0) }.first
     }
 
     private func withCurrentCommand(_ command: NSScriptCommand, body: () -> Void) throws {
