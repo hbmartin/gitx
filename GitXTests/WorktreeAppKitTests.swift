@@ -3026,7 +3026,8 @@ final class WorktreeAppKitTests: XCTestCase {
         defer { controller.close(); service.cancel() }
         await waitUntil { controller.historyViewController?.view.window === window }
         let stale = Data("gitdir: ../missing-admin\n".utf8)
-        try stale.write(to: gitfile)
+        // Discovery is already observing this file; publish the intended link as one change.
+        try stale.write(to: gitfile, options: .atomic)
         service.refresh()
         await waitUntil { service.worktrees.first { WorktreePaths.identity($0.path) == WorktreePaths.identity(fixture.linked.path) }?.hasBrokenLink == true }
         let style = try await waitForSheet(in: window, containing: "Relative Paths")
