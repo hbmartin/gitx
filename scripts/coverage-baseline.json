@@ -47,7 +47,7 @@
     "Classes/Controllers/PBHistorySearchMode.m": 1.0,
     "Classes/Controllers/PBOpenShallowRepositoryErrorRecoveryAttempter.m": 0.5789,
     "Classes/Controllers/PBPrefsWindowController.m": 0.8057,
-    "Classes/Controllers/PBRepositoryDocumentController.swift": 0.9805,
+    "Classes/Controllers/PBRepositoryDocumentController.swift": 0.9813,
     "Classes/Controllers/PBServicesController.m": 0.0,
     "Classes/Controllers/PBViewController.m": 1.0,
     "Classes/Controllers/PBWebController.m": 1.0,
@@ -163,8 +163,8 @@
     "Classes/Views/RepositoryPullRequestReviewOverlayController.swift": 0.9282,
     "Classes/Views/StagingFileCellView.swift": 1.0,
     "Classes/git/CommitHeadExpectation.swift": 0.9838,
-    "Classes/git/GitBinaryDiscovery.swift": 0.9808,
-    "Classes/git/GitBinaryDiscoveryPresenter.swift": 0.95,
+    "Classes/git/GitBinaryDiscovery.swift": 0.9848,
+    "Classes/git/GitBinaryDiscoveryPresenter.swift": 0.9509,
     "Classes/git/GitCommandRunning.swift": 1.0,
     "Classes/git/GitDiscoveryProbe.swift": 1.0,
     "Classes/git/GitOutputFormatting.swift": 1.0,
@@ -235,7 +235,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9349,
+  "minimumLineCoverage": 0.935,
   "target": "Half Dark.app",
   "version": 1
 }
