@@ -576,7 +576,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         var restoredSharedSelection = true
         defer { try? removeFixture(removeFiles: restoredSharedSelection) }
         let original = try XCTUnwrap(GitBinaryDiscovery.shared.currentSelection)
-        let replacement = directory.appendingPathComponent("replacement-git")
+        // Preserve the basename required by Apple's Git tool shim.
+        let replacement = directory.appendingPathComponent("git")
         try FileManager.default.createSymbolicLink(at: replacement, withDestinationURL: URL(fileURLWithPath: original.path))
         document.removeWindowController(window)
         document.makeWindowControllers()
@@ -602,6 +603,16 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let delivered = expectation(description: "Closed-window notification drains")
         DispatchQueue.main.async { delivered.fulfill() }
         wait(for: [delivered], timeout: 3)
+        // A notification already queued off-main may arrive after observer removal.
+        let lateCallback = expectation(description: "Late background notification returns")
+        DispatchQueue.global().async {
+            actual.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+            lateCallback.fulfill()
+        }
+        wait(for: [lateCallback], timeout: 3)
+        let lateDelivery = expectation(description: "Late loader update drains on main")
+        DispatchQueue.main.async { lateDelivery.fulfill() }
+        wait(for: [lateDelivery], timeout: 3)
         XCTAssertEqual(actual.gitLoaderSelection?.path, replacement.path, "A closed owner must not recreate loaders")
     }
 

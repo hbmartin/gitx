@@ -798,11 +798,11 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 @end
 
-@interface NSDocumentController (WindowControllerTests)
+@interface PBRepositoryDocumentController (WindowControllerTests)
 - (void)pb_window_openDocumentWithContentsOfURL:(NSURL *)url display:(BOOL)display completionHandler:(void (^)(NSDocument *_Nullable document, BOOL documentWasAlreadyOpen, NSError *_Nullable error))completionHandler;
 @end
 
-@implementation NSDocumentController (WindowControllerTests)
+@implementation PBRepositoryDocumentController (WindowControllerTests)
 
 - (void)pb_window_openDocumentWithContentsOfURL:(NSURL *)url display:(BOOL)display completionHandler:(void (^)(NSDocument *_Nullable document, BOOL documentWasAlreadyOpen, NSError *_Nullable error))completionHandler
 {
@@ -1473,7 +1473,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:), @selector(pb_window_openURL:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:configuration:completionHandler:), @selector(pb_window_openURL:configuration:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(activateFileViewerSelectingURLs:), @selector(pb_window_activateFileViewerSelectingURLs:));
-	PBSwapInstanceMethods(NSDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
+	// Isolate the coordinator at GitX's entry point, before document display.
+	PBSwapInstanceMethods(PBRepositoryDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
 	PBSwapClassMethods(PBGitXMessageSheet.class, @selector(beginSheetWithMessage:info:windowController:), @selector(pb_window_beginSheetWithMessage:info:windowController:));
 	PBSwapClassMethods(PBGitXMessageSheet.class, @selector(beginSheetWithError:windowController:), @selector(pb_window_beginSheetWithError:windowController:));
 	PBSwapClassMethods(PBCommitHookFailedSheet.class, @selector(beginWithMessageText:infoText:windowController:completionHandler:), @selector(pb_window_beginWithMessageText:infoText:windowController:completionHandler:));
@@ -1498,7 +1499,7 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	PBSwapClassMethods(PBCommitHookFailedSheet.class, @selector(beginWithMessageText:infoText:windowController:completionHandler:), @selector(pb_window_beginWithMessageText:infoText:windowController:completionHandler:));
 	PBSwapClassMethods(PBGitXMessageSheet.class, @selector(beginSheetWithError:windowController:), @selector(pb_window_beginSheetWithError:windowController:));
 	PBSwapClassMethods(PBGitXMessageSheet.class, @selector(beginSheetWithMessage:info:windowController:), @selector(pb_window_beginSheetWithMessage:info:windowController:));
-	PBSwapInstanceMethods(NSDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
+	PBSwapInstanceMethods(PBRepositoryDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(activateFileViewerSelectingURLs:), @selector(pb_window_activateFileViewerSelectingURLs:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:configuration:completionHandler:), @selector(pb_window_openURL:configuration:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:), @selector(pb_window_openURL:));

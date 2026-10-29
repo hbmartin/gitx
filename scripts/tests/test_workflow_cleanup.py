@@ -23,6 +23,104 @@ import workflow_session as session
 
 
 class CleanupTests(unittest.TestCase):
+    def test_independent_container_admission_protects_a_reappearing_handoff(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, release):
+            release()
+            with mock.patch.object(session.NativeRetirementDirectories, 'remove_empty', side_effect=OSError(errno.EIO, 'interrupted')):
+                self.assertEqual(session.retire_registered_native_sources(native.registration, checkout=self.root)[0], 'retired')
+            handoff = session.native_completion_path(native.registration)
+            owner = cleanup.read_json(native.registration)
+            session.atomic_json(handoff, {'schemaVersion':1,'kind':'gitx-native-completion','owner':owner})
+            before = handoff.read_bytes()
+            inventory = cleanup.inventory
+            def protect(*args, **kwargs):
+                report = inventory(*args, **kwargs)
+                report['nativeCompletions'] = []  # It appeared after this discovery boundary.
+                report['protectedPaths'].append(str(handoff))
+                return report
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            with mock.patch.object(cleanup, 'inventory', side_effect=protect):
+                report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'partial')
+            self.assertTrue(handoff.exists(), 'independent container cleanup removed a protected handoff')
+            self.assertEqual(handoff.read_bytes(), before)
+            self.assertEqual(report['nativeContainers'][0]['reason'], 'protected native container')
+
+
+    def test_content_retirement_and_container_retry_have_independent_report_states(self):
+        with self.native_archive_waiting_for_retirement() as (native, source, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            remove = session.os.rmdir
+            def refuse(name, *args, **kwargs):
+                if str(name).startswith('.gitx-native-retired-'):
+                    raise PermissionError(errno.EACCES, 'empty container is busy')
+                return remove(name, *args, **kwargs)
+            with mock.patch.object(session.os, 'rmdir', side_effect=refuse):
+                first = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(first['status'], 'partial')
+            self.assertEqual(first['nativeRetirement'][0]['state'], 'retired')
+            self.assertEqual(first['nativeContainers'][0]['state'], 'deferred')
+            self.assertFalse(session.native_completion_path(native.registration).exists())
+            audit = native.registration.read_bytes()
+            second = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(second['status'], 'complete')
+            self.assertEqual(second['nativeRetirement'], [])
+            self.assertEqual(second['nativeContainers'][0]['state'], 'removed')
+            self.assertEqual(native.registration.read_bytes(), audit)
+            self.assertEqual((native.archive / source.name).read_bytes(), b'archived-native-\x00\xff')
+            self.assertFalse(cleanup.pending_path(self.root).exists())
+
+    def test_container_discovery_recovers_a_missing_journal_without_a_handoff(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, release):
+            release()
+            cleanup.queue_commit(self.root)
+            receipt = self.valid_receipt()
+            with mock.patch.object(session.NativeRetirementDirectories, 'remove_empty', side_effect=OSError(errno.EIO, 'interrupted')):
+                self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'partial')
+            session.native_container_path(native.registration).unlink()
+            self.assertFalse(session.native_completion_path(native.registration).exists())
+            report = cleanup.run_cleanup(self.root, receipt)
+            self.assertEqual(report['status'], 'complete')
+            self.assertEqual(report['nativeContainers'][0]['state'], 'removed')
+
+    def test_invalid_container_journals_are_reported_without_blocking_cleanup(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, release):
+            release()
+            self.assertEqual(session.retire_registered_native_sources(native.registration, checkout=self.root)[0], 'retired')
+            journal = session.native_container_path(native.registration)
+            journal.write_bytes(b'{malformed')
+            before = native.registration.read_bytes()
+            cleanup.queue_commit(self.root)
+            report = cleanup.run_cleanup(self.root, self.valid_receipt())
+            self.assertEqual(report['status'], 'complete')
+            self.assertEqual(report['nativeContainers'][0]['state'], 'retained')
+            self.assertEqual(journal.read_bytes(), b'{malformed')
+            self.assertEqual(native.registration.read_bytes(), before)
+
+    def test_protected_container_refuses_mutation_after_content_retirement(self):
+        with self.native_archive_waiting_for_retirement() as (native, _, release):
+            release()
+            with mock.patch.object(session.NativeRetirementDirectories, 'remove_empty', side_effect=OSError(errno.EIO, 'interrupted')):
+                self.assertEqual(session.retire_registered_native_sources(native.registration, checkout=self.root)[0], 'retired')
+            quarantine = pathlib.Path(cleanup.read_json(native.registration)['retirementPath'])
+            journal = session.native_container_path(native.registration)
+            before = journal.read_bytes()
+            inventory = cleanup.inventory
+            def protect(*args, **kwargs):
+                report = inventory(*args, **kwargs)
+                report['protectedPaths'].append(str(quarantine))
+                return report
+            cleanup.queue_commit(self.root)
+            with mock.patch.object(cleanup, 'inventory', side_effect=protect):
+                report = cleanup.run_cleanup(self.root, self.valid_receipt())
+            self.assertEqual(report['status'], 'partial')
+            self.assertEqual(report['nativeContainers'][0]['reason'], 'protected native container')
+            self.assertTrue(quarantine.is_dir())
+            self.assertEqual(journal.read_bytes(), before)
+
     @contextlib.contextmanager
     def native_archive_waiting_for_retirement(self):
         logs = self.root / 'artifacts/verification/native-fixture/Logs/Native'
@@ -220,7 +318,7 @@ class CleanupTests(unittest.TestCase):
             with mock.patch.object(cleanup, 'eligibility', side_effect=measured):
                 report = cleanup.run_cleanup(self.root, receipt)
             self.assertEqual(report['status'], 'complete', report['nativeRetirement'])
-            self.assertEqual(len(durations), 2 + 3 * 2 + 1, 'Two admissions, three full gates per source, one final queue-clear proof')
+            self.assertEqual(len(durations), 2 + 5 * 2 + 1, 'Two admissions, five mutation scopes per source, one final queue-clear proof')
             self.assertFalse(first.root.exists()); self.assertFalse(second.root.exists())
             print(json.dumps({'nativeCleanupGateMeasurement': {'invocations': 2, 'fullEligibilityCalls': len(durations),
                                                               'durationSeconds': durations}}))
@@ -572,7 +670,7 @@ class CleanupTests(unittest.TestCase):
                 state, reason, _ = session.retire_registered_native_sources(native.registration, checkout=self.root, authorize=authorize)
             self.assertEqual(state, 'retired', reason)
             self.assertEqual([counts[inode] for inode in archive_inodes], [1])
-            self.assertEqual(len(calls), 3, 'Rename and deletion release authority; final publication and handoff share one fresh held scope')
+            self.assertEqual(len(calls), 5, 'Rename, deletion, terminal publication, handoff and container cleanup each use fresh authority')
 
     def test_native_writer_lease_rejects_retirement_before_archive_hashing(self):
         with self.native_archive_waiting_for_retirement() as (native, source, _):
@@ -723,6 +821,11 @@ else:
                 state = outcome.state
                 self.assertEqual(state, 'retired')
                 durable = cleanup.read_json(native.registration)
+                # Freeze the legacy physical-completion format; new content
+                # certificates deliberately tolerate an outstanding container.
+                session.shutil.rmtree(durable['retirementPath'])
+                session.sync_native_directory(native.root.parent)
+                durable['retirementCompletion'] = durable.pop('retirementContents')
                 if variant == 'legacy':
                     durable.pop('retirementPhase', None)
                     durable.pop('retirementParentIdentity', None)

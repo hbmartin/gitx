@@ -40,10 +40,21 @@ nonisolated struct InspectorActionGeometryWait {
         case waiting, ready, oversized, timedOut
     }
 
+    enum Reason: String {
+        case missing, unfinished, moving, unchangedAfterDrag, stable, stableOversized
+    }
+
     static let timeout: TimeInterval = 5
     let viewport: InspectorActionViewport
     let startedAt: TimeInterval
     let afterDragFrom: CGRect?
+    var deadline: TimeInterval {
+        startedAt + Self.timeout
+    }
+
+    private(set) var lastFrame = CGRect.zero
+    private(set) var lastReason = Reason.missing
+    private var observation = Observation.waiting
     private var previous: CGRect?
 
     init(viewport: InspectorActionViewport, startedAt: TimeInterval, afterDragFrom: CGRect? = nil) {
@@ -53,18 +64,38 @@ nonisolated struct InspectorActionGeometryWait {
     }
 
     mutating func observe(exists: Bool, frame: CGRect, at time: TimeInterval) -> Observation {
-        guard time - startedAt < Self.timeout else { return .timedOut }
+        guard time < deadline else { return record(.timedOut) }
+        lastFrame = frame
         guard exists, InspectorActionViewport.isReady(frame) else {
+            lastReason = exists ? .unfinished : .missing
             previous = nil
-            return .waiting
+            return record(.waiting)
         }
         if let initial = afterDragFrom, frame == initial {
             previous = nil
-            return .waiting
+            lastReason = .unchangedAfterDrag
+            return record(.waiting)
         }
         let settled = previous == frame
         previous = frame
-        guard settled else { return .waiting }
-        return viewport.displacement(toContain: frame) == nil ? .oversized : .ready
+        guard settled else {
+            lastReason = .moving
+            return record(.waiting)
+        }
+        let oversized = viewport.displacement(toContain: frame) == nil
+        lastReason = oversized ? .stableOversized : .stable
+        return record(oversized ? .oversized : .ready)
+    }
+
+    mutating func finish(timedOut: Bool, at time: TimeInterval) -> Observation {
+        if timedOut || time >= deadline && observation == .waiting {
+            return record(.timedOut)
+        }
+        return observation
+    }
+
+    private mutating func record(_ value: Observation) -> Observation {
+        observation = value
+        return value
     }
 }

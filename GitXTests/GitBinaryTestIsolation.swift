@@ -40,7 +40,8 @@ final class GitBinaryTestIsolationTests: XCTestCase {
         let previous = defaults.object(forKey: "gitExecutable")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let executable = directory.appendingPathComponent("fixture-git")
+        // Apple's tool shim dispatches by basename, so preserve the name "git".
+        let executable = directory.appendingPathComponent("git")
         try FileManager.default.createSymbolicLink(at: executable, withDestinationURL: URL(fileURLWithPath: original))
         defer {
             defaults.set(previous, forKey: "gitExecutable")

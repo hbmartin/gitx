@@ -2,6 +2,60 @@ import CoreGraphics
 import XCTest
 
 final class InspectorActionGeometryTests: XCTestCase {
+    func testWaiterTimeoutFinalizesCachedGeometryWithoutAnotherPoll() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        let frame = CGRect(x: 10, y: 10, width: 100, height: 25)
+        var wait = InspectorActionGeometryWait(viewport: viewport, startedAt: 0)
+        XCTAssertEqual(wait.observe(exists: true, frame: frame, at: 4.9), .waiting)
+        XCTAssertEqual(wait.finish(timedOut: true, at: 5), .timedOut)
+        XCTAssertEqual(wait.lastReason, .moving)
+        XCTAssertEqual(wait.lastFrame, frame)
+    }
+
+    func testExpiredPolicyFinalizesEvenWhenWaiterCompletionArrivesLate() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        var wait = InspectorActionGeometryWait(viewport: viewport, startedAt: 0)
+        XCTAssertEqual(wait.observe(exists: true, frame: .zero, at: 4.9), .waiting)
+        XCTAssertEqual(wait.finish(timedOut: false, at: 5), .timedOut)
+        XCTAssertEqual(wait.lastReason, .unfinished)
+    }
+
+    func testFinalizationPreservesTheLastFailureReasonAndFixedBudget() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        let initial = CGRect(x: -20, y: 10, width: 100, height: 25)
+        var missing = InspectorActionGeometryWait(viewport: viewport, startedAt: 10)
+        XCTAssertEqual(missing.finish(timedOut: true, at: 15), .timedOut)
+        XCTAssertEqual(missing.lastReason, .missing)
+        var stale = InspectorActionGeometryWait(viewport: viewport, startedAt: 20, afterDragFrom: initial)
+        XCTAssertEqual(stale.observe(exists: true, frame: initial, at: 24.9), .waiting)
+        XCTAssertEqual(stale.finish(timedOut: true, at: 25), .timedOut)
+        XCTAssertEqual(stale.lastReason, .unchangedAfterDrag)
+        XCTAssertEqual(stale.deadline, 25)
+        var oversized = InspectorActionGeometryWait(viewport: viewport, startedAt: 0)
+        let wide = CGRect(x: 0, y: 0, width: 1100, height: 25)
+        XCTAssertEqual(oversized.observe(exists: true, frame: wide, at: 4), .waiting)
+        XCTAssertEqual(oversized.observe(exists: true, frame: wide, at: 4.9), .oversized)
+        XCTAssertEqual(oversized.finish(timedOut: true, at: 5), .timedOut)
+        XCTAssertEqual(oversized.lastReason, .stableOversized)
+        XCTAssertEqual(oversized.lastFrame, wide)
+    }
+
+    func testFinalizationCannotAcceptLateGeometryOrExtendTheBudget() {
+        let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
+        let frame = CGRect(x: 10, y: 10, width: 100, height: 25)
+        var wait = InspectorActionGeometryWait(viewport: viewport, startedAt: 0)
+        XCTAssertEqual(wait.observe(exists: true, frame: frame, at: 4.9), .waiting)
+        XCTAssertEqual(wait.finish(timedOut: false, at: 4.95), .waiting)
+        XCTAssertEqual(wait.observe(exists: true, frame: frame, at: 5), .timedOut)
+        XCTAssertEqual(wait.finish(timedOut: false, at: 5.1), .timedOut)
+        XCTAssertEqual(wait.deadline, 5)
+        var ready = InspectorActionGeometryWait(viewport: viewport, startedAt: 10)
+        XCTAssertEqual(ready.observe(exists: true, frame: frame, at: 14), .waiting)
+        XCTAssertEqual(ready.observe(exists: true, frame: frame, at: 14.9), .ready)
+        XCTAssertEqual(ready.finish(timedOut: false, at: 15.1), .ready)
+        XCTAssertEqual(ready.lastReason, .stable)
+    }
+
     func testInspectorDisplacementCorrectsObservedClampingOnce() throws {
         let viewport = InspectorActionViewport(visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800), primaryDisplayTop: 800)
         let clipped = CGRect(x: -2.25, y: 790.5, width: 995, height: 25)
