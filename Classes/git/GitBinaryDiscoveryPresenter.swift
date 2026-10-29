@@ -1,5 +1,11 @@
 import AppKit
 
+nonisolated enum GitDiscoveryWarningPolicy {
+    static func shouldPresentAutomatically(environment: [String: String]) -> Bool {
+        environment["XCTestConfigurationFilePath"] == nil
+    }
+}
+
 /// Availability never depends on dismissing a warning. Sheets wait for an eligible parent.
 @MainActor
 final class GitBinaryDiscoveryPresenter: NSObject {
@@ -8,22 +14,33 @@ final class GitBinaryDiscoveryPresenter: NSObject {
         let selection: GitBinarySelection?
     }
 
-    typealias PresentSheet = (NSAlert, NSWindow, @escaping (NSApplication.ModalResponse) -> Void) -> Void
-    static let shared = GitBinaryDiscoveryPresenter()
+    private struct Presentation {
+        let id = UUID()
+        let warning: Warning
+        let alert: NSAlert
+    }
 
+    typealias PresentSheet = (NSAlert, NSWindow, @escaping (NSApplication.ModalResponse) -> Void) -> Void
+    static let shared = GitBinaryDiscoveryPresenter(
+        automaticPresentationEnabled: GitDiscoveryWarningPolicy.shouldPresentAutomatically(environment: ProcessInfo.processInfo.environment)
+    )
+
+    let automaticPresentationEnabled: Bool
     private let center: NotificationCenter
     private let windows: () -> [NSWindow]
     private let presentSheet: PresentSheet
     private var selection: GitBinarySelection?
     private var pending: Warning?
-    private var lastPresented: Warning?
-    private var alert: NSAlert?
+    private var acknowledged: Warning?
+    private var presentation: Presentation?
 
     init(center: NotificationCenter = .default, windows: @escaping () -> [NSWindow] = { NSApp.orderedWindows },
+         automaticPresentationEnabled: Bool = true,
          presentSheet: @escaping PresentSheet = { alert, parent, completed in alert.beginSheetModal(for: parent, completionHandler: completed) })
     {
         self.center = center
         self.windows = windows
+        self.automaticPresentationEnabled = automaticPresentationEnabled
         self.presentSheet = presentSheet
         super.init()
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification, NSWindow.didEndSheetNotification,
@@ -38,6 +55,7 @@ final class GitBinaryDiscoveryPresenter: NSObject {
     func invalidateWarning() {
         pending = nil
         dismissWarning()
+        NSLog("[GitDiscovery] Invalidated warning; acknowledgement preserved")
     }
 
     func publishSelection(_ newSelection: GitBinarySelection?) {
@@ -51,8 +69,9 @@ final class GitBinaryDiscoveryPresenter: NSObject {
         publishSelection(newSelection)
         guard let rejected else {
             pending = nil
-            lastPresented = nil
+            acknowledged = nil
             dismissWarning()
+            NSLog("[GitDiscovery] Successful validation cleared warning acknowledgement")
             return
         }
         let warning = Warning(preference: rejected, selection: newSelection)
@@ -68,30 +87,40 @@ final class GitBinaryDiscoveryPresenter: NSObject {
     }
 
     private func dismissWarning() {
-        guard let alert else { return }
-        self.alert = nil
+        guard let presentation else { return }
+        // Revoke authority before endSheet can synchronously invoke its completion.
+        self.presentation = nil
+        let alert = presentation.alert
         if let parent = alert.window.sheetParent {
             parent.endSheet(alert.window, returnCode: .abort)
         }
         alert.window.orderOut(nil)
+        NSLog("[GitDiscovery] Invalidated warning presentation %@", presentation.id.uuidString)
     }
 
     private func presentIfPossible() {
-        guard alert == nil, let pending, pending != lastPresented,
+        guard automaticPresentationEnabled, presentation == nil, let pending, pending != acknowledged,
               let parent = windows().first(where: { $0.isVisible && $0.canBecomeKey && $0.attachedSheet == nil && $0.sheetParent == nil }) else { return }
-        lastPresented = pending
         let alert = NSAlert()
         alert.messageText = NSLocalizedString("Invalid git path", comment: "Configured Git executable is invalid")
         let requested = pending.preference.isEmpty ? NSLocalizedString("Automatic Git discovery", comment: "") : pending.preference
         alert.informativeText = String(format: NSLocalizedString("The configured Git executable “%@” could not be validated. %@", comment: "Git discovery fallback"), requested,
                                        pending.selection.map { "Using \($0.path) instead." } ?? "No usable Git executable was found.")
         alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
-        self.alert = alert
-        NSLog("[GitDiscovery] Presenting rejected preference %@; active %@", requested, pending.selection?.path ?? "unavailable")
-        presentSheet(alert, parent) { [weak self, weak alert] _ in
-            guard let self, self.alert === alert else { return }
-            self.alert = nil
-            presentIfPossible()
+        let presentation = Presentation(warning: pending, alert: alert)
+        self.presentation = presentation
+        NSLog("[GitDiscovery] Presenting rejected preference %@; active %@; presentation %@", requested, pending.selection?.path ?? "unavailable", presentation.id.uuidString)
+        let id = presentation.id
+        let warning = presentation.warning
+        presentSheet(alert, parent) { [weak self] response in
+            guard let self, self.presentation?.id == id else { return }
+            self.presentation = nil
+            if response == .alertFirstButtonReturn {
+                acknowledged = warning
+                NSLog("[GitDiscovery] Acknowledged warning presentation %@", id.uuidString)
+            } else {
+                NSLog("[GitDiscovery] Aborted warning presentation %@ without acknowledgement", id.uuidString)
+            }
         }
     }
 }

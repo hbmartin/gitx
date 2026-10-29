@@ -1,5 +1,29 @@
 import Foundation
 
+/// Canonical Git-directory identity is recomputed at each synchronous opening decision.
+@MainActor
+struct RepositoryGitDirectoryIdentity {
+    private var lookups: [URL: URL?] = [:]
+    private let findGitDirectory: (URL) -> URL?
+
+    init(findGitDirectory: @escaping (URL) -> URL? = { PBRepositoryFinder.gitDir(for: $0) }) {
+        self.findGitDirectory = findGitDirectory
+    }
+
+    mutating func discover(for url: URL) -> URL? {
+        if let cached = lookups[url] {
+            return cached
+        }
+        let identity = Self.normalized(findGitDirectory(url))
+        lookups.updateValue(identity, forKey: url)
+        return identity
+    }
+
+    static func normalized(_ gitDirectory: URL?) -> URL? {
+        gitDirectory?.standardizedFileURL.resolvingSymlinksInPath()
+    }
+}
+
 /// Captured while Cocoa is executing the event, before discovery can defer the open.
 struct RepositoryDocumentOpenIntent {
     let repositoryURL: URL?
@@ -11,9 +35,14 @@ struct RepositoryDocumentOpenIntent {
     }
 
     func arguments(for document: PBGitRepositoryDocument) -> [String]? {
+        var identities = RepositoryGitDirectoryIdentity()
+        return arguments(for: document, identities: &identities)
+    }
+
+    func arguments(for document: PBGitRepositoryDocument, identities: inout RepositoryGitDirectoryIdentity) -> [String]? {
         guard !arguments.isEmpty, let repositoryURL,
-              let intended = PBRepositoryFinder.gitDir(for: repositoryURL),
-              intended.standardizedFileURL.resolvingSymlinksInPath() == document.repository.gitURL()?.standardizedFileURL.resolvingSymlinksInPath() else { return nil }
+              let intended = identities.discover(for: repositoryURL),
+              intended == RepositoryGitDirectoryIdentity.normalized(document.repository.gitURL()) else { return nil }
         return arguments
     }
 }

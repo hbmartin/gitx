@@ -128,14 +128,18 @@ class PBRepositoryDocumentController: NSDocumentController {
         let intent = RepositoryDocumentOpenIntent(command: NSScriptCommand.current())
         openState.beginOpen()
         NSLog("[RepositoryOpening] Opening %@; pending=%ld", url.path, openState.pendingOpenCount)
-        if let existing = existingDocument(for: url) {
-            finishOpening(existing, alreadyOpen: true, error: nil, url: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
+        var identities = RepositoryGitDirectoryIdentity()
+        if let existing = existingDocument(for: url, identities: &identities) {
+            finishOpening(existing, alreadyOpen: true, error: nil, url: url, display: displayDocument, intent: intent, identities: identities, completionHandler: completionHandler)
         } else if gitDiscovery.isReady {
             openValidatedDocument(withContentsOf: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
         } else {
             gitDiscovery.start(retryingFailure: true)
             gitDiscovery.whenSelectionAvailable { [self] _, error in
-                if let error {
+                var identities = RepositoryGitDirectoryIdentity()
+                if let existing = existingDocument(for: url, identities: &identities) {
+                    finishOpening(existing, alreadyOpen: true, error: nil, url: url, display: displayDocument, intent: intent, identities: identities, completionHandler: completionHandler)
+                } else if let error {
                     finishOpening(nil, alreadyOpen: false, error: error, url: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
                 } else {
                     openValidatedDocument(withContentsOf: url, display: displayDocument, intent: intent, completionHandler: completionHandler)
@@ -144,13 +148,13 @@ class PBRepositoryDocumentController: NSDocumentController {
         }
     }
 
-    private func existingDocument(for url: URL) -> NSDocument? {
+    private func existingDocument(for url: URL, identities: inout RepositoryGitDirectoryIdentity) -> NSDocument? {
         if let existing = document(for: url) {
             return existing
         }
-        guard let gitURL = PBRepositoryFinder.gitDir(for: url)?.standardizedFileURL.resolvingSymlinksInPath() else { return nil }
+        guard let gitURL = identities.discover(for: url) else { return nil }
         return documents.compactMap { $0 as? PBGitRepositoryDocument }.first {
-            $0.repository.gitURL()?.standardizedFileURL.resolvingSymlinksInPath() == gitURL
+            RepositoryGitDirectoryIdentity.normalized($0.repository.gitURL()) == gitURL
         }
     }
 
@@ -169,11 +173,13 @@ class PBRepositoryDocumentController: NSDocumentController {
     private func finishOpening(
         _ document: NSDocument?, alreadyOpen: Bool, error: (any Error)?, url: URL,
         display: Bool, intent: RepositoryDocumentOpenIntent,
+        identities: RepositoryGitDirectoryIdentity = .init(),
         completionHandler: (NSDocument?, Bool, (any Error)?) -> Void
     ) {
+        var identities = identities
         if let document {
             if let repositoryDocument = document as? PBGitRepositoryDocument,
-               let arguments = intent.arguments(for: repositoryDocument)
+               let arguments = intent.arguments(for: repositoryDocument, identities: &identities)
             {
                 RepositoryDocumentScripting.enqueue(arguments, for: repositoryDocument)
             }
