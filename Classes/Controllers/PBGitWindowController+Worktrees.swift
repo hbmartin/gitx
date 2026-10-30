@@ -6,12 +6,14 @@ private final class WorktreePresentationContext {
     weak var repository: PBGitRepository?
     let service: PBRepositoryWorktreeService
     let generation: UInt64
+    let operationOwner: NSObject
 
-    init(window: NSWindow, repository: PBGitRepository, service: PBRepositoryWorktreeService, generation: UInt64) {
+    init(window: NSWindow, repository: PBGitRepository, service: PBRepositoryWorktreeService, generation: UInt64, operationOwner: NSObject) {
         self.window = window
         self.repository = repository
         self.service = service
         self.generation = generation
+        self.operationOwner = operationOwner
     }
 
     @MainActor
@@ -337,8 +339,9 @@ extension PBGitWindowController {
             return nil
         }
         let service = repository.worktreeService
+        guard let operationOwner = worktreeOperationOwner(for: service) else { return nil }
         NSLog("[GitX] Captured worktree presentation generation %llu (supported: %@)", worktreePresentationGeneration, service.isSupported ? "yes" : "no")
-        return WorktreePresentationContext(window: window, repository: repository, service: service, generation: worktreePresentationGeneration)
+        return WorktreePresentationContext(window: window, repository: repository, service: service, generation: worktreePresentationGeneration, operationOwner: operationOwner)
     }
 
     private func isCurrentWorktreePresentation(_ context: WorktreePresentationContext) -> Bool {
@@ -466,7 +469,7 @@ extension PBGitWindowController {
         panel.directoryURL = FileManager.default.fileExists(atPath: parent.path) ? parent : newWorktreeParent(context: context)
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, self.isCurrentWorktreePresentation(context), response == .OK, let url = panel.url else { return }
-            context.service.prepareRepair(worktree: worktree, movedTo: url.path) { [weak self] preview, error in
+            context.service.prepareRepair(worktree: worktree, movedTo: url.path, owner: context.operationOwner) { [weak self] preview, error in
                 guard let self, self.isCurrentWorktreePresentation(context) else {
                     context.discardRepairPreview(preview)
                     return
@@ -516,7 +519,7 @@ extension PBGitWindowController {
         alert.addButton(withTitle: "Cancel")
         presentWorktreeSheet(alert, context: context) { [weak self] response in
             guard let self, self.isCurrentWorktreePresentation(context), response == .alertFirstButtonReturn else { return }
-            context.service.perform(.remove(path: worktree.path, force: false), expectedWorktree: worktree.value) { [weak self] _, error in
+            context.service.perform(.remove(path: worktree.path, force: false), expectedWorktree: worktree.value, owner: context.operationOwner) { [weak self] _, error in
                 guard let error else { return }
                 guard let self else {
                     NSLog("[GitX] Discarded a Remove error after its controller was released")
@@ -548,7 +551,7 @@ extension PBGitWindowController {
     @IBAction @objc(pruneWorktrees:)
     dynamic func pruneWorktrees(_: Any?) {
         guard let context = captureWorktreePresentation(), context.service.isSupported else { return }
-        context.service.preparePrunePreview { [weak self] preview, error in
+        context.service.preparePrunePreview(owner: context.operationOwner) { [weak self] preview, error in
             guard let self, self.canReceiveWorktreeResult(context) else {
                 context.discardPrunePreview(preview)
                 NSLog("[GitX] Discarded prune preparation after its presentation owner changed")
@@ -601,7 +604,7 @@ extension PBGitWindowController {
             _ = preparation.consume()
             context.service.refreshPrunePreview(current, ownerIsCurrent: { [weak self] in
                 self?.isCurrentWorktreePresentation(context) == true
-            }) { [weak self] updated, listChanged, error in
+            }, owner: context.operationOwner) { [weak self] updated, listChanged, error in
                 updatedBeforeDisplay = updatedBeforeDisplay || listChanged
                 if let error {
                     preparation = .failed(error)
@@ -650,7 +653,7 @@ extension PBGitWindowController {
             }
             context.service.confirmPrune(preview, ownerIsCurrent: { [weak self] in
                 self?.isCurrentWorktreePresentation(context) == true
-            }) { [weak self] updated, error in
+            }, owner: context.operationOwner) { [weak self] updated, error in
                 guard let self, self.canReceiveWorktreeResult(context) else {
                     context.discardPrunePreview(updated)
                     NSLog("[GitX] Discarded renewed prune consent after its presentation owner changed")
@@ -765,7 +768,7 @@ extension PBGitWindowController {
             } else {
                 return
             }
-            service.prepareRepairLinks(style: style) { [weak self] preview, error in
+            service.prepareRepairLinks(style: style, owner: context.operationOwner) { [weak self] preview, error in
                 guard let self, self.canReceiveWorktreeResult(context) else {
                     context.discardRepairPreview(preview)
                     return
@@ -809,7 +812,7 @@ extension PBGitWindowController {
             _ = preparation.consume()
             context.service.refreshRepairPreview(current, ownerIsCurrent: { [weak self] in
                 self?.isCurrentWorktreePresentation(context) == true
-            }) { [weak self] result in
+            }, owner: context.operationOwner) { [weak self] result in
                 switch result {
                 case let .failure(error):
                     preparation = .failed(error)
@@ -870,7 +873,7 @@ extension PBGitWindowController {
         }
         context.service.confirmRepair(preview, ownerIsCurrent: { [weak self] in
             self?.isCurrentWorktreePresentation(context) == true
-        }) { [weak self] updated, error in
+        }, owner: context.operationOwner) { [weak self] updated, error in
             guard let self, self.canReceiveWorktreeResult(context) else {
                 context.discardRepairPreview(updated)
                 NSLog("[GitX] Discarded renewed repair consent after its presentation owner changed")
@@ -890,7 +893,7 @@ extension PBGitWindowController {
             NSLog("[GitX] Discarded a deferred worktree action after its presentation owner changed")
             return
         }
-        context.service.perform(command, expectedWorktree: expectedWorktree) { [weak self] _, error in
+        context.service.perform(command, expectedWorktree: expectedWorktree, owner: context.operationOwner) { [weak self] _, error in
             if let error {
                 self?.showWorktreeError(error, context: context)
             }

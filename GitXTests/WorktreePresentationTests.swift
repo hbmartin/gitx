@@ -377,7 +377,7 @@ import XCTest
                     let done = expectation(description: "Swift Locate delivers its terminal result")
                     var completed = 0
                     var failure: NSError?
-                    service.prepareRepair(worktree: tree, movedTo: journey.fixture.linked.path) { preview, error in
+                    service.prepareRepair(worktree: tree, movedTo: journey.fixture.linked.path, owner: NSObject()) { preview, error in
                         XCTAssertNil(error)
                         guard let preview else { XCTFail("Locate must prepare a read-only preview"); done.fulfill(); return }
                         XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
@@ -679,6 +679,116 @@ import XCTest
 
         func testExpectedQueuedCancellationIsSilentInALiveWindow() async throws {
             try await queuedCancellation(closesAndReopensWindow: false)
+        }
+
+        func testCancellingOneOwnersPreparationPreservesAnotherOwnerOnTheSameService() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let origin = try await installService(in: fixture)
+            let first = NSObject()
+            let second = NSObject()
+            let report = ["worktree", "prune", "--dry-run", "--verbose"]
+            origin.gate.holdNextArguments = report
+            defer { origin.gate.writer.finish(Data()) }
+            let cancelled = expectation(description: "Only the first owner's preparation is cancelled")
+            origin.service.preparePrunePreview(owner: first) { preview, error in
+                XCTAssertNil(preview)
+                XCTAssertEqual((error as NSError?)?.domain, NSCocoaErrorDomain)
+                XCTAssertEqual((error as NSError?)?.code, NSUserCancelledError)
+                cancelled.fulfill()
+            }
+            await waitUntil { origin.gate.writer.isPending }
+            let ready = expectation(description: "The second owner still receives a real preview from the same service")
+            origin.service.preparePrunePreview(owner: second) { preview, error in
+                XCTAssertNil(error)
+                XCTAssertNotNil(preview)
+                if let preview {
+                    origin.service.discardPrunePreview(preview)
+                }
+                ready.fulfill()
+            }
+            origin.service.markPreparationsCancelled(forOwner: first)
+            origin.service.cancelPreparations(forOwner: first)
+            await fulfillment(of: [cancelled, ready], timeout: 15)
+            XCTAssertTrue(origin.service.isSupported)
+            XCTAssertEqual(origin.gate.commands.filter { $0 == report }.count, 2)
+        }
+
+        func testQueuedLegacyMutationRejectsAReplacedGitDirectoryAndRecoversAfterRestoration() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let blocker = try await installService(in: fixture, holdsWriter: true)
+            let origin = try await installService(in: fixture)
+            let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
+            let lock = ["worktree", "lock", "--reason", "barrier", tree.path]
+            let first = expectation(description: "The admitted barrier releases its reservation")
+            enqueue(blocker.service, command: .lock(path: tree.path, reason: "barrier")) { _, _ in first.fulfill() }
+            await waitUntil { blocker.gate.writer.isPending }
+            let refused = expectation(description: "The queued request refuses a new Git-directory identity")
+            enqueue(origin.service, command: .unlock(path: tree.path)) { _, error in
+                XCTAssertNotNil(error)
+                XCTAssertNotEqual(error?.code, NSUserCancelledError)
+                refused.fulfill()
+            }
+            let git = fixture.main.appendingPathComponent(".git")
+            let approved = fixture.main.appendingPathComponent("approved-git")
+            try FileManager.default.moveItem(at: git, to: approved)
+            try FileManager.default.createDirectory(at: git, withIntermediateDirectories: false)
+            var restored = false
+            defer {
+                if !restored {
+                    try? FileManager.default.removeItem(at: git)
+                    try? FileManager.default.moveItem(at: approved, to: git)
+                }
+                blocker.gate.writer.finish(Data())
+            }
+            blocker.gate.writer.finish(Data())
+            await fulfillment(of: [first, refused], timeout: 15)
+            XCTAssertFalse(origin.gate.commands.contains(["worktree", "unlock", tree.path]))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: approved.appendingPathComponent("HEAD").path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: git.appendingPathComponent("HEAD").path))
+            try FileManager.default.removeItem(at: git)
+            try FileManager.default.moveItem(at: approved, to: git)
+            restored = true
+            origin.service.refresh()
+            await waitUntil { origin.service.isSupported }
+            XCTAssertTrue(try fixture.git(["worktree", "list", "--porcelain"]).contains("refs/heads/topic"))
+            XCTAssertTrue(blocker.gate.commands.contains(lock))
+        }
+
+        func testOwnerCloseLetsItsAlreadyWritingMutationAndAnotherOwnersPreviewFinish() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let origin = try await installService(in: fixture)
+            let controller = await recordingController(for: origin)
+            defer { controller.close() }
+            let second = NSObject()
+            let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
+            let unlock = ["worktree", "unlock", tree.path]
+            origin.gate.holdNextArguments = unlock
+            defer { origin.gate.writer.finish(Data()) }
+            let item = NSMenuItem()
+            item.representedObject = tree
+            controller.unlockWorktree(item)
+            await waitUntil { origin.gate.writer.isPending }
+            let following = expectation(description: "A different owner's queued preview uses the same service")
+            origin.service.preparePrunePreview(owner: second) { preview, error in
+                XCTAssertNil(error)
+                XCTAssertNotNil(preview)
+                if let preview {
+                    origin.service.discardPrunePreview(preview)
+                }
+                following.fulfill()
+            }
+            controller.close()
+            XCTAssertTrue(origin.gate.writer.isPending)
+            _ = try fixture.git(unlock)
+            origin.gate.writer.finish(Data())
+            await fulfillment(of: [following], timeout: 15)
+            XCTAssertEqual(origin.service.worktree(forBranch: "refs/heads/topic")?.isLocked, false)
+            XCTAssertTrue(controller.errors.isEmpty)
+            XCTAssertTrue(origin.service.isSupported)
+            XCTAssertEqual(origin.gate.commands.filter { $0 == unlock }.count, 1)
         }
 
         func testQueuedCancellationDoesNotPresentAfterRetainedWindowIsClosedAndReopened() async throws {
@@ -1168,27 +1278,18 @@ import XCTest
                 } else {
                     replaceAndRestore(.repository, controller: journey.controller, origin: journey.origin, alternative: alternative, window: journey.window)
                 }
-                let progressed = expectation(description: "following preview waits for final validation to acknowledge owner revocation")
-                var followingFinished = false
+                let progressed = expectation(description: "owner cancellation releases admission before its late validation worker returns")
                 enqueuePreview(journey.following.service) { preview, error in
                     XCTAssertNil(error)
                     if let preview {
                         journey.following.service.discardPrunePreview(preview)
                     }
-                    followingFinished = true
                     progressed.fulfill()
                 }
                 await drainCallbacks()
-                if closesWindow {
-                    await fulfillment(of: [progressed], timeout: 15)
-                    XCTAssertTrue(checkpoint.isWaiting, "Closing cancels preparation and releases its reservation before the late worker returns")
-                } else {
-                    XCTAssertFalse(followingFinished, "The final-validation worker still owns this admission")
-                }
+                await fulfillment(of: [progressed], timeout: 15)
+                XCTAssertTrue(checkpoint.isWaiting, "Replacing or closing an owner cancels only its preparation before the late worker returns")
                 checkpoint.resume()
-                if !closesWindow {
-                    await fulfillment(of: [progressed], timeout: 15)
-                }
                 await fulfillment(of: [checkpoint.finishedExpectation()], timeout: 15)
                 XCTAssertFalse(checkpoint.didTimeout)
                 XCTAssertEqual(checkpoint.deliveryCount, 1)

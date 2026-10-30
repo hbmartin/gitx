@@ -5458,6 +5458,27 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(WorkspaceOpenRecorder.openedURLs.isEmpty)
     }
 
+    func testWorkingDirectoryNotificationRefreshesActualIndexContents() throws {
+        let defaults = UserDefaults.standard
+        let domain = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let previousWatcher = defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"]
+        defaults.set(false, forKey: "PBUseRepositoryWatcher")
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        defer {
+            defaults.set(previousWatcher, forKey: "PBUseRepositoryWatcher")
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        try fixture.write("notification refresh\n", to: "notification-untracked.txt")
+        historyController._repositoryUpdatedNotification(Notification(
+            name: .PBGitRepositoryEvent, object: repository,
+            userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: (1 << 2) | (1 << 3))]
+        ))
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            self.repository.index.indexChanges.contains { $0.path == "notification-untracked.txt" }
+        })
+        XCTAssertEqual(try String(contentsOfFile: fixture.path + "/notification-untracked.txt", encoding: .utf8), "notification refresh\n")
+    }
+
     func testNavigationCopySearchQuickLookAndObserverCallbacks() throws {
         let commits = loadedCommits().filter { !$0.parents.isEmpty }
         XCTAssertFalse(commits.isEmpty)

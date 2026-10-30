@@ -1246,6 +1246,9 @@
             )
             let mutationPresentationProof = try mutationControlPresentationProof(fixture)
             let createControlProof = createPullRequestControlProof(repository: local.repository)
+            NSLog("[M2ProductCoverage] remote-action starts=%ld completions=%ld invalid=%@ push=%@ failedStart=%@ cancelled=%@ cancellationCount=%ld capability=%d mutation=%d createControl=%d",
+                  starts, completions, String(describing: invalidEvents), String(describing: pushEvents), String(describing: failedStartEvents),
+                  String(describing: cancelledEvents), cancellingWindow.cancellationCount, collaborationCapabilityProof, mutationPresentationProof, createControlProof)
             return invalidEvents == [.began(createPullRequestSelected: false), .failed]
                 && pushEvents.first == .began(createPullRequestSelected: true)
                 && pushEvents.last?.isTerminal == true && starts == 5 && completions == 5
@@ -1256,6 +1259,11 @@
 
         private static func createPullRequestControlProof(repository: PBGitRepository) -> Bool {
             let windowController = HarnessWindowController(repository: repository, window: NSWindow())
+            // Reconciliation may eagerly install this coordinator. Start the
+            // admission proof without one so a disabled direct action must
+            // preserve its absence before an enabled action creates it.
+            windowController.pullRequestUIController?.invalidateOwner()
+            windowController.pullRequestUIController = nil
             let toolbarController = RepositoryToolbarController(windowController: windowController)
             let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
             guard let toolbarItem = toolbarController.toolbar(
@@ -1334,6 +1342,8 @@
                 requiresConfirmation: false
             )
             let releasedControllerFailsClosed = releasedController == nil
+            NSLog("[M2ProductCoverage] create-control checking=%d public=%d unavailable=%d verified=%d direct=%d unverified=%d released=%d",
+                  checkingDisabled, publicDisabled, unavailableDisabled, verifiedEnabled, directInvocationEnabled, unverifiedEnabled, releasedControllerFailsClosed)
 
             return RepositoryForgeCollaborationController.mutationCapabilityOperations
                 == [.createPullRequest, .editPullRequest, .syncFork]
