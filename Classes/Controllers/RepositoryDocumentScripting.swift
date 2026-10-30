@@ -34,11 +34,6 @@ struct RepositoryDocumentOpenIntent {
         arguments = (command?.arguments?["openOptions"] as? [String] ?? []).map { $0 }
     }
 
-    func arguments(for document: PBGitRepositoryDocument) -> [String]? {
-        var identities = RepositoryGitDirectoryIdentity()
-        return arguments(for: document, identities: &identities)
-    }
-
     func arguments(for document: PBGitRepositoryDocument, identities: inout RepositoryGitDirectoryIdentity) -> [String]? {
         guard !arguments.isEmpty, let repositoryURL,
               let intended = identities.discover(for: repositoryURL),

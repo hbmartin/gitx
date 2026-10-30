@@ -38,6 +38,7 @@ nonisolated enum GitBinaryDiscoveryOutcome: Sendable {
     case success(GitBinarySelection)
     case exhausted
     case timedOut
+    case temporarilyUnavailable
 }
 
 /// The active selection outlives preference validation. Only successful validation replaces it.
@@ -69,6 +70,9 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
         var probeTimedOut = false
         var probeID: UUID?
         var probe: GitDiscoveryProbeRunner.Request?
+        var probeDeadline: TimeInterval?
+        var executedPaths: Set<String> = []
+        var executionBegan = false
     }
 
     private struct Waiter: Sendable {
@@ -87,6 +91,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
         let timeoutError: NSError
         let finishedAt: TimeInterval
         let probe: GitDiscoveryProbeRunner.Request?
+        let shouldNotify: Bool
     }
 
     private struct State {
@@ -182,7 +187,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
     }
 
     @objc private func defaultsChanged(_: Notification) {
-        start()
+        start(retryingFailure: false, retryingTemporary: false)
     }
 
     @objc func start() {
@@ -190,10 +195,16 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
     }
 
     /// Explicit user opens can retry a failed cold discovery; background consumers cannot self-loop.
-    func start(retryingFailure: Bool) {
+    func start(retryingFailure: Bool, retryingTemporary: Bool = true) {
         let requested = preference()
         let launch = state.withLock { state -> (UInt, GitDiscoveryProbeRunner.Request?)? in
-            let retry = retryingFailure && state.search == nil && state.selection == nil
+            let transient: Bool
+            if case .temporarilyUnavailable = state.outcome {
+                transient = true
+            } else {
+                transient = false
+            }
+            let retry = state.search == nil && ((retryingTemporary && transient) || (retryingFailure && state.selection == nil))
             guard !state.started || state.preference != requested || retry else { return nil }
             let previous = state.search?.probe
             state.generation &+= 1
@@ -267,28 +278,46 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
         return result.filter { !$0.path.isEmpty }
     }
 
-    private func advance(_ generation: UInt) {
+    private func advance(_ generation: UInt, retrying retry: (Candidate, TimeInterval)? = nil) {
         let currentPreference = preference()
         let next = state.withLock { state -> (Candidate, UUID, TimeInterval)? in
             guard var search = state.search, search.generation == generation, search.preference == currentPreference,
-                  !search.candidates.isEmpty, timing.now() < search.deadline else { return nil }
-            let candidate = search.candidates.removeFirst()
+                  timing.now() < search.deadline else { return nil }
+            let candidate: Candidate
+            let deadline: TimeInterval
+            if let retry {
+                candidate = retry.0
+                deadline = retry.1
+                guard timing.now() < deadline else { return nil }
+            } else {
+                while let first = search.candidates.first, search.executedPaths.contains(first.path) {
+                    if case .executable = first {
+                        search.candidates.removeFirst()
+                    } else {
+                        break
+                    }
+                }
+                guard !search.candidates.isEmpty else { return nil }
+                candidate = search.candidates.removeFirst()
+                deadline = min(search.deadline, timing.now() + probeBudget)
+            }
             let id = UUID()
             search.probeID = id
             search.probe = nil
+            search.probeDeadline = deadline
             if case .executable = candidate, !search.paths.contains(candidate.path) {
                 search.paths.append(candidate.path)
             }
             state.search = search
-            return (candidate, id, min(probeBudget, search.deadline - timing.now()))
+            return (candidate, id, deadline)
         }
-        guard let (candidate, id, budget) = next else {
-            let timedOut = state.withLock { $0.search?.probeTimedOut == true }
+        guard let (candidate, id, deadline) = next else {
+            let timedOut = retry != nil || state.withLock { $0.search?.probeTimedOut == true }
             finish(timedOut ? .timedOut : .exhausted, generation: generation)
             return
         }
         log("[GitDiscovery] Attempt \(candidate.path) arguments=\(candidate.arguments)")
-        let request = runner.run(path: candidate.path, arguments: candidate.arguments, timeout: budget) { [self] result in
+        let request = runner.run(path: candidate.path, arguments: candidate.arguments, timeout: max(0, deadline - timing.now()), deadline: deadline) { [self] result in
             handle(result, candidate: candidate, generation: generation, probeID: id)
         }
         let accepted = state.withLock { state in
@@ -309,14 +338,38 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
         if preference() != state.withLock({ $0.search?.preference }) {
             start(); return
         }
-        if case .cancelled = result {
-            log("[GitDiscovery] Current probe cancelled for \(candidate.path); advancing generation \(generation) within its original deadline")
+        if case .busy = result {
+            log("[GitDiscovery] Probe queue is busy for \(candidate.path); preserving preference and active selection")
+            finish(.temporarilyUnavailable, generation: generation)
+            return
+        }
+        if case let .cancelled(started) = result {
+            log("[GitDiscovery] Current probe cancelled for \(candidate.path), execution began: \(started)")
+            if !started, let deadline = state.withLock({ $0.search?.probeDeadline }) {
+                advance(generation, retrying: (candidate, deadline))
+            } else {
+                finish(.temporarilyUnavailable, generation: generation)
+            }
+            return
         }
         if case .timedOut = result {
             log("[GitDiscovery] Probe timed out for \(candidate.path)")
             state.withLock { state in
                 if state.search?.generation == generation {
                     state.search?.probeTimedOut = true
+                }
+            }
+            if !result.executionBegan {
+                finish(.timedOut, generation: generation)
+                return
+            }
+        }
+        if result.executionBegan {
+            state.withLock { state in
+                guard state.search?.generation == generation else { return }
+                state.search?.executionBegan = true
+                if case .executable = candidate {
+                    state.search?.executedPaths.insert(candidate.path)
                 }
             }
         }
@@ -344,8 +397,10 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
                 return
             }
             state.withLock { state in
-                if state.search?.generation == generation, state.search?.preference == path {
-                    state.search?.rejected = path
+                if state.search?.generation == generation,
+                   state.search?.preference.map(GitOutputFormatting.normalizedExecutableCandidate) == candidate.path
+                {
+                    state.search?.rejected = candidate.path
                 }
             }
         }
@@ -367,7 +422,17 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
                 state.selection = selection
                 rejected = search.rejected
             case .exhausted, .timedOut:
-                rejected = search.preference.flatMap { $0.isEmpty ? nil : $0 } ?? (state.selection == nil ? nil : "")
+                if let failed = search.rejected {
+                    rejected = failed
+                } else if search.executionBegan,
+                          search.preference.map(GitOutputFormatting.normalizedExecutableCandidate)?.isEmpty == true || (search.preference == nil && state.selection != nil)
+                {
+                    rejected = ""
+                } else {
+                    rejected = nil
+                }
+            case .temporarilyUnavailable:
+                rejected = nil
             }
             state.outcome = final
             state.attemptedPaths = search.paths
@@ -376,7 +441,14 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
             state.waiters.removeAll()
             return Publication(generation: generation, preference: requested, selection: state.selection, rejected: rejected, waiters: waiters,
                                error: state.selection == nil ? unavailableError(outcome: final, paths: search.paths) : nil,
-                               timeoutError: unavailableError(outcome: .timedOut, paths: search.paths), finishedAt: finishedAt, probe: search.probe)
+                               timeoutError: unavailableError(outcome: .timedOut, paths: search.paths), finishedAt: finishedAt, probe: search.probe,
+                               shouldNotify: rejected != nil || {
+                                   if case .success = final {
+                                       true
+                                   } else {
+                                       false
+                                   }
+                               }())
         }
         guard let publication else {
             if state.withLock({ $0.preference != requested }) {
@@ -396,7 +468,7 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
                 waiter.completion(expired ? nil : publication.selection, expired ? publication.timeoutError : publication.error)
             }
             // Presentation is independent of readiness delivery and must never run a modal loop.
-            if state.withLock({ $0.generation == publication.generation }), preference() == publication.preference {
+            if publication.shouldNotify, state.withLock({ $0.generation == publication.generation }), preference() == publication.preference {
                 notify(publication.selection, publication.rejected)
             }
         }
@@ -417,7 +489,9 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
     @objc(versionForPath:)
     func version(forPath path: String?) -> String? {
         guard let path else { return nil }
-        return GitBinaryDiscoveryPolicy.extractGitVersion(synchronousOutput(path: path))
+        let normalizedPath = GitOutputFormatting.normalizedExecutableCandidate(path)
+        guard !normalizedPath.isEmpty else { return nil }
+        return GitBinaryDiscoveryPolicy.extractGitVersion(synchronousOutput(path: normalizedPath))
     }
 
     private func synchronousOutput(path: String) -> String? {
@@ -453,13 +527,19 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
             let waiters = state.waiters
             state.waiters.removeAll()
             return Publication(generation: state.generation, preference: requested, selection: selection, rejected: nil, waiters: waiters,
-                               error: nil, timeoutError: unavailableError(outcome: .timedOut, paths: [selection.path]), finishedAt: finishedAt, probe: probe)
+                               error: nil, timeoutError: unavailableError(outcome: .timedOut, paths: [selection.path]), finishedAt: finishedAt, probe: probe, shouldNotify: true)
         }
         deliver(publication)
         return true
     }
 
     private func unavailableError(outcome: GitBinaryDiscoveryOutcome, paths: [String]) -> NSError {
+        if case .temporarilyUnavailable = outcome {
+            return NSError(domain: "PBGitBinaryErrorDomain", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: NSLocalizedString("Git executable validation is temporarily unavailable", comment: "Git probe congestion"),
+                NSLocalizedFailureReasonErrorKey: NSLocalizedString("Validation was cancelled or all probe slots are busy. Try again when pending work finishes.", comment: "Git probe congestion"),
+            ])
+        }
         let timedOut: Bool
         if case .timedOut = outcome {
             timedOut = true

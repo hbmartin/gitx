@@ -75,7 +75,328 @@ final class GitBinaryReliabilityTests: XCTestCase {
         XCTAssertTrue(attempts.contains("/configured git --version"), "Literal filename spaces survive normalization")
     }
 
-    func testCancelledCurrentQueuedProbeAdvancesWhenOwnedWorkersAreReleased() {
+    func testIndependentSynchronousProbesRunWithoutDisplacingDiscovery() {
+        for queryingVersion in [false, true] {
+            let clock = Clock()
+            let entered = expectation(description: "Both workers remain owned")
+            entered.expectedFulfillmentCount = 2
+            let release = DispatchSemaphore(value: 0)
+            defer { release.signal(); release.signal() }
+            let calls = Mutex<[String]>([])
+            let warnings = Mutex<[String]>([])
+            let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+                calls.withLock { $0.append(path) }
+                if path.hasPrefix("/occupied") {
+                    entered.fulfill(); _ = release.wait(timeout: .now() + 10)
+                }
+                return .init(output: { ["/configured", "/direct", "/healthy"].contains(path) ? "git version 2.50.1" : nil }, cancel: {})
+            })
+            for index in 0 ..< 2 {
+                runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+            }
+            wait(for: [entered], timeout: 3)
+            let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/healthy"], timing: clock.timing, runner: runner,
+                                               notify: {
+                                                   _, rejected in if let rejected {
+                                                       warnings.withLock { $0.append(rejected) }
+                                                   }
+                                               })
+            let ready = expectation(description: "Discovery and the independent request both settle")
+            discovery.whenAvailable { path, error in XCTAssertNotNil(path); XCTAssertNil(error); ready.fulfill() }
+            let scheduled = clock.state.withLock { $0.jobs.count }
+            let direct = expectation(description: "Accepted direct probe actually executes")
+            DispatchQueue.global().async {
+                if queryingVersion {
+                    XCTAssertEqual(discovery.version(forPath: "/direct"), "2.50.1")
+                } else {
+                    XCTAssertTrue(discovery.accept("/direct"))
+                }
+                direct.fulfill()
+            }
+            let queued = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in clock.state.withLock { $0.jobs.count > scheduled } }, object: nil)
+            wait(for: [queued], timeout: 3)
+            release.signal(); release.signal()
+            wait(for: [direct, ready], timeout: 3)
+            XCTAssertEqual(calls.withLock { $0.filter { $0 == "/direct" }.count }, 1)
+            XCTAssertTrue(warnings.withLock { $0.isEmpty }, "An unexecuted preference is not a rejected executable")
+        }
+    }
+
+    func testPendingProbeAdmissionIsFIFOWithoutCancellingIndependentRequests() {
+        let clock = Clock()
+        let entered = expectation(description: "Two occupied workers")
+        entered.expectedFulfillmentCount = 2
+        let first = DispatchSemaphore(value: 0)
+        let second = DispatchSemaphore(value: 0)
+        defer { first.signal(); second.signal() }
+        let calls = Mutex<[String]>([])
+        let outcomes = Mutex<[String]>([])
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            calls.withLock { $0.append(path) }
+            if path == "/occupied0" {
+                entered.fulfill(); _ = first.wait(timeout: .now() + 10)
+            }
+            if path == "/occupied1" {
+                entered.fulfill(); _ = second.wait(timeout: .now() + 10)
+            }
+            return .init(output: { "git version 2.50.1" }, cancel: {})
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+        }
+        wait(for: [entered], timeout: 3)
+        let finished = expectation(description: "All queued callers finish once")
+        finished.expectedFulfillmentCount = 3
+        finished.assertForOverFulfill = true
+        for index in 0 ..< 3 {
+            runner.run(path: "/waiting\(index)", arguments: [], timeout: 100) { result in
+                outcomes.withLock { $0.append(String(describing: result)) }; finished.fulfill()
+            }
+        }
+        XCTAssertTrue(outcomes.withLock { $0.isEmpty }, "Admission must not evict an existing waiter")
+        first.signal()
+        wait(for: [finished], timeout: 3)
+        XCTAssertEqual(calls.withLock { $0.filter { $0.hasPrefix("/waiting") } }, ["/waiting0", "/waiting1", "/waiting2"])
+        XCTAssertTrue(outcomes.withLock { $0.allSatisfy { $0.hasPrefix("output") } })
+    }
+
+    func testPendingProbeCapacityRefusesOnlyTheExcessRequestAsBusy() {
+        let clock = Clock()
+        let entered = expectation(description: "Two occupied workers")
+        entered.expectedFulfillmentCount = 2
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let outcomes = Mutex<[String]>([])
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            if path.hasPrefix("/occupied") {
+                entered.fulfill(); _ = release.wait(timeout: .now() + 10)
+            }
+            return .init(output: { nil }, cancel: {})
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+        }
+        wait(for: [entered], timeout: 3)
+        for index in 0 ..< 17 {
+            runner.run(path: "/waiting\(index)", arguments: [], timeout: 100) { result in outcomes.withLock { $0.append(String(describing: result)) } }
+        }
+        XCTAssertEqual(outcomes.withLock { $0 }, ["busy"])
+        clock.advance(100)
+    }
+
+    func testExecutableCandidatesAreActuallyProbedOnlyOnce() {
+        let calls = Mutex<[String]>([])
+        let discovery = GitBinaryDiscovery(preference: { "/duplicate\r\n" }, environment: ["GIT_PATH": "/duplicate"], output: { path, _ in
+            calls.withLock { $0.append(path) }
+            return path == "/usr/bin/which" || path == "/usr/bin/xcrun" ? "/duplicate\n" : nil
+        }, locations: ["/duplicate"])
+        let finished = expectation(description: "Distinct executable attempts exhaust")
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertNotNil(error); finished.fulfill() }
+        wait(for: [finished], timeout: 3)
+        XCTAssertEqual(calls.withLock { $0.filter { $0 == "/duplicate" }.count }, 1)
+        XCTAssertTrue(calls.withLock { $0.contains("/usr/bin/which") && $0.contains("/usr/bin/xcrun") })
+    }
+
+    func testLineEndingOnlyPreferenceUsesAutomaticWarningIdentity() {
+        let finished = expectation(description: "Failed automatic discovery has no literal newline preference")
+        let discovery = GitBinaryDiscovery(preference: { "\r\n" }, environment: [:], output: { _, _ in nil }, locations: [], notify: { _, rejected in
+            XCTAssertEqual(rejected, ""); finished.fulfill()
+        })
+        discovery.start()
+        wait(for: [finished], timeout: 3)
+    }
+
+    func testCancellingAnUnexecutedPreferenceRetriesWithinItsOriginalAttemptDeadline() {
+        let clock = Clock()
+        let entered = expectation(description: "Two occupied workers")
+        entered.expectedFulfillmentCount = 2
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let admissions = Mutex(0)
+        let budgets = Mutex<[TimeInterval]>([])
+        let warnings = Mutex<[String]>([])
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, remaining in
+            if path.hasPrefix("/occupied") {
+                entered.fulfill(); _ = release.wait(timeout: .now() + 10)
+            } else {
+                budgets.withLock { $0.append(remaining) }
+            }
+            return .init(output: { "git version 2.50.1" }, cancel: {})
+        }, admissionObserver: { request in
+            let index = admissions.withLock { let index = $0; $0 += 1; return index }
+            if index == 2 {
+                clock.elapse(2)
+                request.cancel()
+            }
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+        }
+        wait(for: [entered], timeout: 3)
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: [], timing: clock.timing, runner: runner,
+                                           notify: {
+                                               _, rejected in if let rejected {
+                                                   warnings.withLock { $0.append(rejected) }
+                                               }
+                                           })
+        let ready = expectation(description: "The retried preference is selected without rejection")
+        ready.assertForOverFulfill = true
+        discovery.whenAvailable { path, error in XCTAssertEqual(path, "/configured"); XCTAssertNil(error); ready.fulfill() }
+        clock.elapse(2)
+        release.signal(); release.signal()
+        wait(for: [ready], timeout: 3)
+        XCTAssertEqual(budgets.withLock { $0 }, [1], "Queue residence and cancellation must consume the same five-second attempt")
+        XCTAssertTrue(warnings.withLock { $0.isEmpty })
+        XCTAssertEqual(admissions.withLock { $0 }, 4)
+        XCTAssertFalse(clock.state.withLock { $0.jobs.contains { $0.deadline == 7 } }, "Reentrant admission cannot move the original second-five deadline")
+    }
+
+    func testAttemptDeadlineIncludesTimeSpentInDiscoveryDiagnosticsBeforeAdmission() {
+        let clock = Clock()
+        let calls = Mutex(0)
+        let delayed = Mutex(false)
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], output: { _, _ in calls.withLock { $0 += 1 }; return "git version 2.50.1" },
+                                           locations: [], timing: clock.timing, log: { message in
+                                               if message.contains("Attempt /configured"), delayed.withLock({ let first = !$0; $0 = true; return first }) {
+                                                   clock.elapse(5)
+                                               }
+                                           })
+        let expired = expectation(description: "The expired attempt never launches")
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 2); expired.fulfill() }
+        wait(for: [expired], timeout: 3)
+        XCTAssertEqual(calls.withLock { $0 }, 0)
+    }
+
+    func testExecutedCancellationIsTemporaryAndOnlyANewDemandRetriesIt() {
+        let request = Mutex<GitDiscoveryProbeRunner.Request?>(nil)
+        let attempts = Mutex(0)
+        let warnings = Mutex(0)
+        let runner = GitDiscoveryProbeRunner(factory: { _, _, _ in
+            .init(output: {
+                let index = attempts.withLock { let index = $0; $0 += 1; return index }
+                if index == 0 {
+                    request.withLock { $0 }?.cancel()
+                }
+                return "git version 2.50.1"
+            }, cancel: {})
+        }, admissionObserver: { value in request.withLock { $0 = value } })
+        defer { request.withLock { $0 = nil } }
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/fallback"], runner: runner,
+                                           notify: { _, _ in warnings.withLock { $0 += 1 } })
+        let unavailable = expectation(description: "Executed cancellation settles exactly once without fallback or rejection")
+        unavailable.assertForOverFulfill = true
+        discovery.whenAvailable { path, error in
+            XCTAssertNil(path); XCTAssertEqual(error?.domain, "PBGitBinaryErrorDomain"); XCTAssertEqual(error?.code, 3); unavailable.fulfill()
+        }
+        wait(for: [unavailable], timeout: 3)
+        XCTAssertEqual(attempts.withLock { $0 }, 1)
+        XCTAssertEqual(warnings.withLock { $0 }, 0)
+        let retried = expectation(description: "A later demand may retry temporary unavailability")
+        discovery.whenAvailable { path, error in XCTAssertEqual(path, "/configured"); XCTAssertNil(error); retried.fulfill() }
+        wait(for: [retried], timeout: 3)
+        XCTAssertEqual(attempts.withLock { $0 }, 2)
+    }
+
+    func testQueueExpiryDoesNotRejectOrFallbackFromAnUnexecutedPreference() {
+        let clock = Clock()
+        let entered = expectation(description: "Both slots stay owned")
+        entered.expectedFulfillmentCount = 2
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let calls = Mutex<[String]>([])
+        let warnings = Mutex(0)
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            calls.withLock { $0.append(path) }
+            entered.fulfill(); _ = release.wait(timeout: .now() + 10)
+            return .init(output: { nil }, cancel: {})
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+        }
+        wait(for: [entered], timeout: 3)
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/fallback"], timing: clock.timing, runner: runner,
+                                           notify: { _, _ in warnings.withLock { $0 += 1 } })
+        let expired = expectation(description: "An unexecuted preference expires without becoming invalid")
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 2); expired.fulfill() }
+        clock.advance(5)
+        wait(for: [expired], timeout: 3)
+        XCTAssertEqual(calls.withLock { Set($0) }, Set(["/occupied0", "/occupied1"]))
+        XCTAssertEqual(warnings.withLock { $0 }, 0)
+    }
+
+    func testCancelledAndExpiredQueueEntriesImmediatelyReleaseAdmissionCapacity() {
+        let clock = Clock()
+        let entered = expectation(description: "Two blocked factories retain both workers")
+        entered.expectedFulfillmentCount = 2
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { _, _, _ in
+            entered.fulfill(); _ = release.wait(timeout: .now() + 10)
+            return .init(output: { nil }, cancel: {})
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+        }
+        wait(for: [entered], timeout: 3)
+        let results = Mutex<[String]>([])
+        let queued = (0 ..< 16).map { index in
+            runner.run(path: "/queued\(index)", arguments: [], timeout: index == 1 ? 1 : 100) { result in
+                results.withLock { $0.append(String(describing: result)) }
+            }
+        }
+        queued[0].cancel()
+        clock.advance(1)
+        for index in 0 ..< 2 {
+            runner.run(path: "/replacement\(index)", arguments: [], timeout: 100) { result in
+                results.withLock { $0.append(String(describing: result)) }
+            }
+        }
+        XCTAssertEqual(results.withLock { $0 }, ["cancelled(started: false)", "timedOut(started: false)"])
+        clock.advance(100)
+        XCTAssertEqual(results.withLock { $0.count }, 18)
+    }
+
+    func testBusyDiscoveryPreservesPreferenceAndAllowsALaterDemandWithoutAnAutomaticLoop() {
+        let clock = Clock()
+        let entered = expectation(description: "Both owned workers are blocked")
+        entered.expectedFulfillmentCount = 2
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let warnings = Mutex(0)
+        let calls = Mutex<[String]>([])
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            calls.withLock { $0.append(path) }
+            if path.hasPrefix("/occupied") {
+                entered.fulfill(); _ = release.wait(timeout: .now() + 10)
+            }
+            return .init(output: { "git version 2.50.1" }, cancel: {})
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+        }
+        wait(for: [entered], timeout: 3)
+        let drained = expectation(description: "All accepted independent probes drain")
+        drained.expectedFulfillmentCount = 16
+        for index in 0 ..< 16 {
+            runner.run(path: "/queued\(index)", arguments: [], timeout: 100) { _ in drained.fulfill() }
+        }
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: [], timing: clock.timing, runner: runner,
+                                           notify: { _, _ in warnings.withLock { $0 += 1 } })
+        let busy = expectation(description: "Cold discovery reports temporary unavailability")
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 3); busy.fulfill() }
+        wait(for: [busy], timeout: 3)
+        XCTAssertFalse(discovery.accept("/direct")); XCTAssertNil(discovery.version(forPath: "/direct"))
+        XCTAssertEqual(warnings.withLock { $0 }, 0)
+        XCTAssertFalse(calls.withLock { $0.contains("/configured") || $0.contains("/direct") })
+        release.signal(); release.signal()
+        wait(for: [drained], timeout: 3)
+        XCTAssertFalse(calls.withLock { $0.contains("/configured") }, "No background retry was scheduled")
+        let ready = expectation(description: "A later demand validates the original preference")
+        discovery.whenAvailable { path, error in XCTAssertEqual(path, "/configured"); XCTAssertNil(error); ready.fulfill() }
+        wait(for: [ready], timeout: 3)
+    }
+
+    func testIndependentQueuedProbeDoesNotDisplaceDiscoveryOrItsFallback() {
         let clock = Clock()
         let occupied = expectation(description: "Both owned workers are blocked")
         occupied.expectedFulfillmentCount = 2
@@ -94,11 +415,11 @@ final class GitBinaryReliabilityTests: XCTestCase {
         }
         wait(for: [occupied], timeout: 3)
         let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/healthy"], timing: clock.timing, runner: runner)
-        let available = expectation(description: "A cancelled current attempt advances, rather than stranding discovery")
+        let available = expectation(description: "Independent queued work preserves discovery and its healthy fallback")
         available.assertForOverFulfill = true
         discovery.whenAvailable { path, error in XCTAssertEqual(path, "/healthy"); XCTAssertNil(error); available.fulfill() }
         clock.elapse(4)
-        // Replacing the runner's one pending request cancels the current discovery probe.
+        // Independent accepted work retains its place while discovery advances.
         runner.run(path: "/interloper", arguments: [], timeout: 100) { _ in }
         release.signal(); release.signal()
         wait(for: [available], timeout: 3)
@@ -109,7 +430,7 @@ final class GitBinaryReliabilityTests: XCTestCase {
         XCTAssertEqual(calls.withLock { $0.filter { $0 == "/healthy" }.count }, 1)
     }
 
-    func testCancelledCurrentQueuedProbeDoesNotRenewTheAvailabilityDeadline() {
+    func testQueuedProbeExpiryKeepsTheOriginalAvailabilityDeadline() {
         let clock = Clock()
         let occupied = expectation(description: "Both worker slots remain owned")
         occupied.expectedFulfillmentCount = 2
@@ -124,7 +445,7 @@ final class GitBinaryReliabilityTests: XCTestCase {
         }
         wait(for: [occupied], timeout: 3)
         let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/healthy"], timing: clock.timing, runner: runner)
-        let expired = expectation(description: "Cancellation preserves the original thirty-second deadline")
+        let expired = expectation(description: "Queued work preserves the original thirty-second availability deadline")
         expired.assertForOverFulfill = true
         discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 2); expired.fulfill() }
         clock.elapse(29)
@@ -550,6 +871,42 @@ final class GitDiscoveryPresentationTests: XCTestCase {
         presenter.invalidateWarning()
     }
 
+    func testSelectionNotificationCannotPresentThePreviousPendingWarning() {
+        let center = NotificationCenter()
+        let parent = ParentWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        parent.available = false
+        let warnings = Mutex<[String]>([])
+        let presenter = GitBinaryDiscoveryPresenter(center: center, windows: { [parent] }, presentSheet: { alert, _, _ in warnings.withLock { $0.append(alert.informativeText) } })
+        presenter.publish(selection: nil, rejected: "/obsolete")
+        let observer = center.addObserver(forName: .PBGitBinaryDidChange, object: nil, queue: nil) { _ in
+            center.post(name: NSWindow.didBecomeKeyNotification, object: parent)
+        }
+        defer { center.removeObserver(observer); presenter.invalidateWarning() }
+        parent.available = true
+        presenter.publish(selection: GitBinarySelection(path: "/validated", version: "2.50.1"), rejected: "/current")
+        XCTAssertEqual(warnings.withLock { $0.count }, 1)
+        XCTAssertTrue(warnings.withLock { $0.allSatisfy { $0.contains("/current") && !$0.contains("/obsolete") } })
+    }
+
+    func testWarningDismissalReentrancySeesOnlyTheCommittedReplacement() {
+        let center = NotificationCenter()
+        let parent = ParentWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        var warnings: [String] = []
+        var completions: [(NSApplication.ModalResponse) -> Void] = []
+        let presenter = GitBinaryDiscoveryPresenter(center: center, windows: { [parent] }, presentSheet: { alert, _, complete in
+            warnings.append(alert.informativeText); completions.append(complete)
+        }, dismissSheet: { _ in center.post(name: NSWindow.didEndSheetNotification, object: parent) })
+        presenter.publish(selection: nil, rejected: "/obsolete")
+        presenter.publish(selection: GitBinarySelection(path: "/valid", version: "2.50.1"), rejected: "/current")
+        XCTAssertEqual(warnings.count, 2)
+        XCTAssertTrue(warnings.last?.contains("/current") == true)
+        completions[0](.alertFirstButtonReturn)
+        center.post(name: NSWindow.didBecomeKeyNotification, object: parent)
+        XCTAssertEqual(warnings.count, 2)
+        presenter.publish(selection: GitBinarySelection(path: "/valid", version: "2.50.1"), rejected: nil)
+        XCTAssertEqual(warnings.count, 2, "Successful replacement cannot re-present the dismissed warning")
+    }
+
     func testInterruptedWarningsRecurAndStaleCompletionsCannotAcknowledgeANewerPresentation() {
         let center = NotificationCenter()
         let parent = ParentWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
@@ -798,6 +1155,53 @@ final class RepositoryGitLoaderLifecycleTests: XCTestCase {
         policy.didInstall(replacement)
         XCTAssertFalse(policy.accepts(generation: original, identity: replacement))
         XCTAssertTrue(policy.accepts(generation: policy.generation, identity: replacement))
+    }
+}
+
+final class RepositoryWindowOwnershipTests: XCTestCase {
+    func testEveryOwnerChangeRevokesPreviousResultsAndCloseIsTerminal() {
+        let repository = NSObject()
+        let otherRepository = NSObject()
+        let window = NSObject()
+        let otherWindow = NSObject()
+        let document = NSObject()
+        let initial = RepositoryWindowOwnership.Identity(repository: ObjectIdentifier(repository), window: ObjectIdentifier(window), document: nil)
+        var policy = RepositoryWindowOwnership()
+        XCTAssertNil(policy.identity)
+        policy.install(initial)
+        let generation = policy.generation
+        XCTAssertTrue(policy.accepts(initial, generation: generation))
+        for replacement in [
+            RepositoryWindowOwnership.Identity(repository: ObjectIdentifier(otherRepository), window: ObjectIdentifier(window), document: nil),
+            RepositoryWindowOwnership.Identity(repository: ObjectIdentifier(repository), window: ObjectIdentifier(otherWindow), document: nil),
+            RepositoryWindowOwnership.Identity(repository: ObjectIdentifier(repository), window: ObjectIdentifier(window), document: ObjectIdentifier(document)),
+        ] {
+            XCTAssertFalse(policy.accepts(replacement, generation: generation))
+            policy.revoke()
+            XCTAssertNil(policy.identity)
+            XCTAssertFalse(policy.accepts(initial, generation: generation))
+            policy.install(replacement)
+            XCTAssertTrue(policy.accepts(replacement, generation: policy.generation))
+        }
+        policy.revoke()
+        policy.install(initial)
+        XCTAssertFalse(policy.accepts(initial, generation: generation), "Restoring the same objects cannot restore old consent")
+        policy.revoke(closing: true)
+        policy.install(initial)
+        XCTAssertTrue(policy.closed)
+        XCTAssertNil(policy.identity)
+        XCTAssertFalse(policy.accepts(initial, generation: policy.generation))
+        policy.revoke()
+        XCTAssertTrue(policy.closed)
+    }
+
+    func testExecutionEvidenceDoesNotTreatQueueOutcomesAsExecutedFailures() {
+        XCTAssertFalse(GitDiscoveryProbeResult.busy.executionBegan)
+        XCTAssertFalse(GitDiscoveryProbeResult.cancelled(started: false).executionBegan)
+        XCTAssertFalse(GitDiscoveryProbeResult.timedOut(started: false).executionBegan)
+        XCTAssertTrue(GitDiscoveryProbeResult.cancelled(started: true).executionBegan)
+        XCTAssertTrue(GitDiscoveryProbeResult.timedOut(started: true).executionBegan)
+        XCTAssertTrue(GitDiscoveryProbeResult.output(nil).executionBegan)
     }
 }
 

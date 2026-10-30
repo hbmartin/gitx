@@ -21,6 +21,7 @@ final class GitBinaryDiscoveryPresenter: NSObject {
     }
 
     typealias PresentSheet = (NSAlert, NSWindow, @escaping (NSApplication.ModalResponse) -> Void) -> Void
+    typealias DismissSheet = (NSAlert) -> Void
     static let shared = GitBinaryDiscoveryPresenter(
         automaticPresentationEnabled: GitDiscoveryWarningPolicy.shouldPresentAutomatically(environment: ProcessInfo.processInfo.environment)
     )
@@ -29,6 +30,7 @@ final class GitBinaryDiscoveryPresenter: NSObject {
     private let center: NotificationCenter
     private let windows: () -> [NSWindow]
     private let presentSheet: PresentSheet
+    private let dismissSheet: DismissSheet
     private var selection: GitBinarySelection?
     private var pending: Warning?
     private var acknowledged: Warning?
@@ -36,12 +38,19 @@ final class GitBinaryDiscoveryPresenter: NSObject {
 
     init(center: NotificationCenter = .default, windows: @escaping () -> [NSWindow] = { NSApp.orderedWindows },
          automaticPresentationEnabled: Bool = true,
-         presentSheet: @escaping PresentSheet = { alert, parent, completed in alert.beginSheetModal(for: parent, completionHandler: completed) })
+         presentSheet: @escaping PresentSheet = { alert, parent, completed in alert.beginSheetModal(for: parent, completionHandler: completed) },
+         dismissSheet: @escaping DismissSheet = { alert in
+             if let parent = alert.window.sheetParent {
+                 parent.endSheet(alert.window, returnCode: .abort)
+             }
+             alert.window.orderOut(nil)
+         })
     {
         self.center = center
         self.windows = windows
         self.automaticPresentationEnabled = automaticPresentationEnabled
         self.presentSheet = presentSheet
+        self.dismissSheet = dismissSheet
         super.init()
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification, NSWindow.didEndSheetNotification,
                      NSApplication.didBecomeActiveNotification]
@@ -66,19 +75,18 @@ final class GitBinaryDiscoveryPresenter: NSObject {
     }
 
     func publish(selection newSelection: GitBinarySelection?, rejected: String?) {
-        publishSelection(newSelection)
-        guard let rejected else {
-            pending = nil
-            acknowledged = nil
-            dismissWarning()
-            NSLog("[GitDiscovery] Successful validation cleared warning acknowledgement")
-            return
-        }
-        let warning = Warning(preference: rejected, selection: newSelection)
-        if let pending, pending != warning {
-            dismissWarning()
-        }
+        let warning = rejected.map { Warning(preference: $0, selection: newSelection) }
+        let changed = pending != warning
+        // Both notification publication and sheet dismissal can reenter presentation.
         pending = warning
+        if warning == nil {
+            acknowledged = nil
+            NSLog("[GitDiscovery] Successful validation cleared warning acknowledgement")
+        }
+        if changed || warning == nil {
+            dismissWarning()
+        }
+        publishSelection(newSelection)
         presentIfPossible()
     }
 
@@ -90,11 +98,7 @@ final class GitBinaryDiscoveryPresenter: NSObject {
         guard let presentation else { return }
         // Revoke authority before endSheet can synchronously invoke its completion.
         self.presentation = nil
-        let alert = presentation.alert
-        if let parent = alert.window.sheetParent {
-            parent.endSheet(alert.window, returnCode: .abort)
-        }
-        alert.window.orderOut(nil)
+        dismissSheet(presentation.alert)
         NSLog("[GitDiscovery] Invalidated warning presentation %@", presentation.id.uuidString)
     }
 

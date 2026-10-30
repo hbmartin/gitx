@@ -70,6 +70,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
     // repository must remain alive until the progress sheet completes.
     private let repository: PBGitRepository
     private weak var windowController: PBGitWindowController?
+    private let ownerIsCurrent: () -> Bool
     private let progressStarting: RepositoryRemoteProgressStarting?
     private let retryConfirmation: RepositoryRetryConfirmation?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryRemoteActionCoordinator")
@@ -78,6 +79,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
     init(repository: PBGitRepository, windowController: PBGitWindowController) {
         self.repository = repository
         self.windowController = windowController
+        ownerIsCurrent = windowController.repositoryOwnerValidation(for: repository)
         progressStarting = nil
         retryConfirmation = nil
         super.init()
@@ -91,6 +93,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
     ) {
         self.repository = repository
         self.windowController = windowController
+        ownerIsCurrent = windowController.repositoryOwnerValidation(for: repository)
         self.progressStarting = progressStarting
         self.retryConfirmation = retryConfirmation
         super.init()
@@ -98,10 +101,10 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
 
     @objc(addRemote)
     func addRemote() {
-        guard let windowController else { return }
+        guard ownerIsCurrent(), let windowController else { return }
         logger.debug("Starting add-remote workflow")
         PBAddRemoteSheet.begin(windowController: windowController) { [weak self] sheet, response in
-            guard response == .OK, let self, let sheet = sheet as? PBAddRemoteSheet else { return }
+            guard response == .OK, let self, self.ownerIsCurrent(), let sheet = sheet as? PBAddRemoteSheet else { return }
             let remoteName = sheet.remoteName?.stringValue ?? ""
             let remoteURL = sheet.remoteURL?.stringValue ?? ""
             let operationTarget = RemoteOperationTarget(repository: self.repository)
@@ -112,7 +115,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                     try operationTarget.addRemote(name: remoteName, url: remoteURL)
                 },
                 completion: { [weak self] error in
-                    guard let self else { return }
+                    guard let self, self.ownerIsCurrent() else { return }
                     if let error {
                         self.windowController?.showErrorSheet(error)
                         return
@@ -127,6 +130,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
 
     @objc(performFetchForRef:)
     func performFetch(for ref: PBGitRef?) {
+        guard ownerIsCurrent() else { return }
         let description: String
         if let ref {
             if ref.isRemote || ref.isRemoteBranch {
@@ -148,9 +152,9 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             },
             completion: { [weak self] error in
                 guard let self else { return }
-                if let error {
+                if let error, self.ownerIsCurrent() {
                     self.windowController?.showErrorSheet(error)
-                } else {
+                } else if error == nil {
                     if let repositoryURL = self.repository.workingDirectoryURL() {
                         PBAutoFetchManager.shared().recordManualFetchSucceeded(forRepositoryURL: repositoryURL)
                     }
@@ -163,6 +167,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
 
     @objc(performPullForBranch:remote:rebase:)
     func performPull(branch: PBGitRef?, remote: PBGitRef?, rebase: Bool) {
+        guard ownerIsCurrent() else { return }
         let description: String
         if branch == nil, let remote {
             description = "Pulling all tracking branches from \(remote.remoteName ?? "")"
@@ -185,7 +190,9 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             },
             completion: { [weak self] error in
                 if let error {
-                    self?.windowController?.showErrorSheet(error)
+                    if self?.ownerIsCurrent() == true {
+                        self?.windowController?.showErrorSheet(error)
+                    }
                 } else {
                     self?.logger.debug("Pull workflow completed")
                     self?.reportSuccess(.pull)
@@ -214,6 +221,12 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         suppressesPostPushBrowserSuggestion: Bool = false,
         completion: ((RepositoryPushEvent) -> Void)?
     ) {
+        guard ownerIsCurrent() else {
+            RepositoryPushProgressStartPolicy.rejectedEvents(
+                createPullRequestSelected: pullRequestOption?.initiallySelected == true || pullRequestOffer?.initiallySelected == true
+            ).forEach { completion?($0) }
+            return
+        }
         // Cocoa progress callbacks and failed starts can arrive in either order.
         // Each push workflow owns one terminal event, including its optional retry.
         var gate = RepositoryPushEventGate()
@@ -257,7 +270,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             }
         }
         let beginPush = { [weak self] in
-            guard let self else { return }
+            guard let self, self.ownerIsCurrent() else { _ = emit(.cancelled); return }
             let nativeCreationWasAvailable = pullRequestOption != nil ||
                 pullRequestOffer?.presentation.isEnabled == true
             let createPullRequestSelected = nativeCreationWasAvailable &&
@@ -318,6 +331,13 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 guard isActive(), !completionHandled else { return }
                 completionHandled = true
                 guard let self else { completion(.failed); return }
+                guard self.ownerIsCurrent() else {
+                    if error == nil {
+                        self.reportSuccess(.push)
+                    }
+                    completion(error == nil ? .succeeded : .failed)
+                    return
+                }
                 if let error {
                     if allowsRecovery, let plan = PBRepositoryPushRetryPlan.plan(forError: error) {
                         self.offerForceWithLeaseRetry(
@@ -373,7 +393,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         let action = { [weak self] in
             guard isActive(), !retryStarted else { return }
             retryStarted = true
-            guard let self else { completion(.failed); return }
+            guard let self, self.ownerIsCurrent() else { completion(.failed); return }
             self.logger.info("Starting rejected-push retry with frozen source and fetched lease")
             let target = RemoteOperationTarget(repository: self.repository, retryPlan: plan)
             self.runPush(
@@ -457,7 +477,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         operation: @escaping @Sendable () throws -> Void,
         completion: @escaping (NSError?) -> Void
     ) -> Bool {
-        guard let windowController else { return false }
+        guard ownerIsCurrent(), let windowController else { return false }
         if let progressStarting {
             return progressStarting(title, description, operation, completion)
         }
