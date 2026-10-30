@@ -436,8 +436,10 @@ final class GitBinaryReliabilityTests: XCTestCase {
         occupied.expectedFulfillmentCount = 2
         let release = DispatchSemaphore(value: 0)
         defer { release.signal(); release.signal() }
-        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { _, _, _ in
-            occupied.fulfill(); _ = release.wait(timeout: .now() + 10)
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            if path.hasPrefix("/occupied") {
+                occupied.fulfill(); _ = release.wait(timeout: .now() + 10)
+            }
             return .init(output: { nil }, cancel: {})
         })
         for index in 0 ..< 2 {

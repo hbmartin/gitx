@@ -280,6 +280,7 @@ private final class WorktreeOperation {
     enum Phase { case reserved, preparing, writing, reconciling, terminal }
     let identifier = UUID()
     let context: WorktreeOperationContext
+    let owner: NSObject?
     private(set) var repository: PBGitRepository?
     var taskCompletion: (@MainActor @Sendable (Result<Data, Error>) -> Void)?
     var discoveryCompletion: (@MainActor @Sendable (Result<[GitWorktree], Error>) -> Void)?
@@ -293,8 +294,9 @@ private final class WorktreeOperation {
     var eventArguments: [String] = []
     var afterRelease: [@MainActor @Sendable () -> Void] = []
 
-    init(context: WorktreeOperationContext, repository: PBGitRepository, acknowledged: @escaping @MainActor @Sendable () -> Void) {
+    init(context: WorktreeOperationContext, repository: PBGitRepository, owner: NSObject?, acknowledged: @escaping @MainActor @Sendable () -> Void) {
         self.context = context
+        self.owner = owner
         self.repository = repository
         self.acknowledged = acknowledged
     }
@@ -364,10 +366,16 @@ private final class WorktreeOperation {
         evidenceCancellations.removeAll()
     }
 
-    func cancelPreparation() {
+    func cancelPreparation(asynchronously: Bool = false) {
         markPreparationCancelled()
         guard isActive, isCancelled, phase != .reserved else { return }
-        task?.terminate()
+        if let task {
+            if asynchronously {
+                cancelRepositoryReads([task])
+            } else {
+                task.terminate()
+            }
+        }
         cancellation?()
     }
 }
@@ -976,6 +984,19 @@ final class PBRepositoryWorktreeService: NSObject {
         }
     }
 
+    @objc(markPreparationsCancelledForOwner:)
+    func markPreparationsCancelled(forOwner owner: NSObject) {
+        operations.values.filter { $0.owner === owner }.forEach { $0.markPreparationCancelled() }
+    }
+
+    @objc(cancelPreparationsForOwner:)
+    func cancelPreparations(forOwner owner: NSObject) {
+        let pending = operations.values.filter { $0.owner === owner }
+        pending.forEach { $0.markPreparationCancelled() }
+        pending.forEach { $0.cancelPreparation(asynchronously: true) }
+        logEvent([], stage: "cancelled", phase: "owner-preparation", count: pending.filter { !$0.drainsAfterOwnerChange }.count)
+    }
+
     @objc(worktreeForBranch:)
     func worktree(forBranch refName: String) -> PBGitWorktree? {
         guard isSupported, !state.isClosed else { return nil }
@@ -1003,7 +1024,7 @@ final class PBRepositoryWorktreeService: NSObject {
         perform(.unlock(path: path), completion: completion)
     }
 
-    func perform(_ command: WorktreeCommand, expectedWorktree: GitWorktree? = nil, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+    func perform(_ command: WorktreeCommand, expectedWorktree: GitWorktree? = nil, owner: NSObject? = nil, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
         switch command {
         case .pruneReport: pruneWorktrees(reportOnly: true, completion: completion); return
         case .prune, .repairLinks:
@@ -1022,7 +1043,7 @@ final class PBRepositoryWorktreeService: NSObject {
             validatesRemoval = false
             removalConsent = nil
         }
-        enqueueOperation(onFailure: fail) { operation in
+        enqueueOperation(owner: owner, onFailure: fail) { operation in
             let requiresFreshInventory = validatesRemoval || !self.hasPublishedSnapshot || self.state.isStale
             let execute: @MainActor ([GitWorktree]) -> Void = { records in
                 if case let .remove(path, _) = command,
@@ -1094,8 +1115,13 @@ final class PBRepositoryWorktreeService: NSObject {
 
     @objc(preparePrunePreviewWithCompletion:)
     func preparePrunePreview(completion: @escaping @MainActor @Sendable (PBWorktreePrunePreview?, NSError?) -> Void) {
+        preparePrunePreview(owner: nil, completion: completion)
+    }
+
+    @objc(preparePrunePreviewForOwner:completion:)
+    func preparePrunePreview(owner: NSObject?, completion: @escaping @MainActor @Sendable (PBWorktreePrunePreview?, NSError?) -> Void) {
         let fail = requestFailure(["worktree", "prune"]) { completion(nil, $0) }
-        enqueueOperation(onFailure: fail) { operation in
+        enqueueOperation(owner: owner, onFailure: fail) { operation in
             self.capturePrunePreview(operation: operation) { result in
                 self.finish(operation) {
                     switch result {
@@ -1127,6 +1153,13 @@ final class PBRepositoryWorktreeService: NSObject {
         reviewPrunePreview(preview, refreshOnly: false, ownerIsCurrent: ownerIsCurrent, completion: completion)
     }
 
+    @objc(confirmPrune:ownerIsCurrent:owner:completion:)
+    func confirmPrune(_ preview: PBWorktreePrunePreview, ownerIsCurrent: @escaping @MainActor () -> Bool, owner: NSObject,
+                      completion: @escaping @MainActor @Sendable (PBWorktreePrunePreview?, NSError?) -> Void)
+    {
+        reviewPrunePreview(preview, refreshOnly: false, ownerIsCurrent: ownerIsCurrent, owner: owner, completion: completion)
+    }
+
     @objc(refreshPrunePreview:ownerIsCurrent:completion:)
     func refreshPrunePreview(_ preview: PBWorktreePrunePreview, ownerIsCurrent: @escaping @MainActor () -> Bool,
                              completion: @escaping @MainActor @Sendable (PBWorktreePrunePreview?, Bool, NSError?) -> Void)
@@ -1136,8 +1169,17 @@ final class PBRepositoryWorktreeService: NSObject {
         }
     }
 
+    @objc(refreshPrunePreview:ownerIsCurrent:owner:completion:)
+    func refreshPrunePreview(_ preview: PBWorktreePrunePreview, ownerIsCurrent: @escaping @MainActor () -> Bool, owner: NSObject,
+                             completion: @escaping @MainActor @Sendable (PBWorktreePrunePreview?, Bool, NSError?) -> Void)
+    {
+        reviewPrunePreview(preview, refreshOnly: true, ownerIsCurrent: ownerIsCurrent, owner: owner) { updated, error in
+            completion(updated, updated.map { !$0.matches(preview) } ?? false, error)
+        }
+    }
+
     private func reviewPrunePreview(_ preview: PBWorktreePrunePreview, refreshOnly: Bool,
-                                    ownerIsCurrent: (@MainActor () -> Bool)?,
+                                    ownerIsCurrent: (@MainActor () -> Bool)?, owner: NSObject? = nil,
                                     completion: @escaping @MainActor @Sendable (PBWorktreePrunePreview?, NSError?) -> Void)
     {
         guard ownerIsCurrent?() != false else {
@@ -1147,7 +1189,7 @@ final class PBRepositoryWorktreeService: NSObject {
             completion(nil, failure("This prune preview was cancelled, consumed, or belongs to another repository. Preview it again.")); return
         }
         let fail = requestFailure(["worktree", "prune"]) { completion(nil, $0) }
-        enqueueOperation(context: preview.context, onFailure: fail) { operation in
+        enqueueOperation(context: preview.context, owner: owner, onFailure: fail) { operation in
             guard ownerIsCurrent?() != false else { self.finish(operation) { fail(Self.cancelledError()) }; return }
             self.capturePrunePreview(operation: operation) { result in
                 switch result {
@@ -1244,13 +1286,18 @@ final class PBRepositoryWorktreeService: NSObject {
         requestRepair(selection: WorktreeRepairSelection(originalPath: worktree.path, path: path), style: nil, completion: completion)
     }
 
+    @objc(prepareRepairWorktree:movedTo:owner:completion:)
+    func prepareRepair(worktree: PBGitWorktree, movedTo path: String, owner: NSObject, completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void) {
+        requestRepair(selection: WorktreeRepairSelection(originalPath: worktree.path, path: path), style: nil, owner: owner, completion: completion)
+    }
+
     @objc(prepareRepairLinksWithRelativePaths:completion:)
     func prepareRepairLinks(relativePaths: Bool, completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void) {
         prepareRepairLinks(style: relativePaths ? .relative : .absolute, completion: completion)
     }
 
-    func prepareRepairLinks(style: WorktreeLinkStyle, completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void) {
-        requestRepair(selection: nil, style: style, completion: completion)
+    func prepareRepairLinks(style: WorktreeLinkStyle, owner: NSObject? = nil, completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void) {
+        requestRepair(selection: nil, style: style, owner: owner, completion: completion)
     }
 
     @objc(discardRepairPreview:)
@@ -1263,16 +1310,16 @@ final class PBRepositoryWorktreeService: NSObject {
         reviewRepairPreview(preview, refreshOnly: false, ownerIsCurrent: nil) { updated, _, error in completion(updated, error) }
     }
 
-    func confirmRepair(_ preview: PBWorktreeRepairPreview, ownerIsCurrent: @escaping @MainActor () -> Bool,
+    func confirmRepair(_ preview: PBWorktreeRepairPreview, ownerIsCurrent: @escaping @MainActor () -> Bool, owner: NSObject? = nil,
                        completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void)
     {
-        reviewRepairPreview(preview, refreshOnly: false, ownerIsCurrent: ownerIsCurrent) { updated, _, error in completion(updated, error) }
+        reviewRepairPreview(preview, refreshOnly: false, ownerIsCurrent: ownerIsCurrent, owner: owner) { updated, _, error in completion(updated, error) }
     }
 
-    func refreshRepairPreview(_ preview: PBWorktreeRepairPreview, ownerIsCurrent: @escaping @MainActor () -> Bool,
+    func refreshRepairPreview(_ preview: PBWorktreeRepairPreview, ownerIsCurrent: @escaping @MainActor () -> Bool, owner: NSObject? = nil,
                               completion: @escaping @MainActor @Sendable (Result<WorktreeRepairReview, NSError>) -> Void)
     {
-        reviewRepairPreview(preview, refreshOnly: true, ownerIsCurrent: ownerIsCurrent) { updated, changed, error in
+        reviewRepairPreview(preview, refreshOnly: true, ownerIsCurrent: ownerIsCurrent, owner: owner) { updated, changed, error in
             if let error {
                 completion(.failure(error))
             } else if let updated {
@@ -1284,7 +1331,7 @@ final class PBRepositoryWorktreeService: NSObject {
     }
 
     private func reviewRepairPreview(_ preview: PBWorktreeRepairPreview, refreshOnly: Bool,
-                                     ownerIsCurrent: (@MainActor () -> Bool)?,
+                                     ownerIsCurrent: (@MainActor () -> Bool)?, owner: NSObject? = nil,
                                      completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, Bool, NSError?) -> Void)
     {
         guard ownerIsCurrent?() != false else {
@@ -1297,7 +1344,7 @@ final class PBRepositoryWorktreeService: NSObject {
             return
         }
         let fail = requestFailure(["worktree", "repair"]) { completion(nil, false, $0) }
-        enqueueOperation(context: preview.plan.context, onFailure: fail) { operation in
+        enqueueOperation(context: preview.plan.context, owner: owner, onFailure: fail) { operation in
             self.discover(operation: operation) { discovered in
                 switch discovered {
                 case let .failure(error): self.finish(operation) { fail(self.operationError(error)) }
@@ -1347,6 +1394,7 @@ final class PBRepositoryWorktreeService: NSObject {
 
     /// Request-bound identities precede the wait; the complete touch scope is captured after admission.
     private func requestRepair(selection: WorktreeRepairSelection?, style: WorktreeLinkStyle?,
+                               owner: NSObject? = nil,
                                completion: @escaping @MainActor @Sendable (PBWorktreeRepairPreview?, NSError?) -> Void)
     {
         let fail = requestFailure(["worktree", "repair"]) { completion(nil, $0) }
@@ -1363,7 +1411,7 @@ final class PBRepositoryWorktreeService: NSObject {
             let selectedIdentity = try selection.map { try WorktreeFileIdentity.capture(path: $0.path) }
             let preparationObserver = preparationObserverForTesting
             let acknowledged = preparationResultForTesting
-            enqueuePrepared(context: context, onFailure: fail, acknowledged: acknowledged, preparing: {
+            enqueuePrepared(context: context, owner: owner, onFailure: fail, acknowledged: acknowledged, preparing: {
                 preparationObserver?()
                 return try WorktreeLinkInspector.captureRepairPreparation(seeds: seeds, commonDirectory: context.commonDirectory, selection: selection, selectedIdentity: selectedIdentity)
             }) { operation, preparation in
@@ -1437,12 +1485,12 @@ final class PBRepositoryWorktreeService: NSObject {
     }
 
     @discardableResult
-    private func enqueueOperation(context requested: WorktreeOperationContext? = nil, onFailure: @escaping @MainActor @Sendable (NSError) -> Void, body: @escaping @MainActor (WorktreeOperation) -> Void) -> WorktreeOperation? {
+    private func enqueueOperation(context requested: WorktreeOperationContext? = nil, owner: NSObject? = nil, onFailure: @escaping @MainActor @Sendable (NSError) -> Void, body: @escaping @MainActor (WorktreeOperation) -> Void) -> WorktreeOperation? {
         do {
             let context = try requestContext()
             guard requested == nil || requested == context else { throw WorktreeEvidenceError.changed(context.gitDirectory) }
             guard let repository else { throw Self.cancelledError() }
-            let operation = WorktreeOperation(context: context, repository: repository, acknowledged: activityDrain.begin())
+            let operation = WorktreeOperation(context: context, repository: repository, owner: owner, acknowledged: activityDrain.begin())
             operations[operation.identifier] = operation
             operation.cancellation = { self.finish(operation) { onFailure(Self.cancelledError()) } }
             // The job retains the service and repository until the reserved admission is released.
@@ -1461,7 +1509,7 @@ final class PBRepositoryWorktreeService: NSObject {
     }
 
     /// Reserve synchronously, then begin capture immediately even when an earlier writer owns admission.
-    private func enqueuePrepared<Value: Sendable>(context: WorktreeOperationContext, onFailure: @escaping @MainActor @Sendable (NSError) -> Void, acknowledged: (@MainActor @Sendable () -> Void)? = nil, preparing: @escaping @Sendable () throws -> Value, body: @escaping @MainActor (WorktreeOperation, Value) -> Void) {
+    private func enqueuePrepared<Value: Sendable>(context: WorktreeOperationContext, owner: NSObject? = nil, onFailure: @escaping @MainActor @Sendable (NSError) -> Void, acknowledged: (@MainActor @Sendable () -> Void)? = nil, preparing: @escaping @Sendable () throws -> Value, body: @escaping @MainActor (WorktreeOperation, Value) -> Void) {
         let reservation = WorktreePreparedReservation<Value>()
         var operation: WorktreeOperation?
         let run: @MainActor () -> Void = {
@@ -1472,7 +1520,7 @@ final class PBRepositoryWorktreeService: NSObject {
                 self.finish(operation) { onFailure(self.operationError(error)) }
             }
         }
-        let reserved = enqueueOperation(context: context, onFailure: onFailure) { admitted in
+        let reserved = enqueueOperation(context: context, owner: owner, onFailure: onFailure) { admitted in
             operation = admitted
             reservation.isAdmitted = true
             run()

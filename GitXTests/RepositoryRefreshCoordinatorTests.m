@@ -30,6 +30,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface PBGitRepositoryWatcher (GitXTests)
 - (nullable NSDate *)fileModificationDateAtPath:(NSString *)path;
+- (BOOL)indexChanged;
+- (BOOL)gitDirectoryChanged;
 - (void)handleGitDirEventCallback:(NSArray<PBGitRepositoryWatcherEventPath *> *)eventPaths;
 - (void)handleWorkDirEventCallback:(NSArray<PBGitRepositoryWatcherEventPath *> *)eventPaths;
 @end
@@ -206,6 +208,31 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 	XCTAssertNotNil(statusRepository);
 	XCTAssertNotEqual(statusRepository, self.repository.gtRepo);
 	XCTAssertNotEqual(statusRepository.git_repository, self.repository.gtRepo.git_repository);
+}
+
+// Private watcher probes stay in the Objective-C compatibility fixture.
+- (void)testWatcherSettlesUnchangedFilesAndBareRepositoriesHaveNoIndexChanges
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	[watcher stop];
+	[watcher setValue:nil forKey:@"indexTouchDate"];
+	XCTAssertTrue([watcher indexChanged]);
+	XCTAssertFalse([watcher indexChanged]);
+	BOOL changed = YES;
+	for (NSUInteger attempt = 0; attempt < 100 && changed; attempt++) {
+		changed = [watcher gitDirectoryChanged];
+	}
+	XCTAssertFalse(changed, @"Unchanged Git directory entries must settle without repeated refreshes");
+	NSURL *bareURL = [self.repositoryURL URLByAppendingPathComponent:@"bare.git"];
+	NSError *error = nil;
+	NSString *output = [PBTask outputForCommand:@"/usr/bin/git" arguments:@[ @"init", @"--bare", bareURL.path ] inDirectory:self.repositoryURL.path error:&error];
+	XCTAssertNotNil(output, @"%@", error);
+	PBGitRepository *bare = [[PBGitRepository alloc] initWithURL:bareURL error:&error];
+	XCTAssertNotNil(bare, @"%@", error);
+	PBGitRepositoryWatcher *bareWatcher = [[PBGitRepositoryWatcher alloc] initWithRepository:bare];
+	[bareWatcher stop];
+	XCTAssertFalse([bareWatcher indexChanged]);
+	XCTAssertTrue(bare.isBareRepository);
 }
 
 - (void)testWatcherReportsExistingAndMissingFileModificationDates
