@@ -4,25 +4,29 @@ import OSLog // swiftlint:disable:this unused_import
 // swiftlint:disable unused_declaration
 @objc(PBRepositoryStashActionCoordinator)
 final class RepositoryStashActionCoordinator: NSObject {
-    private unowned let repository: PBGitRepository
+    private let repository: PBGitRepository
     private weak var windowController: PBGitWindowController?
+    private let ownerIsCurrent: () -> Bool
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryStashActionCoordinator")
 
     @objc(initWithRepository:windowController:)
     init(repository: PBGitRepository, windowController: PBGitWindowController) {
         self.repository = repository
         self.windowController = windowController
+        ownerIsCurrent = windowController.repositoryOwnerValidation(for: repository)
         super.init()
     }
 
     @objc(saveWithKeepIndex:)
     func save(keepIndex: Bool) {
+        guard ownerIsCurrent() else { return }
         logger.debug("Starting stash-save action")
         perform { _ = try repository.stashSave(withKeepIndex: keepIndex) }
     }
 
     @objc(popRef:)
     func pop(ref: PBGitRef?) {
+        guard ownerIsCurrent() else { return }
         guard let stash = ref.flatMap(repository.stash(for:)) ?? repository.stashes.first else { return }
         logger.debug("Starting stash-pop action")
         perform { _ = try repository.stashPop(stash) }
@@ -30,6 +34,7 @@ final class RepositoryStashActionCoordinator: NSObject {
 
     @objc(applyRef:)
     func apply(ref: PBGitRef?) {
+        guard ownerIsCurrent() else { return }
         guard let ref, let stash = repository.stash(for: ref) else { return }
         logger.debug("Starting stash-apply action")
         perform { _ = try repository.stashApply(stash) }
@@ -37,6 +42,7 @@ final class RepositoryStashActionCoordinator: NSObject {
 
     @objc(dropRef:)
     func drop(ref: PBGitRef?) {
+        guard ownerIsCurrent() else { return }
         guard let ref, let stash = repository.stash(for: ref) else { return }
         let alert = NSAlert()
         alert.messageText = NSLocalizedString("Dropping stash", comment: "Stash drop alert - title")
@@ -48,12 +54,13 @@ final class RepositoryStashActionCoordinator: NSObject {
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Stash drop alert - cancel button"))
         logger.debug("Requesting stash-drop confirmation")
         windowController?.confirmDialog(alert, suppressionIdentifier: "Stash Drop") { [weak self] in
-            guard let self else { return }
+            guard let self, self.ownerIsCurrent() else { return }
             self.perform { _ = try self.repository.stashDrop(stash) }
         }
     }
 
     private func perform(_ action: () throws -> Void) {
+        guard ownerIsCurrent() else { return }
         guard CommitSubmissionEligibility.allowsMutation(repository.index) else {
             logger.debug("Ignored stash action while repository mutation is active")
             return

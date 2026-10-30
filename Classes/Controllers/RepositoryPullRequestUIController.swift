@@ -38,8 +38,14 @@ private final class RepositoryPullRequestDeferredPushOperation {
 final class RepositoryPullRequestUIController {
     private static let ordinaryPushPreparationLifetime: TimeInterval = 60
 
-    private unowned let repository: PBGitRepository
+    private let repository: PBGitRepository
     private weak var windowController: PBGitWindowController?
+    private let ownerValidation: () -> Bool
+    private var ownerRevoked = false
+    private func ownerIsCurrent() -> Bool {
+        !ownerRevoked && ownerValidation()
+    }
+
     private let remoteActions: any RepositoryRemoteActionCoordinating
     private let service: any RepositoryPullRequestMutationServing
     private let drafts: any RepositoryPullRequestDraftPersisting
@@ -64,6 +70,7 @@ final class RepositoryPullRequestUIController {
     init(
         repository: PBGitRepository,
         windowController: PBGitWindowController,
+        ownerIsCurrent: @escaping () -> Bool = { true },
         remoteActions: any RepositoryRemoteActionCoordinating,
         service: any RepositoryPullRequestMutationServing,
         drafts: any RepositoryPullRequestDraftPersisting = NullRepositoryPullRequestDraftStore(),
@@ -77,12 +84,17 @@ final class RepositoryPullRequestUIController {
     ) {
         self.repository = repository
         self.windowController = windowController
+        ownerValidation = ownerIsCurrent
         self.remoteActions = remoteActions
         self.service = service
         self.drafts = drafts
-        self.destinationOpening = destinationOpening
-        self.bindingResolving = bindingResolving
-        self.postPushBrowserFallback = postPushBrowserFallback
+        self.destinationOpening = { ownerIsCurrent() && destinationOpening($0) }
+        self.bindingResolving = { ownerIsCurrent() ? bindingResolving() : nil }
+        self.postPushBrowserFallback = {
+            if ownerIsCurrent() {
+                postPushBrowserFallback($0)
+            }
+        }
         self.createPullRequestControlResolving = createPullRequestControlResolving
         self.now = now
         preloadOrdinaryPushPreparation()
@@ -91,11 +103,25 @@ final class RepositoryPullRequestUIController {
     deinit {
         preparationTask?.cancel()
         ordinaryPushPreparationTask?.cancel()
-        mutationTask?.cancel()
-        draftSaveTask?.cancel()
+        // Already-admitted mutations and draft saves keep their captured targets.
+    }
+
+    func invalidateOwner() {
+        ownerRevoked = true
+        preparationTask?.cancel()
+        cancelOrdinaryPushPreparation(clearCache: true)
+        cancelDeferredPullRequestOperation()
+        if let sheet = sheetController, sheet.isWindowLoaded, let window = sheet.window {
+            window.sheetParent?.endSheet(window, returnCode: .abort)
+            window.orderOut(nil)
+        }
+        sheetController = nil
+        windowController = nil
+        logger.notice("Revoked Pull Request presentation and admission; admitted mutations continue")
     }
 
     func newPullRequest() {
+        guard ownerIsCurrent() else { return }
         cancelOrdinaryPushPreparation(clearCache: true)
         cancelDeferredPullRequestOperation()
         guard let branch = repository.headRef()?.ref(), branch.isBranch else {
@@ -207,6 +233,7 @@ final class RepositoryPullRequestUIController {
         requiresConfirmation: Bool,
         initiallyCreatePullRequest: Bool = false
     ) {
+        guard ownerIsCurrent() else { return }
         cancelOrdinaryPushPreparation(clearCache: false)
         guard createPullRequestControlResolving().isEnabled else {
             cancelOrdinaryPushPreparation(clearCache: true)
@@ -427,6 +454,7 @@ final class RepositoryPullRequestUIController {
         snapshot: ForgePullRequestEditableSnapshot,
         destination: ForgeDestination
     ) {
+        guard ownerIsCurrent() else { return }
         preparationTask?.cancel()
         mutationTask?.cancel()
         let identity: ForgeDraftIdentity
@@ -442,7 +470,7 @@ final class RepositoryPullRequestUIController {
         preparationTask = Task { [weak self, drafts] in
             do {
                 let draft = try await drafts.load(identity: identity)
-                guard let self, !Task.isCancelled else { return }
+                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
                 let content = RepositoryPullRequestDraftPolicy.restoredEditContent(
                     snapshot: snapshot,
                     draft: draft
@@ -499,6 +527,7 @@ final class RepositoryPullRequestUIController {
     }
 
     func checkout(_ plan: ForgePullRequestCheckoutPlan) {
+        guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
         let executor = RepositoryPullRequestCheckoutExecutor(repository: repository)
         mutationTask = Task { [weak self] in
@@ -506,7 +535,7 @@ final class RepositoryPullRequestUIController {
                 let receipt = try await Task.detached(priority: .userInitiated) {
                     try executor.execute(plan)
                 }.value
-                guard let self, !Task.isCancelled else { return }
+                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
                 self.windowController?.showMessageSheet(
                     "Pull Request Checked Out",
                     infoText: "Checked out \(receipt.localBranch.value) from \(receipt.remoteName)."
@@ -521,12 +550,13 @@ final class RepositoryPullRequestUIController {
     }
 
     func checkout(_ pullRequest: ForgePullRequestSummary) {
+        guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
         let planner = RepositoryPullRequestCheckoutPlanner(repository: repository)
         mutationTask = Task { [weak self] in
             do {
                 let plan = try await planner.plan(for: pullRequest)
-                guard let self, !Task.isCancelled, let windowController = self.windowController else { return }
+                guard let self, self.ownerIsCurrent(), !Task.isCancelled, let windowController = self.windowController else { return }
                 let alert = NSAlert()
                 alert.messageText = "Check Out Pull Request #\(pullRequest.number.rawValue)?"
                 let remoteDetail = plan.addsRemote
@@ -548,13 +578,14 @@ final class RepositoryPullRequestUIController {
     }
 
     func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) {
+        guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
         let runner = RepositoryPullRequestObjectiveGitRunner(repository: repository)
         let coordinator = RepositorySyncForkCoordinator(service: service, runner: runner)
         mutationTask = Task { [weak self] in
             do {
                 let receipt = try await coordinator.sync(accountID: accountID, plan: plan)
-                guard let self, !Task.isCancelled else { return }
+                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
                 self.windowController?.showMessageSheet(
                     "Fork Synchronized",
                     infoText: "\(receipt.serverSummary) Fetched \(receipt.fetchedRemote)/\(receipt.fetchedBranch.value)."
@@ -621,7 +652,7 @@ final class RepositoryPullRequestUIController {
                     initial: forms.forms[forms.selectedTemplateIndex ?? 0],
                     draft: draft
                 )
-                guard let self, !Task.isCancelled else { return }
+                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
                 self.activePreparation = preparation
                 completion(preparation, initial)
                 self.logger.info(
@@ -669,7 +700,7 @@ final class RepositoryPullRequestUIController {
                     expiresAfter: Self.ordinaryPushPreparationLifetime,
                     now: self?.now ?? Date.init
                 )
-                guard let self, !Task.isCancelled else { return }
+                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
                 guard let currentKey = self.ordinaryPushPreparationKey(
                     for: branch,
                     remote: requestedRemote
@@ -808,7 +839,7 @@ final class RepositoryPullRequestUIController {
             pullRequestOffer: nil,
             suppressesPostPushBrowserSuggestion: false
         ) { [weak self] event in
-            guard let self, self.pullRequestOperation === operation else { return }
+            guard let self, self.ownerIsCurrent(), self.pullRequestOperation === operation else { return }
             defer {
                 if event.isTerminal {
                     self.preloadOrdinaryPushPreparation(for: branch, remote: remote)
@@ -844,7 +875,7 @@ final class RepositoryPullRequestUIController {
         intent: ForgePushPullRequestIntent,
         operation: RepositoryPullRequestOperation
     ) {
-        guard pullRequestOperation === operation else { return }
+        guard ownerIsCurrent(), pullRequestOperation === operation else { return }
         guard let window = windowController?.window else {
             do {
                 try operation.flow.createSheetCancelled()
@@ -884,7 +915,7 @@ final class RepositoryPullRequestUIController {
         }
         sheet.onCancel = { [weak self] content in
             self?.saveDraft(preparation: preparation, content: content)
-            guard let self, self.pullRequestOperation === operation else { return }
+            guard let self, self.ownerIsCurrent(), self.pullRequestOperation === operation else { return }
             do {
                 try operation.flow.createSheetCancelled()
             } catch {
@@ -892,7 +923,7 @@ final class RepositoryPullRequestUIController {
             }
         }
         sheet.onDiscard = { [weak self] in
-            guard let self, self.pullRequestOperation === operation else { return }
+            guard let self, self.ownerIsCurrent(), self.pullRequestOperation === operation else { return }
             do {
                 try operation.flow.createSheetCancelled()
             } catch {
@@ -976,6 +1007,7 @@ final class RepositoryPullRequestUIController {
         preparation: RepositoryPullRequestCreationPreparation,
         operation: RepositoryPullRequestOperation
     ) {
+        guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
         saveDraft(
             preparation: preparation,
@@ -1024,7 +1056,7 @@ final class RepositoryPullRequestUIController {
             } catch is CancellationError {
                 return
             } catch {
-                guard let self, self.pullRequestOperation === operation else { return }
+                guard let self, self.ownerIsCurrent(), self.pullRequestOperation === operation else { return }
                 if self.presentAuthorizationRecovery(error, retry: { [weak self] in
                     self?.submitCreate(
                         accountID: accountID,
@@ -1053,6 +1085,7 @@ final class RepositoryPullRequestUIController {
         destination: ForgeDestination,
         draftIdentity: ForgeDraftIdentity
     ) {
+        guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
         let pendingDraftSave = draftSaveTask
         mutationTask = Task { [weak self, service, drafts] in
@@ -1063,7 +1096,7 @@ final class RepositoryPullRequestUIController {
                 guard outcome.destination == destination else {
                     throw ForgePullRequestWorkflowError.mismatchedRepository
                 }
-                guard let self, !Task.isCancelled else { return }
+                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
                 do {
                     try await drafts.delete(identity: draftIdentity)
                     self.logger.notice("Removed published Pull Request edit Forge Draft")
@@ -1103,7 +1136,8 @@ final class RepositoryPullRequestUIController {
         _ error: Error,
         retry: @escaping @MainActor () -> Void
     ) -> Bool {
-        GitHubAuthorizationRecoveryPresenter.present(
+        guard ownerIsCurrent() else { return false }
+        return GitHubAuthorizationRecoveryPresenter.present(
             error: error,
             for: windowController,
             retry: retry

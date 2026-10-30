@@ -1,6 +1,62 @@
 import AppKit
 import ForgeKit
 
+/// Consent and asynchronous results belong to one complete AppKit owner.
+nonisolated struct RepositoryWindowOwnership {
+    struct Identity: Equatable {
+        let repository: ObjectIdentifier
+        let window: ObjectIdentifier
+        let document: ObjectIdentifier?
+    }
+
+    private(set) var generation: UInt64 = 0
+    private(set) var identity: Identity?
+    private(set) var closed = false
+
+    mutating func revoke(closing: Bool = false) {
+        generation &+= 1
+        identity = nil
+        closed = closed || closing
+    }
+
+    mutating func install(_ identity: Identity) {
+        guard !closed else { return }
+        self.identity = identity
+    }
+
+    func accepts(_ identity: Identity, generation: UInt64) -> Bool {
+        !closed && self.identity == identity && self.generation == generation
+    }
+}
+
+/// Retains the repository until its reads and subscriptions have been revoked.
+@MainActor
+private final class RepositoryWindowLifetime {
+    let repository: PBGitRepository
+    let identity: RepositoryWindowOwnership.Identity
+    var focus: RepositoryFocusRefreshCoordinator?
+    var status: RepositoryLocalStatusLoader?
+    var notifications: [NSObjectProtocol] = []
+    var observations: [NSKeyValueObservation] = []
+
+    init(repository: PBGitRepository, identity: RepositoryWindowOwnership.Identity) {
+        self.repository = repository
+        self.identity = identity
+    }
+
+    func invalidate() {
+        notifications.forEach(NotificationCenter.default.removeObserver)
+        notifications.removeAll()
+        observations.removeAll()
+        focus?.cancel()
+        status?.cancel()
+        focus = nil
+        status = nil
+    }
+
+    isolated deinit { invalidate() }
+}
+
 /// A selection is installed only when both repository-scoped loaders exist.
 nonisolated struct RepositoryGitLoaderLifecycle {
     struct Identity: Equatable {
@@ -37,10 +93,19 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc private dynamic weak var contentController: PBViewController?
 
     private var explicitlyAssignedRepository: PBGitRepository?
-    private var focusRefreshCoordinator: RepositoryFocusRefreshCoordinator?
+    private var ownership = RepositoryWindowOwnership()
+    private var lifetime: RepositoryWindowLifetime?
+    private var nibPresentationReady = false
+    private var paneRepository: ObjectIdentifier?
+    private var actionRepository: ObjectIdentifier?
+    private var worktreeRepairRepository: ObjectIdentifier?
+    private final var focusRefreshCoordinator: RepositoryFocusRefreshCoordinator? {
+        get { lifetime?.focus }
+        set { lifetime?.focus = newValue }
+    }
+
     final var gitDiscovery = GitBinaryDiscovery.shared
     private(set) final var gitLoaderSelection: GitBinarySelection?
-    private var gitLoaderOwnerActive = true
     private var gitLoaderLifecycle = RepositoryGitLoaderLifecycle()
     private var actionContextResolver: RepositoryActionContextResolver?
     private var remoteActionCoordinator: RepositoryRemoteActionCoordinator?
@@ -63,7 +128,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repositoryForgeOverlaySession != nil
     }
 
-    private var repositoryLocalStatusLoader: RepositoryLocalStatusLoader?
+    private final var repositoryLocalStatusLoader: RepositoryLocalStatusLoader? {
+        get { lifetime?.status }
+        set { lifetime?.status = newValue }
+    }
+
     private var repositoryLocalStatusSnapshot = RepositoryLocalStatusSnapshot.unavailable
     private var initializedContentControllers: NSHashTable<PBViewController>?
     private var contentStatusObservation: NSKeyValueObservation?
@@ -76,7 +145,6 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @IBOutlet private weak var progressIndicator: NSProgressIndicator?
     @IBOutlet private weak var jumpToCheckedOutBranchButton: NSButton?
 
-    private var worktreeObservations: [NSKeyValueObservation] = []
     /// Objective-C-imported subclasses cannot dispatch new Swift-only virtual accessors.
     final var offeredWorktreeRepair = false
     /// Presentation authority expires when the originating window or owner changes.
@@ -96,10 +164,17 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             // Reading an unloaded window would create it merely to compare ownership.
             let previous = super.isWindowLoaded ? super.window : nil
             if previous !== newValue {
-                invalidateWorktreePresentation()
-                invalidateGitLoaders()
+                revokeOwner()
+                if previous?.delegate === self {
+                    previous?.delegate = nil
+                }
+                repositoryStatusBarController?.uninstall()
+                repositoryStatusBarController = nil
             }
             super.window = newValue
+            if previous !== newValue {
+                reconcileOwnership()
+            }
         }
     }
 
@@ -108,12 +183,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         set {
             let changed = super.document !== newValue
             if changed {
-                invalidateWorktreePresentation()
-                invalidateGitLoaders()
+                revokeOwner()
             }
             super.document = newValue
             if changed {
-                reconcileGitLoaders()
+                reconcileOwnership()
             }
         }
     }
@@ -129,12 +203,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             let incoming = (document as? PBGitRepositoryDocument)?.repository ?? newValue
             let changed = repository !== incoming
             if changed {
-                invalidateWorktreePresentation()
-                invalidateGitLoaders()
+                revokeOwner()
             }
             explicitlyAssignedRepository = newValue
             if changed {
-                reconcileGitLoaders()
+                reconcileOwnership()
             }
         }
     }
@@ -148,7 +221,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     final func ensureActionCoordinators() {
-        guard let repository else { return }
+        guard !ownership.closed, let repository else { return }
+        ensureLifetime()
+        if actionRepository != ObjectIdentifier(repository) {
+            resetActionCoordinators()
+            actionRepository = ObjectIdentifier(repository)
+        }
         if actionContextResolver == nil {
             actionContextResolver = RepositoryActionContextResolver()
         }
@@ -163,6 +241,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             pullRequestUIController = RepositoryPullRequestUIController(
                 repository: repository,
                 windowController: self,
+                ownerIsCurrent: repositoryOwnerValidation(for: repository),
                 remoteActions: remoteActionCoordinator,
                 service: session.service,
                 drafts: session.drafts,
@@ -211,20 +290,36 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         focusRefreshCoordinator = nil
         repositoryLocalStatusLoader = nil
         repositoryLocalStatusSnapshot = .unavailable
+        gitLoaderSelection = nil
+        if isWindowLoaded {
+            updateStatus()
+        }
         NSLog("[GitX] Invalidated Git loader generation %llu", gitLoaderLifecycle.generation)
     }
 
     private final func acceptsGitLoaderResult(generation: UInt64, identity: RepositoryGitLoaderLifecycle.Identity) -> Bool {
-        guard gitLoaderOwnerActive, let repository else { return false }
+        guard !ownership.closed, lifetime != nil, let repository else { return false }
         return ObjectIdentifier(repository) == identity.repository && gitDiscovery.currentSelection == identity.selection &&
             gitLoaderLifecycle.accepts(generation: generation, identity: identity)
     }
 
-    private final func reconcileGitLoaders() {
-        guard gitLoaderOwnerActive, isWindowLoaded, let repository, let selection = gitDiscovery.currentSelection else { return }
+    @discardableResult
+    private final func reconcileGitLoaders() -> Bool {
+        guard !ownership.closed, let scope = lifetime, let repository else { return false }
+        guard let selection = gitDiscovery.currentSelection else {
+            if focusRefreshCoordinator != nil || repositoryLocalStatusLoader != nil {
+                invalidateGitLoaders()
+            }
+            return false
+        }
+        guard
+            repository.workingDirectoryURL() != nil || repository.gitURL() != nil else { return false }
         let identity = RepositoryGitLoaderLifecycle.Identity(repository: ObjectIdentifier(repository), selection: selection)
-        guard gitLoaderLifecycle.requiresInstallation(identity, hasFocus: focusRefreshCoordinator != nil, hasStatus: repositoryLocalStatusLoader != nil) else { return }
+        guard gitLoaderLifecycle.requiresInstallation(identity, hasFocus: focusRefreshCoordinator != nil, hasStatus: repositoryLocalStatusLoader != nil) else { return false }
+        let ownerGeneration = ownership.generation
         invalidateGitLoaders()
+        guard lifetime === scope, ownership.accepts(scope.identity, generation: ownerGeneration),
+              self.repository === repository, gitDiscovery.currentSelection == selection else { return false }
         let generation = gitLoaderLifecycle.generation
         focusRefreshCoordinator = RepositoryFocusRefreshCoordinator(repository: repository, gitExecutablePath: selection.path) { [weak self] in
             guard let self, self.acceptsGitLoaderResult(generation: generation, identity: identity) else { return }
@@ -238,35 +333,204 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         gitLoaderLifecycle.didInstall(identity)
         gitLoaderSelection = selection
         NSLog("[GitX] Installed both Git loaders generation %llu, repository %@, executable %@", generation, String(describing: identity.repository), selection.path)
-        focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
+        let captureInitialFocus = RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation()
+        focusRefreshCoordinator?.updatePreference(enabled: captureInitialFocus)
         repositoryLocalStatusLoader?.refresh()
         updateStatus()
+        return captureInitialFocus
     }
 
-    private func installWorktreeObservations() {
-        guard let repository else { return }
-        worktreeObservations = [
-            repository.observe(\.worktrees, options: [.initial]) { [weak self] _, _ in
-                Task { @MainActor [weak self] in
-                    self?.offerWorktreeRepairIfNeeded()
-                    if let history = self?.historyViewController, history.isViewLoaded {
-                        history.commitList.enumerateAvailableRowViews { row, _ in
-                            row.subviews.forEach { $0.needsDisplay = true }
-                        }
+    private final func currentOwnerIdentity() -> RepositoryWindowOwnership.Identity? {
+        guard isWindowLoaded, let window = super.window, let repository else { return nil }
+        return .init(repository: ObjectIdentifier(repository), window: ObjectIdentifier(window),
+                     document: document.map(ObjectIdentifier.init))
+    }
+
+    /// Captured before asynchronous confirmation or work admission, never retargeted.
+    final func repositoryOwnerValidation(for repository: PBGitRepository) -> () -> Bool {
+        ensureLifetime()
+        let generation = ownership.generation
+        let identity = currentOwnerIdentity()
+        let repositoryID = ObjectIdentifier(repository)
+        // Standalone coordinators historically supply their target before the
+        // window has a document. That absence is itself captured ownership.
+        let originatingRepository = self.repository.map(ObjectIdentifier.init)
+        let matchesTarget = originatingRepository == nil || originatingRepository == repositoryID
+        return { [weak self] in
+            guard let self, matchesTarget, !self.ownership.closed, self.ownership.generation == generation,
+                  self.repository.map(ObjectIdentifier.init) == originatingRepository else { return false }
+            return self.currentOwnerIdentity() == identity
+        }
+    }
+
+    private final func revokeOwner(closing: Bool = false) {
+        // Revocation precedes cancellation, KVO removal and potentially reentrant UI work.
+        ownership.revoke(closing: closing)
+        invalidateWorktreePresentation()
+        invalidateGitLoaders()
+        lifetime?.invalidate()
+        lifetime = nil
+        pullRequestUIController?.invalidateOwner()
+        resetActionCoordinators()
+        repositoryForgeOverlaySession?.invalidate()
+        repositoryForgeOverlaySession = nil
+        repositoryStatusBarController?.invalidate()
+        repositoryStatusBarController?.updateForge(.unbound)
+        NSLog("[GitX] Revoked repository owner generation %llu, closed %@", ownership.generation, closing ? "yes" : "no")
+    }
+
+    private final func resetActionCoordinators() {
+        actionRepository = nil
+        createPullRequestControl = .hidden
+        repositoryToolbarController?.updateCreatePullRequestControl(.hidden)
+        actionContextResolver = nil
+        remoteActionCoordinator = nil
+        pullRequestUIController = nil
+        referenceActionCoordinator = nil
+        stashActionCoordinator = nil
+        workspaceActionCoordinator = nil
+        repositoryForgeCoordinator = nil
+        repositoryForgeLinkUseCase = nil
+    }
+
+    private final func ensureLifetime() {
+        guard !ownership.closed, let identity = currentOwnerIdentity(), let repository else { return }
+        guard lifetime?.identity != identity else { return }
+        if lifetime != nil {
+            revokeOwner()
+        }
+        ownership.install(identity)
+        let scope = RepositoryWindowLifetime(repository: repository, identity: identity)
+        lifetime = scope
+        if worktreeRepairRepository != identity.repository {
+            worktreeRepairRepository = identity.repository
+            offeredWorktreeRepair = false
+        }
+        let generation = ownership.generation
+        let observe: (Notification.Name, AnyObject?, @escaping @MainActor @Sendable (PBGitWindowController, String?) -> Void) -> Void = { [weak self, weak scope] name, object, action in
+            guard let scope else { return }
+            let token = NotificationCenter.default.addObserver(forName: name, object: object, queue: nil) { [weak self] notification in
+                let operation = notification.userInfo?["operation"] as? String
+                let deliver: @MainActor @Sendable () -> Void = { [weak self] in
+                    guard let self, self.ownership.accepts(identity, generation: generation), self.currentOwnerIdentity() == identity else { return }
+                    action(self, operation)
+                }
+                if Thread.isMainThread {
+                    // swift6-safety-justification: AppKit notifications delivered on the main thread run on its actor executor.
+                    MainActor.assumeIsolated(deliver)
+                } else {
+                    DispatchQueue.main.async(execute: deliver)
+                }
+            }
+            scope.notifications.append(token)
+        }
+        observe(NSApplication.didBecomeActiveNotification, nil) { owner, _ in
+            owner.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        }
+        observe(.PBGitBinaryDidChange, nil) { owner, _ in owner.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange)) }
+        observe(UserDefaults.didChangeNotification, nil) { owner, _ in owner.refreshPreferenceDidChange(Notification(name: UserDefaults.didChangeNotification)) }
+        observe(NSNotification.Name(PBGitIndexIndexUpdated), repository.index) { owner, _ in
+            owner.repositoryLocalStatusDidChange(Notification(name: NSNotification.Name(PBGitIndexIndexUpdated)))
+        }
+        observe(.repositoryRemoteOperationDidSucceed, repository) { owner, operation in
+            owner.repositoryRemoteOperationDidSucceed(Notification(name: .repositoryRemoteOperationDidSucceed, userInfo: operation.map { ["operation": $0] }))
+        }
+        observe(.forgeApplicationAvailabilityDidChange, nil) { owner, _ in owner.forgeApplicationAvailabilityDidChange(Notification(name: .forgeApplicationAvailabilityDidChange)) }
+        observe(NSWindow.willCloseNotification, super.window) { owner, _ in
+            owner.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+        }
+        let update: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.ownership.accepts(identity, generation: generation), self.currentOwnerIdentity() == identity else { return }
+                self.offerWorktreeRepairIfNeeded()
+                if let history = self.historyViewController, history.isViewLoaded {
+                    history.commitList.enumerateAvailableRowViews { row, _ in
+                        row.subviews.forEach { $0.needsDisplay = true }
                     }
                 }
-            },
-            repository.observe(\.worktreeFeatureAvailable, options: []) { [weak self] _, _ in
-                Task { @MainActor [weak self] in
-                    self?.offerWorktreeRepairIfNeeded()
-                    if let history = self?.historyViewController, history.isViewLoaded {
-                        history.commitList.enumerateAvailableRowViews { row, _ in
-                            row.subviews.forEach { $0.needsDisplay = true }
-                        }
-                    }
-                }
-            },
+            }
+        }
+        scope.observations = [
+            repository.observe(\.worktrees, options: [.initial]) { _, _ in update() },
+            repository.observe(\.worktreeFeatureAvailable, options: []) { _, _ in update() },
         ]
+        NSLog("[GitX] Installed repository subscriptions generation %llu", generation)
+    }
+
+    @discardableResult
+    private final func reconcileOwnership() -> Bool {
+        guard !ownership.closed else { return false }
+        let repositoryID = repository.map(ObjectIdentifier.init)
+        if paneRepository != repositoryID {
+            closeRepositoryPanes()
+        }
+        ensureLifetime()
+        guard lifetime != nil else { return false }
+        ensureActionCoordinators()
+        installRepositoryPanesIfReady()
+        return reconcileGitLoaders()
+    }
+
+    private final func closeRepositoryPanes() {
+        contentStatusObservation = nil
+        contentController?.viewIfLoaded?.removeFromSuperview()
+        contentController = nil
+        _sidebarController?.sourceListControlsView?.removeFromSuperview()
+        _sidebarController?.viewIfLoaded?.removeFromSuperview()
+        _sidebarController?.closeView()
+        _historyViewController?.closeView()
+        _sidebarController = nil
+        _historyViewController = nil
+        initializedContentControllers = .weakObjects()
+        paneRepository = nil
+        repositoryToolbarController = nil
+        if ownership.closed {
+            repositoryStatusBarController?.uninstall()
+            repositoryStatusBarController = nil
+        }
+    }
+
+    private final func installRepositoryPanesIfReady() {
+        guard nibPresentationReady, let repository, let window = super.window,
+              sourceSplitView?.window === window, contentSplitView?.window === window else { return }
+        if window.delegate == nil {
+            window.delegate = self
+        }
+        if paneRepository == nil {
+            paneRepository = ObjectIdentifier(repository)
+            _sidebarController = PBGitSidebarController(repository: repository, superController: self)
+            _historyViewController = PBGitHistoryController(repository: repository, superController: self)
+            if let sidebar = _sidebarController, let sourceSplitView {
+                sidebar.view.frame = sourceSplitView.bounds
+                sourceSplitView.addSubview(sidebar.view)
+                if let controls = sidebar.sourceListControlsView {
+                    sourceListControlsView?.addSubview(controls)
+                }
+            }
+            if let history = _historyViewController {
+                changeContentController(history)
+            }
+            NSLog("[GitX] Installed repository panes with initial History selection")
+        }
+        window.representedURL = repository.workingDirectoryURL()
+        if repositoryToolbarController == nil {
+            repositoryToolbarController = RepositoryToolbarController(windowController: self)
+        }
+        repositoryToolbarController?.install()
+        installRepositoryForgeOverlaySession()
+        if repositoryStatusBarController == nil {
+            installRepositoryStatusBar()
+        }
+    }
+
+    isolated deinit {
+        ownership.revoke(closing: true)
+        lifetime?.invalidate()
+        pullRequestUIController?.invalidateOwner()
+        repositoryForgeOverlaySession?.invalidate()
+        repositoryStatusBarController?.uninstall()
+        _sidebarController?.closeView()
+        _historyViewController?.closeView()
     }
 
     override open func synchronizeWindowTitleWithDocumentName() {
@@ -277,34 +541,32 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc public dynamic func windowDidBecomeMain(_ notification: Notification) {
+        if let source = notification.object as? NSWindow, source !== (isWindowLoaded ? super.window : nil) {
+            return
+        }
         offerWorktreeRepairIfNeeded()
     }
 
+    override open func close() {
+        windowWillClose(Notification(name: NSWindow.willCloseNotification))
+        super.close()
+    }
+
     @objc public dynamic func windowWillClose(_ notification: Notification) {
-        // Cancellation can synchronously deliver a pending operation's result.
-        invalidateWorktreePresentation()
-        gitLoaderOwnerActive = false
-        NotificationCenter.default.removeObserver(self)
-        invalidateGitLoaders()
-        worktreeObservations.removeAll()
-        sidebarViewController?.closeView()
-        repository?.cancelWorktreeDiscovery()
-        historyViewController?.closeView()
-        _sidebarController = nil
-        _historyViewController = nil
-        repositoryForgeCoordinator = nil
-        repositoryForgeLinkUseCase = nil
-        pullRequestUIController = nil
-        repositoryStatusBarController?.invalidate()
-        repositoryForgeOverlaySession?.invalidate()
-        repositoryStatusBarController = nil
-        repositoryForgeOverlaySession = nil
+        if let source = notification.object as? NSWindow, source !== (isWindowLoaded ? super.window : nil) {
+            return
+        }
+        guard !ownership.closed else { return }
+        revokeOwner(closing: true)
+        closeRepositoryPanes()
         repositoryToolbarController = nil
         #if DEBUG
             milestone2UITestHarness = nil
             milestone3UITestHarness = nil
         #endif
-        WelcomeWindowController.shared.showIfNeededAfterDelay()
+        if nibPresentationReady {
+            WelcomeWindowController.shared.showIfNeededAfterDelay()
+        }
     }
 
     @objc public dynamic func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -437,74 +699,16 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     override open func windowDidLoad() {
         super.windowDidLoad()
-        gitLoaderOwnerActive = true
+        guard !ownership.closed else { return }
+        nibPresentationReady = true
         ForgeDeepLinkApplicationRouter.shared.installIfNeeded()
-        ensureActionCoordinators()
-        reconcileGitLoaders()
-        installWorktreeObservations()
         window?.setFrameUsingName("GitX")
-        window?.representedURL = repository?.workingDirectoryURL()
-        if let repository {
-            installRepositoryForgeOverlaySession()
-            _sidebarController = PBGitSidebarController(repository: repository, superController: self)
-            _historyViewController = PBGitHistoryController(repository: repository, superController: self)
-        }
         repositoryToolbarController = RepositoryToolbarController(windowController: self)
-        initializedContentControllers = .weakObjects()
         repositoryToolbarController?.install()
-        installRepositoryStatusBar()
-        if let sidebar = _sidebarController {
-            sidebar.view.frame = .zero
-            if let sourceSplitView {
-                sidebar.view.frame = sourceSplitView.bounds
-            }
-            sourceSplitView?.addSubview(sidebar.view)
-            if let sidebarControls = sidebar.sourceListControlsView {
-                sourceListControlsView?.addSubview(sidebarControls)
-            }
-        }
+        reconcileOwnership()
         statusField?.cell?.backgroundStyle = .raised
         progressIndicator?.usesThreadedAnimation = true
         jumpToCheckedOutBranchButton?.setAccessibilityIdentifier("JumpToCheckedOutBranchButton")
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(applicationDidBecomeActive(_:)),
-            name: NSApplication.didBecomeActiveNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(self, selector: #selector(gitBinaryDidChange(_:)),
-                                               name: .PBGitBinaryDidChange, object: nil)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(refreshPreferenceDidChange(_:)),
-            name: UserDefaults.didChangeNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(repositoryLocalStatusDidChange(_:)),
-            name: NSNotification.Name(PBGitIndexIndexUpdated),
-            object: repository?.index
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(repositoryRemoteOperationDidSucceed(_:)),
-            name: .repositoryRemoteOperationDidSucceed,
-            object: repository
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(forgeApplicationAvailabilityDidChange(_:)),
-            name: .forgeApplicationAvailabilityDidChange,
-            object: nil
-        )
-        refreshPreferenceDidChange(nil)
-        // Initial navigation belongs to the window. Passive sidebar restoration
-        // must never acquire navigation authority, even before content mounts.
-        if contentController == nil, let history = _historyViewController {
-            changeContentController(history)
-            NSLog("Mounted initial repository History")
-        }
         #if DEBUG
             milestone2UITestHarness = Milestone2UITestHarness.installIfRequested(for: self)
             milestone3UITestHarness = Milestone3UITestHarness.installIfRequested(for: self)
@@ -513,17 +717,19 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc(applicationDidBecomeActive:)
     dynamic func applicationDidBecomeActive(_ notification: Notification) {
-        reconcileGitLoaders()
-        focusRefreshCoordinator?.applicationDidBecomeActive()
+        let capturedInitialFocus = reconcileOwnership()
+        if !capturedInitialFocus {
+            focusRefreshCoordinator?.applicationDidBecomeActive()
+        }
         repositoryForgeOverlaySession?.requestRefresh(reason: .applicationActivated)
     }
 
     @objc nonisolated func gitBinaryDidChange(_: Notification) {
         if Thread.isMainThread {
             // swift6-safety-justification: The thread check establishes main-actor ownership for the Objective-C notification.
-            MainActor.assumeIsolated { reconcileGitLoaders() }
+            _ = MainActor.assumeIsolated { reconcileOwnership() }
         } else {
-            DispatchQueue.main.async { [weak self] in self?.reconcileGitLoaders() }
+            DispatchQueue.main.async { [weak self] in self?.reconcileOwnership() }
         }
     }
 
@@ -549,15 +755,17 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func applyRefreshPreferences() {
-        reconcileGitLoaders()
+        reconcileOwnership()
         focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
         repositoryStatusBarController?.setVisible(ApplicationSettings.repositoryStatusBarVisible)
         updateToolbarForgeDiagnostic()
     }
 
     @objc dynamic func refreshIfRepositoryChangedSinceLastActivation() {
-        reconcileGitLoaders()
-        focusRefreshCoordinator?.applicationDidBecomeActive()
+        let capturedInitialFocus = reconcileOwnership()
+        if !capturedInitialFocus {
+            focusRefreshCoordinator?.applicationDidBecomeActive()
+        }
     }
 
     @objc dynamic func changeContentController(_ controller: PBViewController?) {
@@ -1099,11 +1307,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         )
         repositoryForgeOverlaySession = session
+        repositoryStatusBarController?.bind(to: session)
         session.start()
     }
 
     private func installRepositoryStatusBar() {
-        guard let splitView, let contentView = window?.contentView, repository != nil else { return }
+        guard let splitView, let window = super.window, splitView.window === window, let contentView = window.contentView, repository != nil else { return }
         let controller = RepositoryStatusBarController(splitView: splitView, contentView: contentView)
         controller.presentationDidChange = { [weak self] presentation in
             self?.repositoryToolbarController?.updateForgeDiagnostic(

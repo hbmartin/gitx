@@ -342,6 +342,36 @@ final class RepositoryStatusBarTests: XCTestCase {
         XCTAssertFalse(controller.hasScheduledClockRefresh)
     }
 
+    func testUninstallRestoresTheOriginalLayoutAndAllowsOneFreshStatusBar() {
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 1000, height: 500))
+        let split = NSView()
+        split.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(split)
+        let bottom = split.bottomAnchor.constraint(equalTo: content.bottomAnchor)
+        NSLayoutConstraint.activate([
+            split.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            split.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            split.topAnchor.constraint(equalTo: content.topAnchor), bottom,
+        ])
+        let first = RepositoryStatusBarController(splitView: split, contentView: content)
+        first.install(visible: true)
+        XCTAssertFalse(bottom.isActive)
+        first.uninstall()
+        XCTAssertNil(first.view.superview)
+        XCTAssertTrue(bottom.isActive)
+        first.uninstall()
+        let second = RepositoryStatusBarController(splitView: split, contentView: content)
+        second.install(visible: true)
+        content.layoutSubtreeIfNeeded()
+        XCTAssertEqual(content.subviews.compactMap { $0 as? RepositoryStatusBarView }.count, 1)
+        XCTAssertEqual(second.view.frame.height, 29)
+        XCTAssertEqual(split.frame.height, content.bounds.height - 29, accuracy: 1)
+        second.uninstall()
+        content.layoutSubtreeIfNeeded()
+        XCTAssertEqual(split.frame.height, content.bounds.height, accuracy: 1)
+        XCTAssertTrue(bottom.isActive)
+    }
+
     func testForgeCoordinatorMakesManualRefreshInputAndDetailsObservable() {
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 400))
         let split = NSView()

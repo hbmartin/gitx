@@ -105,6 +105,7 @@ final class RepositoryFocusRefreshCoordinator: NSObject {
                 inDirectory: directory
             )
             task.timeout = 10
+            task.additionalEnvironment = ["GIT_OPTIONAL_LOCKS": "0"]
             task.perform { data, error in
                 accumulator.record(data: data, error: error, at: index)
                 group.leave()
@@ -149,7 +150,7 @@ final class RepositoryFocusRefreshCoordinator: NSObject {
         if !tasks.isEmpty {
             logger.debug("Cancelling repository focus snapshot")
         }
-        tasks.forEach { $0.terminate() }
+        cancelRepositoryReads(tasks)
         tasks.removeAll()
         if resetSnapshot {
             previousSnapshotComponents = nil

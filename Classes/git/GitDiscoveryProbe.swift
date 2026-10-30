@@ -13,13 +13,23 @@ nonisolated struct GitDiscoveryTiming: Sendable {
 
 nonisolated enum GitDiscoveryProbeResult: Sendable {
     case output(String?)
-    case timedOut
-    case cancelled
+    case timedOut(started: Bool)
+    case cancelled(started: Bool)
+    case busy
+
+    var executionBegan: Bool {
+        switch self {
+        case .output: true
+        case let .timedOut(started), let .cancelled(started): started
+        case .busy: false
+        }
+    }
 }
 
 /// The two slots also bound uninterruptible launches and their cancellation workers.
 /// A timed-out launch keeps its slot until the underlying operation actually returns.
 final nonisolated class GitDiscoveryProbeRunner: Sendable {
+    private enum Admission { case start, wait, busy }
     struct Operation: Sendable {
         let output: @Sendable () -> String?
         let cancel: @Sendable () -> Void
@@ -31,6 +41,7 @@ final nonisolated class GitDiscoveryProbeRunner: Sendable {
         private struct State {
             var operation: Operation?
             var finished = false
+            var executionBegan = false
         }
 
         let id = UUID()
@@ -38,13 +49,17 @@ final nonisolated class GitDiscoveryProbeRunner: Sendable {
         private let cancellation = DispatchGroup()
         private let timing: GitDiscoveryTiming
         private let deadline: TimeInterval
-        private let factory: @Sendable () -> Operation
+        private let factory: @Sendable (TimeInterval) -> Operation
         private let completion: @Sendable (GitDiscoveryProbeResult) -> Void
+        private let finished: @Sendable (UUID) -> Void
 
-        init(timing: GitDiscoveryTiming, deadline: TimeInterval, factory: @escaping @Sendable () -> Operation, completion: @escaping @Sendable (GitDiscoveryProbeResult) -> Void) {
+        init(timing: GitDiscoveryTiming, deadline: TimeInterval, factory: @escaping @Sendable (TimeInterval) -> Operation,
+             finished: @escaping @Sendable (UUID) -> Void, completion: @escaping @Sendable (GitDiscoveryProbeResult) -> Void)
+        {
             self.timing = timing
             self.deadline = deadline
             self.factory = factory
+            self.finished = finished
             self.completion = completion
         }
 
@@ -52,11 +67,12 @@ final nonisolated class GitDiscoveryProbeRunner: Sendable {
             guard !isFinished else { return }
             guard timing.now() < deadline else { cancel(timedOut: true); return }
             // Factory work and launch both belong to the owned worker slot.
-            let operation = factory()
+            let operation = factory(max(0, deadline - timing.now()))
             guard timing.now() < deadline else { cancel(timedOut: true); return }
             let shouldStart = state.withLock { state in
                 guard !state.finished else { return false }
                 state.operation = operation
+                state.executionBegan = true
                 return true
             }
             if shouldStart {
@@ -76,21 +92,23 @@ final nonisolated class GitDiscoveryProbeRunner: Sendable {
                 return true
             }
             if accepted {
+                finished(id)
                 completion(result)
             }
         }
 
         func cancel(timedOut: Bool = false) {
-            let decision = state.withLock { state -> (Bool, Operation?) in
-                guard !state.finished else { return (false, nil) }
+            let decision = state.withLock { state -> (Bool, Operation?, Bool) in
+                guard !state.finished else { return (false, nil, state.executionBegan) }
                 state.finished = true
                 if state.operation != nil {
                     cancellation.enter()
                 }
-                return (true, state.operation)
+                return (true, state.operation, state.executionBegan)
             }
             guard decision.0 else { return }
-            completion(timedOut ? .timedOut : .cancelled)
+            finished(id)
+            completion(timedOut ? .timedOut(started: decision.2) : .cancelled(started: decision.2))
             if let operation = decision.1 {
                 // PBTask cancellation can wait for a stalled launch lock. Never put
                 // that wait on the deadline queue or the main actor.
@@ -112,38 +130,55 @@ final nonisolated class GitDiscoveryProbeRunner: Sendable {
 
     private struct State {
         var active: Set<UUID> = []
-        var pending: Request?
+        var pending: [Request] = []
     }
 
     private let state = Mutex(State())
     private let factory: Factory
     private let timing: GitDiscoveryTiming
+    private let admissionObserver: @Sendable (Request) -> Void
+    static let pendingCapacity = 16
 
-    init(timing: GitDiscoveryTiming = .live, factory: @escaping Factory = liveOperation) {
+    init(timing: GitDiscoveryTiming = .live, factory: @escaping Factory = liveOperation,
+         admissionObserver: @escaping @Sendable (Request) -> Void = { _ in })
+    {
         self.timing = timing
         self.factory = factory
+        self.admissionObserver = admissionObserver
     }
 
     @discardableResult
-    func run(path: String, arguments: [String], timeout: TimeInterval,
+    func run(path: String, arguments: [String], timeout: TimeInterval, deadline: TimeInterval? = nil,
              completion: @escaping @Sendable (GitDiscoveryProbeResult) -> Void) -> Request
     {
-        let request = Request(timing: timing, deadline: timing.now() + timeout, factory: { [factory] in factory(path, arguments, timeout) }, completion: completion)
-        let admission = state.withLock { state -> (Bool, Request?) in
-            if state.active.count < 2 {
+        let absoluteDeadline = min(timing.now() + timeout, deadline ?? .infinity)
+        let request = Request(timing: timing, deadline: absoluteDeadline, factory: { [factory] remaining in factory(path, arguments, remaining) },
+                              finished: { [weak self] id in self?.removeQueuedRequest(id) }, completion: completion)
+        let admission = state.withLock { state -> Admission in
+            state.pending.removeAll { $0.isFinished }
+            if state.active.count < 2, state.pending.isEmpty {
                 state.active.insert(request.id)
-                return (true, nil)
+                return .start
             }
-            let replaced = state.pending
-            state.pending = request
-            return (false, replaced)
+            guard state.pending.count < Self.pendingCapacity else { return .busy }
+            state.pending.append(request)
+            return .wait
         }
-        admission.1?.cancel()
-        timing.schedule(timeout) { request.cancel(timedOut: true) }
-        if admission.0 {
+        guard admission != .busy else {
+            NSLog("[GitDiscovery] Refused probe admission: both workers and %ld waiting slots are occupied", Self.pendingCapacity)
+            request.finish(.busy)
+            return request
+        }
+        timing.schedule(max(0, absoluteDeadline - timing.now())) { request.cancel(timedOut: true) }
+        admissionObserver(request)
+        if admission == .start {
             execute(request)
         }
         return request
+    }
+
+    private func removeQueuedRequest(_ id: UUID) {
+        state.withLock { $0.pending.removeAll { $0.id == id } }
     }
 
     private func execute(_ request: Request) {
@@ -153,11 +188,13 @@ final nonisolated class GitDiscoveryProbeRunner: Sendable {
             request.finishOwnedCancellation()
             let next = state.withLock { state -> Request? in
                 state.active.remove(request.id)
-                guard let next = state.pending else { return nil }
-                state.pending = nil
-                guard !next.isFinished else { return nil }
-                state.active.insert(next.id)
-                return next
+                while !state.pending.isEmpty {
+                    let next = state.pending.removeFirst()
+                    guard !next.isFinished else { continue }
+                    state.active.insert(next.id)
+                    return next
+                }
+                return nil
             }
             if let next {
                 execute(next)

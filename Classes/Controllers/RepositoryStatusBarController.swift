@@ -314,6 +314,8 @@ final class RepositoryStatusBarController: NSObject {
     private weak var contentView: NSView?
     private var shownConstraint: NSLayoutConstraint?
     private var hiddenConstraint: NSLayoutConstraint?
+    private var originalBottomConstraints: [NSLayoutConstraint] = []
+    private var attachmentConstraints: [NSLayoutConstraint] = []
     // MainActor owns all scheduling and ordinary access. Foundation documents
     // Timer invalidation as thread-safe, allowing deinit to tear it down after
     // the final reference is released from any executor.
@@ -355,18 +357,18 @@ final class RepositoryStatusBarController: NSObject {
 
     func install(visible: Bool) {
         guard let splitView, let contentView, view.superview == nil else { return }
-        for constraint in contentView.constraints where constraint.connectsBottom(of: splitView, and: contentView) {
-            constraint.isActive = false
-        }
+        originalBottomConstraints = contentView.constraints.filter { $0.connectsBottom(of: splitView, and: contentView) }
+        NSLayoutConstraint.deactivate(originalBottomConstraints)
         contentView.addSubview(view)
         shownConstraint = splitView.bottomAnchor.constraint(equalTo: view.topAnchor)
         hiddenConstraint = splitView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
-        NSLayoutConstraint.activate([
+        attachmentConstraints = [
             view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             view.heightAnchor.constraint(equalToConstant: 29),
-        ])
+        ]
+        NSLayoutConstraint.activate(attachmentConstraints)
         setVisible(visible)
         updateForge(forgeInput)
         logger.info("Installed repository status bar visible=\(visible, privacy: .public)")
@@ -416,6 +418,18 @@ final class RepositoryStatusBarController: NSObject {
         forgeCoordinator = nil
     }
 
+    func uninstall() {
+        invalidate()
+        shownConstraint?.isActive = false
+        hiddenConstraint?.isActive = false
+        NSLayoutConstraint.deactivate(attachmentConstraints)
+        attachmentConstraints.removeAll()
+        view.removeFromSuperview()
+        NSLayoutConstraint.activate(originalBottomConstraints)
+        originalBottomConstraints.removeAll()
+        logger.debug("Detached repository status bar and restored window constraints")
+    }
+
     @objc private func refreshForgeOverlay(_ sender: Any?) {
         guard view.forgeRefreshButton.isEnabled else { return }
         logger.info("Requested manual Forge refresh")
@@ -451,6 +465,25 @@ final class RepositoryStatusBarController: NSObject {
         refreshTimer = timer
         hasScheduledClockRefresh = true
     }
+}
+
+// swift6-safety-justification: Tasks are frozen before transfer; PBTask serializes termination with its own launch state.
+private final nonisolated class RepositoryReadCancellation: @unchecked Sendable {
+    let tasks: [PBTask]
+    init(_ tasks: [PBTask]) {
+        self.tasks = tasks
+    }
+
+    func run() {
+        tasks.forEach { $0.terminate() }
+    }
+}
+
+/// Launch locks and process drainage must never hold AppKit's actor.
+func cancelRepositoryReads(_ tasks: [PBTask]) {
+    guard !tasks.isEmpty else { return }
+    let cancellation = RepositoryReadCancellation(tasks)
+    DispatchQueue.global(qos: .utility).async { cancellation.run() }
 }
 
 @MainActor
@@ -522,7 +555,9 @@ final class RepositoryLocalStatusLoader: NSObject {
     }
 
     private func cancelCurrentTask() {
-        task?.terminate()
+        if let task {
+            cancelRepositoryReads([task])
+        }
         task = nil
     }
 }

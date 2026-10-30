@@ -359,6 +359,14 @@ final class GitBinaryTests: XCTestCase {
 /// Characterizes the Objective-C document before extracting its scripting decisions.
 @MainActor
 final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
+    // swift6-safety-justification: Only immutable identity is transferred to NotificationCenter; repository access remains on the main actor.
+    private final nonisolated class RepositoryNotificationFixture: @unchecked Sendable {
+        let value: PBGitRepository
+        init(_ value: PBGitRepository) {
+            self.value = value
+        }
+    }
+
     private final class WindowProbe: GitX.PBGitWindowController {
         var actions: [String] = []
         override func showUncommittedChanges(_: Any?) {
@@ -481,7 +489,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
             let previous = window.actions.filter { $0 == "commit" }.count
             command.directParameter = parameter
             let intent = RepositoryDocumentOpenIntent(command: command)
-            if let arguments = intent.arguments(for: document) {
+            var identities = RepositoryGitDirectoryIdentity()
+            if let arguments = intent.arguments(for: document, identities: &identities) {
                 RepositoryDocumentScripting.enqueue(arguments, for: document)
             }
             document.showWindows()
@@ -677,7 +686,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let lateDelivery = expectation(description: "Late loader update drains on main")
         DispatchQueue.main.async { lateDelivery.fulfill() }
         wait(for: [lateDelivery], timeout: 3)
-        XCTAssertEqual(actual.gitLoaderSelection?.path, replacement.path, "A closed owner must not recreate loaders")
+        XCTAssertNil(actual.gitLoaderSelection, "A closed owner must not report an installation")
     }
 
     func testSearchCommandAndFilePresenterCallbacks() throws {
@@ -844,6 +853,49 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         waitForBranch("topic", in: actual)
     }
 
+    func testRemovingRepositoryImmediatelyClearsRenderedStatusAndInstallation() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        _ = actual.window
+        defer { actual.close() }
+        waitForBranch("main", in: actual)
+        document.removeWindowController(actual)
+        XCTAssertNil(actual.gitLoaderSelection)
+        XCTAssertEqual(localBranch(in: actual.window?.contentView), "Repository")
+    }
+
+    func testWindowRoundTripReinstallsLoadersWithoutAnotherActivation() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        let originalWindow = try XCTUnwrap(actual.window)
+        defer { actual.window = originalWindow; actual.close() }
+        waitForBranch("main", in: actual)
+        let history = actual.historyViewController
+        let sidebar = actual.sidebarViewController
+        actual.window = nil
+        XCTAssertNil(actual.gitLoaderSelection)
+        let empty = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        actual.window = empty
+        actual.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: originalWindow))
+        XCTAssertNotNil(actual.gitLoaderSelection, "A replaced window's late delegate callback cannot close the current owner")
+        XCTAssertTrue(actual.historyViewController === history)
+        XCTAssertTrue(actual.sidebarViewController === sidebar)
+        XCTAssertNil(localBranch(in: empty.contentView), "Outlets belonging to the old window cannot render in an empty replacement")
+        actual.window = originalWindow
+        empty.close()
+        XCTAssertTrue(actual.historyViewController === history)
+        XCTAssertTrue(actual.sidebarViewController === sidebar)
+        try GitXTestGitFixture.run(["checkout", "topic"], in: directory)
+        NotificationCenter.default.post(name: Notification.Name(PBGitIndexIndexUpdated), object: document.repository.index)
+        waitForBranch("topic", in: actual)
+    }
+
     func testActivationBeforeSelectionNotificationInstallsBothLoadersAndRendersStatus() throws {
         try verifyDeferredLoaderInstallation(activationBeforeNotification: true)
     }
@@ -851,6 +903,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     private func verifyDeferredLoaderInstallation(activationBeforeNotification: Bool) throws {
         try prepareFixture()
         defer { try? removeFixture() }
+        let previousRefresh = UserDefaults.standard.object(forKey: "PBRefreshOnApplicationFocus")
+        UserDefaults.standard.set(true, forKey: "PBRefreshOnApplicationFocus")
+        defer { UserDefaults.standard.set(previousRefresh, forKey: "PBRefreshOnApplicationFocus") }
         let controls = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: controls, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: controls) }
@@ -890,6 +945,13 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
             self.localBranch(in: actual.window?.contentView) == "main"
         }, object: nil)
         wait(for: [rendered], timeout: 5)
+        let focus = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (try? String(contentsOf: commands, encoding: .utf8))?.contains("for-each-ref --format=") == true
+        }, object: nil)
+        wait(for: [focus], timeout: 5)
+        XCTAssertEqual(try String(contentsOf: commands, encoding: .utf8).split(separator: "\n").filter { $0.hasPrefix("for-each-ref ") }.count, 1,
+                       "The installation activation must not start and cancel a redundant initial focus capture")
+
         XCTAssertTrue((try? String(contentsOf: commands, encoding: .utf8))?.contains("status --porcelain=v2 --branch -z --untracked-files=normal") == true)
         actual.close()
         let background = expectation(description: "A background notification reaches a closed owner safely")
@@ -947,8 +1009,177 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let drained = expectation(description: "Closed owner rejects late activation and selection delivery")
         DispatchQueue.main.async { drained.fulfill() }
         wait(for: [drained], timeout: 3)
-        XCTAssertEqual(actual.gitLoaderSelection?.path, second.path)
+        XCTAssertNil(actual.gitLoaderSelection)
         XCTAssertEqual(try String(contentsOf: commands, encoding: .utf8), before)
+    }
+
+    func testRepositoryReplacementRebindsPanesActionsAndActualRepositoryNotifications() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let previousRefresh = UserDefaults.standard.object(forKey: "PBRefreshOnApplicationFocus")
+        UserDefaults.standard.set(false, forKey: "PBRefreshOnApplicationFocus")
+        defer { UserDefaults.standard.set(previousRefresh, forKey: "PBRefreshOnApplicationFocus") }
+        let other = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: other) }
+        try GitXTestGitFixture.run(["init", "--initial-branch=replacement"], in: other)
+        try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "replacement"], in: other)
+        try GitXTestGitFixture.run(["branch", "replacement-topic"], in: other)
+        let replacement = try XCTUnwrap(PBGitRepository(url: other))
+        defer { replacement.revisionList?.cleanup(); replacement.revisionList = nil }
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        _ = actual.window
+        defer { actual.close() }
+        waitForBranch("main", in: actual)
+        let oldHistory = actual.historyViewController
+        let oldSidebar = actual.sidebarViewController
+        document.removeWindowController(actual)
+        actual.repository = replacement
+        waitForBranch("replacement", in: actual)
+        XCTAssertFalse(actual.historyViewController === oldHistory)
+        XCTAssertFalse(actual.sidebarViewController === oldSidebar)
+        XCTAssertTrue(actual.historyViewController?.repository === replacement)
+        XCTAssertTrue(actual.sidebarViewController?.repository === replacement)
+        XCTAssertFalse(actual.isUncommittedChangesSelected)
+        attachScreenshot(of: actual.window?.contentView, named: "Replacement repository owns History sidebar and status")
+        try "replacement bytes".write(to: other.appendingPathComponent("pending.txt"), atomically: true, encoding: .utf8)
+        let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.localStatusText("GitX.RepositoryStatusBar.LocalCounts", in: actual.window?.contentView)?.contains("1 untracked") == true
+        }, object: nil)
+        NotificationCenter.default.post(name: NSNotification.Name(PBGitIndexIndexUpdated), object: replacement.index)
+        wait(for: [refreshed], timeout: 5)
+        actual.checkout(PBGitRef(string: "refs/heads/replacement-topic"))
+        waitForBranch("replacement-topic", in: actual)
+        XCTAssertEqual(try GitXTestGitFixture.run(["branch", "--show-current"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines), "main")
+        try GitXTestGitFixture.run(["checkout", "replacement"], in: other)
+        let notified = expectation(description: "A background event from the replacement repository is delivered")
+        let repositoryBox = RepositoryNotificationFixture(replacement)
+        DispatchQueue.global().async {
+            NotificationCenter.default.post(name: .repositoryRemoteOperationDidSucceed, object: repositoryBox.value, userInfo: ["operation": "push"])
+            notified.fulfill()
+        }
+        wait(for: [notified], timeout: 3)
+        waitForBranch("replacement", in: actual)
+        // If an obsolete subscription survived, this event would reveal the unannounced checkout.
+        try GitXTestGitFixture.run(["checkout", "replacement-topic"], in: other)
+        NotificationCenter.default.post(name: NSNotification.Name(PBGitIndexIndexUpdated), object: document.repository.index)
+        NotificationCenter.default.post(name: .repositoryRemoteOperationDidSucceed, object: document.repository, userInfo: ["operation": "fetch"])
+        let drained = expectation(description: "Obsolete notifications drain")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 3)
+        XCTAssertEqual(localBranch(in: actual.window?.contentView), "replacement")
+        NotificationCenter.default.post(name: NSNotification.Name(PBGitIndexIndexUpdated), object: replacement.index)
+        waitForBranch("replacement-topic", in: actual)
+        let linked = other.appendingPathExtension("linked")
+        defer { try? FileManager.default.removeItem(at: linked) }
+        try GitXTestGitFixture.run(["worktree", "add", "-b", "replacement-linked", linked.path], in: other)
+        replacement.refreshWorktrees()
+        let linkedIdentity = Data(linked.standardizedFileURL.resolvingSymlinksInPath().path.utf8)
+        let inventory = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let sidebar = actual.sidebarViewController,
+                  let group = sidebar.items.compactMap({ $0 as? PBSourceViewItem }).first(where: { $0.title == "WORKTREES" }) else { return false }
+            sidebar.sourceView?.expandItem(group)
+            return group.sortedChildren.compactMap { $0 as? GitX.PBSourceViewGitWorktreeItem }.contains { $0.identity == linkedIdentity }
+        }, object: nil)
+        wait(for: [inventory], timeout: 10)
+        XCTAssertTrue(actual.sidebarViewController?.repository === replacement)
+        attachScreenshot(of: actual.window?.contentView, named: "Replacement repository worktree inventory")
+    }
+
+    func testAdmittedFetchKeepsItsRepositoryWhileReplacementRevokesFurtherAdmission() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let fixtures = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: fixtures, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixtures) }
+        let remote = fixtures.appendingPathComponent("remote.git")
+        try GitXTestGitFixture.run(["init", "--bare", remote.path], in: directory)
+        try GitXTestGitFixture.run(["remote", "add", "origin", remote.path], in: directory)
+        try GitXTestGitFixture.run(["push", "origin", "HEAD:refs/heads/from-remote"], in: directory)
+        try GitXTestGitFixture.run(["update-ref", "-d", "refs/remotes/origin/from-remote"], in: directory)
+        let other = fixtures.appendingPathComponent("replacement")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try GitXTestGitFixture.run(["init", "--initial-branch=replacement"], in: other)
+        let replacement = try XCTUnwrap(PBGitRepository(url: other))
+        defer { replacement.revisionList?.cleanup(); replacement.revisionList = nil }
+        let owner = GitX.PBGitWindowController(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false))
+        owner.repository = document.repository
+        defer { owner.close() }
+        var pending: (@Sendable () throws -> Void)?
+        var completion: ((NSError?) -> Void)?
+        var admissions = 0
+        let coordinator = GitX.RepositoryRemoteActionCoordinator(repository: document.repository, windowController: owner, progressStarting: { _, _, operation, finished in
+            admissions += 1; pending = operation; completion = finished; return true
+        })
+        coordinator.performFetch(for: nil)
+        XCTAssertEqual(admissions, 1)
+        owner.repository = replacement
+        coordinator.performFetch(for: nil)
+        XCTAssertEqual(admissions, 1, "The old coordinator cannot admit another mutation")
+        let operation = try XCTUnwrap(pending)
+        let executed = expectation(description: "The admitted fetch drains on its original repository")
+        let failure = Mutex<Error?>(nil)
+        DispatchQueue.global().async {
+            do { try operation() } catch { failure.withLock { $0 = error } }
+            executed.fulfill()
+        }
+        wait(for: [executed], timeout: 10)
+        XCTAssertNil(failure.withLock { $0 })
+        completion?(failure.withLock { $0 as NSError? })
+        XCTAssertEqual(try GitXTestGitFixture.run(["rev-parse", "refs/remotes/origin/from-remote"], in: directory).standardOutput,
+                       try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput)
+        XCTAssertTrue(try GitXTestGitFixture.run(["for-each-ref", "refs/remotes"], in: other).standardOutput.isEmpty)
+    }
+
+    func testProgrammaticControllerDeallocationCancelsAndReapsItsOwnedStatusProcess() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let previousRefresh = UserDefaults.standard.object(forKey: "PBRefreshOnApplicationFocus")
+        UserDefaults.standard.set(false, forKey: "PBRefreshOnApplicationFocus")
+        defer { UserDefaults.standard.set(previousRefresh, forKey: "PBRefreshOnApplicationFocus") }
+        let controls = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: controls, withIntermediateDirectories: true)
+        let gate = controls.appendingPathComponent("gate")
+        let marker = controls.appendingPathComponent("pid")
+        let executable = controls.appendingPathComponent("git")
+        XCTAssertEqual(mkfifo(gate.path, 0o600), 0)
+        let descriptor = open(gate.path, O_RDWR | O_NONBLOCK | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        var released = false
+        defer {
+            if !released {
+                _ = Darwin.close(descriptor)
+            }
+            if let pid = (try? String(contentsOf: marker, encoding: .utf8)).flatMap({ Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }), kill(pid, 0) == -1, errno == ESRCH {
+                try? FileManager.default.removeItem(at: controls)
+            } else {
+                XCTFail("Retained owned process controls at \(controls.path) because exit was not proven")
+            }
+        }
+        try "#!/bin/sh\nif [ \"$1\" = status ]; then\n  printf '%s\\n' \"$$\" > '\(marker.path).pending'\n  /bin/mv '\(marker.path).pending' '\(marker.path)'\n  exec /bin/cat '\(gate.path)'\nfi\nexec /usr/bin/git \"$@\"\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let discovery = GitBinaryDiscovery(preference: { nil }, environment: [:], output: { _, _ in "git version 2.50.1" })
+        XCTAssertTrue(discovery.accept(executable.path))
+        let nativeWindow = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        var owner: GitX.PBGitWindowController? = GitX.PBGitWindowController(window: nativeWindow)
+        weak let weakOwner = owner
+        owner?.gitDiscovery = discovery
+        owner?.repository = document.repository
+        XCTAssertNil(owner?.historyViewController, "An empty programmatic window must not acquire repository panes")
+        let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: marker.path) }, object: nil)
+        wait(for: [started], timeout: 5)
+        let pid = try XCTUnwrap(try Int32(String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        autoreleasepool { owner = nil }
+        let destroyed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in weakOwner == nil }, object: nil)
+        wait(for: [destroyed], timeout: 3)
+        let reaped = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in kill(pid, 0) == -1 && errno == ESRCH }, object: nil)
+        let result = XCTWaiter.wait(for: [reaped], timeout: 5)
+        _ = Darwin.close(descriptor); released = true
+        XCTAssertEqual(result, .completed, "Deinitialization must cancel owned reads without needing a window delegate")
+        let cleanup = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in kill(pid, 0) == -1 && errno == ESRCH }, object: nil)
+        wait(for: [cleanup], timeout: 5)
     }
 
     func testReplacedStatusTaskCannotPublishItsLateOutput() throws {

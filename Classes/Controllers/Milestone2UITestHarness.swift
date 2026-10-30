@@ -358,6 +358,7 @@ import OSLog // swiftlint:disable:this unused_import
             let controller = RepositoryPullRequestUIController(
                 repository: repository,
                 windowController: windowController,
+                ownerIsCurrent: windowController.repositoryOwnerValidation(for: repository),
                 remoteActions: remoteActions,
                 service: service,
                 destinationOpening: { [weak self] destination in
@@ -509,6 +510,7 @@ import OSLog // swiftlint:disable:this unused_import
             let controller = RepositoryPullRequestUIController(
                 repository: repository,
                 windowController: windowController,
+                ownerIsCurrent: windowController.repositoryOwnerValidation(for: repository),
                 remoteActions: remoteActions,
                 service: UnavailableRepositoryPullRequestMutationService(),
                 destinationOpening: { _ in false },
@@ -551,6 +553,7 @@ import OSLog // swiftlint:disable:this unused_import
             let controller = RepositoryPullRequestUIController(
                 repository: repository,
                 windowController: windowController,
+                ownerIsCurrent: windowController.repositoryOwnerValidation(for: repository),
                 remoteActions: remoteActions,
                 service: service,
                 destinationOpening: { _ in false },
