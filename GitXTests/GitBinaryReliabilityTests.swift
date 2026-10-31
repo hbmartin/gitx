@@ -1,5 +1,4 @@
 import AppKit
-import Darwin
 @testable import GitX
 import ObjectiveGit
 import Synchronization

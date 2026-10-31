@@ -27,7 +27,8 @@
       "mutation-completion-release-repair",
       "mutation-completion-toolbar-isolation2",
       "mutation-completion-priority-green-build",
-      "mutation-completion-priority-green"
+      "mutation-completion-priority-green",
+      "mutation-completion-import-cleanup-build"
     ]
   },
   "coverageRatchet": {
@@ -47,7 +48,8 @@
       "mutation-completion-complete1",
       "mutation-completion-post-feature-contracts",
       "mutation-completion-final-full",
-      "mutation-completion-priority-red"
+      "mutation-completion-priority-red",
+      "mutation-completion-final-full2"
     ]
   },
   "toolbarMeasurement": {
@@ -60,10 +62,10 @@
     "attachmentName": "Repeated toolbar reconciliation samples"
   },
   "requiredFinalVerification": {
-    "runId": "mutation-completion-final-full2",
+    "runId": "mutation-completion-final-full3",
     "profile": "full",
     "cleanupMode": "preview",
-    "receipt": "artifacts/verification/mutation-completion-final-full2/workflow.json",
+    "receipt": "artifacts/verification/mutation-completion-final-full3/workflow.json",
     "uiRequiresFreshIdleConfirmation": true
   },
   "stagedApplication": {
@@ -79,5 +81,12 @@
     "passingFocusedTests": 33,
     "change": "Match cancellation dispatch QoS to its owning probe worker. No queue bounds, availability/probe deadlines or test timeouts change.",
     "diagnostics": "Passing focused execution retains intentional fixture-semaphore QoS messages, with no production cancellation-drain inversion or data-race report."
+  },
+  "semanticImportCorrection": {
+    "failureRunId": "mutation-completion-final-full2",
+    "failedAnalyzerReceipt": "artifacts/verification/mutation-completion-final-full2-analyze-1691b161/receipt.json",
+    "finding": "The only semantic violation was an unnecessary Darwin import in the QoS regression test; AppKit already exposes the symbols.",
+    "change": "Remove the redundant import without changing the QoS assertion or any baseline.",
+    "requiredPostCommitRunId": "mutation-completion-final-full3"
   }
 }
