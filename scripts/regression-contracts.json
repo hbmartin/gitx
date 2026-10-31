@@ -72,11 +72,12 @@
     {
       "id": "EVENT-001",
       "family": "Push event order",
-      "invariant": "An operation accepts at most one begin and one terminal event; stale callbacks cannot reactivate it.",
+      "invariant": "An operation accepts at most one begin and one terminal event; stale callbacks cannot reactivate it. Admitted remote operations retain completion independently of presentation owners and publish their actual original-repository result exactly once.",
       "rootCause": "Duplicate, reordered and cancellation callbacks can publish twice or replace a newer journey.",
       "sourcePaths": [
         "Classes/Controllers/RepositoryPushEventGate.swift",
-        "Classes/git/RepositoryRemoteService.swift"
+        "Classes/git/RepositoryRemoteService.swift",
+        "Classes/Controllers/RepositoryRemoteActionCoordinator.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -100,6 +101,34 @@
           "identifier": "GitXTests/RepositoryPushEventGateTests/testCancellationAfterBeginKeepsThePushActiveUntilItsActualFailure",
           "role": "failure",
           "oracle": "Declining recovery completes through the actual failure event."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAdmittedPushReportsSuccessAfterEveryPresentationOwnerIsReleased",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release all presentation owners, execute an actual push and require the original remote ref and exactly one success notification."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAdmittedFetchPublishesOnceAfterItsOwnersDeallocate",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release owner and coordinator references before actual fetch; require original tracking refs, one notification and eventual coordinator release."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAdmittedPullPublishesOnceAfterItsOwnersDeallocate",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release owner and coordinator references before actual pull; require original HEAD advancement, one notification and eventual release."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testRejectedPushReportsItsActualFailureAfterItsOwnersDeallocate",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Execute a real rejected push after owner deallocation; require one failed terminal event, no success notification, unchanged remote and no new admission."
         }
       ]
     },
@@ -2744,7 +2773,7 @@
     {
       "id": "GIT-001",
       "family": "Bounded Git discovery and immutable executable selection",
-      "invariant": "Only validated current preferences replace the active Git snapshot. Two owned probe workers admit at most sixteen waiting requests in FIFO order without evicting accepted callers; busy maps to temporary unavailability. Queue residence consumes the original five-second attempt deadline and preference changes never extend an existing availability waiter. Unexecuted cancellation may retry within that attempt deadline; busy, cancellation and queued expiry never reject a preference. Executable candidates are normalized and deduplicated without losing literal spaces or helper logs. Each auto-fetch operation uses one injected executable.",
+      "invariant": "Only validated current preferences replace the active Git snapshot. Two owned probe workers admit at most sixteen waiting requests in FIFO order without evicting accepted callers; busy maps to temporary unavailability. Queue residence consumes the original five-second attempt deadline and preference changes never extend an existing availability waiter. Unexpected current cancellation settles temporarily; a later demand may retry; busy, cancellation and queued expiry never reject a preference. Executable candidates are normalized and deduplicated without losing literal spaces or helper logs. Each auto-fetch operation uses one injected executable.",
       "rootCause": "Stale discovery publication clears usable state, unbounded probes strand consumers, and global path reads split an injected operation.",
       "sourcePaths": [
         "Classes/git/GitBinaryDiscovery.swift",
@@ -2838,10 +2867,10 @@
         },
         {
           "source": "GitXTests/GitBinaryReliabilityTests.swift",
-          "identifier": "GitXTests/GitBinaryReliabilityTests/testCancellingAnUnexecutedPreferenceRetriesWithinItsOriginalAttemptDeadline",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testUnexecutedCancellationSettlesWithoutSelfRequeueAndOnlyDemandRetries",
           "role": "boundary",
           "check": "correctness",
-          "oracle": "Cancel the accepted unexecuted preference at second two, release workers at second four, and require one remaining second and no rejected preference."
+          "oracle": "Cancel an unexecuted current preference, require code 3 with no self-requeue or false warning, then validate only after a fresh demand."
         },
         {
           "source": "GitXTests/GitBinaryReliabilityTests.swift",
@@ -2855,7 +2884,7 @@
           "identifier": "GitXTests/GitBinaryReliabilityTests/testQueueExpiryDoesNotRejectOrFallbackFromAnUnexecutedPreference",
           "role": "boundary",
           "check": "correctness",
-          "oracle": "Expire a queued preference at second five and require timeout with zero execution, rejection or fallback."
+          "oracle": "Expire a queued preference at second five and require temporary code 3 with zero execution, rejection or fallback."
         },
         {
           "source": "GitXTests/GitBinaryReliabilityTests.swift",
@@ -2880,10 +2909,38 @@
         },
         {
           "source": "GitXTests/GitBinaryReliabilityTests.swift",
-          "identifier": "GitXTests/GitBinaryReliabilityTests/testLineEndingOnlyPreferenceUsesAutomaticWarningIdentity",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testLineEndingOnlyPreferenceUsesAutomaticDiscoveryWithoutARejection",
           "role": "boundary",
           "check": "correctness",
-          "oracle": "CR/LF-only defaults remain unchanged and report the literal automatic-discovery warning identity."
+          "oracle": "CR/LF-only defaults remain unchanged and behave as automatic discovery without a false rejected preference."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testQueuedExpiryCanBeRetriedByALaterDemand",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Expire an unexecuted preference, free capacity and demand availability again; require actual successful execution and no fallback."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testAutomaticDiscoveryFailureDoesNotRejectNilEmptyOrLineEndingPreferences",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Literal nil, empty and CR/LF-only cases all fail cold automatic discovery without a rejected preference."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testExecutedPreferenceRejectionSurvivesLaterBusyAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Fail the actual preference before congesting later admission; preserve that genuine rejection and report temporary unavailability."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testAutomaticPreferenceFailureRetainsAnActiveSelectionWithTheSameWarningIdentity",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Retain a validated selection while nil, empty and CR/LF automatic discovery exhausts; each warning uses the same literal empty identity."
         }
       ]
     },
@@ -2962,7 +3019,8 @@
         "Classes/Controllers/RepositoryStashActionCoordinator.swift",
         "Classes/Controllers/RepositoryPullRequestUIController.swift",
         "Classes/Controllers/PBGitWindowController+Worktrees.swift",
-        "Classes/git/RepositoryWorktreeService.swift"
+        "Classes/git/RepositoryWorktreeService.swift",
+        "Classes/Controllers/RepositoryToolbarController.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -3172,6 +3230,123 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Replace the Git-directory inode while a legacy mutation waits for admission; require refusal before its writer runs and successful repository inspection after restoring the approved directory."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testNativeToolbarIsConstructedOnceAndDetachedWhenItsRepositoryIsRemoved",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Observe one actual toolbar construction, remove the repository and require detached toolbar and represented URL, then restore valid attachments."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testRepeatedToolbarInstallationPreservesCustomizationWithoutReassignment",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "KVO-observe real toolbar assignment; unchanged reconciliation preserves customization with exactly one assignment."
+        },
+        {
+          "source": "GitXTests/WorktreePresentationTests.swift",
+          "identifier": "GitXTests/WorktreePresentationTests/testClosingOneWindowPreservesRepositoryOwnedInventoryForAnotherWindow",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold shared inventory discovery, close one owner and require the other owner to observe actual worktree lock changes through the same service."
+        }
+      ]
+    },
+    {
+      "id": "DRAFT-001",
+      "family": "Mutation completion and conditional draft retirement",
+      "invariant": "Verified admitted create and edit outcomes retire only the exact submitted draft snapshot, independently of presentation ownership and post-success cancellation. Missing, unreadable or changed drafts survive. Cleanup failures never resubmit or change a successful remote result; revoked capabilities cannot present.",
+      "rootCause": "Controller-bound cleanup loses drafts after owner teardown; unconditional deletion removes newer edits and raw ownership closures outlive revocation.",
+      "sourcePaths": [
+        "Classes/Controllers/RepositoryPullRequestWorkflow.swift",
+        "Classes/Controllers/RepositoryPullRequestUIController.swift",
+        "Classes/Controllers/GitHubPullRequestComposition.swift",
+        "ForgeKit/Sources/ForgeKit/ForgeSQLitePersistence.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "forgekit",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testSuccessfulCreateCleansItsDraftAfterAllPresentationOwnersDeallocate",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Gate the actual server request, release all owners, then verify successful cleanup without late presentation."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testEditSuccessCleansItsDraftAfterPresentationDeallocation",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Gate an edit, release owners and require its exact submitted draft to be removed after verified success."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testSuccessfulCreatePreservesNewerDraftEdits",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Save a newer draft while the submitted request waits; remote success preserves newer bytes."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testVerifiedSuccessCleansItsDraftAfterCancellationDuringTheServerRequest",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Cancel an admitted task while its server response waits; verified success still removes the submitted snapshot."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testCleanupFailurePreservesTheDraftAndTheActualSuccessfulResult",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Inject conditional storage deletion failure; require the original successful outcome and one server attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testCompletionPreservesTheDraftWhenTheServerOutcomeHasAnotherRepository",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Return a different server repository and require a mismatch error with the original draft unchanged."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testExplicitRevocationDisablesEveryWrappedPresentationCapability",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Revoke presentation while the raw external predicate remains true; all wrapped capabilities refuse."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testEscapedPresentationCapabilitiesDoNotRetainOrOutliveTheirController",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Retain only escaped closures, release the controller and require deallocation and refused presentation."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationPresentationTests/testDeferredRetriesRequireTheCurrentMutationAndExternalOwner",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Capture a retry, supersede its mutation and toggle the external owner; literal callback delivery excludes stale and unavailable owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationPresentationTests/testRevocationCannotBeUndoneByAnotherMutationOrAnUnchangedRawOwner",
+          "role": "failure",
+          "check": "correctness",
+          "oracle": "Revoke the authority while its raw owner predicate stays true; neither old nor newly allocated operation identities may deliver recovery."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testCreateSuccessDeletesTheSubmittedDraftBeforeOpeningItsDestination",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Submit through the actual native sheet; require exact draft cleanup before the current owner opens the verified destination."
         }
       ]
     }

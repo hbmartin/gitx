@@ -19,10 +19,11 @@ final class RepositoryReferenceActionCoordinator: NSObject {
 
     @objc(checkoutRefish:)
     func checkout(_ refish: PBGitRefish?) {
-        guard ownerIsCurrent() else { return }
         guard let refish else { return }
-        logger.debug("Starting checkout action")
-        perform { _ = try repository.checkoutRefish(refish) }
+        perform {
+            logger.debug("Starting checkout action")
+            _ = try repository.checkoutRefish(refish)
+        }
     }
 
     @objc(deleteRef:)
@@ -39,41 +40,45 @@ final class RepositoryReferenceActionCoordinator: NSObject {
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Delete ref alert - cancel button"))
         logger.debug("Requesting reference deletion confirmation")
         windowController?.confirmDialog(alert, suppressionIdentifier: "Delete Ref") { [weak self] in
-            guard let self, self.ownerIsCurrent() else { return }
+            guard let self else { return }
             self.perform(confirmed: true) { _ = try self.repository.deleteRef(ref) }
         }
     }
 
     @objc(mergeRefish:)
     func merge(_ refish: PBGitRefish?) {
-        guard ownerIsCurrent() else { return }
         guard let refish else { return }
-        logger.debug("Starting merge action")
-        perform { _ = try repository.merge(with: refish) }
+        perform {
+            logger.debug("Starting merge action")
+            _ = try repository.merge(with: refish)
+        }
     }
 
     @objc(rebaseOnRefish:)
     func rebase(on refish: PBGitRefish?) {
-        guard ownerIsCurrent() else { return }
         guard let refish else { return }
-        logger.debug("Starting rebase action")
-        perform { _ = try repository.rebaseBranch(nil, on: refish) }
+        perform {
+            logger.debug("Starting rebase action")
+            _ = try repository.rebaseBranch(nil, on: refish)
+        }
     }
 
     @objc(cherryPickRefish:)
     func cherryPick(_ refish: PBGitRefish?) {
-        guard ownerIsCurrent() else { return }
         guard let refish else { return }
-        logger.debug("Starting cherry-pick action")
-        perform { _ = try repository.cherryPick(refish) }
+        perform {
+            logger.debug("Starting cherry-pick action")
+            _ = try repository.cherryPick(refish)
+        }
     }
 
     @objc(resetSoftToRefish:)
     func resetSoft(to refish: PBGitRefish?) {
-        guard ownerIsCurrent() else { return }
         guard let refish else { return }
-        logger.debug("Starting soft-reset action")
-        perform { _ = try repository.resetRefish(.soft, to: refish) }
+        perform {
+            logger.debug("Starting soft-reset action")
+            _ = try repository.resetRefish(.soft, to: refish)
+        }
     }
 
     @objc(createBranchFromRefish:selectedCommit:)
@@ -99,7 +104,7 @@ final class RepositoryReferenceActionCoordinator: NSObject {
             refish: initialRefish,
             windowController: windowController
         ) { [weak self] sheet, response in
-            guard response == .OK, let self, self.ownerIsCurrent(), let sheet = sheet as? PBCreateBranchSheet else { return }
+            guard response == .OK, let self, let sheet = sheet as? PBCreateBranchSheet else { return }
             self.perform(confirmed: true) {
                 _ = try self.repository.createBranch(sheet.branchNameField.stringValue, at: sheet.startRefish)
                 PBGitDefaults.setShouldCheckoutBranch(sheet.shouldCheckoutBranch)
@@ -128,7 +133,7 @@ final class RepositoryReferenceActionCoordinator: NSObject {
             refish: initialRefish,
             windowController: windowController
         ) { [weak self] sheet, response in
-            guard response == .OK, let self, self.ownerIsCurrent(), let sheet = sheet as? PBCreateTagSheet else { return }
+            guard response == .OK, let self, let sheet = sheet as? PBCreateTagSheet else { return }
             self.perform(confirmed: true) {
                 _ = try self.repository.createTag(
                     sheet.tagNameField?.stringValue,

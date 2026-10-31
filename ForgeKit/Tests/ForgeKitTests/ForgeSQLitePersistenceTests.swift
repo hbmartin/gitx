@@ -516,6 +516,58 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         await store?.close()
     }
 
+    func testConditionalDurableDeletionPreservesNewerPayloadAcrossConnections() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let reader = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let writer = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let submitted = try fixture.record(.draft, key: "submitted", payload: "original", activity: 1)
+        let newer = try fixture.record(.draft, key: "submitted", payload: "newer", activity: 2)
+        try await reader.saveDurableRecord(submitted)
+        try await writer.saveDurableRecord(newer)
+        let staleDelete = try await reader.deleteDurableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository,
+                                                               key: submitted.key, matchingPayload: submitted.payload)
+        XCTAssertFalse(staleDelete)
+        let retained = try await writer.durableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository, key: submitted.key)
+        XCTAssertEqual(retained, newer)
+        let removed = try await reader.deleteDurableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository,
+                                                           key: newer.key, matchingPayload: newer.payload)
+        XCTAssertTrue(removed)
+        let missing = try await reader.deleteDurableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository,
+                                                           key: newer.key, matchingPayload: newer.payload)
+        XCTAssertFalse(missing)
+        await reader.close()
+        await writer.close()
+    }
+
+    func testConditionalDeletionRetainsOtherPartitionsAndAcceptsEmptyPayload() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let record = try fixture.record(.draft, key: "same-key", payload: "", activity: 1)
+        try await store.saveDurableRecord(record)
+        let otherRepository = try ForgeRepositoryIdentity(forge: fixture.forge, owner: "acme", name: "other")
+        for (kind, account, repository, key) in [
+            (ForgeSQLiteDurableKind.attention, fixture.firstAccount, fixture.repository, record.key),
+            (.draft, fixture.secondAccount, fixture.repository, record.key),
+            (.draft, fixture.firstAccount, otherRepository, record.key),
+            (.draft, fixture.firstAccount, fixture.repository, Data("other-key".utf8)),
+        ] {
+            let removed = try await store.deleteDurableRecord(kind: kind, accountID: account, repository: repository, key: key, matchingPayload: Data())
+            XCTAssertFalse(removed)
+        }
+        let retained = try await store.durableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository, key: record.key)
+        XCTAssertEqual(retained, record)
+        let removed = try await store.deleteDurableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository,
+                                                          key: record.key, matchingPayload: Data())
+        XCTAssertTrue(removed)
+        await store.close()
+        await XCTAssertThrowsErrorAsync {
+            _ = try await store.deleteDurableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository,
+                                                    key: record.key, matchingPayload: Data())
+        }
+    }
+
     func testDurableKindsPersistExpireAndDeleteIndependently() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

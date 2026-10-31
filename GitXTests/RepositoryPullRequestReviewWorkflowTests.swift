@@ -2865,6 +2865,12 @@ actor FakeReviewDraftStore: RepositoryPullRequestDraftPersisting {
         }
     }
 
+    func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool {
+        guard snapshot.identity == identity, values[identity] == snapshot else { return false }
+        try await delete(identity: identity)
+        return true
+    }
+
     func delete(identity: ForgeDraftIdentity) async throws {
         if let deleteFailure {
             throw deleteFailure

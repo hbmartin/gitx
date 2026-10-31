@@ -107,6 +107,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var lifetime: RepositoryWindowLifetime?
     private var nibPresentationReady = false
     private var paneRepository: ObjectIdentifier?
+    private weak var panePresentationWindow: NSWindow?
     private var actionRepository: ObjectIdentifier?
     private var ownerNotifications = NotificationCenter.default
     private weak var worktreeRepairRepository: PBGitRepository?
@@ -183,6 +184,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 }
                 repositoryStatusBarController?.uninstall()
                 repositoryStatusBarController = nil
+                repositoryToolbarController?.uninstall()
+                panePresentationWindow = nil
             }
             super.window = newValue
             if previous !== newValue {
@@ -336,10 +339,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
             return false
         }
-        guard
-            repository.workingDirectoryURL() != nil || repository.gitURL() != nil else { return false }
         let identity = RepositoryGitLoaderLifecycle.Identity(repository: ObjectIdentifier(repository), selection: selection)
         guard gitLoaderLifecycle.requiresInstallation(identity, hasFocus: focusRefreshCoordinator != nil, hasStatus: repositoryLocalStatusLoader != nil) else { return false }
+        guard repository.workingDirectoryURL() != nil || repository.gitURL() != nil else { return false }
         let ownerGeneration = ownership.generation
         invalidateGitLoaders()
         guard lifetime === scope, ownership.accepts(scope.identity, generation: ownerGeneration),
@@ -535,7 +537,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         _historyViewController = nil
         initializedContentControllers = .weakObjects()
         paneRepository = nil
+        panePresentationWindow = nil
+        repositoryToolbarController?.uninstall()
         repositoryToolbarController = nil
+        if isWindowLoaded, repository == nil {
+            super.window?.representedURL = nil
+        }
         if ownership.closed {
             repositoryStatusBarController?.uninstall()
             repositoryStatusBarController = nil
@@ -567,7 +574,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
             NSLog("[GitX] Installed repository panes with initial History selection")
         }
-        window.representedURL = repository.workingDirectoryURL()
+        if panePresentationWindow !== window {
+            window.representedURL = repository.workingDirectoryURL()
+            panePresentationWindow = window
+        }
         if repositoryToolbarController == nil {
             repositoryToolbarController = RepositoryToolbarController(windowController: self)
         }
@@ -583,6 +593,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         pullRequestUIController?.invalidateOwner()
         repositoryForgeOverlaySession?.invalidate()
         repositoryStatusBarController?.uninstall()
+        repositoryToolbarController?.uninstall()
         _sidebarController?.closeView()
         _historyViewController?.closeView()
     }
@@ -757,8 +768,6 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         nibPresentationReady = true
         ForgeDeepLinkApplicationRouter.shared.installIfNeeded()
         window?.setFrameUsingName("GitX")
-        repositoryToolbarController = RepositoryToolbarController(windowController: self)
-        repositoryToolbarController?.install()
         reconcileOwnership()
         statusField?.cell?.backgroundStyle = .raised
         progressIndicator?.usesThreadedAnimation = true
@@ -1548,9 +1557,6 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repositoryForgeOverlaySession?.invalidate()
         repositoryForgeOverlaySession = nil
         installRepositoryForgeOverlaySession()
-        if let repositoryForgeOverlaySession {
-            repositoryStatusBarController?.bind(to: repositoryForgeOverlaySession)
-        }
         updateToolbarForgeDiagnostic()
         NSLog("[GitX] Reloaded the repository Forge overlay after a recovery action")
     }

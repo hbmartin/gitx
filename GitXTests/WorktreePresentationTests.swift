@@ -748,6 +748,7 @@ import XCTest
             let tree = try XCTUnwrap(origin.service.worktree(forBranch: "refs/heads/topic"))
             let lock = ["worktree", "lock", "--reason", "barrier", tree.path]
             let first = expectation(description: "The admitted barrier releases its reservation")
+            blocker.gate.holdNextArguments = lock
             enqueue(blocker.service, command: .lock(path: tree.path, reason: "barrier")) { _, _ in first.fulfill() }
             await waitUntil { blocker.gate.writer.isPending }
             let refused = expectation(description: "The queued request refuses a new Git-directory identity")

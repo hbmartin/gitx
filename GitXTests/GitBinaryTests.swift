@@ -15,6 +15,41 @@ private func closeRepositoryFixtureDocument(_ document: NSDocument?) {
     document?.close()
 }
 
+extension GitXPerformanceTests {
+    func testRepeatedToolbarReconciliationBenchmark() throws {
+        let ready = expectation(description: "Validated Git before the Release fixture")
+        PBGitBinary.whenAvailable { path, error in XCTAssertNotNil(path); XCTAssertNil(error); ready.fulfill() }
+        wait(for: [ready], timeout: 10)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Toolbar-benchmark-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try GitXTestGitFixture.run(["init", "--initial-branch=main"], in: directory)
+        try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "fixture"], in: directory)
+        let document = try PBGitRepositoryDocument(contentsOf: directory, ofType: PBGitRepositoryDocumentType)
+        defer { closeRepositoryFixtureDocument(document) }
+        let owner = GitX.PBGitWindowController(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false))
+        owner.repository = document.repository
+        defer { owner.close() }
+        let controller = GitX.RepositoryToolbarController(windowController: owner)
+        controller.install()
+        let toolbar = owner.window?.toolbar
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 5 {
+            let start = ProcessInfo.processInfo.systemUptime
+            for _ in 0 ..< 100 {
+                controller.install()
+            }
+            samples.append(ProcessInfo.processInfo.systemUptime - start)
+        }
+        XCTAssertTrue(owner.window?.toolbar === toolbar)
+        let data = try JSONSerialization.data(withJSONObject: ["iterationsPerSample": 100, "seconds": samples], options: [.prettyPrinted, .sortedKeys])
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "Repeated toolbar reconciliation samples"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}
+
 final class GitBinaryTests: XCTestCase {
     // swift6-safety-justification: The test counter stays on MainActor; inherited lifecycle state uses the manager's lock.
     private final nonisolated class FetchProbe: GitX.PBAutoFetchManager, @unchecked Sendable {
@@ -359,6 +394,25 @@ final class GitBinaryTests: XCTestCase {
 /// Characterizes the Objective-C document before extracting its scripting decisions.
 @MainActor
 final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
+    private final nonisolated class ToolbarRecording: Sendable {
+        let values = Mutex<[ObjectIdentifier]>([])
+    }
+
+    private final class ToolbarInstallationProbe: GitX.PBGitWindowController {
+        let initialToolbars = ToolbarRecording()
+        override func windowDidLoad() {
+            guard let nativeWindow = super.window else { return }
+            let recorded = initialToolbars
+            let observation = nativeWindow.observe(\.toolbar, options: [.new]) { _, change in
+                if case let toolbar?? = change.newValue {
+                    recorded.values.withLock { $0.append(ObjectIdentifier(toolbar)) }
+                }
+            }
+            super.windowDidLoad()
+            observation.invalidate()
+        }
+    }
+
     // swift6-safety-justification: Only immutable identity is transferred to NotificationCenter; repository access remains on the main actor.
     private final nonisolated class RepositoryNotificationFixture: @unchecked Sendable {
         let value: PBGitRepository
@@ -1037,14 +1091,15 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         owner.repository = document.repository
         defer { owner.close() }
         let controller = GitX.RepositoryToolbarController(windowController: owner)
-        let toolbar = NSToolbar(identifier: "GitX.Test.AccountReplacement")
-        let item = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount"), willBeInsertedIntoToolbar: true))
+        controller.install()
+        let toolbar = try XCTUnwrap(owner.window?.toolbar)
+        let item = try XCTUnwrap(toolbar.items.first { $0.itemIdentifier == NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount") })
         let popup = try XCTUnwrap(item.view?.subviews.compactMap { $0 as? NSPopUpButton }.first)
         NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository,
                                         userInfo: [GitX.RepositoryForgeAccountNotificationKey.providerName: "GitHub", GitX.RepositoryForgeAccountNotificationKey.login: "prior-owner"])
-        XCTAssertEqual(popup.titleOfSelectedItem, "@prior-owner")
+        XCTAssertEqual(popup.item(at: 0)?.title, "@prior-owner")
         NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository)
-        XCTAssertEqual(popup.titleOfSelectedItem, "Forge")
+        XCTAssertEqual(popup.item(at: 0)?.title, "Forge")
         XCTAssertEqual(item.toolTip, "Configure a Forge account")
     }
 
@@ -1094,6 +1149,188 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(admissions, 1, "A retained UI coordinator cannot admit another write after owner deallocation")
         XCTAssertEqual(try GitXTestGitFixture.run(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"], in: directory).standardOutput,
                        try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput)
+    }
+
+    func testNativeToolbarIsConstructedOnceAndDetachedWhenItsRepositoryIsRemoved() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let owner = ToolbarInstallationProbe(windowNibName: "RepositoryWindow")
+        document.addWindowController(owner)
+        defer { owner.close() }
+        let nativeWindow = try XCTUnwrap(owner.window)
+        XCTAssertNotNil(nativeWindow.toolbar?.delegate)
+        XCTAssertEqual(owner.initialToolbars.values.withLock { $0.count }, 1)
+        document.removeWindowController(owner)
+        XCTAssertNil(owner.repository)
+        XCTAssertNil(nativeWindow.toolbar)
+        XCTAssertNil(nativeWindow.representedURL)
+        document.addWindowController(owner)
+        XCTAssertNotNil(nativeWindow.toolbar?.delegate)
+        XCTAssertNotNil(owner.historyViewController)
+        XCTAssertNotNil(nativeWindow.representedURL)
+    }
+
+    func testRepeatedToolbarInstallationPreservesCustomizationWithoutReassignment() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let nativeWindow = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        let owner = GitX.PBGitWindowController(window: nativeWindow)
+        owner.repository = document.repository
+        defer { owner.close() }
+        let assignments = Mutex(0)
+        let observation = nativeWindow.observe(\.toolbar, options: [.new]) { _, _ in assignments.withLock { $0 += 1 } }
+        defer { observation.invalidate() }
+        let toolbarController = GitX.RepositoryToolbarController(windowController: owner)
+        toolbarController.install()
+        let toolbar = try XCTUnwrap(nativeWindow.toolbar)
+        toolbar.displayMode = .iconOnly
+        XCTAssertEqual(toolbar.displayMode, .iconOnly)
+        toolbar.insertItem(withItemIdentifier: .flexibleSpace, at: 0)
+        XCTAssertEqual(toolbar.items.first?.itemIdentifier, .flexibleSpace)
+        let identifiers = toolbar.items.map(\.itemIdentifier)
+        toolbarController.install()
+        XCTAssertTrue(nativeWindow.toolbar === toolbar)
+        XCTAssertEqual(toolbar.displayMode, .iconOnly)
+        XCTAssertEqual(toolbar.items.map(\.itemIdentifier), identifiers)
+        XCTAssertEqual(assignments.withLock { $0 }, 1)
+    }
+
+    func testAdmittedPushReportsSuccessAfterEveryPresentationOwnerIsReleased() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let remote = directory.appendingPathComponent("completion-target.git")
+        try GitXTestGitFixture.run(["init", "--bare", remote.path], in: directory)
+        try GitXTestGitFixture.run(["remote", "add", "origin", remote.path], in: directory)
+        var pending: (@Sendable () throws -> Void)?
+        var finished: ((NSError?) -> Void)?
+        weak var weakOwner: GitX.PBGitWindowController?
+        let successes = Mutex(0)
+        let token = NotificationCenter.default.addObserver(forName: .repositoryRemoteOperationDidSucceed, object: document.repository, queue: nil) { _ in successes.withLock { $0 += 1 } }
+        defer { NotificationCenter.default.removeObserver(token) }
+        autoreleasepool {
+            let owner = GitX.PBGitWindowController(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false),
+                                                   remoteProgressStarting: { _, _, operation, completion in pending = operation; finished = completion; return true })
+            weakOwner = owner
+            owner.repository = document.repository
+            owner.pullRequestUIController?.performPush(branch: PBGitRef(string: "refs/heads/main"), remote: PBGitRef(string: "refs/remotes/origin"), requiresConfirmation: false)
+            owner.close()
+        }
+        let operation = try XCTUnwrap(pending)
+        pending = nil
+        let deallocated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in weakOwner == nil }, object: nil)
+        wait(for: [deallocated], timeout: 5)
+        let executed = expectation(description: "The admitted operation reaches its actual Git result")
+        let error = Mutex<NSError?>(nil)
+        DispatchQueue.global().async {
+            do { try operation() } catch let failure { error.withLock { $0 = failure as NSError } }
+            executed.fulfill()
+        }
+        wait(for: [executed], timeout: 10)
+        XCTAssertNil(error.withLock { $0 })
+        finished?(error.withLock { $0 })
+        finished?(error.withLock { $0 })
+        finished = nil
+        XCTAssertEqual(successes.withLock { $0 }, 1)
+        XCTAssertEqual(try GitXTestGitFixture.run(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"], in: directory).standardOutput,
+                       try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput)
+    }
+
+    func testAdmittedFetchPublishesOnceAfterItsOwnersDeallocate() throws {
+        try remoteCompletionSurvivesPresentationRelease(kind: .fetch)
+    }
+
+    func testAdmittedPullPublishesOnceAfterItsOwnersDeallocate() throws {
+        try remoteCompletionSurvivesPresentationRelease(kind: .pull)
+    }
+
+    func testRejectedPushReportsItsActualFailureAfterItsOwnersDeallocate() throws {
+        try remoteCompletionSurvivesPresentationRelease(kind: .rejectedPush)
+    }
+
+    private enum CompletionKind { case fetch, pull, rejectedPush }
+
+    private func remoteCompletionSurvivesPresentationRelease(kind: CompletionKind) throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let remote = directory.appendingPathComponent("completion-remote.git")
+        try GitXTestGitFixture.run(["init", "--bare", remote.path], in: directory)
+        try GitXTestGitFixture.run(["remote", "add", "origin", remote.path], in: directory)
+        let original = try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try GitXTestGitFixture.run(["push", "--set-upstream", "origin", "main"], in: directory)
+        try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "Incoming remote commit"], in: directory)
+        let incoming = try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try GitXTestGitFixture.run(["push", "origin", "main"], in: directory)
+        try GitXTestGitFixture.run(["reset", "--hard", original], in: directory)
+        try GitXTestGitFixture.run(["update-ref", "refs/remotes/origin/main", original], in: directory)
+        var pending: (@Sendable () throws -> Void)?
+        var finished: ((NSError?) -> Void)?
+        var admissions = 0
+        var events: [GitX.RepositoryPushEvent] = []
+        weak var weakOwner: GitX.PBGitWindowController?
+        weak var weakCoordinator: GitX.RepositoryRemoteActionCoordinator?
+        let successes = Mutex<[String]>([])
+        let token = NotificationCenter.default.addObserver(forName: .repositoryRemoteOperationDidSucceed, object: document.repository, queue: nil) { notification in
+            successes.withLock { $0.append(notification.userInfo?["operation"] as? String ?? "missing") }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        autoreleasepool {
+            let owner = GitX.PBGitWindowController(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false))
+            owner.repository = document.repository
+            weakOwner = owner
+            let coordinator = GitX.RepositoryRemoteActionCoordinator(repository: document.repository, windowController: owner, progressStarting: { _, _, operation, completion in
+                admissions += 1
+                pending = operation
+                finished = completion
+                return true
+            })
+            weakCoordinator = coordinator
+            switch kind {
+            case .pull:
+                coordinator.performPull(branch: PBGitRef(string: "refs/heads/main"), remote: PBGitRef(string: "refs/remotes/origin"), rebase: false)
+            case .fetch:
+                coordinator.performFetch(for: PBGitRef(string: "refs/remotes/origin"))
+            case .rejectedPush:
+                coordinator.performPush(branch: PBGitRef(string: "refs/heads/main"), remote: PBGitRef(string: "refs/remotes/origin"), requiresConfirmation: false,
+                                        pullRequestOption: nil, suppressesPostPushBrowserSuggestion: true, completion: { events.append($0) })
+            }
+            owner.close()
+        }
+        XCTAssertNil(weakOwner)
+        XCTAssertNotNil(weakCoordinator, "Admitted completion retains its coordinator without retaining its presentation owner")
+        let operation = try XCTUnwrap(pending)
+        pending = nil
+        let executed = expectation(description: "The original repository completes its admitted remote operation")
+        let failure = Mutex<NSError?>(nil)
+        DispatchQueue.global().async {
+            do { try operation() } catch { failure.withLock { $0 = error as NSError } }
+            executed.fulfill()
+        }
+        wait(for: [executed], timeout: 10)
+        if kind == .rejectedPush {
+            XCTAssertNotNil(failure.withLock { $0 })
+        } else {
+            XCTAssertNil(failure.withLock { $0 })
+        }
+        autoreleasepool {
+            weakCoordinator?.performFetch(for: nil)
+            finished?(failure.withLock { $0 })
+            finished?(failure.withLock { $0 })
+            finished = nil
+        }
+        XCTAssertEqual(admissions, 1, "Revoked presentation cannot admit more work")
+        XCTAssertEqual(successes.withLock { $0 }, kind == .rejectedPush ? [] : [kind == .pull ? "pull" : "fetch"])
+        if kind == .rejectedPush {
+            XCTAssertEqual(events, [.began(createPullRequestSelected: false), .failed])
+        }
+        XCTAssertNil(weakCoordinator)
+        let fetched = try GitXTestGitFixture.run(["rev-parse", "refs/remotes/origin/main"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let head = try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if kind != .rejectedPush {
+            XCTAssertEqual(fetched, incoming)
+        }
+        XCTAssertEqual(head, kind == .pull ? incoming : original)
+        let remoteHead = try GitXTestGitFixture.run(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(remoteHead, incoming)
     }
 
     private func verifyDeferredLoaderInstallation(activationBeforeNotification: Bool) throws {

@@ -197,19 +197,21 @@ final class GitBinaryReliabilityTests: XCTestCase {
         XCTAssertTrue(calls.withLock { $0.contains("/usr/bin/which") && $0.contains("/usr/bin/xcrun") })
     }
 
-    func testLineEndingOnlyPreferenceUsesAutomaticWarningIdentity() {
-        let finished = expectation(description: "Failed automatic discovery has no literal newline preference")
-        let discovery = GitBinaryDiscovery(preference: { "\r\n" }, environment: [:], output: { _, _ in nil }, locations: [], notify: { _, rejected in
-            XCTAssertEqual(rejected, ""); finished.fulfill()
-        })
-        discovery.start()
+    func testLineEndingOnlyPreferenceUsesAutomaticDiscoveryWithoutARejection() {
+        let finished = expectation(description: "Automatic discovery exhausts without a literal newline preference")
+        let warnings = Mutex(0)
+        let discovery = GitBinaryDiscovery(preference: { "\r\n" }, environment: [:], output: { _, _ in nil }, locations: [], notify: { _, _ in warnings.withLock { $0 += 1 } })
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 1); finished.fulfill() }
         wait(for: [finished], timeout: 3)
+        XCTAssertEqual(warnings.withLock { $0 }, 0)
     }
 
-    func testCancellingAnUnexecutedPreferenceRetriesWithinItsOriginalAttemptDeadline() {
+    func testUnexecutedCancellationSettlesWithoutSelfRequeueAndOnlyDemandRetries() {
         let clock = Clock()
         let entered = expectation(description: "Two occupied workers")
         entered.expectedFulfillmentCount = 2
+        let drained = expectation(description: "Both occupied workers finish")
+        drained.expectedFulfillmentCount = 2
         let release = DispatchSemaphore(value: 0)
         defer { release.signal(); release.signal() }
         let admissions = Mutex(0)
@@ -225,12 +227,11 @@ final class GitBinaryReliabilityTests: XCTestCase {
         }, admissionObserver: { request in
             let index = admissions.withLock { let index = $0; $0 += 1; return index }
             if index == 2 {
-                clock.elapse(2)
-                request.cancel()
+                clock.elapse(2); request.cancel()
             }
         })
         for index in 0 ..< 2 {
-            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in drained.fulfill() }
         }
         wait(for: [entered], timeout: 3)
         let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: [], timing: clock.timing, runner: runner,
@@ -239,16 +240,20 @@ final class GitBinaryReliabilityTests: XCTestCase {
                                                    warnings.withLock { $0.append(rejected) }
                                                }
                                            })
-        let ready = expectation(description: "The retried preference is selected without rejection")
-        ready.assertForOverFulfill = true
-        discovery.whenAvailable { path, error in XCTAssertEqual(path, "/configured"); XCTAssertNil(error); ready.fulfill() }
-        clock.elapse(2)
+        let unavailable = expectation(description: "Unexpected current cancellation settles without a self-retry loop")
+        unavailable.assertForOverFulfill = true
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 3); unavailable.fulfill() }
+        wait(for: [unavailable], timeout: 3)
+        XCTAssertEqual(admissions.withLock { $0 }, 3)
+        XCTAssertTrue(budgets.withLock { $0.isEmpty })
         release.signal(); release.signal()
+        wait(for: [drained], timeout: 3)
+        let ready = expectation(description: "New demand owns a new attempt")
+        discovery.whenAvailable { path, error in XCTAssertEqual(path, "/configured"); XCTAssertNil(error); ready.fulfill() }
         wait(for: [ready], timeout: 3)
-        XCTAssertEqual(budgets.withLock { $0 }, [1], "Queue residence and cancellation must consume the same five-second attempt")
-        XCTAssertTrue(warnings.withLock { $0.isEmpty })
+        XCTAssertEqual(budgets.withLock { $0 }, [5])
         XCTAssertEqual(admissions.withLock { $0 }, 4)
-        XCTAssertFalse(clock.state.withLock { $0.jobs.contains { $0.deadline == 7 } }, "Reentrant admission cannot move the original second-five deadline")
+        XCTAssertTrue(warnings.withLock { $0.isEmpty })
     }
 
     func testAttemptDeadlineIncludesTimeSpentInDiscoveryDiagnosticsBeforeAdmission() {
@@ -262,7 +267,7 @@ final class GitBinaryReliabilityTests: XCTestCase {
                                                }
                                            })
         let expired = expectation(description: "The expired attempt never launches")
-        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 2); expired.fulfill() }
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 3); expired.fulfill() }
         wait(for: [expired], timeout: 3)
         XCTAssertEqual(calls.withLock { $0 }, 0)
     }
@@ -297,6 +302,143 @@ final class GitBinaryReliabilityTests: XCTestCase {
         XCTAssertEqual(attempts.withLock { $0 }, 2)
     }
 
+    func testQueuedExpiryCanBeRetriedByALaterDemand() {
+        let clock = Clock()
+        let entered = expectation(description: "Both workers are occupied")
+        entered.expectedFulfillmentCount = 2
+        let drained = expectation(description: "Both occupied workers finish")
+        drained.expectedFulfillmentCount = 2
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let calls = Mutex<[String]>([])
+        let warnings = Mutex<[String]>([])
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            calls.withLock { $0.append(path) }
+            if path.hasPrefix("/occupied") {
+                entered.fulfill()
+                _ = release.wait(timeout: .now() + 10)
+            }
+            return .init(output: { "git version 2.50.1" }, cancel: {})
+        })
+        for index in 0 ..< 2 {
+            runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in drained.fulfill() }
+        }
+        wait(for: [entered], timeout: 3)
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/fallback"], timing: clock.timing, runner: runner,
+                                           notify: {
+                                               _, rejected in if let rejected {
+                                                   warnings.withLock { $0.append(rejected) }
+                                               }
+                                           })
+        let unavailable = expectation(description: "Queue expiry is temporary without rejecting the executable")
+        unavailable.assertForOverFulfill = true
+        discovery.whenAvailable { path, error in
+            XCTAssertNil(path)
+            XCTAssertEqual(error?.domain, "PBGitBinaryErrorDomain")
+            XCTAssertEqual(error?.code, 3)
+            unavailable.fulfill()
+        }
+        clock.advance(5)
+        wait(for: [unavailable], timeout: 3)
+        release.signal(); release.signal()
+        wait(for: [drained], timeout: 3)
+        let ready = expectation(description: "A fresh demand executes the original preference")
+        ready.assertForOverFulfill = true
+        discovery.whenAvailable { path, error in
+            XCTAssertEqual(path, "/configured")
+            XCTAssertNil(error)
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 3)
+        XCTAssertEqual(calls.withLock { $0.filter { $0 == "/configured" }.count }, 1)
+        XCTAssertFalse(calls.withLock { $0.contains("/fallback") })
+        XCTAssertTrue(warnings.withLock { $0.isEmpty })
+    }
+
+    func testAutomaticDiscoveryFailureDoesNotRejectNilEmptyOrLineEndingPreferences() {
+        for preference: String? in [nil, "", "\r\n"] {
+            let warnings = Mutex<[String]>([])
+            let discovery = GitBinaryDiscovery(preference: { preference }, environment: [:], output: { _, _ in nil }, locations: [],
+                                               notify: {
+                                                   _, rejected in if let rejected {
+                                                       warnings.withLock { $0.append(rejected) }
+                                                   }
+                                               })
+            let finished = expectation(description: "Automatic discovery exhausts without a configured preference")
+            discovery.whenAvailable { path, error in
+                XCTAssertNil(path)
+                XCTAssertEqual(error?.code, 1)
+                finished.fulfill()
+            }
+            wait(for: [finished], timeout: 3)
+            XCTAssertTrue(warnings.withLock { $0.isEmpty }, "Automatic preference \(String(describing: preference)) must not be reported as rejected")
+        }
+    }
+
+    func testAutomaticPreferenceFailureRetainsAnActiveSelectionWithTheSameWarningIdentity() {
+        for automatic: String? in [nil, "", "\r\n"] {
+            let preference = Mutex<String?>("/configured")
+            let warning = expectation(description: "A failed automatic replacement preserves the usable selection")
+            let discovery = GitBinaryDiscovery(preference: { preference.withLock { $0 } }, environment: [:], output: { path, _ in
+                path == "/configured" ? "git version 2.50.1" : nil
+            }, locations: [], notify: { selection, rejected in
+                if let rejected {
+                    XCTAssertEqual(rejected, "")
+                    XCTAssertEqual(selection?.path, "/configured")
+                    warning.fulfill()
+                }
+            })
+            let ready = expectation(description: "The initial preference is validated")
+            discovery.whenAvailable { path, error in XCTAssertEqual(path, "/configured"); XCTAssertNil(error); ready.fulfill() }
+            wait(for: [ready], timeout: 3)
+            preference.withLock { $0 = automatic }
+            discovery.start()
+            wait(for: [warning], timeout: 3)
+            XCTAssertEqual(discovery.currentSelection, GitBinarySelection(path: "/configured", version: "2.50.1"))
+        }
+    }
+
+    func testExecutedPreferenceRejectionSurvivesLaterBusyAdmission() {
+        let release = DispatchSemaphore(value: 0)
+        let drained = expectation(description: "All accepted occupied probes finish")
+        drained.expectedFulfillmentCount = 17
+        defer { for _ in 0 ..< 17 {
+            release.signal()
+        } }
+        let runner = GitDiscoveryProbeRunner(factory: { path, _, _ in
+            if path.hasPrefix("/occupied") {
+                _ = release.wait(timeout: .now() + 10)
+            }
+            return .init(output: { nil }, cancel: {})
+        })
+        let filled = Mutex(false)
+        let warnings = Mutex<[String]>([])
+        let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: [], runner: runner,
+                                           log: { message in
+                                               if message.contains("Attempt /usr/bin/which"), filled.withLock({ let first = !$0; $0 = true; return first }) {
+                                                   for index in 0 ..< 17 {
+                                                       runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in drained.fulfill() }
+                                                   }
+                                               }
+                                           }, notify: {
+                                               _, rejected in if let rejected {
+                                                   warnings.withLock { $0.append(rejected) }
+                                               }
+                                           })
+        let finished = expectation(description: "An executed rejection is retained when fallback admission is busy")
+        discovery.whenAvailable { path, error in
+            XCTAssertNil(path)
+            XCTAssertEqual(error?.code, 3)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 3)
+        XCTAssertEqual(warnings.withLock { $0 }, ["/configured"])
+        for _ in 0 ..< 17 {
+            release.signal()
+        }
+        wait(for: [drained], timeout: 3)
+    }
+
     func testQueueExpiryDoesNotRejectOrFallbackFromAnUnexecutedPreference() {
         let clock = Clock()
         let entered = expectation(description: "Both slots stay owned")
@@ -317,7 +459,7 @@ final class GitBinaryReliabilityTests: XCTestCase {
         let discovery = GitBinaryDiscovery(preference: { "/configured" }, environment: [:], locations: ["/fallback"], timing: clock.timing, runner: runner,
                                            notify: { _, _ in warnings.withLock { $0 += 1 } })
         let expired = expectation(description: "An unexecuted preference expires without becoming invalid")
-        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 2); expired.fulfill() }
+        discovery.whenAvailable { path, error in XCTAssertNil(path); XCTAssertEqual(error?.code, 3); expired.fulfill() }
         clock.advance(5)
         wait(for: [expired], timeout: 3)
         XCTAssertEqual(calls.withLock { Set($0) }, Set(["/occupied0", "/occupied1"]))

@@ -244,6 +244,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
 
     private weak var windowController: PBGitWindowController?
     private var toolbar: NSToolbar?
+    private weak var installedWindow: NSWindow?
     private var statusViews: StatusViews?
     private var forgeAccountViews: ForgeAccountViews?
     private var attentionItem: NSToolbarItem?
@@ -295,6 +296,20 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         installToolbar()
     }
 
+    func uninstall() {
+        let previous = installedWindow
+        installedWindow = nil
+        guard let previous else { return }
+        if previous.toolbar === toolbar {
+            previous.toolbar = nil
+        }
+        logger.info("Detached repository toolbar from its previous window")
+    }
+
+    func isInstalled(in window: NSWindow) -> Bool {
+        installedWindow === window && window.toolbar === toolbar
+    }
+
     @objc(updateWithStatus:busy:baseWindowTitle:)
     // swiftlint:disable:next unused_declaration
     func update(status: String, busy: Bool, baseWindowTitle: String) {
@@ -322,12 +337,14 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     }
 
     private func installToolbar() {
-        guard let window = windowController?.window else { return }
+        guard let window = windowController?.window, !isInstalled(in: window) else { return }
+        uninstall()
         let start = ProcessInfo.processInfo.systemUptime
         let reused = toolbar != nil
         let installed = toolbar ?? makeToolbar()
         toolbar = installed
         window.toolbar = installed
+        installedWindow = window
         window.toolbarStyle = .expanded
         reconcilePersistentFailureAccountItem()
         applyCurrentStatus()

@@ -3,6 +3,37 @@ import ForgeKit
 import XCTest
 
 final class ForgeApplicationCompositionTests: XCTestCase {
+    func testLazyDraftCleanupPreservesNewerEditsBeforeDeletingTheExactSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("LazyDraftCompletion-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let cleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let loader = ForgeApplicationServiceLoader {
+            try await ForgeApplicationServiceFactory.make(forgeDirectory: root, bindingCleaner: cleaner,
+                                                          keychain: CompositionKeychain(), cliRunner: CompositionRunner())
+        }
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let account = try ForgeAccountID(forge: forge, value: "draft-completion")
+        let identity = try ForgeDraftIdentity(accountID: account, destination: .pullRequest(repository: repository, number: ForgeItemNumber(42)))
+        let drafts = ForgeLazySQLitePullRequestDraftStore(loader: loader)
+        try await drafts.save(identity: identity, content: ForgeDraftContent(title: "Submitted", body: "Original"), at: Date(timeIntervalSince1970: 100))
+        let loaded = try await drafts.load(identity: identity)
+        let submitted = try XCTUnwrap(loaded)
+        try await drafts.save(identity: identity, content: ForgeDraftContent(title: "Newer", body: "Keep"), at: Date(timeIntervalSince1970: 101))
+        let oldRemoved = try await drafts.delete(identity: identity, matching: submitted)
+        XCTAssertFalse(oldRemoved)
+        let retained = try await drafts.load(identity: identity)
+        let newer = try XCTUnwrap(retained)
+        XCTAssertEqual(newer.content, ForgeDraftContent(title: "Newer", body: "Keep"))
+        let removed = try await drafts.delete(identity: identity, matching: newer)
+        XCTAssertTrue(removed)
+        let absent = try await drafts.load(identity: identity)
+        XCTAssertNil(absent)
+        let services = try await loader.services()
+        await services.database?.close()
+    }
+
     func testOverlayLoaderPreparesCredentialFreeGitHubBindingWithPublicAccessAndSharedBudget() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ForgePublicOverlayComposition-\(UUID().uuidString)", isDirectory: true)

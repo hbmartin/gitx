@@ -1,5 +1,6 @@
 import ForgeKit
 import Foundation
+import OSLog // swiftlint:disable:this unused_import
 
 // MARK: - Provider-neutral mutation seam
 
@@ -630,6 +631,7 @@ nonisolated protocol RepositoryPullRequestDraftPersisting: Sendable {
     func load(identity: ForgeDraftIdentity) async throws -> ForgeDraft?
     func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws
     func delete(identity: ForgeDraftIdentity) async throws
+    func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool
 }
 
 nonisolated struct NullRepositoryPullRequestDraftStore: RepositoryPullRequestDraftPersisting {
@@ -639,6 +641,9 @@ nonisolated struct NullRepositoryPullRequestDraftStore: RepositoryPullRequestDra
 
     func save(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws {}
     func delete(identity _: ForgeDraftIdentity) async throws {}
+    func delete(identity _: ForgeDraftIdentity, matching _: ForgeDraft) async throws -> Bool {
+        false
+    }
 }
 
 nonisolated struct ForgeSQLitePullRequestDraftStore: RepositoryPullRequestDraftPersisting {
@@ -681,6 +686,18 @@ nonisolated struct ForgeSQLitePullRequestDraftStore: RepositoryPullRequestDraftP
             lastActivityAt: draft.lastActivityAt,
             expiresAt: draft.lastActivityAt.addingTimeInterval(ForgePolicyConstants.durableRecordExpiration)
         ))
+    }
+
+    func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool {
+        guard snapshot.identity == identity else { return false }
+        let key = try ForgeSQLiteStore.encodedKey(identity)
+        guard let record = try await database.durableRecord(kind: .draft, accountID: identity.accountID,
+                                                            repository: identity.destination.repository, key: key) else { return false }
+        let current = try JSONDecoder().decode(ForgeDraft.self, from: record.payload)
+        guard current.identity == identity else { throw RepositoryPullRequestServiceError.draftUnavailable }
+        guard current == snapshot else { return false }
+        return try await database.deleteDurableRecord(kind: .draft, accountID: identity.accountID,
+                                                      repository: identity.destination.repository, key: key, matchingPayload: record.payload)
     }
 
     func delete(identity: ForgeDraftIdentity) async throws {
@@ -809,5 +826,70 @@ final nonisolated class RepositoryForgeCloneServiceResolver: Sendable {
     @MainActor
     func service() -> any RepositoryForgeCloneCatalogServing {
         factory()
+    }
+}
+
+/// An admitted server mutation owns its target and local cleanup independently
+/// of the window which admitted it. Only its caller may publish presentation.
+nonisolated struct RepositoryPullRequestMutationCompletion: Sendable {
+    let service: any RepositoryPullRequestMutationServing
+    let drafts: any RepositoryPullRequestDraftPersisting
+    private static let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestCompletion")
+
+    func create(accountID: ForgeAccountID, form: ForgePullRequestCreationForm,
+                preparation: RepositoryPullRequestCreationPreparation) async throws -> RepositoryPullRequestCreationOutcome
+    {
+        let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: preparation)
+        let snapshot = await submittedSnapshot(identity: identity, content: ForgeDraftContent(title: form.title, body: form.bodyMarkdown))
+        try Task.checkCancellation()
+        let outcome = try await service.createPullRequest(accountID: accountID, form: form)
+        let destination: ForgeDestination
+        switch outcome {
+        case let .created(value), let .existing(value): destination = value
+        }
+        guard case .pullRequest = destination, destination.repository == preparation.repository else {
+            throw ForgePullRequestWorkflowError.mismatchedRepository
+        }
+        await removePublishedSnapshot(snapshot)
+        return outcome
+    }
+
+    func edit(accountID: ForgeAccountID, edit: ForgePullRequestEdit, destination: ForgeDestination,
+              identity: ForgeDraftIdentity) async throws -> RepositoryPullRequestEditOutcome
+    {
+        let snapshot = await submittedSnapshot(identity: identity, content: ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown))
+        try Task.checkCancellation()
+        let outcome = try await service.editPullRequest(accountID: accountID, edit: edit)
+        guard outcome.destination == destination else { throw ForgePullRequestWorkflowError.mismatchedRepository }
+        await removePublishedSnapshot(snapshot)
+        return outcome
+    }
+
+    private func submittedSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent) async -> ForgeDraft? {
+        do {
+            guard let snapshot = try await drafts.load(identity: identity), snapshot.identity == identity, snapshot.content == content else {
+                Self.logger.info("No matching submitted draft snapshot; later cleanup will preserve stored edits")
+                return nil
+            }
+            return snapshot
+        } catch {
+            Self.logger.error("Cannot capture submitted draft; preserving local evidence, code=\((error as NSError).code)")
+            return nil
+        }
+    }
+
+    private func removePublishedSnapshot(_ snapshot: ForgeDraft?) async {
+        guard let snapshot else { return }
+        let drafts = drafts
+        // Verified publication owns local completion even if its submitting task
+        // was cancelled while the server response was in flight.
+        await Task.detached(priority: .utility) {
+            do {
+                let removed = try await drafts.delete(identity: snapshot.identity, matching: snapshot)
+                Self.logger.notice("Verified server success; submitted draft removed=\(removed, privacy: .public)")
+            } catch {
+                Self.logger.error("Server mutation succeeded but draft cleanup failed; no mutation retry, code=\((error as NSError).code)")
+            }
+        }.value
     }
 }

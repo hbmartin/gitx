@@ -1102,6 +1102,183 @@ final class RepositoryPullRequestUIControllerAppTests: XCTestCase {
 
 @MainActor
 final class RepositoryMutationCompletionTests: XCTestCase {
+    private enum OwnerState { case current, revoked, released }
+
+    func testCompletionPreservesTheDraftWhenTheServerOutcomeHasAnotherRepository() async throws {
+        for returnsIssue in [false, true] {
+            let fixture = try DirectMutationFixture(started: expectation(description: "The captured server request executes once"))
+            try await fixture.saveSubmittedDraft()
+            let original = try await fixture.drafts.load(identity: fixture.identity)
+            let destination: ForgeDestination = try returnsIssue
+                ? .issue(fixture.app.repository, ForgeItemNumber(42))
+                : .pullRequest(fixture.app.fork, ForgeItemNumber(42))
+            await fixture.service.release(.created(destination))
+            do {
+                _ = try await fixture.operation.create(accountID: fixture.app.accountID, form: fixture.form, preparation: fixture.preparation)
+                XCTFail("Only a Pull Request in the submitted repository can certify publication")
+            } catch { XCTAssertEqual(error as? ForgePullRequestWorkflowError, .mismatchedRepository) }
+            let retained = try await fixture.drafts.load(identity: fixture.identity)
+            XCTAssertEqual(retained, original)
+            let deletions = await fixture.drafts.conditionalDeletes
+            XCTAssertEqual(deletions, 0)
+            await fulfillment(of: [fixture.started], timeout: 5)
+        }
+    }
+
+    func testCleanupFailurePreservesTheDraftAndTheActualSuccessfulResult() async throws {
+        let fixture = try DirectMutationFixture(started: expectation(description: "The successful server request is not retried"))
+        try await fixture.saveSubmittedDraft()
+        let original = try await fixture.drafts.load(identity: fixture.identity)
+        await fixture.drafts.failDeletion(true)
+        await fixture.service.release(fixture.outcome)
+        let actual = try await fixture.operation.create(accountID: fixture.app.accountID, form: fixture.form, preparation: fixture.preparation)
+        XCTAssertEqual(actual, fixture.outcome)
+        let retained = try await fixture.drafts.load(identity: fixture.identity)
+        XCTAssertEqual(retained, original)
+        let attempts = await fixture.service.createCount
+        let deletions = await fixture.drafts.conditionalDeletes
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(deletions, 1)
+        await fulfillment(of: [fixture.started], timeout: 5)
+    }
+
+    func testUnreadableSubmittedSnapshotDoesNotTurnServerSuccessIntoFailure() async throws {
+        let fixture = try DirectMutationFixture(started: expectation(description: "A snapshot failure never resubmits the server request"))
+        try await fixture.saveSubmittedDraft()
+        let original = try await fixture.drafts.load(identity: fixture.identity)
+        await fixture.drafts.failLoads(true)
+        await fixture.service.release(fixture.outcome)
+        let actual = try await fixture.operation.create(accountID: fixture.app.accountID, form: fixture.form, preparation: fixture.preparation)
+        XCTAssertEqual(actual, fixture.outcome)
+        await fixture.drafts.failLoads(false)
+        let retained = try await fixture.drafts.load(identity: fixture.identity)
+        let deletions = await fixture.drafts.conditionalDeletes
+        XCTAssertEqual(retained, original)
+        XCTAssertEqual(deletions, 0)
+        await fulfillment(of: [fixture.started], timeout: 5)
+    }
+
+    func testMissingOrDifferentDraftContentSurvivesVerifiedPublication() async throws {
+        for newer in [false, true] {
+            let fixture = try DirectMutationFixture(started: expectation(description: "Publish without a matching snapshot"))
+            if newer {
+                try await fixture.drafts.save(identity: fixture.identity, content: ForgeDraftContent(title: "Other edit", body: "Keep this"), at: Date(timeIntervalSince1970: 100))
+            }
+            let original = try await fixture.drafts.load(identity: fixture.identity)
+            await fixture.service.release(fixture.outcome)
+            let actual = try await fixture.operation.create(accountID: fixture.app.accountID, form: fixture.form, preparation: fixture.preparation)
+            XCTAssertEqual(actual, fixture.outcome)
+            let retained = try await fixture.drafts.load(identity: fixture.identity)
+            let deletions = await fixture.drafts.conditionalDeletes
+            XCTAssertEqual(retained, original)
+            XCTAssertEqual(deletions, 0)
+            await fulfillment(of: [fixture.started], timeout: 5)
+        }
+    }
+
+    func testFailedServerRequestPreservesItsOriginalDraftAndError() async throws {
+        let fixture = try DirectMutationFixture(started: expectation(description: "The refused server request executes once"))
+        try await fixture.saveSubmittedDraft()
+        let original = try await fixture.drafts.load(identity: fixture.identity)
+        await fixture.service.rejectMutations()
+        do {
+            _ = try await fixture.operation.create(accountID: fixture.app.accountID, form: fixture.form, preparation: fixture.preparation)
+            XCTFail("The original server error must propagate")
+        } catch { XCTAssertEqual(error as? CompletionFixtureError, .unavailable) }
+        let retained = try await fixture.drafts.load(identity: fixture.identity)
+        let deletions = await fixture.drafts.conditionalDeletes
+        XCTAssertEqual(retained, original)
+        XCTAssertEqual(deletions, 0)
+        await fulfillment(of: [fixture.started], timeout: 5)
+    }
+
+    func testEditCompletionRejectsADifferentDestinationWithoutDeletingTheDraft() async throws {
+        let fixture = try DirectMutationFixture(started: expectation(description: "The exact edit request executes once"))
+        let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.app.repository, number: ForgeItemNumber(42), title: "Submitted", bodyMarkdown: "Text", updatedAt: Date(timeIntervalSince1970: 100))
+        let identity = try RepositoryPullRequestDraftPolicy.editIdentity(accountID: fixture.app.accountID, snapshot: snapshot)
+        let edit = try ForgePullRequestEdit(snapshot: snapshot, title: snapshot.title, bodyMarkdown: snapshot.bodyMarkdown)
+        try await fixture.drafts.save(identity: identity, content: ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown), at: snapshot.updatedAt)
+        let original = try await fixture.drafts.load(identity: identity)
+        try await fixture.service.releaseEdit(RepositoryPullRequestEditOutcome(snapshot: snapshot, destination: .pullRequest(fixture.app.repository, ForgeItemNumber(43))))
+        do {
+            _ = try await fixture.operation.edit(accountID: fixture.app.accountID, edit: edit, destination: .pullRequest(fixture.app.repository, snapshot.number), identity: identity)
+            XCTFail("Another destination cannot certify this edit")
+        } catch { XCTAssertEqual(error as? ForgePullRequestWorkflowError, .mismatchedRepository) }
+        let retained = try await fixture.drafts.load(identity: identity)
+        XCTAssertEqual(retained, original)
+        await fulfillment(of: [fixture.started], timeout: 5)
+    }
+
+    func testConditionalDraftDeletionPreservesNewerEditsAndSupportsLegacyPayloadEncoding() async throws {
+        let fixture = try PullRequestAppFixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Conditional-draft-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let database = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(databaseURL: root.appendingPathComponent("Forge.sqlite3"), recoveryDirectoryURL: root.appendingPathComponent("Recovery")))
+        let store = ForgeSQLitePullRequestDraftStore(database: database)
+        let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: fixture.preparation())
+        try await store.save(identity: identity, content: ForgeDraftContent(title: "Submitted", body: "Old"), at: Date(timeIntervalSince1970: 100))
+        let loaded = try await store.load(identity: identity)
+        let submitted = try XCTUnwrap(loaded)
+        try await store.save(identity: identity, content: ForgeDraftContent(title: "Newer", body: "Keep"), at: Date(timeIntervalSince1970: 101))
+        let stale = try await store.delete(identity: identity, matching: submitted)
+        XCTAssertFalse(stale)
+        let updated = try await store.load(identity: identity)
+        let newer = try XCTUnwrap(updated)
+        XCTAssertEqual(newer.content, ForgeDraftContent(title: "Newer", body: "Keep"))
+        let wrongIdentity = try ForgeDraftIdentity(accountID: fixture.accountID, destination: .pullRequest(repository: fixture.repository, number: ForgeItemNumber(42)))
+        let wrong = try await store.delete(identity: wrongIdentity, matching: newer)
+        XCTAssertFalse(wrong)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let legacyPayload = try encoder.encode(newer)
+        let key = try ForgeSQLiteStore.encodedKey(identity)
+        try await database.saveDurableRecord(ForgeSQLiteDurableRecord(kind: .draft, accountID: fixture.accountID, repository: fixture.repository, key: key, payload: legacyPayload, lastActivityAt: newer.lastActivityAt))
+        let removed = try await store.delete(identity: identity, matching: newer)
+        XCTAssertTrue(removed, "Deletion must use stored bytes rather than a freshly encoded snapshot")
+        let missing = try await store.delete(identity: identity, matching: newer)
+        XCTAssertFalse(missing)
+        let absent = try await NullRepositoryPullRequestDraftStore().delete(identity: identity, matching: newer)
+        XCTAssertFalse(absent)
+        await database.close()
+    }
+
+    func testConditionalDraftDeletionProtectsMalformedMismatchedAndUnavailableStorage() async throws {
+        let fixture = try PullRequestAppFixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Protected-draft-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let database = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(databaseURL: root.appendingPathComponent("Forge.sqlite3"), recoveryDirectoryURL: root.appendingPathComponent("Recovery")))
+        let store = ForgeSQLitePullRequestDraftStore(database: database)
+        let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: fixture.preparation())
+        let submitted = try ForgeDraft(identity: identity, content: ForgeDraftContent(title: "Submitted", body: "Text"), createdAt: Date(timeIntervalSince1970: 100), lastActivityAt: Date(timeIntervalSince1970: 100))
+        let otherIdentity = try ForgeDraftIdentity(accountID: fixture.accountID, destination: .pullRequest(repository: fixture.repository, number: ForgeItemNumber(42)))
+        let other = try ForgeDraft(identity: otherIdentity, content: submitted.content, createdAt: submitted.createdAt, lastActivityAt: submitted.lastActivityAt)
+        let key = try ForgeSQLiteStore.encodedKey(identity)
+        for (payload, mismatchedIdentity) in try [(JSONEncoder().encode(other), true), (Data("invalid JSON".utf8), false)] {
+            try await database.saveDurableRecord(ForgeSQLiteDurableRecord(kind: .draft, accountID: fixture.accountID, repository: fixture.repository, key: key, payload: payload, lastActivityAt: submitted.lastActivityAt))
+            do {
+                _ = try await store.delete(identity: identity, matching: submitted)
+                XCTFail("Invalid stored evidence cannot be deleted")
+            } catch {
+                if mismatchedIdentity {
+                    XCTAssertEqual(error as? RepositoryPullRequestServiceError, .draftUnavailable)
+                } else {
+                    XCTAssertTrue(error is DecodingError)
+                }
+            }
+            let retained = try await database.durableRecord(kind: .draft, accountID: fixture.accountID, repository: fixture.repository, key: key)
+            XCTAssertEqual(retained?.payload, payload)
+        }
+        await database.close()
+        do {
+            _ = try await store.delete(identity: identity, matching: submitted)
+            XCTFail("Storage errors must propagate")
+        } catch ForgeSQLiteError.closed {
+            // Closed storage must fail rather than silently preserve a success value.
+        } catch { XCTFail("Expected closed storage, got \(error)") }
+    }
+
     func testCreateSuccessDeletesTheSubmittedDraftBeforeOpeningItsDestination() async throws {
         try await characterizeSuccessfulCreation(existing: false)
     }
@@ -1110,35 +1287,185 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await characterizeSuccessfulCreation(existing: true)
     }
 
-    private func characterizeSuccessfulCreation(existing: Bool) async throws {
+    func testSuccessfulCreateCleansItsDraftAfterOwnerRevocationWithoutPresentation() async throws {
+        try await characterizeSuccessfulCreation(existing: false, ownerState: .revoked)
+    }
+
+    func testSuccessfulCreateCleansItsDraftAfterAllPresentationOwnersDeallocate() async throws {
+        try await characterizeSuccessfulCreation(existing: false, ownerState: .released)
+    }
+
+    func testOutcomeCallbackRevocationPreventsLaterPresentationCallbacks() async throws {
+        try await characterizeSuccessfulCreation(existing: false, revokeDuringOutcome: true)
+    }
+
+    func testSuccessfulCreatePreservesNewerDraftEdits() async throws {
+        try await characterizeSuccessfulCreation(existing: false, newerDraft: true)
+    }
+
+    func testExplicitRevocationDisablesEveryWrappedPresentationCapability() throws {
+        let fixture = try PullRequestAppFixture()
+        let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        defer { local.cleanup() }
+        let window = NSWindow()
+        let owner = PBGitWindowController(window: window)
+        defer { owner.close() }
+        let binding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: fixture.repository, preferredAccount: fixture.accountID)
+        let destination = try ForgeDestination.pullRequest(fixture.repository, ForgeItemNumber(42))
+        var openings = 0
+        var fallbacks = 0
+        let controller = RepositoryPullRequestUIController(repository: local.repository, windowController: owner,
+                                                           remoteActions: RecordingRepositoryRemoteActions(events: []), service: FailingPreparationMutationService(),
+                                                           destinationOpening: { _ in openings += 1; return true }, bindingResolving: { binding },
+                                                           postPushBrowserFallback: { _ in fallbacks += 1 })
+        controller.invalidateOwner()
+        XCTAssertFalse(controller.destinationOpening(destination))
+        XCTAssertNil(controller.bindingResolving())
+        controller.postPushBrowserFallback(nil)
+        XCTAssertEqual(openings, 0)
+        XCTAssertEqual(fallbacks, 0)
+    }
+
+    func testEscapedPresentationCapabilitiesDoNotRetainOrOutliveTheirController() throws {
+        let fixture = try PullRequestAppFixture()
+        let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        defer { local.cleanup() }
+        let owner = PBGitWindowController(window: NSWindow())
+        defer { owner.close() }
+        let box = PullRequestBindingBox()
+        let binding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: fixture.repository, preferredAccount: fixture.accountID)
+        let destination = try ForgeDestination.pullRequest(fixture.repository, ForgeItemNumber(42))
+        var openings = 0
+        var fallbacks = 0
+        var controller: RepositoryPullRequestUIController? = RepositoryPullRequestUIController(repository: local.repository, windowController: owner,
+                                                                                               remoteActions: RecordingRepositoryRemoteActions(events: []), service: FailingPreparationMutationService(),
+                                                                                               destinationOpening: { _ in openings += 1; return true }, bindingResolving: { box.binding },
+                                                                                               postPushBrowserFallback: { _ in fallbacks += 1 })
+        box.binding = binding
+        let open = try XCTUnwrap(controller?.destinationOpening)
+        let resolve = try XCTUnwrap(controller?.bindingResolving)
+        let fallback = try XCTUnwrap(controller?.postPushBrowserFallback)
+        XCTAssertNotNil(resolve())
+        weak let weakController = controller
+        controller = nil
+        XCTAssertNil(weakController)
+        XCTAssertFalse(open(destination))
+        XCTAssertNil(resolve())
+        fallback(nil)
+        XCTAssertEqual(openings, 0)
+        XCTAssertEqual(fallbacks, 0)
+    }
+
+    func testVerifiedSuccessCleansItsDraftAfterCancellationDuringTheServerRequest() async throws {
+        try await characterizeSuccessfulCreation(existing: false, cancelAfterAdmission: true)
+    }
+
+    func testEditSuccessCleansItsDraftForTheCurrentOwner() async throws {
+        try await exerciseEdit(ownerState: .current)
+    }
+
+    func testEditSuccessCleansItsDraftAfterOwnerRevocation() async throws {
+        try await exerciseEdit(ownerState: .revoked)
+    }
+
+    func testEditSuccessCleansItsDraftAfterPresentationDeallocation() async throws {
+        try await exerciseEdit(ownerState: .released)
+    }
+
+    private func exerciseEdit(ownerState: OwnerState) async throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
-        let owner = PBGitWindowController(window: window)
+        var owner: PBGitWindowController? = PBGitWindowController(window: window)
+        weak let weakOwner = owner
+        let started = expectation(description: "The edit reaches its captured service")
+        let service = try CompletionMutationService(preparation: fixture.preparation(), started: started)
+        let drafts = CompletionDraftStore()
+        let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "Submitted edit", bodyMarkdown: "Submitted body", updatedAt: Date(timeIntervalSince1970: 100))
+        let destination = ForgeDestination.pullRequest(fixture.repository, snapshot.number)
+        let outcome = RepositoryPullRequestEditOutcome(snapshot: snapshot, destination: destination)
+        let identity = try RepositoryPullRequestDraftPolicy.editIdentity(accountID: fixture.accountID, snapshot: snapshot)
+        var openings: [ForgeDestination] = []
+        var controller: RepositoryPullRequestUIController? = try RepositoryPullRequestUIController(repository: local.repository, windowController: XCTUnwrap(owner),
+                                                                                                   remoteActions: RecordingRepositoryRemoteActions(events: []), service: service, drafts: drafts,
+                                                                                                   destinationOpening: { openings.append($0); return true }, bindingResolving: { nil }, postPushBrowserFallback: { _ in XCTFail("An edit never opens push fallback") })
+        weak let weakController = controller
+        defer {
+            Task { await service.releaseEdit(outcome) }
+            controller?.invalidateOwner()
+            owner?.close()
+            window.close()
+            local.cleanup()
+        }
+        window.makeKeyAndOrderFront(nil)
+        controller?.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: destination)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 5)
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        let button = try XCTUnwrap(find("GitX.PullRequest.Submit", in: XCTUnwrap(sheet.contentView)) as? NSButton)
+        button.performClick(nil)
+        await fulfillment(of: [started], timeout: 5)
+        let admitted = try XCTUnwrap(controller?.mutationTask)
+        switch ownerState {
+        case .current: break
+        case .revoked: controller?.invalidateOwner()
+        case .released:
+            controller = nil
+            owner = nil
+            let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in weakController == nil && weakOwner == nil }, object: nil)
+            await fulfillment(of: [released], timeout: 5)
+        }
+        await service.releaseEdit(outcome)
+        let completed = expectation(description: "The admitted edit finishes cleanup")
+        Task { await admitted.value; completed.fulfill() }
+        await fulfillment(of: [completed], timeout: 5)
+        let stored = try await drafts.load(identity: identity)
+        XCTAssertNil(stored)
+        XCTAssertEqual(openings, ownerState == .current ? [destination] : [])
+        let calls = await service.editCount
+        XCTAssertEqual(calls, 1)
+    }
+
+    private func characterizeSuccessfulCreation(existing: Bool, ownerState: OwnerState = .current, newerDraft: Bool = false, cancelAfterAdmission: Bool = false, revokeDuringOutcome: Bool = false) async throws {
+        let fixture = try PullRequestAppFixture()
+        let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
+        var owner: PBGitWindowController? = PBGitWindowController(window: window)
+        weak let weakOwner = owner
         let preparation = try fixture.preparation()
         let form = try XCTUnwrap(preparation.initialForms().forms.first)
         let destination = try ForgeDestination.pullRequest(fixture.repository, ForgeItemNumber(42))
         let outcome: RepositoryPullRequestCreationOutcome = existing ? .existing(destination) : .created(destination)
         let started = expectation(description: "The submitted mutation reaches its service")
-        let completed = expectation(description: "A verified outcome reaches the live owner")
         let service = CompletionMutationService(preparation: preparation, started: started)
         let drafts = CompletionDraftStore()
         let binding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: fixture.repository, preferredAccount: fixture.accountID)
-        let controller = RepositoryPullRequestUIController(
-            repository: local.repository, windowController: owner,
+        var outcomes: [RepositoryPullRequestCreationOutcome] = []
+        var openings: [ForgeDestination] = []
+        var controller: RepositoryPullRequestUIController? = try RepositoryPullRequestUIController(
+            repository: local.repository, windowController: XCTUnwrap(owner),
             remoteActions: RecordingRepositoryRemoteActions(events: []), service: service, drafts: drafts,
-            destinationOpening: { value in XCTAssertEqual(value, destination); return true },
+            destinationOpening: { value in openings.append(value); return true },
             bindingResolving: { binding }, postPushBrowserFallback: { _ in XCTFail("Creation does not open a push fallback") }
         )
         defer {
             Task { await service.release(outcome) }
-            controller.invalidateOwner()
+            controller?.invalidateOwner()
+            owner?.close()
             window.close()
             local.cleanup()
         }
-        controller.onCreationOutcome = { value in XCTAssertEqual(value, outcome); completed.fulfill() }
+        weak let weakController = controller
+        controller?.onCreationOutcome = { [weak controller] outcome in
+            outcomes.append(outcome)
+            if revokeDuringOutcome {
+                controller?.invalidateOwner()
+            }
+        }
+        var destinationCallbacks = 0
+        controller?.onCreationDestinationOpened = { _, _ in destinationCallbacks += 1 }
         window.makeKeyAndOrderFront(nil)
-        controller.newPullRequest()
+        controller?.newPullRequest()
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
         await fulfillment(of: [ready], timeout: 5)
         let sheet = try XCTUnwrap(window.attachedSheet)
@@ -1148,10 +1475,35 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: preparation)
         let pending = try await drafts.load(identity: identity)
         XCTAssertEqual(pending?.content, ForgeDraftContent(title: form.title, body: form.bodyMarkdown))
+        let admittedTask = try XCTUnwrap(controller?.mutationTask)
+        if cancelAfterAdmission {
+            admittedTask.cancel()
+        }
+        if newerDraft {
+            try await drafts.save(identity: identity, content: ForgeDraftContent(title: "Newer edit", body: "Keep this text"), at: Date().addingTimeInterval(10))
+        }
+        switch ownerState {
+        case .current: break
+        case .revoked: controller?.invalidateOwner()
+        case .released:
+            controller = nil
+            owner = nil
+            let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in weakController == nil && weakOwner == nil }, object: nil)
+            await fulfillment(of: [released], timeout: 5)
+        }
         await service.release(outcome)
+        let completed = expectation(description: "The admitted mutation finishes its cleanup")
+        Task { await admittedTask.value; completed.fulfill() }
         await fulfillment(of: [completed], timeout: 5)
         let saved = try await drafts.load(identity: identity)
-        XCTAssertNil(saved)
+        if newerDraft {
+            XCTAssertEqual(saved?.content, ForgeDraftContent(title: "Newer edit", body: "Keep this text"))
+        } else {
+            XCTAssertNil(saved)
+        }
+        XCTAssertEqual(outcomes, ownerState == .current && !cancelAfterAdmission ? [outcome] : [])
+        XCTAssertEqual(openings, ownerState == .current && !cancelAfterAdmission && !revokeDuringOutcome ? [destination] : [])
+        XCTAssertEqual(destinationCallbacks, ownerState == .current && !cancelAfterAdmission && !revokeDuringOutcome ? 1 : 0)
         let calls = await service.createCount
         XCTAssertEqual(calls, 1)
     }
@@ -1164,15 +1516,114 @@ final class RepositoryMutationCompletionTests: XCTestCase {
     }
 }
 
+@MainActor
+final class RepositoryMutationPresentationTests: XCTestCase {
+    func testDeferredRetriesRequireTheCurrentMutationAndExternalOwner() {
+        var externalOwnerIsCurrent = true
+        let authority = RepositoryPullRequestPresentationAuthority(validation: { externalOwnerIsCurrent })
+        XCTAssertFalse(authority.permitsMutation(UUID()))
+        let first = authority.beginMutation()
+        var deliveries: [String] = []
+        let oldRetry = authority.retry(for: first) { deliveries.append("first") }
+        oldRetry()
+        XCTAssertEqual(deliveries, ["first"])
+        let second = authority.beginMutation()
+        let newRetry = authority.retry(for: second) { deliveries.append("second") }
+        oldRetry()
+        XCTAssertEqual(deliveries, ["first"], "An earlier recovery sheet cannot resubmit a superseded mutation")
+        externalOwnerIsCurrent = false
+        newRetry()
+        XCTAssertEqual(deliveries, ["first"])
+        externalOwnerIsCurrent = true
+        newRetry()
+        XCTAssertEqual(deliveries, ["first", "second"])
+    }
+
+    func testRevocationCannotBeUndoneByAnotherMutationOrAnUnchangedRawOwner() {
+        let authority = RepositoryPullRequestPresentationAuthority(validation: { true })
+        let submitted = authority.beginMutation()
+        var calls = 0
+        let retry = authority.retry(for: submitted) { calls += 1 }
+        XCTAssertTrue(authority.permitsMutation(submitted))
+        authority.revoke()
+        retry()
+        let later = authority.beginMutation()
+        let laterRetry = authority.retry(for: later) { calls += 1 }
+        laterRetry()
+        XCTAssertFalse(authority.isCurrent)
+        XCTAssertFalse(authority.permitsMutation(submitted))
+        XCTAssertFalse(authority.permitsMutation(later))
+        XCTAssertEqual(calls, 0)
+    }
+}
+
+private enum CompletionFixtureError: Error, Equatable { case unavailable }
+
+@MainActor
+private struct DirectMutationFixture {
+    let started: XCTestExpectation
+    let app: PullRequestAppFixture
+    let preparation: RepositoryPullRequestCreationPreparation
+    let form: ForgePullRequestCreationForm
+    let identity: ForgeDraftIdentity
+    let outcome: RepositoryPullRequestCreationOutcome
+    let service: CompletionMutationService
+    let drafts: CompletionDraftStore
+    var operation: RepositoryPullRequestMutationCompletion {
+        .init(service: service, drafts: drafts)
+    }
+
+    init(started: XCTestExpectation) throws {
+        self.started = started
+        drafts = CompletionDraftStore()
+        app = try PullRequestAppFixture()
+        preparation = try app.preparation()
+        form = try XCTUnwrap(preparation.initialForms().forms.first)
+        identity = try RepositoryPullRequestDraftPolicy.identity(preparation: preparation)
+        outcome = try .created(.pullRequest(app.repository, ForgeItemNumber(42)))
+        service = CompletionMutationService(preparation: preparation, started: started)
+    }
+
+    func saveSubmittedDraft() async throws {
+        try await drafts.save(identity: identity, content: ForgeDraftContent(title: form.title, body: form.bodyMarkdown), at: Date(timeIntervalSince1970: 100))
+    }
+}
+
 private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
+    init() {}
     private var values: [ForgeDraftIdentity: ForgeDraft] = [:]
+    private var loadsFail = false
+    private var deletionFails = false
+    private(set) var conditionalDeletes = 0
+
+    func failLoads(_ value: Bool) {
+        loadsFail = value
+    }
+
+    func failDeletion(_ value: Bool) {
+        deletionFails = value
+    }
 
     func load(identity: ForgeDraftIdentity) async throws -> ForgeDraft? {
-        values[identity]
+        if loadsFail {
+            throw CompletionFixtureError.unavailable
+        }
+        return values[identity]
     }
 
     func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
         values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: date)
+    }
+
+    func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool {
+        conditionalDeletes += 1
+        try Task.checkCancellation()
+        if deletionFails {
+            throw CompletionFixtureError.unavailable
+        }
+        guard snapshot.identity == identity, values[identity] == snapshot else { return false }
+        values[identity] = nil
+        return true
     }
 
     func delete(identity: ForgeDraftIdentity) async throws {
@@ -1185,6 +1636,13 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
     let started: XCTestExpectation
     let gate = IgnoringCancellationGate<RepositoryPullRequestCreationOutcome>()
     private(set) var createCount = 0
+    private(set) var editCount = 0
+    let editGate = IgnoringCancellationGate<RepositoryPullRequestEditOutcome>()
+    private var rejectsMutation = false
+
+    func rejectMutations() {
+        rejectsMutation = true
+    }
 
     init(preparation: RepositoryPullRequestCreationPreparation, started: XCTestExpectation) {
         self.preparation = preparation
@@ -1206,11 +1664,23 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
     func createPullRequest(accountID _: ForgeAccountID, form _: ForgePullRequestCreationForm) async throws -> RepositoryPullRequestCreationOutcome {
         createCount += 1
         started.fulfill()
+        if rejectsMutation {
+            throw CompletionFixtureError.unavailable
+        }
         return await gate.wait()
     }
 
     func editPullRequest(accountID _: ForgeAccountID, edit _: ForgePullRequestEdit) async throws -> RepositoryPullRequestEditOutcome {
-        throw CompletionError.unexpected
+        editCount += 1
+        started.fulfill()
+        if rejectsMutation {
+            throw CompletionFixtureError.unavailable
+        }
+        return await editGate.wait()
+    }
+
+    func releaseEdit(_ outcome: RepositoryPullRequestEditOutcome) async {
+        await editGate.release(outcome)
     }
 
     func syncFork(accountID _: ForgeAccountID, plan _: ForgeSyncForkPlan) async throws -> RepositorySyncForkOutcome {
@@ -2322,6 +2792,10 @@ private actor CountingPullRequestDraftStore: RepositoryPullRequestDraftPersistin
     }
 
     func save(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws {}
+    func delete(identity _: ForgeDraftIdentity, matching _: ForgeDraft) async throws -> Bool {
+        false
+    }
+
     func delete(identity _: ForgeDraftIdentity) async throws {}
 }
 
@@ -2333,6 +2807,10 @@ private struct GatedPullRequestDraftStore: RepositoryPullRequestDraftPersisting 
     }
 
     func save(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws {}
+    func delete(identity _: ForgeDraftIdentity, matching _: ForgeDraft) async throws -> Bool {
+        false
+    }
+
     func delete(identity _: ForgeDraftIdentity) async throws {}
 }
 
