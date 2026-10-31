@@ -574,12 +574,22 @@ final class GitBinaryReliabilityTests: XCTestCase {
 
     func testQueuedProbeExpiryKeepsTheOriginalAvailabilityDeadline() {
         let clock = Clock()
+        let starts = Mutex<[String]>([])
         let occupied = expectation(description: "Both worker slots remain owned")
         occupied.expectedFulfillmentCount = 2
+        occupied.assertForOverFulfill = true
+        let returned = expectation(description: "Both gated factories return before fixture teardown")
+        returned.expectedFulfillmentCount = 2
+        returned.assertForOverFulfill = true
         let release = DispatchSemaphore(value: 0)
-        defer { release.signal(); release.signal() }
+        defer {
+            release.signal(); release.signal()
+            wait(for: [returned], timeout: 3)
+        }
         let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            starts.withLock { $0.append(path) }
             if path.hasPrefix("/occupied") {
+                defer { returned.fulfill() }
                 occupied.fulfill(); _ = release.wait(timeout: .now() + 10)
             }
             return .init(output: { nil }, cancel: {})
@@ -596,6 +606,7 @@ final class GitBinaryReliabilityTests: XCTestCase {
         runner.run(path: "/interloper", arguments: [], timeout: 100) { _ in }
         clock.advance(1)
         wait(for: [expired], timeout: 3)
+        XCTAssertEqual(starts.withLock { $0.sorted() }, ["/occupied0", "/occupied1"])
         XCTAssertNil(discovery.currentSelection)
     }
 

@@ -47,6 +47,8 @@
 #endif
 #import "PBGitDefaults.h"
 #import "PBGitRepository.h"
+// Window-owned Swift status invalidation consumes the existing watcher contract.
+#import "PBGitRepositoryWatcher.h"
 #import "PBGitRepositoryDocument.h"
 #import "PBGitIndex.h"
 #import "PBChangedFile.h"

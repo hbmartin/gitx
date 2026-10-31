@@ -89,7 +89,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         repository: PBGitRepository,
         windowController: PBGitWindowController,
         retryConfirmation: RepositoryRetryConfirmation? = nil,
-        progressStarting: @escaping RepositoryRemoteProgressStarting
+        progressStarting: RepositoryRemoteProgressStarting?
     ) {
         self.repository = repository
         self.windowController = windowController

@@ -28,7 +28,8 @@
       "mutation-completion-toolbar-isolation2",
       "mutation-completion-priority-green-build",
       "mutation-completion-priority-green",
-      "mutation-completion-import-cleanup-build"
+      "mutation-completion-import-cleanup-build",
+      "worktree-ownership-static"
     ]
   },
   "coverageRatchet": {
@@ -49,7 +50,10 @@
       "mutation-completion-post-feature-contracts",
       "mutation-completion-final-full",
       "mutation-completion-priority-red",
-      "mutation-completion-final-full2"
+      "mutation-completion-final-full2",
+      "worktree-ownership-broad-green",
+      "worktree-ownership-tsan-focused",
+      "worktree-ownership-critical-green"
     ]
   },
   "toolbarMeasurement": {
@@ -62,10 +66,11 @@
     "attachmentName": "Repeated toolbar reconciliation samples"
   },
   "requiredFinalVerification": {
-    "runId": "mutation-completion-final-full3",
+    "runId": "worktree-ownership-final-full",
     "profile": "full",
     "cleanupMode": "preview",
-    "receipt": "artifacts/verification/mutation-completion-final-full3/workflow.json",
+    "receipt": "artifacts/verification/worktree-ownership-final-full/workflow.json",
+    "status": "Required after final implementation and eligible coverage commits; earlier receipts are historical.",
     "uiRequiresFreshIdleConfirmation": true
   },
   "stagedApplication": {
@@ -87,6 +92,33 @@
     "failedAnalyzerReceipt": "artifacts/verification/mutation-completion-final-full2-analyze-1691b161/receipt.json",
     "finding": "The only semantic violation was an unnecessary Darwin import in the QoS regression test; AppKit already exposes the symbols.",
     "change": "Remove the redundant import without changing the QoS assertion or any baseline.",
-    "requiredPostCommitRunId": "mutation-completion-final-full3"
+    "requiredPostCommitRunId": "worktree-ownership-final-full"
+  },
+  "worktreeOwnershipReview": {
+    "firstCommentTarget": {
+      "pullRequest": "https://github.com/hbmartin/gitx/pull/118",
+      "commit": "5b01fb88a802d51ab73d409378b9b0d0fdebde59",
+      "comment": "discussion_r4429331176"
+    },
+    "remainingPastedComments": "Original reviewed SHA unavailable; actionable behavior independently verified at 83db8088e8a061dcf38e162664f37e332119901f.",
+    "plan": "Complete worktree cancellation and window ownership",
+    "protocol": "Caller cancellation revokes publication immediately; common-directory admission remains held through task and evidence acknowledgement. Each owned discovery generation is settled once; recovery follows resource release.",
+    "windowPolicy": "Complete captured ownership reconciliation precedes action admission and repair offers. History rebinding preserves browsing while replacing facts, badges and demand authority. HEAD/ref identities filter browsing-only reloads.",
+    "regressionRunIds": [
+      "worktree-ownership-red",
+      "worktree-ownership-legacy-order-red2"
+    ],
+    "passingRunIds": [
+      "worktree-ownership-focused4",
+      "worktree-ownership-critical-green2",
+      "worktree-ownership-broad-green2"
+    ],
+    "broadTests": 348,
+    "consumerBuilds": [
+      "Debug",
+      "Release"
+    ],
+    "diagnostics": "Current retained-History screenshot demonstrates replacement facts and Checks/Pull Request badges. Test gates acknowledge resource drainage before fixture deletion.",
+    "preserved": "Selectors, callback signatures, admitted writes, repository-owned inventory, delayed scripting options, persisted formats, dependencies and existing coverage floors."
   }
 }

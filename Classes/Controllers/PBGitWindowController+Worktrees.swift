@@ -334,14 +334,13 @@ extension PBGitWindowController {
     }
 
     private func captureWorktreePresentation() -> WorktreePresentationContext? {
-        guard isWindowLoaded, let window, window.isVisible, let repository else {
+        guard isWindowLoaded, let window, window.isVisible else {
             NSLog("[GitX] Ignored a worktree action without a loaded visible repository window")
             return nil
         }
-        let service = repository.worktreeService
-        guard let operationOwner = worktreeOperationOwner(for: service) else { return nil }
-        NSLog("[GitX] Captured worktree presentation generation %llu (supported: %@)", worktreePresentationGeneration, service.isSupported ? "yes" : "no")
-        return WorktreePresentationContext(window: window, repository: repository, service: service, generation: worktreePresentationGeneration, operationOwner: operationOwner)
+        guard let captured = reconciledWorktreeOwnership(), self.window === window else { return nil }
+        NSLog("[GitX] Captured worktree presentation generation %llu (supported: %@)", worktreePresentationGeneration, captured.service.isSupported ? "yes" : "no")
+        return WorktreePresentationContext(window: window, repository: captured.repository, service: captured.service, generation: worktreePresentationGeneration, operationOwner: captured.owner)
     }
 
     private func isCurrentWorktreePresentation(_ context: WorktreePresentationContext) -> Bool {
@@ -716,12 +715,16 @@ extension PBGitWindowController {
     }
 
     func offerWorktreeRepairIfNeeded() {
-        guard !offeredWorktreeRepair, let service = worktreeService, service.isSupported,
+        guard let context = captureWorktreePresentation(), let repository = context.repository,
+              !offeredWorktreeRepair else { return }
+        let service = context.service
+        guard service.isSupported,
               service.worktrees.contains(where: \.hasBrokenLink), !service.worktrees.contains(where: { $0.value.hasForeignLink }),
               let window, window.isVisible, window.attachedSheet == nil,
               worktreePresentationQueue?.hasPendingPresentations != true else { return }
-        offeredWorktreeRepair = true
-        repairWorktreeLinks(nil)
+        if presentWorktreeRepair(context: context) {
+            recordWorktreeRepairOffer(for: repository)
+        }
     }
 
     @IBAction @objc(repairWorktreeLinks:)
@@ -730,8 +733,9 @@ extension PBGitWindowController {
         presentWorktreeRepair(context: context)
     }
 
-    private func presentWorktreeRepair(context: WorktreePresentationContext) {
-        guard canUseWorktreePreview(context) else { return }
+    @discardableResult
+    private func presentWorktreeRepair(context: WorktreePresentationContext) -> Bool {
+        guard canUseWorktreePreview(context) else { return false }
         let service = context.service
         let manualPaths = WorktreePolicy.manualRepairPaths(service.worktrees.map(\.value))
         let broken = service.worktrees.filter(\.hasBrokenLink)
@@ -741,10 +745,10 @@ extension PBGitWindowController {
                 description: "A moved worktree needs manual link repair",
                 failureReason: "Its .git link cannot be replaced safely. Restore a regular Git link file before repairing or pruning:\n\n" + manualPaths.joined(separator: "\n")
             ), context: context)
-            return
+            return true
         case .none:
             NSLog("[GitX] Repair discovery found no broken worktree links")
-            return
+            return false
         case .chooseStyle:
             break
         }
@@ -781,6 +785,7 @@ extension PBGitWindowController {
                 }
             }
         }
+        return true
     }
 
     private func presentRepairPreview(_ preview: PBWorktreeRepairPreview, context: WorktreePresentationContext, changed: Bool) {

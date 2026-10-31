@@ -288,16 +288,22 @@ private final class WorktreeOperation {
     private(set) var isCancelled = false
     private var release: (@MainActor @Sendable () -> Void)?
     private var acknowledged: (@MainActor @Sendable () -> Void)?
+    private var retainedService: PBRepositoryWorktreeService?
+    var admission: (@MainActor () -> Void)?
     var task: PBTask?
     var cancellation: (() -> Void)?
     var evidenceCancellations: [UUID: () -> Void] = [:]
     var eventArguments: [String] = []
     var afterRelease: [@MainActor @Sendable () -> Void] = []
+    var ownedDiscoveryGeneration: UInt64?
+    private var pendingResources: Set<UUID> = []
+    private var didReleaseResources = false
 
-    init(context: WorktreeOperationContext, repository: PBGitRepository, owner: NSObject?, acknowledged: @escaping @MainActor @Sendable () -> Void) {
+    init(context: WorktreeOperationContext, repository: PBGitRepository, service: PBRepositoryWorktreeService, owner: NSObject?, acknowledged: @escaping @MainActor @Sendable () -> Void) {
         self.context = context
         self.owner = owner
         self.repository = repository
+        retainedService = service
         self.acknowledged = acknowledged
     }
 
@@ -320,12 +326,21 @@ private final class WorktreeOperation {
     }
 
     func admit(release: @escaping @MainActor @Sendable () -> Void) {
-        guard isActive else { release(); return }
+        guard !didReleaseResources else { release(); return }
         self.release = release
-        phase = .preparing
+        guard isActive else { releaseResourcesIfDrained(); return }
         if isCancelled {
             cancellation?()
+        } else {
+            phase = .preparing
         }
+    }
+
+    func runAdmission() {
+        let start = admission
+        admission = nil
+        guard isActive else { return }
+        start?()
     }
 
     func beginWriter() {
@@ -344,39 +359,53 @@ private final class WorktreeOperation {
         discoveryCompletion = nil
         evidenceCancellations.values.forEach { $0() }
         evidenceCancellations.removeAll()
+        admission = nil
         cancellation = nil
-        repository = nil
         eventArguments = []
-        let release = release
+        deliver()
+        releaseResourcesIfDrained()
+    }
+
+    /// Caller completion revokes authority; actual I/O acknowledgement releases admission.
+    func ownResource() -> @MainActor @Sendable () -> Void {
+        let identifier = UUID()
+        pendingResources.insert(identifier)
+        return { [self] in
+            guard pendingResources.remove(identifier) != nil else { return }
+            releaseResourcesIfDrained()
+        }
+    }
+
+    private func releaseResourcesIfDrained() {
+        guard !isActive, pendingResources.isEmpty, !didReleaseResources, let release else { return }
+        didReleaseResources = true
+        repository = nil
+        retainedService = nil
         self.release = nil
         let acknowledged = acknowledged
         self.acknowledged = nil
         let afterRelease = afterRelease
         self.afterRelease.removeAll()
-        deliver()
-        release?()
+        release()
         afterRelease.forEach { $0() }
         acknowledged?()
     }
 
     func markPreparationCancelled() {
-        guard isActive, !drainsAfterOwnerChange else { return }
+        guard isActive, !isCancelled, !drainsAfterOwnerChange else { return }
         isCancelled = true
         evidenceCancellations.values.forEach { $0() }
         evidenceCancellations.removeAll()
     }
 
-    func cancelPreparation(asynchronously: Bool = false) {
-        markPreparationCancelled()
-        guard isActive, isCancelled, phase != .reserved else { return }
+    @discardableResult
+    func cancelMarkedPreparation() -> Bool {
+        guard isActive, isCancelled else { return false }
         if let task {
-            if asynchronously {
-                cancelRepositoryReads([task])
-            } else {
-                task.terminate()
-            }
+            cancelRepositoryReads([task])
         }
         cancellation?()
+        return true
     }
 }
 
@@ -980,7 +1009,7 @@ final class PBRepositoryWorktreeService: NSObject {
             if operation.drainsAfterOwnerChange {
                 logEvent(operation.eventArguments, stage: "draining", phase: operation.phaseName, count: 1)
             }
-            operation.cancelPreparation()
+            operation.cancelMarkedPreparation()
         }
     }
 
@@ -993,8 +1022,7 @@ final class PBRepositoryWorktreeService: NSObject {
     func cancelPreparations(forOwner owner: NSObject) {
         let pending = operations.values.filter { $0.owner === owner }
         pending.forEach { $0.markPreparationCancelled() }
-        pending.forEach { $0.cancelPreparation(asynchronously: true) }
-        logEvent([], stage: "cancelled", phase: "owner-preparation", count: pending.filter { !$0.drainsAfterOwnerChange }.count)
+        pending.forEach { $0.cancelMarkedPreparation() }
     }
 
     @objc(worktreeForBranch:)
@@ -1026,7 +1054,9 @@ final class PBRepositoryWorktreeService: NSObject {
 
     func perform(_ command: WorktreeCommand, expectedWorktree: GitWorktree? = nil, owner: NSObject? = nil, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
         switch command {
-        case .pruneReport: pruneWorktrees(reportOnly: true, completion: completion); return
+        case .pruneReport:
+            prepareLegacyPruneReport(owner: owner, completion: completion)
+            return
         case .prune, .repairLinks:
             completion(nil, failure("This operation requires a captured prune preview or repair ownership target.")); return
         default: break
@@ -1089,14 +1119,7 @@ final class PBRepositoryWorktreeService: NSObject {
     @objc(pruneWorktreesReportOnly:completion:)
     func pruneWorktrees(reportOnly: Bool, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
         if reportOnly {
-            if let legacyPrunePreview {
-                discardPrunePreview(legacyPrunePreview)
-            }
-            legacyPrunePreview = nil
-            preparePrunePreview { preview, error in
-                self.legacyPrunePreview = preview
-                completion(preview?.report, error)
-            }
+            prepareLegacyPruneReport(owner: nil, completion: completion)
         } else {
             guard let preview = legacyPrunePreview else {
                 completion(nil, failure("Preview the worktrees before confirming Prune.")); return
@@ -1110,6 +1133,17 @@ final class PBRepositoryWorktreeService: NSObject {
                     completion(nil, error)
                 }
             }
+        }
+    }
+
+    private func prepareLegacyPruneReport(owner: NSObject?, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+        if let legacyPrunePreview {
+            discardPrunePreview(legacyPrunePreview)
+        }
+        legacyPrunePreview = nil
+        preparePrunePreview(owner: owner) { preview, error in
+            self.legacyPrunePreview = preview
+            completion(preview?.report, error)
         }
     }
 
@@ -1490,19 +1524,26 @@ final class PBRepositoryWorktreeService: NSObject {
             let context = try requestContext()
             guard requested == nil || requested == context else { throw WorktreeEvidenceError.changed(context.gitDirectory) }
             guard let repository else { throw Self.cancelledError() }
-            let operation = WorktreeOperation(context: context, repository: repository, owner: owner, acknowledged: activityDrain.begin())
+            let operation = WorktreeOperation(context: context, repository: repository, service: self, owner: owner, acknowledged: activityDrain.begin())
             operations[operation.identifier] = operation
-            operation.cancellation = { self.finish(operation) { onFailure(Self.cancelledError()) } }
-            // The job retains the service and repository until the reserved admission is released.
-            WorktreeMutationGate.enqueue(key: context.commonIdentity.pathIdentity) { finished in
-                operation.admit(release: finished)
-                guard operation.isActive else { return }
+            operation.cancellation = {
+                let error = self.lifecycleFailure(Self.cancelledError(), phase: operation.phaseName, category: "none")
+                self.finishReconciliation(operation: operation, generation: operation.ownedDiscoveryGeneration, published: false)
+                self.finish(operation) { onFailure(error) }
+            }
+            operation.admission = {
                 do { try self.validateCurrentContext(context) } catch {
                     let failure = self.operationError(error)
                     self.finish(operation) { onFailure(failure) }
                     return
                 }
                 body(operation)
+            }
+            // The marker retains drainage ownership without retaining the caller's
+            // consumed admission/completion closures after cancellation.
+            WorktreeMutationGate.enqueue(key: context.commonIdentity.pathIdentity) { finished in
+                operation.admit(release: finished)
+                operation.runAdmission()
             }
             return operation
         } catch { onFailure(operationError(error)); return nil }
@@ -1558,7 +1599,7 @@ final class PBRepositoryWorktreeService: NSObject {
         operation.task = task
         operation.taskCompletion = completion
         logEvent(command.arguments, stage: "started", phase: readOnly ? "preparing" : "writing", count: 1)
-        performTask(task) { [weak self] data, error in
+        performTask(task, operation: operation) { [weak self] data, error in
             guard let self, operation.isActive, let deliver = operation.taskCompletion else { return }
             operation.taskCompletion = nil
             let ownedTask = operation.task
@@ -1586,6 +1627,7 @@ final class PBRepositoryWorktreeService: NSObject {
         defer { synchronizeFreshness() }
         let context = operation.context
         let reconciliationGeneration = reconciling ? state.beginReconciliation() : state.beginOwnedDiscovery()
+        operation.ownedDiscoveryGeneration = reconciliationGeneration
         let retired = discovery
         discovery = nil
         discoveryTicket?.cancel()
@@ -1619,8 +1661,9 @@ final class PBRepositoryWorktreeService: NSObject {
         task.timeout = 10
         operation.task = task
         operation.discoveryCompletion = completion
+        operation.eventArguments = ["worktree", "list"]
         logEvent(arguments, stage: "started", phase: reconciling ? "reconciling" : "preparing")
-        performTask(task) { [weak self] data, error in
+        performTask(task, operation: operation) { [weak self] data, error in
             guard let self, operation.isActive, let deliver = operation.discoveryCompletion else { return }
             operation.discoveryCompletion = nil
             let complete = operation.task?.standardOutputTruncated == false && operation.task?.standardErrorTruncated == false
@@ -1652,9 +1695,12 @@ final class PBRepositoryWorktreeService: NSObject {
                     #if DEBUG
                         self.ownershipCaptureCount &+= 1
                     #endif
+                    let observer = self.discoveryObserverForTesting
                     self.evidence(operation: operation, checking: { check in
-                        try WorktreeDiscoveryEvidence(records: records, commonDirectory: context.commonDirectory, generation: context.generation,
-                                                      checkCancellation: check)
+                        observer?()
+                        try check()
+                        return try WorktreeDiscoveryEvidence(records: records, commonDirectory: context.commonDirectory, generation: context.generation,
+                                                             checkCancellation: check)
                     }) { result in
                         self.deliverDiscovery(result, context: context, operation: operation, reconciliationGeneration: reconciliationGeneration, completion: deliver)
                     }
@@ -1683,10 +1729,10 @@ final class PBRepositoryWorktreeService: NSObject {
     }
 
     private func finishReconciliation(operation: WorktreeOperation, generation: UInt64?, published: Bool) {
+        guard let generation, operation.ownedDiscoveryGeneration == generation else { return }
+        operation.ownedDiscoveryGeneration = nil
         defer { synchronizeFreshness() }
-        if let generation,
-           let next = state.completeOwnedDiscovery(generation, succeeded: published, recoverOnFailure: true)
-        {
+        if let next = state.completeOwnedDiscovery(generation, succeeded: published, recoverOnFailure: true) {
             // The operation still owns admission. Enqueue its follow-up only
             // after release, before the operation's drainage acknowledgement.
             operation.afterRelease.append { [weak self] in
@@ -1717,6 +1763,7 @@ final class PBRepositoryWorktreeService: NSObject {
                                            completion: @escaping @MainActor @Sendable (Result<Value, Error>) -> Void)
     {
         guard operation.isActive, !operation.isCancelled else { acknowledged?(); return }
+        let resourceAcknowledged = operation.ownResource()
         let context = operation.context
         let delivery = WorktreeEvidenceDelivery(completion)
         let identifier = UUID()
@@ -1730,7 +1777,7 @@ final class PBRepositoryWorktreeService: NSObject {
             try context.validate()
             return value
         }) { [weak delivery] result in
-            defer { acknowledged?() }
+            defer { resourceAcknowledged(); acknowledged?() }
             guard let delivery else { return }
             let completion = delivery.completion
             delivery.completion = nil
@@ -1748,10 +1795,11 @@ final class PBRepositoryWorktreeService: NSObject {
         }
     #endif
 
-    private func performTask(_ task: PBTask, completion: @escaping @MainActor @Sendable (Data?, Error?) -> Void) {
+    private func performTask(_ task: PBTask, operation: WorktreeOperation? = nil, completion: @escaping @MainActor @Sendable (Data?, Error?) -> Void) {
         let acknowledged = activityDrain.begin()
+        let resourceAcknowledged = operation?.ownResource()
         task.perform { data, error in
-            defer { acknowledged() }
+            defer { resourceAcknowledged?(); acknowledged() }
             completion(data, error)
         }
     }
@@ -1896,7 +1944,9 @@ final class PBRepositoryWorktreeService: NSObject {
 
     private func logRejection(_ arguments: [String], error: NSError, count: Int = 0) {
         if WorktreePresentationPolicy.isExpectedCancellation(error) {
-            logEvent(arguments, stage: "cancelled", count: count); return
+            let event = error.userInfo["PBWorktreeLifecycleFailureEvent"] as? [String: String]
+            logEvent(arguments, stage: "cancelled", phase: event?["phase"] ?? "preparing", count: event == nil ? count : 1)
+            return
         }
         var cause: Error = error
         while true {

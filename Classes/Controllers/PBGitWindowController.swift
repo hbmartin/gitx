@@ -36,6 +36,7 @@ private final class RepositoryWindowLifetime {
     let identity: RepositoryWindowOwnership.Identity
     var focus: RepositoryFocusRefreshCoordinator?
     var status: RepositoryLocalStatusLoader?
+    var referenceStatusRefresh = RepositoryStatusReferenceRefreshPolicy()
     var notifications: [NSObjectProtocol] = []
     var observations: [NSKeyValueObservation] = []
     let notificationCenter: NotificationCenter
@@ -109,6 +110,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var paneRepository: ObjectIdentifier?
     private weak var panePresentationWindow: NSWindow?
     private var actionRepository: ObjectIdentifier?
+    private var isReconcilingOwnership = false
+    private var pendingOwnershipReconciliation = false
+    private var pendingOwnershipGeneration: UInt64 = 0
+    private var pendingActivation = false
+    private var pendingPreferences = false
+    private var pendingLocalStatusGeneration: UInt64?
     private var ownerNotifications = NotificationCenter.default
     private weak var worktreeRepairRepository: PBGitRepository?
     private let repairOfferedRepositories = NSHashTable<PBGitRepository>.weakObjects()
@@ -136,7 +143,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         private var milestone3UITestHarness: Milestone3UITestHarness?
     #endif
     private var repositoryStatusBarController: RepositoryStatusBarController?
-    private(set) final var repositoryForgeOverlaySession: RepositoryForgeOverlaySession?
+    private(set) final var repositoryForgeOverlaySession: RepositoryForgeOverlaySession? {
+        didSet {
+            guard oldValue !== repositoryForgeOverlaySession else { return }
+            (_historyViewController?.commitList.delegate as? HistoryTableInteractionCoordinator)?
+                .bindForgeSession(repositoryForgeOverlaySession)
+        }
+    }
+
     /// Read-only diagnostic state used to verify deterministic UI-test launches.
     @objc public final var hasRepositoryForgeOverlaySessionForDiagnostics: Bool {
         repositoryForgeOverlaySession != nil
@@ -247,8 +261,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     final func ensureActionCoordinators() {
+        if !isReconcilingOwnership {
+            reconcileOwnership()
+            return
+        }
         guard !ownership.closed, let repository, repository.gitURL() != nil else { return }
-        ensureLifetime()
+        guard lifetime?.identity == currentOwnerIdentity(), lifetime?.repository === repository else { return }
         if actionRepository != ObjectIdentifier(repository) {
             resetActionCoordinators()
             actionRepository = ObjectIdentifier(repository)
@@ -257,11 +275,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             actionContextResolver = RepositoryActionContextResolver()
         }
         if remoteActionCoordinator == nil {
-            if let remoteProgressStarting {
-                remoteActionCoordinator = RepositoryRemoteActionCoordinator(repository: repository, windowController: self, progressStarting: remoteProgressStarting)
-            } else {
-                remoteActionCoordinator = RepositoryRemoteActionCoordinator(repository: repository, windowController: self)
-            }
+            remoteActionCoordinator = RepositoryRemoteActionCoordinator(repository: repository, windowController: self, progressStarting: remoteProgressStarting)
         }
         if pullRequestUIController == nil, let remoteActionCoordinator {
             let session = ApplicationComposition.shared.forgePullRequestServices.session(for: repository)
@@ -312,6 +326,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private final func invalidateGitLoaders() {
         // Revoke callback authority before either cancellation can deliver a result.
         gitLoaderLifecycle.invalidate()
+        pendingLocalStatusGeneration = nil
         focusRefreshCoordinator?.cancel()
         repositoryLocalStatusLoader?.cancel()
         focusRefreshCoordinator = nil
@@ -347,6 +362,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard lifetime === scope, ownership.accepts(scope.identity, generation: ownerGeneration),
               self.repository === repository, gitDiscovery.currentSelection == selection else { return false }
         let generation = gitLoaderLifecycle.generation
+        scope.referenceStatusRefresh = RepositoryStatusReferenceRefreshPolicy(baseline: referenceStatusIdentity(for: repository))
         focusRefreshCoordinator = RepositoryFocusRefreshCoordinator(repository: repository, gitExecutablePath: selection.path) { [weak self] in
             guard let self, self.acceptsGitLoaderResult(generation: generation, identity: identity) else { return }
             self.refreshLocalRepositoryContent()
@@ -367,23 +383,31 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private final func currentOwnerIdentity() -> RepositoryWindowOwnership.Identity? {
+        ownerIdentity(for: repository)
+    }
+
+    private final func ownerIdentity(for repository: PBGitRepository?) -> RepositoryWindowOwnership.Identity? {
         guard isWindowLoaded, let window = super.window, let repository else { return nil }
         return .init(repository: ObjectIdentifier(repository), window: ObjectIdentifier(window),
                      document: document.map(ObjectIdentifier.init))
     }
 
-    final func worktreeOperationOwner(for service: PBRepositoryWorktreeService) -> NSObject? {
-        ensureLifetime()
-        guard !ownership.closed, let scope = lifetime else { return nil }
+    final func reconciledWorktreeOwnership() -> (repository: PBGitRepository, service: PBRepositoryWorktreeService, owner: NSObject)? {
+        guard !isReconcilingOwnership else { return nil }
+        reconcileOwnership()
+        guard !ownership.closed, let scope = lifetime, scope.identity == currentOwnerIdentity() else { return nil }
+        let service = scope.repository.worktreeService
         if !scope.worktreeServices.contains(where: { $0 === service }) {
             scope.worktreeServices.append(service)
         }
-        return scope.worktreeOwner
+        return (scope.repository, service, scope.worktreeOwner)
     }
 
     /// Captured before asynchronous confirmation or work admission, never retargeted.
     final func repositoryOwnerValidation(for repository: PBGitRepository) -> () -> Bool {
-        ensureLifetime()
+        if !isReconcilingOwnership {
+            reconcileOwnership()
+        }
         let generation = ownership.generation
         let identity = currentOwnerIdentity()
         let repositoryID = ObjectIdentifier(repository)
@@ -392,7 +416,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let originatingRepository = self.repository.map(ObjectIdentifier.init)
         let matchesTarget = originatingRepository == nil || originatingRepository == repositoryID
         return { [weak self] in
-            guard let self, matchesTarget, !self.ownership.closed, self.ownership.generation == generation,
+            guard let self, matchesTarget, !self.ownership.closed, !self.isReconcilingOwnership, self.ownership.generation == generation,
                   self.repository.map(ObjectIdentifier.init) == originatingRepository else { return false }
             return self.currentOwnerIdentity() == identity
         }
@@ -428,19 +452,22 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repositoryForgeLinkUseCase = nil
     }
 
-    private final func ensureLifetime() {
-        guard !ownership.closed, let identity = currentOwnerIdentity(), let repository, repository.gitURL() != nil else { return }
-        guard lifetime?.identity != identity else { return }
-        if lifetime != nil {
+    private final func ensureLifetime(repository: PBGitRepository?, identity: RepositoryWindowOwnership.Identity?) -> Bool {
+        guard !ownership.closed else { return false }
+        if lifetime != nil, lifetime?.identity != identity {
             revokeOwner()
         }
+        let available = repository?.gtRepo != nil && repository?.gitURL() != nil
+        if lifetime != nil, !available {
+            revokeOwner()
+        }
+        guard available else { return false }
+        guard let identity, let repository else { return true }
+        guard lifetime?.identity != identity else { return true }
         ownership.install(identity)
         let scope = RepositoryWindowLifetime(repository: repository, identity: identity, notificationCenter: ownerNotifications)
         lifetime = scope
         if worktreeRepairRepository !== repository {
-            if offeredWorktreeRepair, let previous = worktreeRepairRepository {
-                repairOfferedRepositories.add(previous)
-            }
             worktreeRepairRepository = repository
             offeredWorktreeRepair = repairOfferedRepositories.contains(repository)
         }
@@ -449,6 +476,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         // installed notification callbacks need weak owner references.
         let observe: (Notification.Name, AnyObject?, @escaping @MainActor @Sendable (PBGitWindowController, String?) -> Void) -> Void = { [self, scope] name, object, action in
             let token = scope.notificationCenter.addObserver(forName: name, object: object, queue: nil) { [weak self] notification in
+                if name == .PBGitRepositoryEvent,
+                   let raw = notification.userInfo?[kPBGitRepositoryEventTypeUserInfoKey] as? NSNumber,
+                   raw.uintValue & PBGitRepositoryWatcherEventType.gitDirectory.rawValue == 0
+                {
+                    return
+                }
                 let operation = notification.userInfo?["operation"] as? String
                 let deliver: @MainActor @Sendable () -> Void = { [weak self] in
                     guard let self else { return }
@@ -460,9 +493,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                     NSLog("[GitX] Delivering owner event %@ generation %llu", name.rawValue, generation)
                     action(self, operation)
                 }
-                // Settings publication can hold a repository's binding lock.
-                // Reconcile preferences only after the publisher has returned.
-                if Thread.isMainThread, name != UserDefaults.didChangeNotification {
+                // Publishers may hold nonrecursive repository locks. Only close
+                // revocation is synchronous; every other event crosses a queue boundary.
+                if Thread.isMainThread, name == NSWindow.willCloseNotification {
                     // swift6-safety-justification: AppKit notifications delivered on the main thread run on its actor executor.
                     MainActor.assumeIsolated(deliver)
                 } else {
@@ -472,16 +505,17 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             scope.notifications.append(token)
         }
         observe(NSApplication.didBecomeActiveNotification, nil) { owner, _ in
-            owner.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+            owner.scheduleOwnershipReconciliation(activated: true)
         }
-        observe(.PBGitBinaryDidChange, nil) { owner, _ in owner.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange)) }
-        observe(UserDefaults.didChangeNotification, nil) { owner, _ in owner.refreshPreferenceDidChange(Notification(name: UserDefaults.didChangeNotification)) }
+        observe(.PBGitBinaryDidChange, nil) { owner, _ in owner.scheduleOwnershipReconciliation() }
+        observe(UserDefaults.didChangeNotification, nil) { owner, _ in owner.scheduleOwnershipReconciliation(preferences: true) }
         observe(NSNotification.Name(PBGitIndexIndexUpdated), repository.index) { owner, _ in
             owner.repositoryLocalStatusDidChange(Notification(name: NSNotification.Name(PBGitIndexIndexUpdated)))
         }
         observe(.repositoryRemoteOperationDidSucceed, repository) { owner, operation in
             owner.repositoryRemoteOperationDidSucceed(Notification(name: .repositoryRemoteOperationDidSucceed, userInfo: operation.map { ["operation": $0] }))
         }
+        observe(.PBGitRepositoryEvent, repository) { owner, _ in owner.requestLocalStatusRefresh() }
         observe(.forgeApplicationAvailabilityDidChange, nil) { owner, _ in owner.forgeApplicationAvailabilityDidChange(Notification(name: .forgeApplicationAvailabilityDidChange)) }
         observe(NSWindow.willCloseNotification, super.window) { owner, _ in
             owner.windowWillClose(Notification(name: NSWindow.willCloseNotification))
@@ -500,29 +534,113 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         scope.observations = [
             repository.observe(\.worktrees, options: [.initial]) { _, _ in update() },
             repository.observe(\.worktreeFeatureAvailable, options: []) { _, _ in update() },
-            repository.observe(\.currentBranch, options: []) { [weak self] _, _ in
-                Task { @MainActor [weak self] in
-                    guard let self, self.ownership.accepts(identity, generation: generation), self.currentOwnerIdentity() == identity else { return }
-                    self.repositoryLocalStatusLoader?.refresh()
-                    NSLog("[GitX] Refreshed local status after current branch changed, owner generation %llu", generation)
+            repository.observe(\.refs, options: []) { [weak self, weak scope] _, _ in
+                Task { @MainActor [weak self, weak scope] in
+                    guard let self, let scope,
+                          self.ownership.accepts(identity, generation: generation), self.currentOwnerIdentity() == identity else { return }
+                    if scope.referenceStatusRefresh.needsRefresh(for: self.referenceStatusIdentity(for: scope.repository)) {
+                        self.requestLocalStatusRefresh()
+                        NSLog("[GitX] Requested local status after HEAD or references changed, owner generation %llu", generation)
+                    }
                 }
             },
         ]
         NSLog("[GitX] Installed repository subscriptions generation %llu", generation)
+        return true
     }
 
     @discardableResult
     private final func reconcileOwnership() -> Bool {
         guard !ownership.closed else { return false }
+        guard !isReconcilingOwnership else {
+            scheduleOwnershipReconciliation()
+            return false
+        }
+        isReconcilingOwnership = true
+        defer { isReconcilingOwnership = false }
+        let repository = repository
+        let identity = ownerIdentity(for: repository)
         let repositoryID = repository.map(ObjectIdentifier.init)
-        if paneRepository != repositoryID {
+        let repositoryAvailable = ensureLifetime(repository: repository, identity: identity)
+        if paneRepository != repositoryID || !repositoryAvailable {
             closeRepositoryPanes()
         }
-        ensureLifetime()
-        guard lifetime != nil else { return false }
+        guard lifetime != nil else {
+            if isWindowLoaded {
+                super.window?.representedURL = nil
+            }
+            return false
+        }
         ensureActionCoordinators()
         installRepositoryPanesIfReady()
         return reconcileGitLoaders()
+    }
+
+    private final func scheduleOwnershipReconciliation(activated: Bool = false, preferences: Bool = false) {
+        guard !ownership.closed else { return }
+        if pendingOwnershipGeneration != ownership.generation {
+            pendingActivation = false
+            pendingPreferences = false
+        }
+        pendingOwnershipGeneration = ownership.generation
+        pendingActivation = pendingActivation || activated
+        pendingPreferences = pendingPreferences || preferences
+        guard !pendingOwnershipReconciliation else { return }
+        pendingOwnershipReconciliation = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingOwnershipReconciliation = false
+            let activated = self.pendingActivation
+            let preferences = self.pendingPreferences
+            self.pendingActivation = false
+            self.pendingPreferences = false
+            guard self.pendingOwnershipGeneration == self.ownership.generation, !self.ownership.closed else { return }
+            let capturedInitialFocus = self.reconcileOwnership()
+            if preferences {
+                self.applyRefreshPreferencePresentation()
+            }
+            if activated {
+                if !capturedInitialFocus {
+                    self.focusRefreshCoordinator?.applicationDidBecomeActive()
+                }
+                self.repositoryForgeOverlaySession?.requestRefresh(reason: .applicationActivated)
+            }
+        }
+    }
+
+    private final func referenceStatusIdentity(for repository: PBGitRepository) -> RepositoryStatusReferenceIdentity? {
+        guard let snapshot = repository.refs else { return nil }
+        var references: [Data: Data] = [:]
+        for (key, value) in snapshot {
+            guard let object = key as? GTOID, let refs = value as? [PBGitRef] else { return nil }
+            for ref in refs {
+                references[Data(ref.ref.utf8)] = Data(object.sha.utf8)
+            }
+        }
+        let headReference: String? = repository.headRef()?.simpleRef()
+        let headObject: GTOID? = repository.headOID()
+        return RepositoryStatusReferenceIdentity(headReference: headReference.map { Data($0.utf8) },
+                                                 headObject: headObject.map { Data($0.sha.utf8) }, references: references)
+    }
+
+    private final func requestLocalStatusRefresh() {
+        guard !ownership.closed, let scope = lifetime, scope.identity == currentOwnerIdentity() else { return }
+        let generation = ownership.generation
+        guard pendingLocalStatusGeneration != generation else { return }
+        pendingLocalStatusGeneration = generation
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.pendingLocalStatusGeneration == generation else { return }
+            self.pendingLocalStatusGeneration = nil
+            guard self.ownership.accepts(scope.identity, generation: generation), self.currentOwnerIdentity() == scope.identity else { return }
+            self.repositoryLocalStatusLoader?.refresh()
+        }
+    }
+
+    final func recordWorktreeRepairOffer(for repository: PBGitRepository) {
+        repairOfferedRepositories.add(repository)
+        if worktreeRepairRepository === repository {
+            offeredWorktreeRepair = true
+        }
     }
 
     private final func closeRepositoryPanes() {
@@ -609,6 +727,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if let source = notification.object as? NSWindow, source !== (isWindowLoaded ? super.window : nil) {
             return
         }
+        reconcileOwnership()
         offerWorktreeRepairIfNeeded()
     }
 
@@ -819,6 +938,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private func applyRefreshPreferences() {
         reconcileOwnership()
+        applyRefreshPreferencePresentation()
+    }
+
+    private func applyRefreshPreferencePresentation() {
         focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
         repositoryStatusBarController?.setVisible(ApplicationSettings.repositoryStatusBarVisible)
         updateToolbarForgeDiagnostic()
@@ -1342,12 +1465,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc(repositoryLocalStatusDidChange:)
     private dynamic func repositoryLocalStatusDidChange(_ notification: Notification) {
-        repositoryLocalStatusLoader?.refresh()
+        requestLocalStatusRefresh()
     }
 
     @objc(repositoryRemoteOperationDidSucceed:)
     private dynamic func repositoryRemoteOperationDidSucceed(_ notification: Notification) {
-        repositoryLocalStatusLoader?.refresh()
+        requestLocalStatusRefresh()
         let operation = notification.userInfo?["operation"] as? String
         let reason: ForgeRefreshReason = operation == "push" ? .localPushSucceeded : .localFetchSucceeded
         repositoryForgeOverlaySession?.requestRefresh(reason: reason)
@@ -1369,9 +1492,20 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 self?.presentForgeStatusDetails(action)
             }
         )
+        replaceRepositoryForgeOverlaySession(session)
+    }
+
+    final func replaceRepositoryForgeOverlaySession(_ session: RepositoryForgeOverlaySession?) {
+        guard repositoryForgeOverlaySession !== session, session == nil || !ownership.closed else { return }
+        repositoryForgeOverlaySession?.invalidate()
         repositoryForgeOverlaySession = session
-        repositoryStatusBarController?.bind(to: session)
-        session.start()
+        if let session {
+            repositoryStatusBarController?.bind(to: session)
+            session.start()
+        } else {
+            repositoryStatusBarController?.invalidate()
+            repositoryStatusBarController?.updateForge(.unbound)
+        }
     }
 
     private func installRepositoryStatusBar() {
@@ -1554,8 +1688,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func reloadRepositoryForgeOverlaySession() {
-        repositoryForgeOverlaySession?.invalidate()
-        repositoryForgeOverlaySession = nil
+        replaceRepositoryForgeOverlaySession(nil)
         installRepositoryForgeOverlaySession()
         updateToolbarForgeDiagnostic()
         NSLog("[GitX] Reloaded the repository Forge overlay after a recovery action")

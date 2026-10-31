@@ -735,9 +735,112 @@ import XCTest
             }
             origin.service.markPreparationsCancelled(forOwner: first)
             origin.service.cancelPreparations(forOwner: first)
-            await fulfillment(of: [cancelled, ready], timeout: 15)
+            await fulfillment(of: [cancelled], timeout: 5)
+            origin.gate.writer.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+            await fulfillment(of: [ready], timeout: 15)
             XCTAssertTrue(origin.service.isSupported)
             XCTAssertEqual(origin.gate.commands.filter { $0 == report }.count, 2)
+        }
+
+        func testCancelledOwnedDiscoveryDrainsBeforeFollowingWriterAndRecoversInventory() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let origin = try await installService(in: fixture)
+            let owner = NSObject()
+            let list = ["worktree", "list", "--porcelain", "-z"]
+            let unlock = ["worktree", "unlock", fixture.linked.path]
+            let events = CancellationEvents()
+            origin.service.lifecycleEventObserver = { events.values.append($0) }
+            defer { origin.service.lifecycleEventObserver = nil }
+            origin.service.cancelPreparations(forOwner: owner)
+            XCTAssertTrue(events.values.isEmpty, "An empty cancellation set has no lifecycle transition")
+            origin.gate.holdNextArguments = list
+            defer { origin.gate.writer.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)) }
+            let cancelled = expectation(description: "The cancelled caller completes before process drainage")
+            cancelled.assertForOverFulfill = true
+            origin.service.preparePrunePreview(owner: owner) { preview, error in
+                XCTAssertNil(preview)
+                XCTAssertEqual((error as NSError?)?.code, NSUserCancelledError)
+                cancelled.fulfill()
+            }
+            await waitUntil { origin.gate.writer.isPending }
+            XCTAssertEqual(origin.service.inventoryStatus, WorktreeInventoryStatus.updating.rawValue)
+            let following = expectation(description: "The next writer runs after the cancelled process acknowledges exit")
+            following.assertForOverFulfill = true
+            enqueue(origin.service, command: .unlock(path: fixture.linked.path)) { _, error in
+                XCTAssertNil(error)
+                following.fulfill()
+            }
+            origin.service.refresh()
+            origin.service.markPreparationsCancelled(forOwner: owner)
+            origin.service.cancelPreparations(forOwner: owner)
+            origin.service.cancelPreparations(forOwner: owner)
+            await fulfillment(of: [cancelled], timeout: 5)
+            XCTAssertEqual(events.values.filter { $0.contains(".cancelled ") }, ["worktree.prune.cancelled phase=preparing count=1 category=none"])
+            await waitUntil { origin.gate.writer.wasCancelled }
+            await drainCallbacks()
+            XCTAssertFalse(origin.gate.commands.contains(unlock), "Cancellation delivery must not release a live process's reservation")
+            origin.gate.writer.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+            await fulfillment(of: [following], timeout: 15)
+            await waitUntil { origin.service.inventoryStatus == WorktreeInventoryStatus.fresh.rawValue }
+            XCTAssertFalse(try fixture.git(["worktree", "list", "--porcelain"]).contains("locked"))
+            origin.service.refresh()
+            await waitUntil { origin.service.inventoryStatus == WorktreeInventoryStatus.fresh.rawValue }
+            XCTAssertFalse(origin.service.isSnapshotStale)
+        }
+
+        func testCancelledOwnedEvidenceHoldsAdmissionUntilItsWorkerAcknowledges() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let origin = try await installService(in: fixture)
+            let checkpoint = WorktreeWorkerCheckpoint()
+            let owner = NSObject()
+            origin.service.discoveryEvidenceObserver = { checkpoint.wait() }
+            defer { origin.service.discoveryEvidenceObserver = nil; checkpoint.resume() }
+            let cancelled = expectation(description: "Evidence cancellation promptly completes its caller")
+            cancelled.assertForOverFulfill = true
+            origin.service.preparePrunePreview(owner: owner) { preview, error in
+                XCTAssertNil(preview)
+                XCTAssertEqual((error as NSError?)?.code, NSUserCancelledError)
+                cancelled.fulfill()
+            }
+            await fulfillment(of: [checkpoint.entered], timeout: 5)
+            let before = origin.gate.commands.count
+            let following = expectation(description: "The next owner writes after the evidence worker drains")
+            enqueue(origin.service, command: .unlock(path: fixture.linked.path)) { _, error in
+                XCTAssertNil(error)
+                following.fulfill()
+            }
+            origin.service.refresh()
+            origin.service.cancelPreparations(forOwner: owner)
+            await fulfillment(of: [cancelled], timeout: 5)
+            await drainCallbacks()
+            XCTAssertEqual(origin.gate.commands.count, before)
+            XCTAssertTrue(checkpoint.isWaiting)
+            origin.service.discoveryEvidenceObserver = nil
+            checkpoint.resume()
+            await fulfillment(of: [following], timeout: 15)
+            await waitUntil { origin.service.inventoryStatus == WorktreeInventoryStatus.fresh.rawValue }
+            XCTAssertFalse(checkpoint.didTimeout)
+        }
+
+        func testPruneReportCompatibilityEntryPreservesItsOwner() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let origin = try await installService(in: fixture)
+            let owner = NSObject()
+            origin.gate.holdNextArguments = ["worktree", "list", "--porcelain", "-z"]
+            defer { origin.gate.writer.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)) }
+            let cancelled = expectation(description: "The compatibility report retains its supplied owner")
+            cancelled.assertForOverFulfill = true
+            performOwnedWorktreePruneReport(service: origin.service, owner: owner) { _, error in
+                XCTAssertEqual(error?.code, NSUserCancelledError)
+                cancelled.fulfill()
+            }
+            await waitUntil { origin.gate.writer.isPending }
+            origin.service.cancelPreparations(forOwner: owner)
+            await fulfillment(of: [cancelled], timeout: 5)
+            await waitUntil { origin.gate.writer.wasCancelled }
         }
 
         func testQueuedLegacyMutationRejectsAReplacedGitDirectoryAndRecoversAfterRestoration() async throws {
@@ -1075,6 +1178,9 @@ import XCTest
                 await drainCallbacks()
                 origin.gate.holdNextArguments = arguments
                 window.endSheet(occupant.window, returnCode: .alertFirstButtonReturn)
+                await activateWorktreeTestApplication()
+                window.makeKeyAndOrderFront(nil)
+                await waitUntil { NSApp.isActive && (window.isKeyWindow || window.attachedSheet?.isKeyWindow == true) }
                 await waitUntil { origin.gate.writer.isPending }
                 // Force another wait while refresh consumes the original token.
                 window.orderOut(nil)
@@ -1091,7 +1197,9 @@ import XCTest
                 await fulfillment(of: [failedReadDrained], timeout: 15)
                 await drainCallbacks()
                 XCTAssertEqual(controller.errors.count, 0)
+                await activateWorktreeTestApplication()
                 window.makeKeyAndOrderFront(nil)
+                await waitUntil { NSApp.isActive && (window.isKeyWindow || window.attachedSheet?.isKeyWindow == true) }
                 let errorSheet = try await waitForSheet(in: window, containing: "unknown-deferred-refresh-option")
                 XCTAssertEqual(controller.errors.count, 1)
                 XCTAssertFalse(sheetText(errorSheet).contains("cancelled, consumed"))
@@ -1305,7 +1413,8 @@ import XCTest
                 } else {
                     replaceAndRestore(.repository, controller: journey.controller, origin: journey.origin, alternative: alternative, window: journey.window)
                 }
-                let progressed = expectation(description: "owner cancellation releases admission before its late validation worker returns")
+                let progressed = expectation(description: "owner cancellation releases admission after its validation worker acknowledges")
+                let commandsBefore = journey.following.gate.commands.count
                 enqueuePreview(journey.following.service) { preview, error in
                     XCTAssertNil(error)
                     if let preview {
@@ -1314,10 +1423,10 @@ import XCTest
                     progressed.fulfill()
                 }
                 await drainCallbacks()
-                await fulfillment(of: [progressed], timeout: 15)
+                XCTAssertEqual(journey.following.gate.commands.count, commandsBefore, "The cancelled evidence worker still owns admission")
                 XCTAssertTrue(checkpoint.isWaiting, "Replacing or closing an owner cancels only its preparation before the late worker returns")
                 checkpoint.resume()
-                await fulfillment(of: [checkpoint.finishedExpectation()], timeout: 15)
+                await fulfillment(of: [checkpoint.finishedExpectation(), progressed], timeout: 15)
                 XCTAssertFalse(checkpoint.didTimeout)
                 XCTAssertEqual(checkpoint.deliveryCount, 1)
                 XCTAssertFalse(journey.origin.gate.commands.contains { $0.starts(with: ["worktree", "repair"]) })
@@ -2542,6 +2651,10 @@ import XCTest
             let repository: RepositoryTestGitRepository
             let service: PBRepositoryWorktreeService
             let gate: TaskGate
+        }
+
+        private final class CancellationEvents {
+            var values: [String] = []
         }
 
         private final class TaskGate {

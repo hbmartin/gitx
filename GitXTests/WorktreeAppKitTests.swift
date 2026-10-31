@@ -1009,6 +1009,7 @@ final class WorktreeAppKitTests: XCTestCase {
                     XCTAssertFalse(FileManager.default.fileExists(atPath: gitfile.path))
                     XCTAssertEqual(try registrationMetadata(administrative), metadata)
                     XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+                    await showForegroundWindow(controller)
                     controller.repairWorktreeLinks(nil)
                     let freshStyle = try await waitForSheet(in: window, containing: "Absolute Paths")
                     window.endSheet(freshStyle, returnCode: .alertFirstButtonReturn)
