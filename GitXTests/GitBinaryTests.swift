@@ -1171,6 +1171,10 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     func testRepeatedToolbarInstallationPreservesCustomizationWithoutReassignment() throws {
+        let defaults = UserDefaults.standard
+        let configurationKey = "NSToolbar Configuration GitX.Repository.HistoryToolbar"
+        let previousConfiguration = defaults.object(forKey: configurationKey)
+        defer { defaults.set(previousConfiguration, forKey: configurationKey) }
         try prepareFixture()
         defer { try? removeFixture() }
         let nativeWindow = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
@@ -1183,6 +1187,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let toolbarController = GitX.RepositoryToolbarController(windowController: owner)
         toolbarController.install()
         let toolbar = try XCTUnwrap(nativeWindow.toolbar)
+        toolbar.autosavesConfiguration = false
+        let configurationBeforeCustomization = defaults.object(forKey: configurationKey) as? NSDictionary
         toolbar.displayMode = .iconOnly
         XCTAssertEqual(toolbar.displayMode, .iconOnly)
         toolbar.insertItem(withItemIdentifier: .flexibleSpace, at: 0)
@@ -1193,6 +1199,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(toolbar.displayMode, .iconOnly)
         XCTAssertEqual(toolbar.items.map(\.itemIdentifier), identifiers)
         XCTAssertEqual(assignments.withLock { $0 }, 1)
+        XCTAssertFalse(toolbar.autosavesConfiguration)
+        XCTAssertEqual(defaults.object(forKey: configurationKey) as? NSDictionary, configurationBeforeCustomization)
     }
 
     func testAdmittedPushReportsSuccessAfterEveryPresentationOwnerIsReleased() throws {

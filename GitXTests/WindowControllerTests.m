@@ -4035,6 +4035,23 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 
 - (void)testRepositoryToolbarInstallsSingleHistoryConfiguration
 {
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	NSString *configurationKey = @"NSToolbar Configuration GitX.Repository.HistoryToolbar";
+	id previousConfiguration = [defaults objectForKey:configurationKey];
+	NSWindow *window = self.controller.window;
+	NSToolbar *previousToolbar = window.toolbar;
+	NSToolbarDisplayMode previousDisplayMode = previousToolbar.displayMode;
+	[self addTeardownBlock:^{
+		window.toolbar = previousToolbar;
+		previousToolbar.displayMode = previousDisplayMode;
+		if (previousConfiguration)
+			[defaults setObject:previousConfiguration forKey:configurationKey];
+		else
+			[defaults removeObjectForKey:configurationKey];
+	}];
+	previousToolbar.displayMode = NSToolbarDisplayModeIconAndLabel;
+	window.toolbar = nil;
+	[defaults removeObjectForKey:configurationKey];
 	PBRepositoryToolbarController *toolbarController = [[PBRepositoryToolbarController alloc] initWithWindowController:self.controller];
 	[toolbarController install];
 	NSToolbar *historyToolbar = self.controller.window.toolbar;
