@@ -681,6 +681,32 @@ import XCTest
             try await queuedCancellation(closesAndReopensWindow: false)
         }
 
+        func testClosingOneWindowPreservesRepositoryOwnedInventoryForAnotherWindow() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let origin = try await installService(in: fixture)
+            let first = await recordingController(for: origin)
+            let second = await recordingController(for: origin)
+            defer { origin.gate.writer.finish(Data()); first.close(); second.close() }
+            let list = ["worktree", "list", "--porcelain", "-z"]
+            origin.gate.holdNextArguments = list
+            origin.service.refresh()
+            await waitUntil { origin.gate.writer.isPending }
+            _ = try fixture.git(["worktree", "unlock", fixture.linked.path])
+            let report = try fixture.git(list)
+            first.close()
+            XCTAssertFalse(origin.gate.writer.wasCancelled, "Closing a window must not terminally cancel repository-owned inventory")
+            origin.gate.writer.finish(Data(report.utf8))
+            await waitUntil { origin.service.worktree(forBranch: "refs/heads/topic")?.isLocked == false }
+            XCTAssertTrue(origin.service.isSupported)
+            _ = try fixture.git(["worktree", "lock", "--reason", "second-consumer", fixture.linked.path])
+            let proof = try fixture.ownershipProof()
+            XCTAssertTrue(NSApp.sendAction(NSSelectorFromString("refreshWorktrees:"), to: second, from: nil))
+            await waitUntil { origin.service.worktree(forBranch: "refs/heads/topic")?.lockReason == "second-consumer" }
+            XCTAssertEqual(try fixture.ownershipProof(), proof)
+            XCTAssertTrue(second.window?.isVisible == true)
+        }
+
         func testCancellingOneOwnersPreparationPreservesAnotherOwnerOnTheSameService() async throws {
             selectGit()
             let fixture = try makeFixture()
