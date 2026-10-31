@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "reviewTarget": {
+    "pullRequest": "https://github.com/hbmartin/gitx/pull/117",
+    "commit": "42e8f985cdf901c06904f94702ee1bfef0106aac"
+  },
+  "integrationBase": "feec5170f47e7d3a137dbbada25a2521af1ab2fd",
+  "implementationCommit": "fddc588300417772c81f6e6f41237e43edcca892",
+  "fixtureCorrectionCommit": "42f9d1f46f7b6a0eec42f38f3e53852459d831a4",
+  "characterization": {
+    "runIds": [
+      "mutation-completion-characterization",
+      "mutation-completion-shared-green"
+    ]
+  },
+  "regressionReproductions": {
+    "runIds": [
+      "mutation-completion-red",
+      "mutation-completion-remote-red"
+    ]
+  },
+  "historicalPassingDevelopmentVerification": {
+    "runIds": [
+      "mutation-completion-focused2",
+      "mutation-completion-focused3",
+      "mutation-completion-post-feature-static",
+      "mutation-completion-release-repair",
+      "mutation-completion-toolbar-isolation2"
+    ]
+  },
+  "coverageRatchet": {
+    "runId": "mutation-completion-complete2",
+    "nativeTests": 2170,
+    "forgeKitTests": 312,
+    "appCoveredLines": 76595,
+    "appExecutableLines": 81819,
+    "previousAppFloor": 0.935,
+    "appFloor": 0.9361,
+    "fileFloorsRaised": 16,
+    "loweredFloors": 0,
+    "packagePolicyChanges": 0
+  },
+  "retainedFailureDiagnostics": {
+    "runIds": [
+      "mutation-completion-complete1",
+      "mutation-completion-post-feature-contracts"
+    ]
+  },
+  "toolbarMeasurement": {
+    "before": {
+      "runId": "mutation-completion-toolbar-baseline"
+    },
+    "samples": 5,
+    "iterationsPerSample": 100,
+    "scope": "Repeated RepositoryToolbarController.install calls with an unchanged attachment; final full performance plan retains the after-change sample attachment.",
+    "attachmentName": "Repeated toolbar reconciliation samples"
+  },
+  "requiredFinalVerification": {
+    "runId": "mutation-completion-final-full",
+    "profile": "full",
+    "cleanupMode": "preview",
+    "receipt": "artifacts/verification/mutation-completion-final-full/workflow.json",
+    "uiRequiresFreshIdleConfirmation": true
+  },
+  "stagedApplication": {
+    "path": "build/GitX.app",
+    "signatureVerificationRequired": true
+  }
+}
