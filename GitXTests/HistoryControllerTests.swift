@@ -5436,6 +5436,45 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(WorkspaceOpenRecorder.openedURLs.isEmpty)
     }
 
+    func testWatcherFixtureRestoresAbsentAndStoredPreferencesAfterScopeAndFailure() throws {
+        enum ScopeError: Error, Equatable { case injected }
+        let defaults = UserDefaults.standard
+        let domain = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let initial = defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"]
+        defer {
+            if let initial {
+                defaults.set(initial, forKey: "PBUseRepositoryWatcher")
+            } else {
+                defaults.removeObject(forKey: "PBUseRepositoryWatcher")
+            }
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        let expectedValues: [Bool?] = [nil, true, false]
+        for expected in expectedValues {
+            for fails in [false, true] {
+                if let expected {
+                    defaults.set(expected, forKey: "PBUseRepositoryWatcher")
+                } else {
+                    defaults.removeObject(forKey: "PBUseRepositoryWatcher")
+                }
+                let scope = {
+                    let restore = try self.disableRepositoryWatcher()
+                    defer { restore() }
+                    XCTAssertEqual(defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"] as? Bool, false)
+                    if fails {
+                        throw ScopeError.injected
+                    }
+                }
+                if fails {
+                    XCTAssertThrowsError(try scope()) { XCTAssertEqual($0 as? ScopeError, .injected) }
+                } else {
+                    try scope()
+                }
+                XCTAssertEqual(defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"] as? Bool, expected)
+            }
+        }
+    }
+
     private func disableRepositoryWatcher() throws -> () -> Void {
         let defaults = UserDefaults.standard
         let domain = try XCTUnwrap(Bundle.main.bundleIdentifier)

@@ -833,14 +833,58 @@ import XCTest
             defer { origin.gate.writer.finish(nil, error: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)) }
             let cancelled = expectation(description: "The compatibility report retains its supplied owner")
             cancelled.assertForOverFulfill = true
+            let callbacks = CancellationEvents()
             performOwnedWorktreePruneReport(service: origin.service, owner: owner) { _, error in
                 XCTAssertEqual(error?.code, NSUserCancelledError)
+                callbacks.values.append("cancelled")
                 cancelled.fulfill()
             }
             await waitUntil { origin.gate.writer.isPending }
+            origin.service.markPreparationsCancelled(forOwner: owner)
+            XCTAssertTrue(callbacks.values.isEmpty, "Marking reserves cancellation without delivering it")
+            XCTAssertFalse(origin.gate.writer.wasCancelled, "The mark-only compatibility selector does not terminate a process")
             origin.service.cancelPreparations(forOwner: owner)
             await fulfillment(of: [cancelled], timeout: 5)
+            XCTAssertEqual(callbacks.values, ["cancelled"])
             await waitUntil { origin.gate.writer.wasCancelled }
+        }
+
+        func testMarkedQueuedPreparationCancelsOnAdmissionAndLeavesFollowingWorkFunctional() async throws {
+            selectGit()
+            let fixture = try makeFixture()
+            let blocker = try await installService(in: fixture, holdsWriter: true)
+            let origin = try await installService(in: fixture)
+            let path = fixture.linked.path
+            let first = expectation(description: "The preceding writer completes")
+            enqueue(blocker.service, command: .lock(path: path, reason: "barrier")) { _, error in
+                XCTAssertNil(error)
+                first.fulfill()
+            }
+            await waitUntil { blocker.gate.writer.isPending }
+            defer { blocker.gate.writer.finish(Data()) }
+            let owner = NSObject()
+            let callbacks = CancellationEvents()
+            let cancelled = expectation(description: "The marked queued request cancels when admitted")
+            cancelled.assertForOverFulfill = true
+            origin.service.preparePrunePreview(owner: owner) { preview, error in
+                XCTAssertNil(preview)
+                XCTAssertEqual((error as NSError?)?.code, NSUserCancelledError)
+                callbacks.values.append("cancelled")
+                cancelled.fulfill()
+            }
+            origin.service.markPreparationsCancelled(forOwner: owner)
+            XCTAssertTrue(callbacks.values.isEmpty, "A mark does not complete a still-queued request")
+            blocker.gate.writer.finish(Data())
+            await fulfillment(of: [first, cancelled], timeout: 15)
+            XCTAssertEqual(callbacks.values, ["cancelled"])
+            XCTAssertFalse(origin.gate.commands.contains(WorktreeCommand.pruneReport.arguments))
+            let following = expectation(description: "The cancelled reservation releases following work")
+            enqueue(origin.service, command: .unlock(path: path)) { _, error in
+                XCTAssertNil(error)
+                following.fulfill()
+            }
+            await fulfillment(of: [following], timeout: 15)
+            XCTAssertFalse(try fixture.git(["worktree", "list", "--porcelain"]).contains("locked"))
         }
 
         func testQueuedLegacyMutationRejectsAReplacedGitDirectoryAndRecoversAfterRestoration() async throws {
