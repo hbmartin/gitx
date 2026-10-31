@@ -2941,6 +2941,13 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Retain a validated selection while nil, empty and CR/LF automatic discovery exhausts; each warning uses the same literal empty identity."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testBlockedCancellationDoesNotDelayTheAvailabilityDeadline",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Block cancellation and advance the original availability deadline; require its timeout callback before cancellation returns, and require cancellation to run at the owning probe worker's user-initiated QoS."
         }
       ]
     },

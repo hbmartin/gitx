@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 @testable import GitX
 import ObjectiveGit
 import Synchronization
@@ -895,12 +896,17 @@ final class GitBinaryReliabilityTests: XCTestCase {
         let clock = Clock()
         let entered = expectation(description: "Probe is running")
         let cancellation = expectation(description: "Cancellation worker is blocked")
+        let cancellationQoS = Mutex<UInt32?>(nil)
         let releaseOutput = DispatchSemaphore(value: 0)
         let releaseCancellation = DispatchSemaphore(value: 0)
         defer { releaseOutput.signal(); releaseCancellation.signal() }
         let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { _, _, _ in
             .init(output: { entered.fulfill(); _ = releaseOutput.wait(timeout: .now() + 10); return nil },
-                  cancel: { cancellation.fulfill(); _ = releaseCancellation.wait(timeout: .now() + 10) })
+                  cancel: {
+                      cancellationQoS.withLock { $0 = qos_class_self().rawValue }
+                      cancellation.fulfill()
+                      _ = releaseCancellation.wait(timeout: .now() + 10)
+                  })
         })
         let discovery = GitBinaryDiscovery(preference: { "/blocked" }, environment: [:], locations: [], timing: clock.timing, runner: runner)
         let ready = expectation(description: "Deadline completes before cancellation returns")
@@ -908,6 +914,8 @@ final class GitBinaryReliabilityTests: XCTestCase {
         wait(for: [entered], timeout: 3)
         clock.advance(30)
         wait(for: [ready, cancellation], timeout: 3)
+        XCTAssertEqual(cancellationQoS.withLock { $0 }, QOS_CLASS_USER_INITIATED.rawValue,
+                       "Cancellation must match the priority of the probe worker that owns and drains it")
     }
 
     func testLiveProbeCancellationReapsItsOwnedProcess() throws {
