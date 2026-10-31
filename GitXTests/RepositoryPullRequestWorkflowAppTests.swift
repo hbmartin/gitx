@@ -1101,6 +1101,126 @@ final class RepositoryPullRequestUIControllerAppTests: XCTestCase {
 }
 
 @MainActor
+final class RepositoryMutationCompletionTests: XCTestCase {
+    func testCreateSuccessDeletesTheSubmittedDraftBeforeOpeningItsDestination() async throws {
+        try await characterizeSuccessfulCreation(existing: false)
+    }
+
+    func testExistingPullRequestDeletesTheSubmittedDraftWithoutCreatingAgain() async throws {
+        try await characterizeSuccessfulCreation(existing: true)
+    }
+
+    private func characterizeSuccessfulCreation(existing: Bool) async throws {
+        let fixture = try PullRequestAppFixture()
+        let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
+        let owner = PBGitWindowController(window: window)
+        let preparation = try fixture.preparation()
+        let form = try XCTUnwrap(preparation.initialForms().forms.first)
+        let destination = try ForgeDestination.pullRequest(fixture.repository, ForgeItemNumber(42))
+        let outcome: RepositoryPullRequestCreationOutcome = existing ? .existing(destination) : .created(destination)
+        let started = expectation(description: "The submitted mutation reaches its service")
+        let completed = expectation(description: "A verified outcome reaches the live owner")
+        let service = CompletionMutationService(preparation: preparation, started: started)
+        let drafts = CompletionDraftStore()
+        let binding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: fixture.repository, preferredAccount: fixture.accountID)
+        let controller = RepositoryPullRequestUIController(
+            repository: local.repository, windowController: owner,
+            remoteActions: RecordingRepositoryRemoteActions(events: []), service: service, drafts: drafts,
+            destinationOpening: { value in XCTAssertEqual(value, destination); return true },
+            bindingResolving: { binding }, postPushBrowserFallback: { _ in XCTFail("Creation does not open a push fallback") }
+        )
+        defer {
+            Task { await service.release(outcome) }
+            controller.invalidateOwner()
+            window.close()
+            local.cleanup()
+        }
+        controller.onCreationOutcome = { value in XCTAssertEqual(value, outcome); completed.fulfill() }
+        window.makeKeyAndOrderFront(nil)
+        controller.newPullRequest()
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 5)
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        let submit = try XCTUnwrap(find("GitX.PullRequest.Submit", in: XCTUnwrap(sheet.contentView)) as? NSButton)
+        submit.performClick(nil)
+        await fulfillment(of: [started], timeout: 5)
+        let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: preparation)
+        let pending = try await drafts.load(identity: identity)
+        XCTAssertEqual(pending?.content, ForgeDraftContent(title: form.title, body: form.bodyMarkdown))
+        await service.release(outcome)
+        await fulfillment(of: [completed], timeout: 5)
+        let saved = try await drafts.load(identity: identity)
+        XCTAssertNil(saved)
+        let calls = await service.createCount
+        XCTAssertEqual(calls, 1)
+    }
+
+    private func find(_ identifier: String, in view: NSView) -> NSView? {
+        if view.accessibilityIdentifier() == identifier {
+            return view
+        }
+        return view.subviews.lazy.compactMap { self.find(identifier, in: $0) }.first
+    }
+}
+
+private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
+    private var values: [ForgeDraftIdentity: ForgeDraft] = [:]
+
+    func load(identity: ForgeDraftIdentity) async throws -> ForgeDraft? {
+        values[identity]
+    }
+
+    func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
+        values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: date)
+    }
+
+    func delete(identity: ForgeDraftIdentity) async throws {
+        values[identity] = nil
+    }
+}
+
+private actor CompletionMutationService: RepositoryPullRequestMutationServing {
+    let preparation: RepositoryPullRequestCreationPreparation
+    let started: XCTestExpectation
+    let gate = IgnoringCancellationGate<RepositoryPullRequestCreationOutcome>()
+    private(set) var createCount = 0
+
+    init(preparation: RepositoryPullRequestCreationPreparation, started: XCTestExpectation) {
+        self.preparation = preparation
+        self.started = started
+    }
+
+    func release(_ outcome: RepositoryPullRequestCreationOutcome) async {
+        await gate.release(outcome)
+    }
+
+    func capabilities(accountID _: ForgeAccountID, repository _: ForgeRepositoryIdentity, operations: Set<ForgeOperation>) async throws -> [ForgeOperation: ForgeOperationCapability] {
+        Dictionary(uniqueKeysWithValues: operations.map { ($0, .verified(.knownAuthority)) })
+    }
+
+    func prepareCreation(repository _: ForgeRepositoryIdentity, localBranch _: ForgeRefName, localHead _: ForgeCommitID) async throws -> RepositoryPullRequestCreationPreparation {
+        preparation
+    }
+
+    func createPullRequest(accountID _: ForgeAccountID, form _: ForgePullRequestCreationForm) async throws -> RepositoryPullRequestCreationOutcome {
+        createCount += 1
+        started.fulfill()
+        return await gate.wait()
+    }
+
+    func editPullRequest(accountID _: ForgeAccountID, edit _: ForgePullRequestEdit) async throws -> RepositoryPullRequestEditOutcome {
+        throw CompletionError.unexpected
+    }
+
+    func syncFork(accountID _: ForgeAccountID, plan _: ForgeSyncForkPlan) async throws -> RepositorySyncForkOutcome {
+        throw CompletionError.unexpected
+    }
+
+    private enum CompletionError: Error { case unexpected }
+}
+
+@MainActor
 final class RepositoryPullRequestSheetAppTests: XCTestCase {
     func testCreateSheetHasStableAccessibilityAndDraftDefaultsOffAfterRestore() throws {
         let fixture = try PullRequestAppFixture()
