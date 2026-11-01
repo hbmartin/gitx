@@ -2908,7 +2908,7 @@
         }
     }
 
-    private actor HarnessDraftStore: RepositoryPullRequestDraftPersisting {
+    actor HarnessDraftStore: RepositoryPullRequestDraftPersisting {
         private(set) var saveCount = 0
         private(set) var deleteCount = 0
         private(set) var savedContents: [ForgeDraftIdentity: ForgeDraftContent] = [:]

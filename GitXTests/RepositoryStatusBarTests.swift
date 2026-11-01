@@ -119,6 +119,17 @@ final class RepositoryStatusBarTests: XCTestCase {
         XCTAssertEqual(updated.preferredAccount, replacement)
     }
 
+    func testReferenceRefreshDistinguishesCanonicallyEquivalentRefBytes() {
+        let composed = Data("refs/heads/caf\u{00E9}".utf8)
+        let decomposed = Data("refs/heads/cafe\u{0301}".utf8)
+        let object = Data("11111111".utf8)
+        let first = RepositoryStatusReferenceIdentity(headReference: composed, headObject: object, references: [composed: object])
+        var policy = RepositoryStatusReferenceRefreshPolicy(baseline: first)
+        XCTAssertNotEqual(composed, decomposed)
+        XCTAssertFalse(policy.needsRefresh(for: first))
+        XCTAssertTrue(policy.needsRefresh(for: RepositoryStatusReferenceIdentity(headReference: decomposed, headObject: object, references: [decomposed: object])))
+    }
+
     func testReferenceRefreshIgnoresUnchangedHistoryReloadsAndTracksActualHeadAndRefs() {
         let main = Data("refs/heads/main".utf8)
         let topic = Data("refs/heads/topic".utf8)

@@ -8,6 +8,33 @@ import XCTest
 // Keep the generated Swift service surface out of files using its Objective-C mirror.
 #if DEBUG
     @MainActor
+    final class ForgeHarnessDraftStoreCharacterizationTests: XCTestCase {
+        func testHarnessPreservesCreationAndConditionallyDeletesOnlyItsStoredSnapshot() async throws {
+            let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+            let repository = try ForgeRepositoryIdentity(forge: forge, owner: "fixture", name: "drafts")
+            let identity = try ForgeDraftIdentity(accountID: ForgeAccountID(forge: forge, value: "fixture"),
+                                                  destination: .pullRequest(repository: repository, number: ForgeItemNumber(1)))
+            let store = GitX.HarnessDraftStore()
+            let initial = ForgeDraftContent(title: "First", body: "Initial body")
+            let updated = ForgeDraftContent(title: "Submitted", body: "Submitted body")
+            try await store.save(identity: identity, content: initial, at: Date(timeIntervalSince1970: 10))
+            let first = try await store.load(identity: identity)
+            try await store.save(identity: identity, content: updated, at: Date(timeIntervalSince1970: 30))
+            let loaded = try await store.load(identity: identity)
+            let current = try XCTUnwrap(loaded)
+            XCTAssertEqual(current.createdAt, Date(timeIntervalSince1970: 10))
+            XCTAssertEqual(current.lastActivityAt, Date(timeIntervalSince1970: 30))
+            XCTAssertEqual(current.content, updated)
+            let staleDelete = try await store.delete(identity: identity, matching: XCTUnwrap(first))
+            XCTAssertFalse(staleDelete)
+            let removed = try await store.delete(identity: identity, matching: current)
+            XCTAssertTrue(removed)
+            let absent = try await store.load(identity: identity)
+            XCTAssertNil(absent)
+        }
+    }
+
+    @MainActor
     func performOwnedWorktreePruneReport(service: NSObject, owner: NSObject, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
         guard let service = service as? GitX.PBRepositoryWorktreeService else {
             XCTFail("The fixture must supply the actual Swift worktree service")
