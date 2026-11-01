@@ -1199,6 +1199,10 @@ nonisolated struct ForgeLazySQLitePullRequestDraftStore: RepositoryPullRequestDr
         try await store().delete(identity: identity)
     }
 
+    func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool {
+        try await store().delete(identity: identity, matching: snapshot)
+    }
+
     private func store() async throws -> ForgeSQLitePullRequestDraftStore {
         guard let database = try await loader.services().database else {
             throw RepositoryPullRequestServiceError.draftUnavailable

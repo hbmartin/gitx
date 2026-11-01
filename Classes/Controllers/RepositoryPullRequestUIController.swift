@@ -3,6 +3,42 @@ import ForgeKit
 import OSLog // swiftlint:disable:this unused_import
 
 @MainActor
+final class RepositoryPullRequestPresentationAuthority {
+    private let validation: () -> Bool
+    private var revoked = false
+    private var mutationIdentity: UUID?
+
+    init(validation: @escaping () -> Bool) {
+        self.validation = validation
+    }
+
+    var isCurrent: Bool {
+        !revoked && validation()
+    }
+
+    func revoke() {
+        revoked = true
+    }
+
+    func beginMutation() -> UUID {
+        let identity = UUID()
+        mutationIdentity = identity
+        return identity
+    }
+
+    func permitsMutation(_ identity: UUID) -> Bool {
+        isCurrent && mutationIdentity == identity
+    }
+
+    func retry(for identity: UUID, action: @escaping @MainActor () -> Void) -> @MainActor () -> Void {
+        { [self] in
+            guard permitsMutation(identity) else { return }
+            action()
+        }
+    }
+}
+
+@MainActor
 private final class RepositoryPullRequestOperation {
     var flow: RepositoryPullRequestPushFlow
 
@@ -40,10 +76,9 @@ final class RepositoryPullRequestUIController {
 
     private let repository: PBGitRepository
     private weak var windowController: PBGitWindowController?
-    private let ownerValidation: () -> Bool
-    private var ownerRevoked = false
+    private let authority: RepositoryPullRequestPresentationAuthority
     private func ownerIsCurrent() -> Bool {
-        !ownerRevoked && ownerValidation()
+        authority.isCurrent
     }
 
     private let remoteActions: any RepositoryRemoteActionCoordinating
@@ -57,7 +92,7 @@ final class RepositoryPullRequestUIController {
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestWorkflow")
     private var preparationTask: Task<Void, Never>?
     private var ordinaryPushPreparationTask: Task<Void, Never>?
-    private var mutationTask: Task<Void, Never>?
+    private(set) var mutationTask: Task<Void, Never>?
     private var draftSaveTask: Task<Void, Never>?
     private var sheetController: ForgePullRequestSheetController?
     private var activePreparation: RepositoryPullRequestCreationPreparation?
@@ -84,14 +119,15 @@ final class RepositoryPullRequestUIController {
     ) {
         self.repository = repository
         self.windowController = windowController
-        ownerValidation = ownerIsCurrent
+        let authority = RepositoryPullRequestPresentationAuthority(validation: ownerIsCurrent)
+        self.authority = authority
         self.remoteActions = remoteActions
         self.service = service
         self.drafts = drafts
-        self.destinationOpening = { ownerIsCurrent() && destinationOpening($0) }
-        self.bindingResolving = { ownerIsCurrent() ? bindingResolving() : nil }
+        self.destinationOpening = { authority.isCurrent && destinationOpening($0) }
+        self.bindingResolving = { authority.isCurrent ? bindingResolving() : nil }
         self.postPushBrowserFallback = {
-            if ownerIsCurrent() {
+            if authority.isCurrent {
                 postPushBrowserFallback($0)
             }
         }
@@ -100,14 +136,15 @@ final class RepositoryPullRequestUIController {
         preloadOrdinaryPushPreparation()
     }
 
-    deinit {
+    isolated deinit {
+        authority.revoke()
         preparationTask?.cancel()
         ordinaryPushPreparationTask?.cancel()
         // Already-admitted mutations and draft saves keep their captured targets.
     }
 
     func invalidateOwner() {
-        ownerRevoked = true
+        authority.revoke()
         preparationTask?.cancel()
         cancelOrdinaryPushPreparation(clearCache: true)
         cancelDeferredPullRequestOperation()
@@ -1009,19 +1046,19 @@ final class RepositoryPullRequestUIController {
     ) {
         guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
+        let identity = authority.beginMutation()
         saveDraft(
             preparation: preparation,
             content: ForgeDraftContent(title: form.title, body: form.bodyMarkdown)
         )
         let pendingDraftSave = draftSaveTask
-        mutationTask = Task { [weak self, service, drafts] in
+        let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
+        mutationTask = Task { [weak self] in
             do {
                 await pendingDraftSave?.value
                 guard !Task.isCancelled else { return }
-                let outcome = try await service.createPullRequest(accountID: accountID, form: form)
-                let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: preparation)
-                guard let self,
-                      !Task.isCancelled,
+                let outcome = try await completion.create(accountID: accountID, form: form, preparation: preparation)
+                guard let self, self.mayPresentMutation(identity),
                       self.pullRequestOperation === operation
                 else { return }
                 let destination: ForgeDestination
@@ -1033,32 +1070,24 @@ final class RepositoryPullRequestUIController {
                     destination = value
                     self.logger.notice("Detected existing Pull Request; skipped duplicate creation")
                 }
-                guard case .pullRequest = destination,
-                      destination.repository == preparation.repository
-                else {
-                    throw ForgePullRequestWorkflowError.mismatchedRepository
-                }
                 switch outcome {
                 case .created:
                     try operation.flow.creationSucceeded(destination)
                 case .existing:
                     try operation.flow.existingPullRequest(destination)
                 }
-                do {
-                    try await drafts.delete(identity: identity)
-                    self.logger.notice("Removed published Pull Request Forge Draft")
-                } catch {
-                    self.logger.error("Pull Request succeeded, but its published Forge Draft could not be removed")
-                }
                 self.onCreationOutcome?(outcome)
+                guard self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
                 let opened = self.destinationOpening(destination)
+                guard self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
                 self.onCreationDestinationOpened?(destination, opened)
             } catch is CancellationError {
                 return
             } catch {
-                guard let self, self.ownerIsCurrent(), self.pullRequestOperation === operation else { return }
-                if self.presentAuthorizationRecovery(error, retry: { [weak self] in
-                    self?.submitCreate(
+                guard let self, self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
+                if self.presentAuthorizationRecovery(error, retry: self.authority.retry(for: identity) { [weak self] in
+                    guard let self, self.pullRequestOperation === operation else { return }
+                    self.submitCreate(
                         accountID: accountID,
                         form: form,
                         preparation: preparation,
@@ -1087,36 +1116,30 @@ final class RepositoryPullRequestUIController {
     ) {
         guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
+        let identity = authority.beginMutation()
         let pendingDraftSave = draftSaveTask
-        mutationTask = Task { [weak self, service, drafts] in
+        let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
+        mutationTask = Task { [weak self] in
             do {
                 await pendingDraftSave?.value
                 guard !Task.isCancelled else { return }
-                let outcome = try await service.editPullRequest(accountID: accountID, edit: edit)
-                guard outcome.destination == destination else {
-                    throw ForgePullRequestWorkflowError.mismatchedRepository
-                }
-                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
-                do {
-                    try await drafts.delete(identity: draftIdentity)
-                    self.logger.notice("Removed published Pull Request edit Forge Draft")
-                } catch {
-                    self.logger.error("Pull Request edit succeeded, but its published Forge Draft could not be removed")
-                }
+                let outcome = try await completion.edit(accountID: accountID, edit: edit, destination: destination, identity: draftIdentity)
+                guard let self, self.mayPresentMutation(identity) else { return }
                 _ = self.destinationOpening(outcome.destination)
                 self.logger.notice("Saved conflict-aware Pull Request title/body edit")
             } catch is CancellationError {
                 return
             } catch ForgePullRequestWorkflowError.editConflict {
-                self?.windowController?.showMessageSheet(
+                guard let self, self.mayPresentMutation(identity) else { return }
+                self.windowController?.showMessageSheet(
                     "Pull Request Changed",
                     infoText: "Refresh the Pull Request before applying your title or body edit. Your text remains in the editor draft."
                 )
             } catch {
-                guard let self else { return }
+                guard let self, self.mayPresentMutation(identity) else { return }
                 let offeredRecovery = self.presentAuthorizationRecovery(
                     error,
-                    retry: { [weak self] in
+                    retry: self.authority.retry(for: identity) { [weak self] in
                         self?.submitEdit(
                             accountID: accountID,
                             edit: edit,
@@ -1130,6 +1153,10 @@ final class RepositoryPullRequestUIController {
                 }
             }
         }
+    }
+
+    private func mayPresentMutation(_ identity: UUID) -> Bool {
+        authority.permitsMutation(identity) && !Task.isCancelled
     }
 
     private func presentAuthorizationRecovery(

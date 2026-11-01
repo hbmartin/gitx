@@ -38,9 +38,15 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         self.commitList = commitList
         self.stateCoordinator = stateCoordinator
         super.init()
-        if let session = owner.windowController?.repositoryForgeOverlaySession,
-           let repository = owner.repository
-        {
+        bindForgeSession(owner.windowController?.repositoryForgeOverlaySession)
+    }
+
+    func bindForgeSession(_ session: RepositoryForgeOverlaySession?) {
+        if let forgeOverlayCoordinator {
+            forgeOverlayCoordinator.bind(to: session)
+            return
+        }
+        if let session, let owner, let commitList, let repository = owner.repository {
             let settings = ApplicationComposition.shared.repositoryViewState(for: repository)
             forgeOverlayCoordinator = HistoryForgeOverlayCoordinator(
                 owner: owner,

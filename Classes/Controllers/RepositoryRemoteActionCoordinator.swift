@@ -89,7 +89,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         repository: PBGitRepository,
         windowController: PBGitWindowController,
         retryConfirmation: RepositoryRetryConfirmation? = nil,
-        progressStarting: @escaping RepositoryRemoteProgressStarting
+        progressStarting: RepositoryRemoteProgressStarting?
     ) {
         self.repository = repository
         self.windowController = windowController
@@ -478,8 +478,16 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         completion: @escaping (NSError?) -> Void
     ) -> Bool {
         guard ownerIsCurrent(), let windowController else { return false }
+        // The admitted operation owns completion, while the window remains weak.
+        // Revocation suppresses presentation; it must not change a Git result.
+        var completed = false
+        let finish: (NSError?) -> Void = { [self] error in
+            guard !completed else { return }
+            completed = true
+            withExtendedLifetime(self) { completion(error) }
+        }
         if let progressStarting {
-            return progressStarting(title, description, operation, completion)
+            return progressStarting(title, description, operation, finish)
         }
         let progressSheet = PBRemoteProgressSheet(
             title: title,
@@ -496,7 +504,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 }
             },
             completion: { error in
-                completion(error as NSError?)
+                finish(error as NSError?)
             }
         )
         return true

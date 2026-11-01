@@ -112,7 +112,7 @@ final nonisolated class GitDiscoveryProbeRunner: Sendable {
             if let operation = decision.1 {
                 // PBTask cancellation can wait for a stalled launch lock. Never put
                 // that wait on the deadline queue or the main actor.
-                DispatchQueue.global(qos: .utility).async { [cancellation] in
+                DispatchQueue.global(qos: .userInitiated).async { [cancellation] in
                     operation.cancel()
                     cancellation.leave()
                 }

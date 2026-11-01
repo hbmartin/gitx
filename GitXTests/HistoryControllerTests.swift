@@ -1760,19 +1760,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryFlowCancelsRunningGitWorkWhenTheSelectionMoves() throws {
-        let defaults = UserDefaults.standard
-        let defaultsDomain = try XCTUnwrap(Bundle.main.bundleIdentifier)
-        let previousWatcherPreference = defaults.persistentDomain(forName: defaultsDomain)?["PBUseRepositoryWatcher"]
-        defaults.set(false, forKey: "PBUseRepositoryWatcher")
-        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-        defer {
-            if let previousWatcherPreference {
-                defaults.set(previousWatcherPreference, forKey: "PBUseRepositoryWatcher")
-            } else {
-                defaults.removeObject(forKey: "PBUseRepositoryWatcher")
-            }
-            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-        }
+        let restoreWatcher = try disableRepositoryWatcher()
+        defer { restoreWatcher() }
         let originalGit = try XCTUnwrap(PBGitBinary.path())
         defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
         let processStarted = testArtifactDirectory.appendingPathComponent("flow-git-started")
@@ -3813,19 +3802,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testFirstPatchReconciliationRefreshesStatCacheBeforePublishingRows() throws {
-        let defaults = UserDefaults.standard
-        let defaultsDomain = try XCTUnwrap(Bundle.main.bundleIdentifier)
-        let previousWatcherPreference = defaults.persistentDomain(forName: defaultsDomain)?["PBUseRepositoryWatcher"]
-        defaults.set(false, forKey: "PBUseRepositoryWatcher")
-        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-        defer {
-            if let previousWatcherPreference {
-                defaults.set(previousWatcherPreference, forKey: "PBUseRepositoryWatcher")
-            } else {
-                defaults.removeObject(forKey: "PBUseRepositoryWatcher")
-            }
-            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-        }
+        let restoreWatcher = try disableRepositoryWatcher()
+        defer { restoreWatcher() }
         try fixture.write(" second\n", to: "nested/tracked.txt")
         let patch = try fixture.git(["diff", "--unified=0", "--", "nested/tracked.txt"])
         let index = PBGitIndex(repository: repository)
@@ -5458,20 +5436,68 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(WorkspaceOpenRecorder.openedURLs.isEmpty)
     }
 
-    func testWorkingDirectoryNotificationRefreshesActualIndexContents() throws {
+    func testWatcherFixtureRestoresAbsentAndStoredPreferencesAfterScopeAndFailure() throws {
+        enum ScopeError: Error, Equatable { case injected }
         let defaults = UserDefaults.standard
         let domain = try XCTUnwrap(Bundle.main.bundleIdentifier)
-        let previousWatcher = defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"]
-        defaults.set(false, forKey: "PBUseRepositoryWatcher")
-        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        let initial = defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"]
         defer {
-            defaults.set(previousWatcher, forKey: "PBUseRepositoryWatcher")
+            if let initial {
+                defaults.set(initial, forKey: "PBUseRepositoryWatcher")
+            } else {
+                defaults.removeObject(forKey: "PBUseRepositoryWatcher")
+            }
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
         }
+        let expectedValues: [Bool?] = [nil, true, false]
+        for expected in expectedValues {
+            for fails in [false, true] {
+                if let expected {
+                    defaults.set(expected, forKey: "PBUseRepositoryWatcher")
+                } else {
+                    defaults.removeObject(forKey: "PBUseRepositoryWatcher")
+                }
+                let scope = {
+                    let restore = try self.disableRepositoryWatcher()
+                    defer { restore() }
+                    XCTAssertEqual(defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"] as? Bool, false)
+                    if fails {
+                        throw ScopeError.injected
+                    }
+                }
+                if fails {
+                    XCTAssertThrowsError(try scope()) { XCTAssertEqual($0 as? ScopeError, .injected) }
+                } else {
+                    try scope()
+                }
+                XCTAssertEqual(defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"] as? Bool, expected)
+            }
+        }
+    }
+
+    private func disableRepositoryWatcher() throws -> () -> Void {
+        let defaults = UserDefaults.standard
+        let domain = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let previous = defaults.persistentDomain(forName: domain)?["PBUseRepositoryWatcher"]
+        defaults.set(false, forKey: "PBUseRepositoryWatcher")
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        return {
+            if let previous {
+                defaults.set(previous, forKey: "PBUseRepositoryWatcher")
+            } else {
+                defaults.removeObject(forKey: "PBUseRepositoryWatcher")
+            }
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+    }
+
+    func testWorkingDirectoryNotificationRefreshesActualIndexContents() throws {
+        let restoreWatcher = try disableRepositoryWatcher()
+        defer { restoreWatcher() }
         try fixture.write("notification refresh\n", to: "notification-untracked.txt")
         historyController._repositoryUpdatedNotification(Notification(
             name: .PBGitRepositoryEvent, object: repository,
-            userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: (1 << 2) | (1 << 3))]
+            userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: PBGitRepositoryWatcherEventType.workingDirectory.rawValue | PBGitRepositoryWatcherEventType.index.rawValue)]
         ))
         XCTAssertTrue(waitForCondition(timeout: 10) {
             self.repository.index.indexChanges.contains { $0.path == "notification-untracked.txt" }

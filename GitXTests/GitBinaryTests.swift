@@ -1,8 +1,21 @@
 import AppKit
+import ForgeKit
 @testable import GitX
 import ObjectiveGit
 import Synchronization
 import XCTest
+
+// Keep the generated Swift service surface out of files using its Objective-C mirror.
+#if DEBUG
+    @MainActor
+    func performOwnedWorktreePruneReport(service: NSObject, owner: NSObject, completion: @escaping @MainActor @Sendable (String?, NSError?) -> Void) {
+        guard let service = service as? GitX.PBRepositoryWorktreeService else {
+            XCTFail("The fixture must supply the actual Swift worktree service")
+            return
+        }
+        service.perform(.pruneReport, owner: owner, completion: completion)
+    }
+#endif
 
 /// File-coordination may release a closed document on its own queue.
 /// Clear main-actor history ownership before that asynchronous release.
@@ -13,6 +26,41 @@ private func closeRepositoryFixtureDocument(_ document: NSDocument?) {
         repositoryDocument.repository.revisionList = nil
     }
     document?.close()
+}
+
+extension GitXPerformanceTests {
+    func testRepeatedToolbarReconciliationBenchmark() throws {
+        let ready = expectation(description: "Validated Git before the Release fixture")
+        PBGitBinary.whenAvailable { path, error in XCTAssertNotNil(path); XCTAssertNil(error); ready.fulfill() }
+        wait(for: [ready], timeout: 10)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Toolbar-benchmark-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try GitXTestGitFixture.run(["init", "--initial-branch=main"], in: directory)
+        try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "fixture"], in: directory)
+        let document = try PBGitRepositoryDocument(contentsOf: directory, ofType: PBGitRepositoryDocumentType)
+        defer { closeRepositoryFixtureDocument(document) }
+        let owner = GitX.PBGitWindowController(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false))
+        owner.repository = document.repository
+        defer { owner.close() }
+        let controller = GitX.RepositoryToolbarController(windowController: owner)
+        controller.install()
+        let toolbar = owner.window?.toolbar
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 5 {
+            let start = ProcessInfo.processInfo.systemUptime
+            for _ in 0 ..< 100 {
+                controller.install()
+            }
+            samples.append(ProcessInfo.processInfo.systemUptime - start)
+        }
+        XCTAssertTrue(owner.window?.toolbar === toolbar)
+        let data = try JSONSerialization.data(withJSONObject: ["iterationsPerSample": 100, "seconds": samples], options: [.prettyPrinted, .sortedKeys])
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "Repeated toolbar reconciliation samples"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 }
 
 final class GitBinaryTests: XCTestCase {
@@ -359,6 +407,67 @@ final class GitBinaryTests: XCTestCase {
 /// Characterizes the Objective-C document before extracting its scripting decisions.
 @MainActor
 final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
+    private actor WindowOverlaySource: GitX.RepositoryForgeOverlayReading, GitX.RepositoryForgeOverlayCaching {
+        let repository: ForgeRepositoryIdentity
+        let description: String
+        let rollup: ForgeCheckRollup
+        let number: Int
+
+        init(repository: ForgeRepositoryIdentity, description: String, rollup: ForgeCheckRollup, number: Int) {
+            self.repository = repository
+            self.description = description
+            self.rollup = rollup
+            self.number = number
+        }
+
+        func repositoryFacts(request _: GitX.RepositoryForgeOverlayRemoteRequest) async throws -> GitX.RepositoryForgeRemoteSnapshot<ForgeRepositoryFacts> {
+            let facts = try ForgeRepositoryFacts(repository: repository, defaultBranch: .available(ForgeRefName("main")),
+                                                 description: .available(description), topics: .available([]), visibility: .available(.public),
+                                                 isArchived: .available(false), forkRelationship: .available(.standalone))
+            return .init(value: facts, fetchedAt: Date(), completeness: .complete, cooldownDeadline: nil)
+        }
+
+        func historyOverlay(commit: ForgeCommitID, request _: GitX.RepositoryForgeOverlayRemoteRequest) async throws -> GitX.RepositoryForgeRemoteSnapshot<ForgeHistoryOverlay> {
+            let date = Date()
+            let pullRequest = try ForgePullRequestSummary(repository: repository, number: ForgeItemNumber(number), state: .open, isDraft: false,
+                                                          title: description, author: .unavailable(.notRequested), head: .unavailable(.notRequested),
+                                                          base: .unavailable(.notRequested), createdAt: date, updatedAt: date,
+                                                          labels: .unavailable(.notRequested), checkRollup: .available(rollup), reviewRollup: .unavailable(.notRequested))
+            return try .init(value: ForgeHistoryOverlay(repository: repository, commit: commit, checkRollup: .available(rollup),
+                                                        pullRequests: .available(ForgePage(items: [pullRequest]))), fetchedAt: date, completeness: .complete, cooldownDeadline: nil)
+        }
+
+        func cachedRepositoryFacts(accessedAt _: Date) async throws -> GitX.RepositoryForgeOverlaySnapshot<ForgeRepositoryFacts>? {
+            nil
+        }
+
+        func putRepositoryFacts(_: GitX.RepositoryForgeRemoteSnapshot<ForgeRepositoryFacts>) async throws {}
+        func cachedHistoryOverlay(commit _: ForgeCommitID, accessedAt _: Date) async throws -> GitX.RepositoryForgeOverlaySnapshot<ForgeHistoryOverlay>? {
+            nil
+        }
+
+        func putHistoryOverlay(_: GitX.RepositoryForgeRemoteSnapshot<ForgeHistoryOverlay>) async throws {}
+    }
+
+    private final nonisolated class ToolbarRecording: Sendable {
+        let values = Mutex<[ObjectIdentifier]>([])
+    }
+
+    private final class ToolbarInstallationProbe: GitX.PBGitWindowController {
+        let initialToolbars = ToolbarRecording()
+        override func windowDidLoad() {
+            guard let nativeWindow = super.window else { return }
+            let recorded = initialToolbars
+            let observation = nativeWindow.observe(\.toolbar, options: [.new]) { _, change in
+                if case let toolbar?? = change.newValue {
+                    recorded.values.withLock { $0.append(ObjectIdentifier(toolbar)) }
+                }
+            }
+            super.windowDidLoad()
+            observation.invalidate()
+        }
+    }
+
     // swift6-safety-justification: Only immutable identity is transferred to NotificationCenter; repository access remains on the main actor.
     private final nonisolated class RepositoryNotificationFixture: @unchecked Sendable {
         let value: PBGitRepository
@@ -389,8 +498,14 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     /// Legacy Objective-C subclasses can supply repository identity without the base setter.
     private final class RepositoryOverrideWindowProbe: GitX.PBGitWindowController {
         private var suppliedRepository: PBGitRepository?
+        var beforeRepositoryRead: (() -> Void)?
         override var repository: PBGitRepository? {
-            get { suppliedRepository }
+            get {
+                let callback = beforeRepositoryRead
+                beforeRepositoryRead = nil
+                callback?()
+                return suppliedRepository
+            }
             set { suppliedRepository = newValue }
         }
     }
@@ -923,7 +1038,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertNil(actual.gitLoaderSelection)
         XCTAssertTrue(discovery.accept("/usr/bin/git"))
         NotificationCenter.default.post(name: .PBGitBinaryDidChange, object: nil)
-        XCTAssertEqual(actual.gitLoaderSelection?.path, "/usr/bin/git")
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.gitLoaderSelection?.path == "/usr/bin/git" }, object: nil)
+        wait(for: [selected], timeout: 5)
         let delivered = expectation(description: "A background selection event also reconciles the Objective-C-derived owner")
         DispatchQueue.global().async {
             NotificationCenter.default.post(name: .PBGitBinaryDidChange, object: nil)
@@ -997,6 +1113,399 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(localBranch(in: actual.window?.contentView), "Repository")
     }
 
+    func testWorktreeOwnerAcquisitionCompletesAnOverriddenRepositoryTransition() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let other = directory.appendingPathComponent("replacement")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try GitXTestGitFixture.run(["init", "--initial-branch=replacement"], in: other)
+        try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "replacement"], in: other)
+        let replacement = try XCTUnwrap(PBGitRepository(url: other))
+        defer { replacement.revisionList?.cleanup(); replacement.revisionList = nil }
+        let actual = RepositoryOverrideWindowProbe()
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        waitForBranch("main", in: actual)
+        actual.repository = replacement
+        XCTAssertTrue(actual.reconciledWorktreeOwnership()?.repository === replacement)
+        XCTAssertTrue(actual.historyViewController?.repository === replacement)
+        XCTAssertTrue(actual.sidebarViewController?.repository === replacement)
+        waitForBranch("replacement", in: actual)
+        actual.repository = PBGitRepository()
+        XCTAssertNil(actual.reconciledWorktreeOwnership())
+        actual.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        XCTAssertNil(actual.gitLoaderSelection)
+        XCTAssertNil(actual.historyViewController)
+        XCTAssertNil(actual.sidebarViewController)
+        XCTAssertEqual(localBranch(in: actual.window?.contentView), "Repository")
+    }
+
+    func testReentrantOwnershipReconciliationRefusesAdmissionAndPreservesItsCompleteOwner() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let actual = RepositoryOverrideWindowProbe()
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        waitForBranch("main", in: actual)
+        let history = actual.historyViewController
+        let selection = actual.gitLoaderSelection
+        var calls = 0
+        actual.beforeRepositoryRead = { [weak actual] in
+            guard let actual else { return }
+            calls += 1
+            XCTAssertNil(actual.reconciledWorktreeOwnership())
+            actual.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        }
+        actual.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        let drained = expectation(description: "One deferred reconciliation completes after the reentrant callback")
+        DispatchQueue.main.async { DispatchQueue.main.async { drained.fulfill() } }
+        wait(for: [drained], timeout: 5)
+        XCTAssertEqual(calls, 1)
+        XCTAssertTrue(actual.historyViewController === history)
+        XCTAssertEqual(actual.gitLoaderSelection, selection)
+        waitForBranch("main", in: actual)
+    }
+
+    #if DEBUG
+        private final nonisolated class RepositoryLocationProbe: PBGitRepository {
+            let failNextMainThreadLocationRead = Mutex(false)
+
+            override func task(withArguments arguments: [Any]?) -> PBTask {
+                let task = super.task(withArguments: arguments)
+                RepositoryTestGitEnvironment.prepare(task)
+                return task
+            }
+
+            override func gitURL() -> URL? {
+                // Inject a transient owner-location failure without changing the
+                // backend path observed by unrelated repository workers.
+                let unavailable = Thread.isMainThread && failNextMainThreadLocationRead.withLock { pending in
+                    defer { pending = false }
+                    return pending
+                }
+                return unavailable ? nil : super.gitURL()
+            }
+        }
+
+        func testTransientLocationLossRevokesTheCurrentRepositoryAndRestoresMatchingPanes() throws {
+            try prepareFixture()
+            defer { try? removeFixture() }
+            let other = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-owner-location-" + UUID().uuidString)
+            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+            var drainedService = true
+            defer {
+                if drainedService {
+                    try? FileManager.default.removeItem(at: other)
+                }
+            }
+            try GitXTestGitFixture.run(["init", "--initial-branch=available-owner"], in: other)
+            try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "available owner"], in: other)
+            let repository = try XCTUnwrap(RepositoryLocationProbe(url: other))
+            let service = try XCTUnwrap(repository.worktreeService)
+            defer {
+                repository.revisionList?.cleanup()
+                repository.revisionList = nil
+                service.cancel()
+                drainedService = false
+                let drained = expectation(description: "Location fixture acknowledges owned processes and evidence")
+                service.drainForTesting { drained.fulfill() }
+                drainedService = XCTWaiter.wait(for: [drained], timeout: 15) == .completed
+                XCTAssertTrue(drainedService, "Preserving undrained location fixture at \(other.path)")
+            }
+            let actual = RepositoryOverrideWindowProbe()
+            actual.repository = repository
+            _ = actual.window
+            defer { actual.close() }
+            waitForBranch("available-owner", in: actual)
+            XCTAssertTrue(actual.reconciledWorktreeOwnership()?.repository === repository)
+            let authority = actual.repositoryOwnerValidation(for: repository)
+            XCTAssertTrue(authority())
+            repository.failNextMainThreadLocationRead.withLock { $0 = true }
+            XCTAssertNil(actual.reconciledWorktreeOwnership())
+            XCTAssertFalse(authority(), "Location loss revokes the previously captured presentation authority")
+            XCTAssertNil(actual.gitLoaderSelection)
+            XCTAssertNil(actual.historyViewController)
+            XCTAssertNil(actual.sidebarViewController)
+            XCTAssertEqual(localBranch(in: actual.window?.contentView), "Repository")
+            XCTAssertTrue(actual.reconciledWorktreeOwnership()?.repository === repository)
+            XCTAssertTrue(actual.historyViewController?.repository === repository)
+            XCTAssertTrue(actual.sidebarViewController?.repository === repository)
+            waitForBranch("available-owner", in: actual)
+        }
+
+        func testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository() throws {
+            try prepareFixture()
+            defer { try? removeFixture() }
+            let other = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+            var drainedService = true
+            defer {
+                if drainedService {
+                    try? FileManager.default.removeItem(at: other)
+                }
+            }
+            try GitXTestGitFixture.run(["init", "--initial-branch=replacement"], in: other)
+            try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "replacement"], in: other)
+            let linked = other.appendingPathComponent("linked")
+            try GitXTestGitFixture.run(["worktree", "add", "-b", "linked", linked.path], in: other)
+            try FileManager.default.removeItem(at: linked.appendingPathComponent(".git"))
+            let replacement = try XCTUnwrap(PBGitRepository(url: other))
+            defer { replacement.revisionList?.cleanup(); replacement.revisionList = nil }
+            let service = try XCTUnwrap(replacement.worktreeService)
+            drainedService = false
+            defer {
+                service.cancel()
+                let drained = expectation(description: "Repair fixture service acknowledges every owned process and worker")
+                service.drainForTesting { drained.fulfill() }
+                drainedService = XCTWaiter.wait(for: [drained], timeout: 15) == .completed
+                XCTAssertTrue(drainedService, "Preserving undrained repair fixture at \(other.path)")
+            }
+            service.refresh()
+            let broken = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in service.isSupported && service.worktrees.contains(where: \.hasBrokenLink) }, object: nil)
+            wait(for: [broken], timeout: 10)
+            let actual = RepositoryOverrideWindowProbe()
+            actual.repository = document.repository
+            let nativeWindow = try XCTUnwrap(actual.window)
+            activateFixtureWindow(nativeWindow)
+            defer {
+                if let sheet = nativeWindow.attachedSheet {
+                    nativeWindow.endSheet(sheet, returnCode: .cancel)
+                }
+                actual.close()
+            }
+            actual.repository = replacement
+            actual.windowDidBecomeMain(Notification(name: NSWindow.didBecomeMainNotification, object: nativeWindow))
+            let offered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in nativeWindow.attachedSheet != nil }, object: nil)
+            wait(for: [offered], timeout: 5)
+            XCTAssertTrue(actual.offeredWorktreeRepair)
+            XCTAssertTrue(actual.historyViewController?.repository === replacement)
+            attachScreenshot(of: nativeWindow.attachedSheet?.contentView, named: "Replacement repository owns its repair offer")
+            if let sheet = nativeWindow.attachedSheet {
+                nativeWindow.endSheet(sheet, returnCode: .alertThirdButtonReturn)
+            }
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in nativeWindow.attachedSheet == nil }, object: nil)
+            wait(for: [dismissed], timeout: 5)
+            actual.repository = document.repository
+            actual.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+            XCTAssertFalse(actual.offeredWorktreeRepair, "The old repository has not received an offer")
+            actual.repository = replacement
+            actual.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+            XCTAssertTrue(actual.offeredWorktreeRepair, "Returning to the replacement preserves its acknowledged offer")
+            actual.offerWorktreeRepairIfNeeded()
+            XCTAssertNil(nativeWindow.attachedSheet)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: linked.appendingPathComponent(".git").path), "Skipping the offer cannot perform repair")
+        }
+    #endif
+
+    func testRetainedHistoryRebindsForgeFactsWithoutReplacingItsInspector() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        _ = actual.window
+        defer { actual.close() }
+        let history = try XCTUnwrap(actual.historyViewController)
+        func panels(_ view: NSView) -> [GitX.RepositoryFactsInspectorView] {
+            (view as? GitX.RepositoryFactsInspectorView).map { [$0] } ?? view.subviews.flatMap(panels)
+        }
+        func labels(_ view: NSView) -> [String] {
+            (view as? NSTextField).map { [$0.stringValue] } ?? view.subviews.flatMap(labels)
+        }
+        let panel = try XCTUnwrap(panels(history.view).first)
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "example", name: "repo")
+        func session(_ bootstrap: GitX.RepositoryForgeOverlayBootstrap) -> GitX.RepositoryForgeOverlaySession {
+            GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: bootstrap, now: Date.init))
+        }
+        let first = session(.unsupported(identity))
+        let second = session(.authenticationRequired(identity))
+        defer { first.invalidate(); second.invalidate() }
+        actual.replaceRepositoryForgeOverlaySession(first)
+        let firstFacts = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in labels(panel).contains("Native facts are unavailable") }, object: nil)
+        wait(for: [firstFacts], timeout: 5)
+        panel.collapseButton.performClick(nil)
+        let width = panel.constraints.first { $0.firstAttribute == .width }?.constant
+        let selection = history.commitController.selectionIndexes
+        actual.replaceRepositoryForgeOverlaySession(second)
+        let secondFacts = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in labels(panel).contains("Sign in and choose an Account") }, object: nil)
+        wait(for: [secondFacts], timeout: 5)
+        XCTAssertTrue(actual.historyViewController === history)
+        XCTAssertEqual(panels(history.view).count, 1)
+        XCTAssertTrue(panels(history.view).first === panel)
+        XCTAssertEqual(panel.constraints.first { $0.firstAttribute == .width }?.constant, width)
+        XCTAssertEqual(history.commitController.selectionIndexes, selection)
+        first.start()
+        let drained = expectation(description: "Obsolete session output is ignored")
+        DispatchQueue.main.async { DispatchQueue.main.async { drained.fulfill() } }
+        wait(for: [drained], timeout: 5)
+        XCTAssertTrue(labels(panel).contains("Sign in and choose an Account"))
+        actual.replaceRepositoryForgeOverlaySession(nil)
+        XCTAssertTrue(labels(panel).contains("Waiting for Forge data"))
+        attachScreenshot(of: actual.window?.contentView, named: "Retained History clears its obsolete Forge session")
+    }
+
+    func testRetainedHistoryRendersReplacementFactsAndBadgesAndRejectsOldSessionOutput() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let actual = GitX.PBGitWindowController(ownerNotifications: NotificationCenter())
+        actual.repository = document.repository
+        let nativeWindow = try XCTUnwrap(actual.window)
+        defer { actual.close() }
+        activateFixtureWindow(nativeWindow)
+        let history = try XCTUnwrap(actual.historyViewController)
+        func labels(_ view: NSView) -> [String] {
+            (view as? NSTextField).map { [$0.stringValue] } ?? view.subviews.flatMap(labels)
+        }
+        let panel = try XCTUnwrap(history.view.subviews.compactMap { $0 as? GitX.RepositoryFactsInspectorView }.first)
+        let wasCollapsed = panel.collapseButton.toolTip == "Show Repository Facts"
+        if wasCollapsed {
+            panel.collapseButton.performClick(nil)
+        }
+        defer {
+            if wasCollapsed {
+                panel.collapseButton.performClick(nil)
+            }
+        }
+        XCTAssertEqual(panel.collapseButton.toolTip, "Hide Repository Facts")
+        let check = try XCTUnwrap(history.commitList.tableColumn(withIdentifier: .init("ForgeCheckRollupColumn")))
+        let pullRequest = try XCTUnwrap(history.commitList.tableColumn(withIdentifier: .init("ForgePullRequestBadgeColumn")))
+        let previousCheck = check.isHidden
+        let previousPullRequest = pullRequest.isHidden
+        defer { check.isHidden = previousCheck; pullRequest.isHidden = previousPullRequest }
+        check.isHidden = false
+        pullRequest.isHidden = false
+        nativeWindow.contentView?.layoutSubtreeIfNeeded()
+        history.commitList.scrollColumnToVisible(history.commitList.column(withIdentifier: pullRequest.identifier))
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "example", name: "repo")
+        func session(description: String, rollup: ForgeCheckRollup, number: Int) throws -> GitX.RepositoryForgeOverlaySession {
+            let credential = try ForgeCredentialReference(accountID: ForgeAccountID(forge: identity.forge, value: "isolated-window-account"),
+                                                          credentialID: ForgeCredentialID("isolated-window-credential"), generation: ForgeCredentialGeneration(1))
+            let source = WindowOverlaySource(repository: identity, description: description, rollup: rollup, number: number)
+            let context = GitX.RepositoryForgeOverlayContext(access: .account(login: "fixture"), authentication: .credential(credential),
+                                                             reader: source, cache: source, cooldowns: GitX.ForgeCredentialCooldownRegistry())
+            return GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .ready(identity, context), now: Date.init))
+        }
+        let first = try session(description: "First session facts", rollup: .succeeded, number: 7)
+        let second = try session(description: "Replacement session facts", rollup: .failed, number: 8)
+        defer { first.invalidate(); second.invalidate() }
+        actual.replaceRepositoryForgeOverlaySession(first)
+        let firstRendered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let values = labels(history.view)
+            return values.contains("First session facts") && values.contains("✓ Passed") && values.contains("#7")
+        }, object: nil)
+        wait(for: [firstRendered], timeout: 5)
+        XCTAssertTrue(first.historyStates.values.contains { $0.snapshot?.value.checkRollup == .available(.succeeded) }, "Visible commit demand reaches the first production session")
+        let selection = history.commitController.selectionIndexes
+        let scroll = history.commitList.enclosingScrollView?.contentView.bounds.origin
+        actual.replaceRepositoryForgeOverlaySession(second)
+        let secondRendered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let values = labels(history.view)
+            return values.contains("Replacement session facts") && values.contains("✕ Failed") && values.contains("#8")
+        }, object: nil)
+        wait(for: [secondRendered], timeout: 5)
+        XCTAssertTrue(second.historyStates.values.contains { $0.snapshot?.value.checkRollup == .available(.failed) }, "Replacement resets commit demand and loads fresh badges")
+        let oldPublished = expectation(description: "An obsolete session publishes an actual late remote result")
+        var oldValues = 0
+        let token = first.observeFacts { state in
+            if case .value = state {
+                oldValues += 1
+                if oldValues == 2 {
+                    oldPublished.fulfill()
+                }
+            }
+        }
+        defer { first.removeObserver(token) }
+        first.start()
+        wait(for: [oldPublished], timeout: 5)
+        XCTAssertTrue(actual.historyViewController === history)
+        XCTAssertEqual(history.commitController.selectionIndexes, selection)
+        XCTAssertEqual(history.commitList.enclosingScrollView?.contentView.bounds.origin, scroll)
+        XCTAssertTrue(labels(history.view).contains("Replacement session facts"))
+        XCTAssertTrue(labels(history.view).contains("✕ Failed"))
+        XCTAssertTrue(labels(history.view).contains("#8"))
+        XCTAssertFalse(labels(history.view).contains("#7"))
+        attachScreenshot(of: nativeWindow.contentView, named: "Retained History renders replacement Forge facts and badges")
+    }
+
+    func testOwnerNotificationsReturnBeforeReconciliationAndDiscardRevokedDeliveries() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        _ = actual.window
+        defer { actual.close() }
+        let before = try XCTUnwrap(actual.repositoryForgeOverlaySession)
+        let publisherLock = NSLock()
+        publisherLock.lock()
+        NotificationCenter.default.post(name: .forgeApplicationAvailabilityDidChange, object: nil)
+        XCTAssertTrue(actual.repositoryForgeOverlaySession === before, "Publication must return before a handler can reenter repository settings")
+        publisherLock.unlock()
+        let replaced = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.repositoryForgeOverlaySession !== before }, object: nil)
+        wait(for: [replaced], timeout: 5)
+        NotificationCenter.default.post(name: .forgeApplicationAvailabilityDidChange, object: nil)
+        actual.close()
+        let drained = expectation(description: "A queued event cannot restore a closed owner's session")
+        DispatchQueue.main.async { DispatchQueue.main.async { drained.fulfill() } }
+        wait(for: [drained], timeout: 5)
+        XCTAssertNil(actual.repositoryForgeOverlaySession)
+        XCTAssertNil(actual.gitLoaderSelection)
+    }
+
+    func testHistorySelectionDoesNotRefreshStatusButRefAndHeadEventsDo() throws {
+        let defaults = UserDefaults.standard
+        let previousWatcher = defaults.object(forKey: "PBUseRepositoryWatcher")
+        let previousFocus = defaults.object(forKey: "PBRefreshOnApplicationFocus")
+        defaults.set(false, forKey: "PBUseRepositoryWatcher")
+        defaults.set(false, forKey: "PBRefreshOnApplicationFocus")
+        defer {
+            defaults.set(previousWatcher, forKey: "PBUseRepositoryWatcher")
+            defaults.set(previousFocus, forKey: "PBRefreshOnApplicationFocus")
+        }
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let controls = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: controls, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: controls) }
+        let commands = controls.appendingPathComponent("commands")
+        let executable = controls.appendingPathComponent("git")
+        try "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '\(commands.path)'\nexec /usr/bin/git \"$@\"\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let discovery = GitBinaryDiscovery(preference: { nil }, environment: [:], output: { _, _ in "git version 2.50.1" }, notify: { _, _ in })
+        XCTAssertTrue(discovery.accept(executable.path))
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        actual.gitDiscovery = discovery
+        _ = actual.window
+        defer { actual.close() }
+        waitForBranch("main", in: actual)
+        func statusStarts() -> Int {
+            ((try? String(contentsOf: commands, encoding: .utf8)) ?? "").split(separator: "\n").filter { $0.hasPrefix("status ") }.count
+        }
+        let before = statusStarts()
+        document.repository.currentBranch = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/topic"))
+        NotificationCenter.default.post(name: .PBGitRepositoryEvent, object: document.repository,
+                                        userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: 0)])
+        let unexpected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in statusStarts() > before }, object: nil)
+        unexpected.isInverted = true
+        wait(for: [unexpected], timeout: 2)
+        XCTAssertEqual(localBranch(in: actual.window?.contentView), "main")
+        try GitXTestGitFixture.run(["checkout", "topic"], in: directory)
+        document.repository.reloadRefs()
+        waitForBranch("topic", in: actual)
+        try GitXTestGitFixture.run(["checkout", "--detach", "main"], in: directory)
+        NotificationCenter.default.post(name: .PBGitRepositoryEvent, object: document.repository,
+                                        userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: PBGitRepositoryWatcherEventType.gitDirectory.rawValue)])
+        let detached = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.localBranch(in: actual.window?.contentView)?.hasPrefix("Detached") == true
+        }, object: nil)
+        wait(for: [detached], timeout: 5)
+        XCTAssertGreaterThanOrEqual(statusStarts(), before + 2)
+    }
+
     func testLegacyRepositoryCancellationAndBareIgnoreFailurePreserveRepositoryBytes() throws {
         try prepareFixture()
         defer { try? removeFixture() }
@@ -1037,14 +1546,15 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         owner.repository = document.repository
         defer { owner.close() }
         let controller = GitX.RepositoryToolbarController(windowController: owner)
-        let toolbar = NSToolbar(identifier: "GitX.Test.AccountReplacement")
-        let item = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount"), willBeInsertedIntoToolbar: true))
+        controller.install()
+        let toolbar = try XCTUnwrap(owner.window?.toolbar)
+        let item = try XCTUnwrap(toolbar.items.first { $0.itemIdentifier == NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount") })
         let popup = try XCTUnwrap(item.view?.subviews.compactMap { $0 as? NSPopUpButton }.first)
         NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository,
                                         userInfo: [GitX.RepositoryForgeAccountNotificationKey.providerName: "GitHub", GitX.RepositoryForgeAccountNotificationKey.login: "prior-owner"])
-        XCTAssertEqual(popup.titleOfSelectedItem, "@prior-owner")
+        XCTAssertEqual(popup.item(at: 0)?.title, "@prior-owner")
         NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository)
-        XCTAssertEqual(popup.titleOfSelectedItem, "Forge")
+        XCTAssertEqual(popup.item(at: 0)?.title, "Forge")
         XCTAssertEqual(item.toolTip, "Configure a Forge account")
     }
 
@@ -1094,6 +1604,196 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(admissions, 1, "A retained UI coordinator cannot admit another write after owner deallocation")
         XCTAssertEqual(try GitXTestGitFixture.run(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"], in: directory).standardOutput,
                        try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput)
+    }
+
+    func testNativeToolbarIsConstructedOnceAndDetachedWhenItsRepositoryIsRemoved() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let owner = ToolbarInstallationProbe(windowNibName: "RepositoryWindow")
+        document.addWindowController(owner)
+        defer { owner.close() }
+        let nativeWindow = try XCTUnwrap(owner.window)
+        XCTAssertNotNil(nativeWindow.toolbar?.delegate)
+        XCTAssertEqual(owner.initialToolbars.values.withLock { $0.count }, 1)
+        document.removeWindowController(owner)
+        XCTAssertNil(owner.repository)
+        XCTAssertNil(nativeWindow.toolbar)
+        XCTAssertNil(nativeWindow.representedURL)
+        document.addWindowController(owner)
+        XCTAssertNotNil(nativeWindow.toolbar?.delegate)
+        XCTAssertNotNil(owner.historyViewController)
+        XCTAssertNotNil(nativeWindow.representedURL)
+    }
+
+    func testRepeatedToolbarInstallationPreservesCustomizationWithoutReassignment() throws {
+        let defaults = UserDefaults.standard
+        let configurationKey = "NSToolbar Configuration GitX.Repository.HistoryToolbar"
+        let previousConfiguration = defaults.object(forKey: configurationKey)
+        defer { defaults.set(previousConfiguration, forKey: configurationKey) }
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let nativeWindow = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        let owner = GitX.PBGitWindowController(window: nativeWindow)
+        owner.repository = document.repository
+        defer { owner.close() }
+        let assignments = Mutex(0)
+        let observation = nativeWindow.observe(\.toolbar, options: [.new]) { _, _ in assignments.withLock { $0 += 1 } }
+        defer { observation.invalidate() }
+        let toolbarController = GitX.RepositoryToolbarController(windowController: owner)
+        toolbarController.install()
+        let toolbar = try XCTUnwrap(nativeWindow.toolbar)
+        toolbar.autosavesConfiguration = false
+        let configurationBeforeCustomization = defaults.object(forKey: configurationKey) as? NSDictionary
+        toolbar.displayMode = .iconOnly
+        XCTAssertEqual(toolbar.displayMode, .iconOnly)
+        toolbar.insertItem(withItemIdentifier: .flexibleSpace, at: 0)
+        XCTAssertEqual(toolbar.items.first?.itemIdentifier, .flexibleSpace)
+        let identifiers = toolbar.items.map(\.itemIdentifier)
+        toolbarController.install()
+        XCTAssertTrue(nativeWindow.toolbar === toolbar)
+        XCTAssertEqual(toolbar.displayMode, .iconOnly)
+        XCTAssertEqual(toolbar.items.map(\.itemIdentifier), identifiers)
+        XCTAssertEqual(assignments.withLock { $0 }, 1)
+        XCTAssertFalse(toolbar.autosavesConfiguration)
+        XCTAssertEqual(defaults.object(forKey: configurationKey) as? NSDictionary, configurationBeforeCustomization)
+    }
+
+    func testAdmittedPushReportsSuccessAfterEveryPresentationOwnerIsReleased() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let remote = directory.appendingPathComponent("completion-target.git")
+        try GitXTestGitFixture.run(["init", "--bare", remote.path], in: directory)
+        try GitXTestGitFixture.run(["remote", "add", "origin", remote.path], in: directory)
+        var pending: (@Sendable () throws -> Void)?
+        var finished: ((NSError?) -> Void)?
+        weak var weakOwner: GitX.PBGitWindowController?
+        let successes = Mutex(0)
+        let token = NotificationCenter.default.addObserver(forName: .repositoryRemoteOperationDidSucceed, object: document.repository, queue: nil) { _ in successes.withLock { $0 += 1 } }
+        defer { NotificationCenter.default.removeObserver(token) }
+        autoreleasepool {
+            let owner = GitX.PBGitWindowController(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false),
+                                                   remoteProgressStarting: { _, _, operation, completion in pending = operation; finished = completion; return true })
+            weakOwner = owner
+            owner.repository = document.repository
+            owner.pullRequestUIController?.performPush(branch: PBGitRef(string: "refs/heads/main"), remote: PBGitRef(string: "refs/remotes/origin"), requiresConfirmation: false)
+            owner.close()
+        }
+        let operation = try XCTUnwrap(pending)
+        pending = nil
+        let deallocated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in weakOwner == nil }, object: nil)
+        wait(for: [deallocated], timeout: 5)
+        let executed = expectation(description: "The admitted operation reaches its actual Git result")
+        let error = Mutex<NSError?>(nil)
+        DispatchQueue.global().async {
+            do { try operation() } catch let failure { error.withLock { $0 = failure as NSError } }
+            executed.fulfill()
+        }
+        wait(for: [executed], timeout: 10)
+        XCTAssertNil(error.withLock { $0 })
+        finished?(error.withLock { $0 })
+        finished?(error.withLock { $0 })
+        finished = nil
+        XCTAssertEqual(successes.withLock { $0 }, 1)
+        XCTAssertEqual(try GitXTestGitFixture.run(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"], in: directory).standardOutput,
+                       try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput)
+    }
+
+    func testAdmittedFetchPublishesOnceAfterItsOwnersDeallocate() throws {
+        try remoteCompletionSurvivesPresentationRelease(kind: .fetch)
+    }
+
+    func testAdmittedPullPublishesOnceAfterItsOwnersDeallocate() throws {
+        try remoteCompletionSurvivesPresentationRelease(kind: .pull)
+    }
+
+    func testRejectedPushReportsItsActualFailureAfterItsOwnersDeallocate() throws {
+        try remoteCompletionSurvivesPresentationRelease(kind: .rejectedPush)
+    }
+
+    private enum CompletionKind { case fetch, pull, rejectedPush }
+
+    private func remoteCompletionSurvivesPresentationRelease(kind: CompletionKind) throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let remote = directory.appendingPathComponent("completion-remote.git")
+        try GitXTestGitFixture.run(["init", "--bare", remote.path], in: directory)
+        try GitXTestGitFixture.run(["remote", "add", "origin", remote.path], in: directory)
+        let original = try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try GitXTestGitFixture.run(["push", "--set-upstream", "origin", "main"], in: directory)
+        try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "Incoming remote commit"], in: directory)
+        let incoming = try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try GitXTestGitFixture.run(["push", "origin", "main"], in: directory)
+        try GitXTestGitFixture.run(["reset", "--hard", original], in: directory)
+        try GitXTestGitFixture.run(["update-ref", "refs/remotes/origin/main", original], in: directory)
+        var pending: (@Sendable () throws -> Void)?
+        var finished: ((NSError?) -> Void)?
+        var admissions = 0
+        var events: [GitX.RepositoryPushEvent] = []
+        weak var weakOwner: GitX.PBGitWindowController?
+        weak var weakCoordinator: GitX.RepositoryRemoteActionCoordinator?
+        let successes = Mutex<[String]>([])
+        let token = NotificationCenter.default.addObserver(forName: .repositoryRemoteOperationDidSucceed, object: document.repository, queue: nil) { notification in
+            successes.withLock { $0.append(notification.userInfo?["operation"] as? String ?? "missing") }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        autoreleasepool {
+            let owner = GitX.PBGitWindowController(window: NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false))
+            owner.repository = document.repository
+            weakOwner = owner
+            let coordinator = GitX.RepositoryRemoteActionCoordinator(repository: document.repository, windowController: owner, progressStarting: { _, _, operation, completion in
+                admissions += 1
+                pending = operation
+                finished = completion
+                return true
+            })
+            weakCoordinator = coordinator
+            switch kind {
+            case .pull:
+                coordinator.performPull(branch: PBGitRef(string: "refs/heads/main"), remote: PBGitRef(string: "refs/remotes/origin"), rebase: false)
+            case .fetch:
+                coordinator.performFetch(for: PBGitRef(string: "refs/remotes/origin"))
+            case .rejectedPush:
+                coordinator.performPush(branch: PBGitRef(string: "refs/heads/main"), remote: PBGitRef(string: "refs/remotes/origin"), requiresConfirmation: false,
+                                        pullRequestOption: nil, suppressesPostPushBrowserSuggestion: true, completion: { events.append($0) })
+            }
+            owner.close()
+        }
+        XCTAssertNil(weakOwner)
+        XCTAssertNotNil(weakCoordinator, "Admitted completion retains its coordinator without retaining its presentation owner")
+        let operation = try XCTUnwrap(pending)
+        pending = nil
+        let executed = expectation(description: "The original repository completes its admitted remote operation")
+        let failure = Mutex<NSError?>(nil)
+        DispatchQueue.global().async {
+            do { try operation() } catch { failure.withLock { $0 = error as NSError } }
+            executed.fulfill()
+        }
+        wait(for: [executed], timeout: 10)
+        if kind == .rejectedPush {
+            XCTAssertNotNil(failure.withLock { $0 })
+        } else {
+            XCTAssertNil(failure.withLock { $0 })
+        }
+        autoreleasepool {
+            weakCoordinator?.performFetch(for: nil)
+            finished?(failure.withLock { $0 })
+            finished?(failure.withLock { $0 })
+            finished = nil
+        }
+        XCTAssertEqual(admissions, 1, "Revoked presentation cannot admit more work")
+        XCTAssertEqual(successes.withLock { $0 }, kind == .rejectedPush ? [] : [kind == .pull ? "pull" : "fetch"])
+        if kind == .rejectedPush {
+            XCTAssertEqual(events, [.began(createPullRequestSelected: false), .failed])
+        }
+        XCTAssertNil(weakCoordinator)
+        let fetched = try GitXTestGitFixture.run(["rev-parse", "refs/remotes/origin/main"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let head = try GitXTestGitFixture.run(["rev-parse", "HEAD"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if kind != .rejectedPush {
+            XCTAssertEqual(fetched, incoming)
+        }
+        XCTAssertEqual(head, kind == .pull ? incoming : original)
+        let remoteHead = try GitXTestGitFixture.run(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"], in: directory).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(remoteHead, incoming)
     }
 
     private func verifyDeferredLoaderInstallation(activationBeforeNotification: Bool) throws {
@@ -1484,6 +2184,18 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         wait(for: [drained], timeout: 3)
         XCTAssertEqual(localBranch(in: actual.window?.contentView), "topic")
         XCTAssertTrue(try Data(contentsOf: captured).contains(Data("branch.head main".utf8)))
+    }
+
+    private func activateFixtureWindow(_ window: NSWindow) {
+        let activated = expectation(description: "Launch Services activates the existing test host")
+        Task { @MainActor in
+            await activateWorktreeTestApplication()
+            activated.fulfill()
+        }
+        wait(for: [activated], timeout: 5)
+        window.makeKeyAndOrderFront(nil)
+        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in NSApp.isActive && window.isKeyWindow }, object: nil)
+        wait(for: [foreground], timeout: 5)
     }
 
     private func waitForBranch(_ branch: String, in controller: GitX.PBGitWindowController) {

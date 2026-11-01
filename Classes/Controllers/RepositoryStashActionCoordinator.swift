@@ -19,9 +19,10 @@ final class RepositoryStashActionCoordinator: NSObject {
 
     @objc(saveWithKeepIndex:)
     func save(keepIndex: Bool) {
-        guard ownerIsCurrent() else { return }
-        logger.debug("Starting stash-save action")
-        perform { _ = try repository.stashSave(withKeepIndex: keepIndex) }
+        perform {
+            logger.debug("Starting stash-save action")
+            _ = try repository.stashSave(withKeepIndex: keepIndex)
+        }
     }
 
     @objc(popRef:)
@@ -54,7 +55,7 @@ final class RepositoryStashActionCoordinator: NSObject {
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Stash drop alert - cancel button"))
         logger.debug("Requesting stash-drop confirmation")
         windowController?.confirmDialog(alert, suppressionIdentifier: "Stash Drop") { [weak self] in
-            guard let self, self.ownerIsCurrent() else { return }
+            guard let self else { return }
             self.perform { _ = try self.repository.stashDrop(stash) }
         }
     }

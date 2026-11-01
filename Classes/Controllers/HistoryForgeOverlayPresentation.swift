@@ -208,26 +208,32 @@ private nonisolated enum HistoryForgeOverlayRegistry {
     private nonisolated(unsafe) static let presentations =
         NSMapTable<PBGitCommit, HistoryForgeBadgeBox>.weakToStrongObjects()
 
-    static func presentation(for commit: PBGitCommit) -> HistoryForgeBadgePresentation {
-        lock.withLock {
-            presentations.object(forKey: commit)?.presentation ?? HistoryForgeBadgePresenter.unavailable
+    #if GITX_APP_TARGET
+        static func presentation(for commit: PBGitCommit) -> HistoryForgeBadgePresentation {
+            lock.withLock {
+                presentations.object(forKey: commit)?.presentation ?? HistoryForgeBadgePresenter.unavailable
+            }
         }
-    }
+    #endif
 
     static func set(_ presentation: HistoryForgeBadgePresentation, for commit: PBGitCommit) {
         lock.withLock { presentations.setObject(HistoryForgeBadgeBox(presentation), forKey: commit) }
     }
 }
 
-extension PBGitCommit {
-    @objc dynamic var forgeCheckRollupText: String {
-        HistoryForgeOverlayRegistry.presentation(for: self).checkText
-    }
+// The hosted test target shares presenters, but must not replace the app's
+// Objective-C binding getters with getters backed by a second private cache.
+#if GITX_APP_TARGET
+    extension PBGitCommit {
+        @objc dynamic var forgeCheckRollupText: String {
+            HistoryForgeOverlayRegistry.presentation(for: self).checkText
+        }
 
-    @objc dynamic var forgePullRequestBadgeText: String {
-        HistoryForgeOverlayRegistry.presentation(for: self).pullRequestText
+        @objc dynamic var forgePullRequestBadgeText: String {
+            HistoryForgeOverlayRegistry.presentation(for: self).pullRequestText
+        }
     }
-}
+#endif
 
 @MainActor
 final class RepositoryFactsInspectorController: NSObject {
@@ -416,7 +422,8 @@ private extension NSLayoutConstraint {
 final class HistoryForgeOverlayCoordinator: NSObject {
     private weak var owner: PBGitHistoryController?
     private weak var commitList: PBCommitList?
-    private let session: RepositoryForgeOverlaySession
+    private var session: RepositoryForgeOverlaySession?
+    private var bindingGeneration: UInt64 = 0
     private let inspector: RepositoryFactsInspectorController
     private var factsToken: UUID?
     private var historyToken: UUID?
@@ -436,34 +443,51 @@ final class HistoryForgeOverlayCoordinator: NSObject {
         guard owner.repository != nil else { return nil }
         self.owner = owner
         self.commitList = commitList
-        self.session = session
         inspector = RepositoryFactsInspectorController(
             isExpanded: factsInspectorInitiallyExpanded,
             visibilityDidChange: factsInspectorVisibilityDidChange
         )
         super.init()
         inspector.install(in: owner.view)
-        factsToken = session.observeFacts { [weak self] state in
-            self?.inspector.apply(state)
-        }
-        historyToken = session.observeHistory { [weak self] commit, state in
-            self?.apply(state, to: commit)
-        }
         observeDemand()
+        bind(to: session)
+    }
+
+    func bind(to replacement: RepositoryForgeOverlaySession?) {
+        guard session !== replacement else { return }
+        bindingGeneration &+= 1
+        let generation = bindingGeneration
+        if let factsToken {
+            session?.removeObserver(factsToken)
+        }
+        if let historyToken {
+            session?.removeObserver(historyToken)
+        }
+        factsToken = nil
+        historyToken = nil
+        session = replacement
+        requestedCommits.removeAll()
+        inspector.apply(.unavailable(.notRequested))
+        if let commitList, let commits = owner?.commitController.arrangedObjects as? [PBGitCommit] {
+            apply(HistoryForgeBadgePresenter.unavailable, to: Array(commits.enumerated()), in: commitList)
+        }
+        guard let replacement else { return }
+        factsToken = replacement.observeFacts { [weak self] state in
+            guard let self, bindingGeneration == generation else { return }
+            inspector.apply(state)
+        }
+        historyToken = replacement.observeHistory { [weak self] commit, state in
+            guard let self, bindingGeneration == generation else { return }
+            apply(state, to: commit)
+        }
         requestVisibleOverlays()
+        logger.debug("Rebound History Forge session generation=\(generation, privacy: .public)")
     }
 
     // Invoked by the owning window controller and app-hosted verification.
     // swiftlint:disable:next unused_declaration
     func invalidate() {
-        if let factsToken {
-            session.removeObserver(factsToken)
-        }
-        if let historyToken {
-            session.removeObserver(historyToken)
-        }
-        factsToken = nil
-        historyToken = nil
+        bind(to: nil)
         columnObservations.removeAll()
         arrangedObjectsObservation = nil
         if let boundsObserver {
@@ -506,7 +530,7 @@ final class HistoryForgeOverlayCoordinator: NSObject {
     }
 
     private func requestVisibleOverlays() {
-        guard let owner, let commitList, forgeColumnsAreVisible(in: commitList),
+        guard let session, let owner, let commitList, forgeColumnsAreVisible(in: commitList),
               let commits = owner.commitController.arrangedObjects as? [PBGitCommit]
         else { return }
         let rows = commitList.rows(in: commitList.visibleRect)
@@ -541,6 +565,10 @@ final class HistoryForgeOverlayCoordinator: NSObject {
         else { return }
         let presentation = HistoryForgeBadgePresenter.present(state)
         let matchingRows = commits.enumerated().filter { $0.element.sha.caseInsensitiveCompare(commit.value) == .orderedSame }
+        apply(presentation, to: matchingRows, in: commitList)
+    }
+
+    private func apply(_ presentation: HistoryForgeBadgePresentation, to matchingRows: [(offset: Int, element: PBGitCommit)], in commitList: PBCommitList) {
         let columns = IndexSet([
             commitList.column(withIdentifier: NSUserInterfaceItemIdentifier("ForgeCheckRollupColumn")),
             commitList.column(withIdentifier: NSUserInterfaceItemIdentifier("ForgePullRequestBadgeColumn")),

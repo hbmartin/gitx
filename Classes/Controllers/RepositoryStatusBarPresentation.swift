@@ -2,6 +2,27 @@ import AppKit
 import ForgeKit
 import Foundation
 
+/// History selection may reload refs without changing any local status input.
+nonisolated struct RepositoryStatusReferenceIdentity: Equatable, Sendable {
+    let headReference: Data?
+    let headObject: Data?
+    let references: [Data: Data]
+}
+
+nonisolated struct RepositoryStatusReferenceRefreshPolicy {
+    private var baseline: RepositoryStatusReferenceIdentity?
+
+    init(baseline: RepositoryStatusReferenceIdentity? = nil) {
+        self.baseline = baseline
+    }
+
+    mutating func needsRefresh(for identity: RepositoryStatusReferenceIdentity?) -> Bool {
+        defer { baseline = identity }
+        guard let identity else { return true }
+        return baseline != identity
+    }
+}
+
 nonisolated enum ForgeRecoveryAlertAction: Equatable, Sendable {
     case retry
     case resetForgeData

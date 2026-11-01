@@ -1060,10 +1060,14 @@ final class WorktreeServiceTests: XCTestCase {
         enqueueLock(second.service, path: fixture.linked.path, reason: "following") { _, error in XCTAssertNotNil(error); following.fulfill() }
         let started = second.tasks.expect(["worktree", "lock", "--reason", "following", fixture.linked.path])
         first.service.cancel()
-        await fulfillment(of: [cancelled, started], timeout: 5)
+        await fulfillment(of: [cancelled], timeout: 5)
+        XCTAssertTrue(second.tasks.mutations.isEmpty, "The cancelled read still owns admission until its task acknowledges completion")
+        let terminated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in read.wasCancelled }, object: nil)
+        await fulfillment(of: [terminated], timeout: 5)
         XCTAssertTrue(read.wasCancelled)
         try late(fixture.listing(), nil)
         try read.finish(fixture.listing())
+        await fulfillment(of: [started], timeout: 5)
         try second.tasks.task(["worktree", "lock", "--reason", "following", fixture.linked.path]).finish(nil, error: NSError(domain: "fixture", code: 1))
         await fulfillment(of: [following], timeout: 5)
         XCTAssertTrue(first.tasks.mutations.isEmpty)
@@ -1667,22 +1671,27 @@ final class WorktreeServiceTests: XCTestCase {
         let lastCompleted = expectation(description: "last mutation completed")
         let firstArguments = ["worktree", "lock", "--reason", "first", "/linked"]
         let lastArguments = ["worktree", "unlock", "/linked"]
+        var queuedCompletionOwner: NSObject? = NSObject()
+        weak let retainedQueuedOwner = queuedCompletionOwner
         enqueueLock(first.service, reason: "first") { _, error in
             XCTAssertNil(error)
             completions.names.append("first"); firstCompleted.fulfill()
         }
-        enqueueLock(cancelled.service, reason: "cancelled") { output, error in
+        enqueueLock(cancelled.service, reason: "cancelled") { [owner = queuedCompletionOwner] output, error in
+            withExtendedLifetime(owner) {}
             XCTAssertNil(output)
             XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
             XCTAssertEqual(error?.code, NSUserCancelledError)
             completions.names.append("cancelled"); cancelledCompleted.fulfill()
         }
+        queuedCompletionOwner = nil
         enqueueUnlock(last.service) { _, error in
             XCTAssertNil(error)
             completions.names.append("last"); lastCompleted.fulfill()
         }
         cancelled.service.cancel()
-        XCTAssertTrue(completions.names.isEmpty)
+        XCTAssertEqual(completions.names, ["cancelled"], "Queued callers are cancelled promptly without admitting their mutation")
+        XCTAssertNil(retainedQueuedOwner, "A cancelled reservation cannot retain its caller's completion until admission")
         XCTAssertTrue(cancelled.tasks.mutations.isEmpty)
         XCTAssertTrue(last.tasks.mutations.isEmpty)
 
@@ -1692,7 +1701,7 @@ final class WorktreeServiceTests: XCTestCase {
         let lastStarted = last.tasks.expect(lastArguments)
         try first.tasks.task(discoveryArguments, occurrence: 1).finish(snapshot)
         await fulfillment(of: [firstCompleted, cancelledCompleted, lastStarted], timeout: 5)
-        XCTAssertEqual(completions.names, ["first", "cancelled"])
+        XCTAssertEqual(completions.names, ["cancelled", "first"])
         XCTAssertTrue(cancelled.tasks.mutations.isEmpty)
 
         let lastDiscovery = last.tasks.expect(discoveryArguments)
@@ -1700,7 +1709,7 @@ final class WorktreeServiceTests: XCTestCase {
         await fulfillment(of: [lastDiscovery], timeout: 5)
         try last.tasks.task(discoveryArguments, occurrence: 1).finish(snapshot)
         await fulfillment(of: [lastCompleted], timeout: 5)
-        XCTAssertEqual(completions.names, ["first", "cancelled", "last"])
+        XCTAssertEqual(completions.names, ["cancelled", "first", "last"])
     }
 
     func testCloseDrainsPostMutationDiscoveryKeepsFIFOAndIgnoresLateCompletion() async throws {
@@ -3577,7 +3586,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
     #endif
 
     #if DEBUG
-        func testCancellingAdmittedRepairEvidenceReleasesCompletionAndFIFOBeforeWorkerReturns() async throws {
+        func testCancellingAdmittedRepairEvidenceCompletesPromptlyAndHoldsFIFOUntilWorkerAcknowledgement() async throws {
             let held = try await heldRepairPreparationFixture(label: "cancel-held-evidence")
             let fixture = held.fixture
             let checkpoint = held.checkpoint
@@ -3609,7 +3618,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             completionOwner = nil
             await fulfillment(of: [checkpoint.entered], timeout: 5)
             XCTAssertNotNil(retainedCompletionOwner)
-            let progressed = expectation(description: "following real writer finishes while evidence worker remains held")
+            let progressed = expectation(description: "following real writer finishes after the cancelled evidence worker acknowledges")
             progressed.assertForOverFulfill = true
             enqueue {
                 held.lockFollowing(reason: "following") { error in
@@ -3619,7 +3628,7 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             }
             XCTAssertEqual(held.followingCommands, 0)
             service.cancel()
-            await fulfillment(of: [cancelled, progressed], timeout: 5)
+            await fulfillment(of: [cancelled], timeout: 5)
             XCTAssertEqual(completions, 1)
             XCTAssertNil(result.preview)
             XCTAssertEqual(result.error?.domain, NSCocoaErrorDomain)
@@ -3629,9 +3638,9 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             XCTAssertFalse(checkpoint.wasReleased)
             XCTAssertEqual(service.repairPreparationCount, 0)
             XCTAssertEqual(held.repairCommands, 0)
-            XCTAssertEqual(held.followingCommands, 1)
+            XCTAssertEqual(held.followingCommands, 0)
             checkpoint.resume()
-            await fulfillment(of: [checkpoint.finishedExpectation()], timeout: 5)
+            await fulfillment(of: [checkpoint.finishedExpectation(), progressed], timeout: 5)
             XCTAssertFalse(checkpoint.didTimeout)
             XCTAssertTrue(checkpoint.wasReleased)
             XCTAssertFalse(checkpoint.isWaiting)
@@ -5069,7 +5078,10 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         progressed.assertForOverFulfill = true
         enqueue { following.lockWorktree(path: fixture.linked.path, reason: "following") { _, error in XCTAssertNil(error); progressed.fulfill() } }
         service.cancel()
-        await fulfillment(of: [cancelled, progressed], timeout: 10)
+        await fulfillment(of: [cancelled], timeout: 10)
+        XCTAssertNil(following.worktree(forBranch: "refs/heads/topic")?.lockReason)
+        try discovery.finish(Data(fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
+        await fulfillment(of: [progressed], timeout: 10)
         XCTAssertNil(result.preview)
         XCTAssertEqual(result.error?.domain, NSCocoaErrorDomain)
         XCTAssertEqual(result.error?.code, NSUserCancelledError)
@@ -5079,7 +5091,6 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["show-ref", "--head"]), refs)
         XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent("marker.txt")), content)
         XCTAssertEqual(try Data(contentsOf: fixture.linked.appendingPathComponent(".git")), gitfile)
-        try discovery.finish(Data(fixture.git(["worktree", "list", "--porcelain", "-z"]).utf8))
         let drained = expectation(description: "late discovery callback was rejected")
         DispatchQueue.main.async { drained.fulfill() }
         await fulfillment(of: [drained], timeout: 5)
@@ -5621,9 +5632,11 @@ final class WorktreeRepairSafetyTests: XCTestCase {
         let progressed = expectation(description: "shared queue progresses")
         enqueue { following.lockWorktree(path: fixture.linked.path, reason: "next") { _, error in XCTAssertNil(error); progressed.fulfill() } }
         service.cancel()
-        await fulfillment(of: [cancelled, progressed], timeout: 10)
+        await fulfillment(of: [cancelled], timeout: 10)
+        XCTAssertNil(following.worktree(forBranch: "refs/heads/topic")?.lockReason)
         XCTAssertTrue(report.wasCancelled)
         report.finish(Data("Removing worktrees/linked: fixture\n".utf8))
+        await fulfillment(of: [progressed], timeout: 10)
         let drained = expectation(description: "late report drained")
         DispatchQueue.main.async { drained.fulfill() }
         await fulfillment(of: [drained], timeout: 5)

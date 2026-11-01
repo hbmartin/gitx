@@ -746,6 +746,29 @@ public actor ForgeSQLiteStore {
         repository: ForgeRepositoryIdentity,
         key: Data
     ) throws -> Bool {
+        try removeDurableRecord(kind: kind, accountID: accountID, repository: repository, key: key, matchingPayload: nil)
+    }
+
+    /// Deletes only the exact payload observed by the caller. A newer record is
+    /// preserved even if another connection writes between its read and this call.
+    @discardableResult
+    public func deleteDurableRecord(
+        kind: ForgeSQLiteDurableKind,
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        key: Data,
+        matchingPayload: Data
+    ) throws -> Bool {
+        try removeDurableRecord(kind: kind, accountID: accountID, repository: repository, key: key, matchingPayload: matchingPayload)
+    }
+
+    private func removeDurableRecord(
+        kind: ForgeSQLiteDurableKind,
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        key: Data,
+        matchingPayload: Data?
+    ) throws -> Bool {
         _ = try ForgeSQLiteDurableRecord(
             kind: kind,
             accountID: accountID,
@@ -757,15 +780,16 @@ public actor ForgeSQLiteStore {
         let connection = try activeConnection()
         let account = try Self.encodedKey(accountID)
         let repository = try Self.encodedKey(repository)
+        var predicate = ""
+        var bindings: [ForgeSQLiteBinding] = [.integer(Int64(kind.rawValue)), .blob(account), .blob(repository), .blob(key)]
+        if let matchingPayload {
+            predicate = " AND payload = ?"
+            bindings.append(.blob(matchingPayload))
+        }
         return try connection.changeCount {
             try connection.execute(
-                """
-                DELETE FROM forge_durable_records
-                WHERE kind = ? AND account_key = ? AND repository_key = ? AND record_key = ?
-                """,
-                bindings: [
-                    .integer(Int64(kind.rawValue)), .blob(account), .blob(repository), .blob(key),
-                ]
+                "DELETE FROM forge_durable_records WHERE kind = ? AND account_key = ? AND repository_key = ? AND record_key = ?" + predicate,
+                bindings: bindings
             )
         } > 0
     }

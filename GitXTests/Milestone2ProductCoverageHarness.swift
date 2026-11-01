@@ -2912,17 +2912,26 @@
         private(set) var saveCount = 0
         private(set) var deleteCount = 0
         private(set) var savedContents: [ForgeDraftIdentity: ForgeDraftContent] = [:]
-        func load(identity _: ForgeDraftIdentity) async throws -> ForgeDraft? {
-            nil
+        private var values: [ForgeDraftIdentity: ForgeDraft] = [:]
+        func load(identity: ForgeDraftIdentity) async throws -> ForgeDraft? {
+            values[identity]
         }
 
-        func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at _: Date) async throws {
+        func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
+            values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: date)
             savedContents[identity] = content
             saveCount += 1
         }
 
-        func delete(identity _: ForgeDraftIdentity) async throws {
+        func delete(identity: ForgeDraftIdentity) async throws {
+            values[identity] = nil
             deleteCount += 1
+        }
+
+        func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool {
+            guard snapshot.identity == identity, values[identity] == snapshot else { return false }
+            try await delete(identity: identity)
+            return true
         }
     }
 

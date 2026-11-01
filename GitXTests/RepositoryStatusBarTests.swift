@@ -119,6 +119,28 @@ final class RepositoryStatusBarTests: XCTestCase {
         XCTAssertEqual(updated.preferredAccount, replacement)
     }
 
+    func testReferenceRefreshIgnoresUnchangedHistoryReloadsAndTracksActualHeadAndRefs() {
+        let main = Data("refs/heads/main".utf8)
+        let topic = Data("refs/heads/topic".utf8)
+        let remote = Data("refs/remotes/origin/main".utf8)
+        let first = Data("11111111".utf8)
+        let second = Data("22222222".utf8)
+        let initial = RepositoryStatusReferenceIdentity(headReference: main, headObject: first, references: [main: first, topic: first, remote: first])
+        var policy = RepositoryStatusReferenceRefreshPolicy(baseline: initial)
+        XCTAssertFalse(policy.needsRefresh(for: initial))
+        XCTAssertFalse(policy.needsRefresh(for: RepositoryStatusReferenceIdentity(headReference: main, headObject: first, references: [remote: first, topic: first, main: first])))
+        let checkout = RepositoryStatusReferenceIdentity(headReference: topic, headObject: first, references: initial.references)
+        XCTAssertTrue(policy.needsRefresh(for: checkout), "Changing HEAD to an equal-OID branch still changes status")
+        XCTAssertFalse(policy.needsRefresh(for: checkout))
+        XCTAssertTrue(policy.needsRefresh(for: RepositoryStatusReferenceIdentity(headReference: topic, headObject: first, references: [main: first, topic: first, remote: second])))
+        XCTAssertTrue(policy.needsRefresh(for: RepositoryStatusReferenceIdentity(headReference: Data("HEAD".utf8), headObject: second, references: initial.references)))
+        XCTAssertTrue(policy.needsRefresh(for: nil), "An unverifiable snapshot refreshes conservatively")
+        XCTAssertTrue(policy.needsRefresh(for: initial))
+        let unborn = RepositoryStatusReferenceIdentity(headReference: main, headObject: nil, references: [:])
+        XCTAssertTrue(policy.needsRefresh(for: unborn))
+        XCTAssertFalse(policy.needsRefresh(for: unborn))
+    }
+
     func testPorcelainParserCoversBranchDivergenceEveryWorkingStateAndRenameContinuation() {
         let records = [
             "# branch.oid 0123456789abcdef",
