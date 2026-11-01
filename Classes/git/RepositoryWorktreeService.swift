@@ -398,14 +398,12 @@ private final class WorktreeOperation {
         evidenceCancellations.removeAll()
     }
 
-    @discardableResult
-    func cancelMarkedPreparation() -> Bool {
-        guard isActive, isCancelled else { return false }
+    func cancelMarkedPreparation() {
+        guard isActive, isCancelled else { return }
         if let task {
             cancelRepositoryReads([task])
         }
         cancellation?()
-        return true
     }
 }
 
@@ -1015,14 +1013,24 @@ final class PBRepositoryWorktreeService: NSObject {
 
     @objc(markPreparationsCancelledForOwner:)
     func markPreparationsCancelled(forOwner owner: NSObject) {
-        operations.values.filter { $0.owner === owner }.forEach { $0.markPreparationCancelled() }
+        preparations(forOwner: owner).forEach { $0.markPreparationCancelled() }
     }
 
     @objc(cancelPreparationsForOwner:)
     func cancelPreparations(forOwner owner: NSObject) {
-        let pending = operations.values.filter { $0.owner === owner }
+        Self.cancelPreparations(forOwner: owner, in: [self])
+    }
+
+    static func cancelPreparations(forOwner owner: NSObject, in services: [PBRepositoryWorktreeService]) {
+        let pending = services.flatMap { $0.preparations(forOwner: owner) }
+        // Cancellation can advance admission synchronously. Collect and mark
+        // every affected service before invoking any cancellation callback.
         pending.forEach { $0.markPreparationCancelled() }
         pending.forEach { $0.cancelMarkedPreparation() }
+    }
+
+    private func preparations(forOwner owner: NSObject) -> [WorktreeOperation] {
+        operations.values.filter { $0.owner === owner }
     }
 
     @objc(worktreeForBranch:)

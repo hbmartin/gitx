@@ -1169,6 +1169,72 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     #if DEBUG
+        private final nonisolated class RepositoryLocationProbe: PBGitRepository {
+            let failNextMainThreadLocationRead = Mutex(false)
+
+            override func task(withArguments arguments: [Any]?) -> PBTask {
+                let task = super.task(withArguments: arguments)
+                RepositoryTestGitEnvironment.prepare(task)
+                return task
+            }
+
+            override func gitURL() -> URL? {
+                // Inject a transient owner-location failure without changing the
+                // backend path observed by unrelated repository workers.
+                let unavailable = Thread.isMainThread && failNextMainThreadLocationRead.withLock { pending in
+                    defer { pending = false }
+                    return pending
+                }
+                return unavailable ? nil : super.gitURL()
+            }
+        }
+
+        func testTransientLocationLossRevokesTheCurrentRepositoryAndRestoresMatchingPanes() throws {
+            try prepareFixture()
+            defer { try? removeFixture() }
+            let other = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-owner-location-" + UUID().uuidString)
+            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+            var drainedService = true
+            defer {
+                if drainedService {
+                    try? FileManager.default.removeItem(at: other)
+                }
+            }
+            try GitXTestGitFixture.run(["init", "--initial-branch=available-owner"], in: other)
+            try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "available owner"], in: other)
+            let repository = try XCTUnwrap(RepositoryLocationProbe(url: other))
+            let service = try XCTUnwrap(repository.worktreeService)
+            defer {
+                repository.revisionList?.cleanup()
+                repository.revisionList = nil
+                service.cancel()
+                drainedService = false
+                let drained = expectation(description: "Location fixture acknowledges owned processes and evidence")
+                service.drainForTesting { drained.fulfill() }
+                drainedService = XCTWaiter.wait(for: [drained], timeout: 15) == .completed
+                XCTAssertTrue(drainedService, "Preserving undrained location fixture at \(other.path)")
+            }
+            let actual = RepositoryOverrideWindowProbe()
+            actual.repository = repository
+            _ = actual.window
+            defer { actual.close() }
+            waitForBranch("available-owner", in: actual)
+            XCTAssertTrue(actual.reconciledWorktreeOwnership()?.repository === repository)
+            let authority = actual.repositoryOwnerValidation(for: repository)
+            XCTAssertTrue(authority())
+            repository.failNextMainThreadLocationRead.withLock { $0 = true }
+            XCTAssertNil(actual.reconciledWorktreeOwnership())
+            XCTAssertFalse(authority(), "Location loss revokes the previously captured presentation authority")
+            XCTAssertNil(actual.gitLoaderSelection)
+            XCTAssertNil(actual.historyViewController)
+            XCTAssertNil(actual.sidebarViewController)
+            XCTAssertEqual(localBranch(in: actual.window?.contentView), "Repository")
+            XCTAssertTrue(actual.reconciledWorktreeOwnership()?.repository === repository)
+            XCTAssertTrue(actual.historyViewController?.repository === repository)
+            XCTAssertTrue(actual.sidebarViewController?.repository === repository)
+            waitForBranch("available-owner", in: actual)
+        }
+
         func testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository() throws {
             try prepareFixture()
             defer { try? removeFixture() }
@@ -1421,6 +1487,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
         let before = statusStarts()
         document.repository.currentBranch = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/topic"))
+        NotificationCenter.default.post(name: .PBGitRepositoryEvent, object: document.repository,
+                                        userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: 0)])
         let unexpected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in statusStarts() > before }, object: nil)
         unexpected.isInverted = true
         wait(for: [unexpected], timeout: 2)

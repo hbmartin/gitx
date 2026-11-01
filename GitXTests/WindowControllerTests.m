@@ -1854,6 +1854,10 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	NSUInteger forgeSessionBeforeAvailabilityChange = [controller repositoryForgeOverlaySessionIdentityForTesting];
 	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBForgeApplicationAvailabilityDidChangeNotification"
 														object:nil];
+	XCTestExpectation *availabilityHandled = [self expectationForPredicate:[NSPredicate predicateWithBlock:^BOOL(id object, __unused NSDictionary *bindings) {
+		return [(PBGitWindowController *)object repositoryForgeOverlaySessionIdentityForTesting] != forgeSessionBeforeAvailabilityChange;
+	}] evaluatedWithObject:controller handler:nil];
+	[self waitForExpectations:@[ availabilityHandled ] timeout:5.0];
 	NSUInteger forgeSessionAfterAvailabilityChange = [controller repositoryForgeOverlaySessionIdentityForTesting];
 	XCTAssertNotEqual(forgeSessionBeforeAvailabilityChange, forgeSessionAfterAvailabilityChange);
 	[controller showForgeStatusDetails:self];

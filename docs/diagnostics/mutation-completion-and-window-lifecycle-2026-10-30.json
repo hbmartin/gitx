@@ -119,6 +119,28 @@
       "Release"
     ],
     "diagnostics": "Current retained-History screenshot demonstrates replacement facts and Checks/Pull Request badges. Test gates acknowledge resource drainage before fixture deletion.",
-    "preserved": "Selectors, callback signatures, admitted writes, repository-owned inventory, delayed scripting options, persisted formats, dependencies and existing coverage floors."
+    "preserved": "Selectors, callback signatures, admitted writes, repository-owned inventory, delayed scripting options, persisted formats, dependencies and existing coverage floors.",
+    "additionalCharacterization": {
+      "commit": "e2d879e9",
+      "runIds": [
+        "worktree-ownership-fixture-characterization",
+        "worktree-ownership-fixture-characterization2"
+      ],
+      "passingCases": 3,
+      "behavior": "Exact nil/true/false watcher preference restoration across normal and throwing exits; mark-only cancellation preserves callback/process state and cancels a queued reservation on later admission."
+    },
+    "completeCompatibilityRegression": {
+      "runId": "worktree-ownership-complete1",
+      "nativeTests": 2181,
+      "failedCases": 4,
+      "failedAssertions": 12,
+      "coverageEligible": false,
+      "findings": [
+        "Unchanged programmatic owners lose manually supplied panes.",
+        "Metadata-only bare repositories lose read-only Finder policy when Git-backed lifetime is unavailable.",
+        "The real-nib test still expects availability notification handling before its publisher returns."
+      ],
+      "preparedCorrections": "Preserve unchanged manual panes, reconcile captured read-only facades separately from lifetime-gated Git work, and wait for observable session replacement. Consolidate owner cancellation across services and cover transient location loss and empty Git-directory events."
+    }
   }
 }

@@ -56,9 +56,7 @@ private final class RepositoryWindowLifetime {
         observations.removeAll()
         let services = worktreeServices
         worktreeServices.removeAll()
-        // Mark every reservation before cancellation can release shared FIFO admission.
-        services.forEach { $0.markPreparationsCancelled(forOwner: worktreeOwner) }
-        services.forEach { $0.cancelPreparations(forOwner: worktreeOwner) }
+        PBRepositoryWorktreeService.cancelPreparations(forOwner: worktreeOwner, in: services)
         focus?.cancel()
         status?.cancel()
         focus = nil
@@ -261,12 +259,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     final func ensureActionCoordinators() {
-        if !isReconcilingOwnership {
-            reconcileOwnership()
-            return
-        }
-        guard !ownership.closed, let repository, repository.gitURL() != nil else { return }
-        guard lifetime?.identity == currentOwnerIdentity(), lifetime?.repository === repository else { return }
+        guard !isReconcilingOwnership else { return }
+        reconcileOwnership()
+    }
+
+    private final func installActionCoordinators(repository: PBGitRepository?, identity: RepositoryWindowOwnership.Identity?, gitAvailable: Bool) {
+        guard let repository else { resetActionCoordinators(); return }
+        let locationAvailable = gitAvailable || repository.gitURL() != nil
+        guard identity == currentOwnerIdentity(), !ownership.closed, locationAvailable else { resetActionCoordinators(); return }
         if actionRepository != ObjectIdentifier(repository) {
             resetActionCoordinators()
             actionRepository = ObjectIdentifier(repository)
@@ -274,6 +274,13 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if actionContextResolver == nil {
             actionContextResolver = RepositoryActionContextResolver()
         }
+        // Legacy repository subclasses may expose a location without ObjectiveGit.
+        // Read-only context and Finder/Terminal policy remain usable; Git work
+        // still requires the complete validated lifetime below.
+        if workspaceActionCoordinator == nil {
+            workspaceActionCoordinator = WorkspaceActionCoordinator(repository: repository)
+        }
+        guard gitAvailable, lifetime?.identity == identity, lifetime?.repository === repository else { return }
         if remoteActionCoordinator == nil {
             remoteActionCoordinator = RepositoryRemoteActionCoordinator(repository: repository, windowController: self, progressStarting: remoteProgressStarting)
         }
@@ -317,9 +324,6 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 repository: repository,
                 windowController: self
             )
-        }
-        if workspaceActionCoordinator == nil {
-            workspaceActionCoordinator = WorkspaceActionCoordinator(repository: repository)
         }
     }
 
@@ -561,17 +565,18 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let repository = repository
         let identity = ownerIdentity(for: repository)
         let repositoryID = repository.map(ObjectIdentifier.init)
+        let previousRepository = paneRepository ?? lifetime?.identity.repository ?? actionRepository
         let repositoryAvailable = ensureLifetime(repository: repository, identity: identity)
-        if paneRepository != repositoryID || !repositoryAvailable {
+        if !repositoryAvailable || (previousRepository != nil && previousRepository != repositoryID) {
             closeRepositoryPanes()
         }
+        installActionCoordinators(repository: repository, identity: identity, gitAvailable: repositoryAvailable)
         guard lifetime != nil else {
             if isWindowLoaded {
                 super.window?.representedURL = nil
             }
             return false
         }
-        ensureActionCoordinators()
         installRepositoryPanesIfReady()
         return reconcileGitLoaders()
     }
