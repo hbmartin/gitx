@@ -38,11 +38,13 @@
     "runIds": [
       "forge-refresh-round2-static",
       "forge-refresh-query-green",
-      "forge-refresh-local-complete"
+      "forge-refresh-local-complete",
+      "forge-refresh-local-complete2"
     ],
     "static": "SDK lookup prevented 21 diagnostics-fixture cases. Explicit installed SDK retry passed; subsequent canonical static verification passed all 864 script tests.",
     "native": "First combined run: 262 selected correctness tests (plus a passing host probe), two failures. Correct nullable table capture preserves a matching manually supplied History table without loading its view; reentrant fixture now checks replaced History ownership and final visibility, allowing a retained status-bar view.",
-    "completeCorrectness": "2,203 tests executed; one session-replacement fixture failed because it compared addresses after releasing the old object. The fixture now retains the previous session without weakening the replacement assertion."
+    "completeCorrectness": "2,203 tests executed; one session-replacement fixture failed because it compared addresses after releasing the old object. The fixture now retains the previous session without weakening the replacement assertion.",
+    "completeCorrectnessRetry": "2,204 tests passed and one auto-fetch fixture crashed during teardown. class_createInstance bypassed the Swift window controller stored-property initialization; the fixture now uses initWithWindow:nil. No assertion was weakened or production behavior changed."
   },
   "requiredFinalVerification": {
     "runId": "forge-refresh-local-final-full",
@@ -58,9 +60,12 @@
     "runIds": [
       "forge-refresh-boundary-green",
       "forge-refresh-coverage-boundary-build",
-      "forge-refresh-boundary-static"
+      "forge-refresh-boundary-static",
+      "forge-refresh-autofetch-fixture-build",
+      "forge-refresh-autofetch-fixture-green"
     ],
     "focusedNativeTests": 3,
-    "status": "Focused session replacement, amend eligibility and app-target explicit draft discard passed; Debug/Release consumers, 864 script tests and interoperability passed. Complete post-commit correctness remains required."
+    "status": "Focused session replacement, amend eligibility and app-target explicit draft discard passed; Debug/Release consumers, 864 script tests and interoperability passed. Complete post-commit correctness remains required.",
+    "autoFetchFixture": "Full GitXFeatureTests class passed after initializing the Swift superclass normally. Complete correctness remains required."
   }
 }

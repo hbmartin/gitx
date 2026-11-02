@@ -1921,7 +1921,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	PBAutoFetchRepositorySpy *repository = class_createInstance(PBAutoFetchRepositorySpy.class, 0);
 	NSURL *repositoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-notification" isDirectory:YES];
 	repository.testWorkingDirectoryURL = repositoryURL;
-	PBAutoFetchWindowControllerSpy *windowController = class_createInstance(PBAutoFetchWindowControllerSpy.class, 0);
+	// The Swift superclass requires its stored-property initialization and teardown invariants.
+	PBAutoFetchWindowControllerSpy *windowController = [[PBAutoFetchWindowControllerSpy alloc] initWithWindow:nil];
 	PBAutoFetchHistoryControllerSpy *historyController = class_createInstance(PBAutoFetchHistoryControllerSpy.class, 0);
 	windowController.testHistoryViewController = historyController;
 	PBAutoFetchRepositoryDocumentSpy *document = class_createInstance(PBAutoFetchRepositoryDocumentSpy.class, 0);
