@@ -450,6 +450,7 @@ static NSControlStateValue PBWindowAlertSuppressionState;
 static NSUInteger PBWindowAlertSheetCount;
 static NSUInteger PBWindowAlertAppModalCount;
 @interface PBForgeWindowFixtureTools : NSObject
++ (nullable id)retainedSessionFor:(NSObject *)controller;
 + (BOOL)requireAuthenticationFor:(NSObject *)controller;
 @end
 
@@ -1855,6 +1856,9 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBRepositoryRemoteOperationDidSucceedNotification"
 														object:self.repository
 													  userInfo:@{@"operation" : @"push"}];
+	// Keep the original object alive so allocator address reuse cannot hide a replacement.
+	__attribute__((objc_precise_lifetime)) id previousForgeSession = [PBForgeWindowFixtureTools retainedSessionFor:controller];
+	XCTAssertNotNil(previousForgeSession);
 	NSUInteger forgeSessionBeforeAvailabilityChange = [controller repositoryForgeOverlaySessionIdentityForTesting];
 	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBForgeApplicationAvailabilityDidChangeNotification"
 														object:nil];

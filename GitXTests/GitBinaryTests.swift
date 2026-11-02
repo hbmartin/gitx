@@ -8,6 +8,11 @@ import XCTest
 @MainActor
 @objc(PBForgeWindowFixtureTools)
 final class ForgeWindowFixtureTools: NSObject {
+    @objc(retainedSessionFor:)
+    static func retainedSession(for object: NSObject) -> AnyObject? {
+        (object as? GitX.PBGitWindowController)?.repositoryForgeOverlaySession
+    }
+
     @objc(requireAuthenticationFor:)
     static func requireAuthentication(for object: NSObject) -> Bool {
         guard let owner = object as? GitX.PBGitWindowController,
@@ -1625,6 +1630,27 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertFalse(actual.forgeLinkContext.isForgeAvailable)
         XCTAssertEqual(repository.remoteReads.withLock { $0 }, 0, "Menu context must not start discovery")
         XCTAssertFalse(actual.isWindowLoaded)
+    }
+
+    func testAmendMenuValidationPreservesItsCurrentWindowAndIndexEligibility() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let actual = GitX.PBGitWindowController(ownerNotifications: NotificationCenter())
+        actual.repository = document.repository
+        let window = try XCTUnwrap(actual.window)
+        defer { actual.close() }
+        activateFixtureWindow(window)
+        let history = try XCTUnwrap(actual.historyViewController)
+        let selection = actual.gitLoaderSelection
+        let menu = NSMenuItem(title: "Amend Commit", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
+        let eligible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.validateMenuItem(menu) }, object: nil)
+        wait(for: [eligible], timeout: 5)
+        XCTAssertEqual(menu.state, .off)
+        XCTAssertTrue(actual.historyViewController === history)
+        XCTAssertEqual(actual.gitLoaderSelection, selection)
+        XCTAssertTrue(actual.window === window)
+        actual.close()
+        XCTAssertFalse(actual.validateMenuItem(menu))
     }
 
     func testForgeQueriesUsePreparedMetadataAndRefreshOnlyAtAuthorizedBoundaries() throws {

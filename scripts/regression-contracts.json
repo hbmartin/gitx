@@ -3436,6 +3436,13 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Unavailable repository commands must reset stale labels and disable destinations without a live window or resolver."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAmendMenuValidationPreservesItsCurrentWindowAndIndexEligibility",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Require current-index amend eligibility and unchanged History, executable and window; closed owners refuse validation."
         }
       ]
     },
@@ -3560,6 +3567,13 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Use literal out-of-order dates, including one before creation, and require the original creation time and greatest activity timestamp."
+        },
+        {
+          "source": "GitXTests/Milestone2CompositionCoverageHarnessTests.swift",
+          "identifier": "GitXTests/Milestone2CompositionCoverageHarnessTests/testShippedAsyncCompositionCoverageProof",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Run the app-target lazy SQLite draft store through save, verified load, explicit discard and absent reload, preserving unconditional discard alongside conditional publication cleanup."
         }
       ]
     },
