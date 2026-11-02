@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "reviewTarget": "e2a5f9a8489370039889dbdc303c02afed8ebca2",
+  "integrationBase": "56a827695ede59f40c353f76e27b95aa594850b8",
+  "characterization": {
+    "commit": "1bd2335b01717ecde8b2caaec09b42904c9add67",
+    "runId": "forge-refresh-characterization",
+    "nativeTests": 2
+  },
+  "policies": {
+    "queries": "Defer stale queries; use prepared Forge metadata and existing unavailable menu rendering.",
+    "draftSaveFailure": "Continue remote submission and protect unverified draft data.",
+    "performanceScope": "Bound reset work; measure complete cached rebinding without broad optimization.",
+    "delivery": "Local commits only; no push or PR."
+  },
+  "regressionReproductions": {
+    "runIds": [
+      "forge-refresh-red2",
+      "forge-refresh-cold-red"
+    ],
+    "originalCases": 6,
+    "coldQueryCases": 2,
+    "coldQueryAssertionFailures": 3,
+    "note": "Expected failures retained locally; no failing tests committed."
+  },
+  "historicalPassingDevelopmentVerification": {
+    "runIds": [
+      "forge-refresh-fixture-focus",
+      "forge-refresh-pre-native",
+      "forge-refresh-query-fix-build",
+      "forge-refresh-query-compat-build",
+      "forge-refresh-query-green2"
+    ],
+    "note": "Focused and pre-commit evidence does not establish final delivery readiness.",
+    "focusedNativeTests": 262
+  },
+  "retainedFailureDiagnostics": {
+    "runIds": [
+      "forge-refresh-round2-static",
+      "forge-refresh-query-green"
+    ],
+    "static": "SDK lookup prevented 21 diagnostics-fixture cases; isolated retry with explicit installed SDK passed all 21. Complete canonical rerun remains required.",
+    "native": "First combined run: 262 selected correctness tests (plus a passing host probe), two failures. Correct nullable table capture preserves a matching manually supplied History table without loading its view; reentrant fixture now checks replaced History ownership and final visibility, allowing a retained status-bar view."
+  },
+  "requiredFinalVerification": {
+    "runId": "forge-refresh-local-final-full",
+    "profile": "full",
+    "cleanupMode": "preview",
+    "receipt": "artifacts/verification/forge-refresh-local-final-full/workflow.json",
+    "status": "Required after final implementation and eligible coverage commits; no coverage floor may be lowered.",
+    "uiRequiresFreshIdleConfirmation": true
+  },
+  "stagedApplication": "build/GitX.app",
+  "reviewChecklist": "artifacts/verification/forge-refresh-implementation/round2-comment-checklist.json"
+}

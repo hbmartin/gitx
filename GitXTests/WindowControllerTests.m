@@ -449,6 +449,10 @@ static NSModalResponse PBWindowAlertResponse;
 static NSControlStateValue PBWindowAlertSuppressionState;
 static NSUInteger PBWindowAlertSheetCount;
 static NSUInteger PBWindowAlertAppModalCount;
+@interface PBForgeWindowFixtureTools : NSObject
++ (BOOL)requireAuthenticationFor:(NSObject *)controller;
+@end
+
 static NSMutableArray<NSAlert *> *PBWindowPresentedAlerts;
 static void (^PBWindowAlertPresentationHook)(NSAlert *);
 static NSModalResponse PBWindowAddRemoteResponse;
@@ -1855,11 +1859,15 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBForgeApplicationAvailabilityDidChangeNotification"
 														object:nil];
 	XCTestExpectation *availabilityHandled = [self expectationForPredicate:[NSPredicate predicateWithBlock:^BOOL(id object, __unused NSDictionary *bindings) {
-		return [(PBGitWindowController *)object repositoryForgeOverlaySessionIdentityForTesting] != forgeSessionBeforeAvailabilityChange;
-	}] evaluatedWithObject:controller handler:nil];
+													   return [(PBGitWindowController *)object repositoryForgeOverlaySessionIdentityForTesting] != forgeSessionBeforeAvailabilityChange;
+												   }]
+													   evaluatedWithObject:controller
+																   handler:nil];
 	[self waitForExpectations:@[ availabilityHandled ] timeout:5.0];
 	NSUInteger forgeSessionAfterAvailabilityChange = [controller repositoryForgeOverlaySessionIdentityForTesting];
 	XCTAssertNotEqual(forgeSessionBeforeAvailabilityChange, forgeSessionAfterAvailabilityChange);
+	// Public anonymous reads may succeed; inject the authentication failure this route tests.
+	XCTAssertTrue([PBForgeWindowFixtureTools requireAuthenticationFor:controller]);
 	[controller showForgeStatusDetails:self];
 	XCTAssertEqualObjects(PBWindowPresentedAlerts.lastObject.messageText, @"Sign In Required");
 	NSURL *recoveryCopyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()

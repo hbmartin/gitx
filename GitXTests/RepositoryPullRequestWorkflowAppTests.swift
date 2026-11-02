@@ -1372,7 +1372,19 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await exerciseEdit(ownerState: .released)
     }
 
-    private func exerciseEdit(ownerState: OwnerState) async throws {
+    func testEditPersistsItsFinalSubmittedPayloadBeforePublication() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Final submitted title", body: "Final submitted body"))
+    }
+
+    func testFinalEditSaveFailureStillPublishesAndPreservesUnverifiedDraft() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Published title", body: "Published body"), finalSaveFails: true)
+    }
+
+    func testFinalEditPublicationPreservesANewerDraftWrittenAfterAdmission() async throws {
+        try await exerciseEdit(ownerState: .revoked, finalContent: ForgeDraftContent(title: "Submitted title", body: "Submitted body"), newerAfterAdmission: true)
+    }
+
+    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false) async throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
@@ -1385,6 +1397,8 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         let destination = ForgeDestination.pullRequest(fixture.repository, snapshot.number)
         let outcome = RepositoryPullRequestEditOutcome(snapshot: snapshot, destination: destination)
         let identity = try RepositoryPullRequestDraftPolicy.editIdentity(accountID: fixture.accountID, snapshot: snapshot)
+        let initialContent = ForgeDraftContent(title: snapshot.title, body: snapshot.bodyMarkdown)
+        try await drafts.save(identity: identity, content: initialContent, at: snapshot.updatedAt)
         var openings: [ForgeDestination] = []
         var controller: RepositoryPullRequestUIController? = try RepositoryPullRequestUIController(repository: local.repository, windowController: XCTUnwrap(owner),
                                                                                                    remoteActions: RecordingRepositoryRemoteActions(events: []), service: service, drafts: drafts,
@@ -1403,8 +1417,21 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         await fulfillment(of: [ready], timeout: 5)
         let sheet = try XCTUnwrap(window.attachedSheet)
         let button = try XCTUnwrap(find("GitX.PullRequest.Submit", in: XCTUnwrap(sheet.contentView)) as? NSButton)
+        if finalSaveFails {
+            await drafts.failSaves(true)
+        }
+        if let finalContent {
+            let title = try XCTUnwrap(find("GitX.PullRequest.Title", in: XCTUnwrap(sheet.contentView)) as? NSTextField)
+            let body = try XCTUnwrap(find("GitX.PullRequest.Body", in: XCTUnwrap(sheet.contentView)) as? NSTextView)
+            title.stringValue = finalContent.title ?? ""
+            body.string = finalContent.body
+        }
         button.performClick(nil)
         await fulfillment(of: [started], timeout: 5)
+        if let finalContent {
+            let submittedDraft = try await drafts.load(identity: identity)
+            XCTAssertEqual(submittedDraft?.content, finalSaveFails ? initialContent : finalContent, "The exact final payload must be saved unless persistence fails")
+        }
         let admitted = try XCTUnwrap(controller?.mutationTask)
         switch ownerState {
         case .current: break
@@ -1415,12 +1442,22 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in weakController == nil && weakOwner == nil }, object: nil)
             await fulfillment(of: [released], timeout: 5)
         }
+        let newerContent = ForgeDraftContent(title: "Newer local title", body: "Keep the newer edit")
+        if newerAfterAdmission {
+            try await drafts.save(identity: identity, content: newerContent, at: .distantFuture)
+        }
         await service.releaseEdit(outcome)
         let completed = expectation(description: "The admitted edit finishes cleanup")
         Task { await admitted.value; completed.fulfill() }
         await fulfillment(of: [completed], timeout: 5)
         let stored = try await drafts.load(identity: identity)
-        XCTAssertNil(stored)
+        if finalSaveFails {
+            XCTAssertEqual(stored?.content, initialContent)
+        } else if newerAfterAdmission {
+            XCTAssertEqual(stored?.content, newerContent)
+        } else {
+            XCTAssertNil(stored)
+        }
         XCTAssertEqual(openings, ownerState == .current ? [destination] : [])
         let calls = await service.editCount
         XCTAssertEqual(calls, 1)
@@ -1594,6 +1631,7 @@ private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
     private var values: [ForgeDraftIdentity: ForgeDraft] = [:]
     private var loadsFail = false
     private var deletionFails = false
+    private var savesFail = false
     private(set) var conditionalDeletes = 0
 
     func failLoads(_ value: Bool) {
@@ -1604,6 +1642,10 @@ private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
         deletionFails = value
     }
 
+    func failSaves(_ value: Bool) {
+        savesFail = value
+    }
+
     func load(identity: ForgeDraftIdentity) async throws -> ForgeDraft? {
         if loadsFail {
             throw CompletionFixtureError.unavailable
@@ -1612,6 +1654,9 @@ private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
     }
 
     func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
+        if savesFail {
+            throw CompletionFixtureError.unavailable
+        }
         values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: date)
     }
 

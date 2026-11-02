@@ -1,5 +1,9 @@
 import AppKit
 import ForgeKit
+@testable import class GitX.HistoryForgeOverlayCoordinator
+@testable import class GitX.PBCommitList
+@testable import class GitX.RepositoryForgeOverlayLoader
+@testable import class GitX.RepositoryForgeOverlaySession
 import GitXCore
 import XCTest
 
@@ -8,6 +12,101 @@ import XCTest
 /// correctness and sanitizer plans.
 @MainActor
 final class GitXPerformanceTests: XCTestCase {
+    private final class RebindingHistory: PBGitHistoryController {
+        let arranged = NSArrayController()
+        override var commitController: NSArrayController {
+            arranged
+        }
+
+        override func loadView() {
+            view = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        }
+    }
+
+    private final class RebindingCommit: PBGitCommit {
+        var sequence = 0
+        var identifier = ""
+        override var sha: String {
+            identifier
+        }
+
+        override var hash: Int {
+            sequence
+        }
+    }
+
+    private final class RebindingTable: GitX.PBCommitList {
+        var reloads = 0
+        override func rows(in _: NSRect) -> NSRange {
+            NSRange(location: 0, length: 40)
+        }
+
+        override func reloadData(forRowIndexes _: IndexSet, columnIndexes _: IndexSet) {
+            reloads += 1
+        }
+    }
+
+    /// Synthetic arranged models, fixed viewport and applied overlays; drawing is excluded.
+    func testHistoryForgeResetAndRebindScaling() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("forge-rebinding-perf-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try gitOutput(["init", "--quiet", "--initial-branch=main"], in: root)
+        _ = try gitOutput(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture"], in: root)
+        let repository = try XCTUnwrap(PBGitRepository(url: root))
+        let git = try XCTUnwrap(repository.gtRepo)
+        let object = try XCTUnwrap(try git.lookUpObject(byRevParse: "HEAD") as? GTCommit)
+        let history = try XCTUnwrap(RebindingHistory(repository: repository, superController: nil))
+        defer { history.closeView() }
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "rebinding")
+        var measurements: [[String: Any]] = []
+        for count in [1000, 10000, 300_000] {
+            let commits = (0 ..< count).map { index in
+                let commit = RebindingCommit(repository: repository, andCommit: object)
+                commit.sequence = index
+                commit.identifier = String(format: "%040x", index + 1)
+                return commit
+            }
+            history.arranged.content = commits
+            for applied in [0, 32] {
+                for sample in 0 ..< 5 {
+                    let table = RebindingTable(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+                    for identifier in ["ForgeCheckRollupColumn", "ForgePullRequestBadgeColumn"] {
+                        let column = NSTableColumn(identifier: .init(identifier))
+                        column.isHidden = true
+                        table.addTableColumn(column)
+                    }
+                    let session = GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .unsupported(identity), now: Date.init))
+                    for commit in commits.prefix(applied) {
+                        try session.requestHistoryOverlay(ForgeCommitID(commit.sha))
+                    }
+                    let coordinator = try XCTUnwrap(GitX.HistoryForgeOverlayCoordinator(owner: history, commitList: table, session: session, factsInspectorInitiallyExpanded: false, factsInspectorVisibilityDidChange: { _ in }))
+                    table.reloads = 0
+                    let reset = elapsed { coordinator.bind(to: nil) }
+                    let resetReloads = table.reloads
+                    let replacement = GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .unsupported(identity), now: Date.init))
+                    let attach = elapsed { coordinator.bind(to: replacement) }
+                    // Re-establish the old session and seed the replacement outside timing.
+                    coordinator.bind(to: session)
+                    for commit in commits.prefix(applied) {
+                        try replacement.requestHistoryOverlay(ForgeCommitID(commit.sha))
+                    }
+                    let complete = elapsed { coordinator.bind(to: replacement) }
+                    measurements.append(["count": count, "applied": applied, "viewport": 40, "sample": sample, "resetSeconds": reset, "attachmentSeconds": attach, "completeRebindSeconds": complete, "resetReloads": resetReloads])
+                    coordinator.invalidate()
+                    session.invalidate()
+                    replacement.invalidate()
+                }
+            }
+        }
+        let data = try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys])
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "History Forge reset and rebind scaling"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        print("FORGE_REBINDING_MEASUREMENTS \(String(decoding: data, as: UTF8.self))")
+    }
+
     func testNativeLogIndexActiveAndFinalizedScaling() throws {
         for count in [1, 33, 128] {
             for finalized in [false, true] {

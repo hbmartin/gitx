@@ -1693,6 +1693,8 @@
                 defer: false
             )
             let windowController = PBGitWindowController(window: window)
+            windowController.repository = local.repository
+            defer { windowController.close(); window.close() }
             let localHead = try ForgeBranchReference(
                 repository: fixture.fork,
                 name: ForgeRefName("main"),
@@ -1763,6 +1765,8 @@
                 defer: false
             )
             let exactPushWindowController = PBGitWindowController(window: exactPushWindow)
+            exactPushWindowController.repository = local.repository
+            defer { exactPushWindowController.close(); exactPushWindow.close() }
             let exactPushActions = HarnessRemoteActions(events: [
                 .began(createPullRequestSelected: true), .succeeded,
             ])
@@ -1843,6 +1847,8 @@
                 defer: false
             )
             let deferredWindowController = HarnessDialogWindowController(window: deferredWindow)
+            deferredWindowController.repository = local.repository
+            defer { deferredWindowController.close(); deferredWindow.close() }
             let deferredActions = HarnessRemoteActions(events: [
                 .began(createPullRequestSelected: true), .succeeded,
             ])
@@ -1881,6 +1887,8 @@
                 defer: false
             )
             let newWindowController = HarnessDialogWindowController(window: newWindow)
+            newWindowController.repository = local.repository
+            defer { newWindowController.close(); newWindow.close() }
             var newOpened = false
             let newController = RepositoryPullRequestUIController(
                 repository: local.repository,
@@ -2918,7 +2926,7 @@
         }
 
         func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
-            values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: date)
+            values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: max(date, values[identity]?.lastActivityAt ?? date))
             savedContents[identity] = content
             saveCount += 1
         }

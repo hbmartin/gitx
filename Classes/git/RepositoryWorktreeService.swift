@@ -294,6 +294,7 @@ private final class WorktreeOperation {
     var cancellation: (() -> Void)?
     var evidenceCancellations: [UUID: () -> Void] = [:]
     var eventArguments: [String] = []
+    var mutationArguments: [String] = []
     var afterRelease: [@MainActor @Sendable () -> Void] = []
     var ownedDiscoveryGeneration: UInt64?
     private var pendingResources: Set<UUID> = []
@@ -362,6 +363,7 @@ private final class WorktreeOperation {
         admission = nil
         cancellation = nil
         eventArguments = []
+        mutationArguments = []
         deliver()
         releaseResourcesIfDrained()
     }
@@ -1600,6 +1602,7 @@ final class PBRepositoryWorktreeService: NSObject {
         if !readOnly {
             operation.beginWriter()
             operation.eventArguments = Array(command.arguments.prefix(2))
+            operation.mutationArguments = operation.eventArguments
         }
         let task = makeTask(command.arguments, context: operation.context)
         task.additionalEnvironment = (task.additionalEnvironment ?? [:]).merging(["LC_ALL": "C"]) { _, value in value }
@@ -1724,7 +1727,8 @@ final class PBRepositoryWorktreeService: NSObject {
         let published: Bool
         if case let .failure(error) = result, operation.phase == .reconciling {
             let event = (error as NSError).userInfo["PBWorktreeLifecycleFailureEvent"] as? [String: String]
-            logEvent(operation.eventArguments, stage: "failed", phase: "reconciling", count: 1, category: failureCategory ?? event?["category"] ?? "context")
+            let arguments = operation.mutationArguments.isEmpty ? operation.eventArguments : operation.mutationArguments
+            logEvent(arguments, stage: "failed", phase: "reconciling", count: 1, category: failureCategory ?? event?["category"] ?? "context")
         }
         if case let .success(evidence) = result, canPublish(context) {
             publish(evidence)
