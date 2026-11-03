@@ -11,7 +11,7 @@
     "queries": "Defer stale queries; use prepared Forge metadata and existing unavailable menu rendering.",
     "draftSaveFailure": "Continue remote submission and protect unverified draft data.",
     "performanceScope": "Bound reset work; measure complete cached rebinding without broad optimization.",
-    "delivery": "Local commits only; no push or PR."
+    "delivery": "Ready follow-up PR on hbmartin/gitx requested on 2026-11-03. Publish committed fixes with verification explicitly incomplete; do not merge."
   },
   "regressionReproductions": {
     "runIds": [
@@ -67,5 +67,20 @@
     "focusedNativeTests": 3,
     "status": "Focused session replacement, amend eligibility and app-target explicit draft discard passed; Debug/Release consumers, 864 script tests and interoperability passed. Complete post-commit correctness remains required.",
     "autoFetchFixture": "Full GitXFeatureTests class passed after initializing the Swift superclass normally. Complete correctness remains required."
+  },
+  "publicationVerificationState": {
+    "productionThrough": "7a654b7f8d1e4f27525a9e8620390d4585bb26ed",
+    "runIds": [
+      "forge-refresh-autofetch-fixture-green",
+      "forge-refresh-amend-headless-analysis",
+      "forge-refresh-base-complete-scaling",
+      "forge-refresh-current-complete-scaling"
+    ],
+    "completeCorrectness": "Latest complete attempt: 2204 passed and one fixture crash. Fixture initializer corrected; 89 feature-class tests then passed. Clean complete rerun required.",
+    "semanticLint": "Three unused-declaration diagnostics for bridges referenced by Objective-C tests. Compiler analysis and exact warning policy passed on the prepared working tree; full semantic lint did not pass.",
+    "coverage": "Every existing floor unchanged. No eligible current complete passing receipt or ratchet.",
+    "performance": "Identical Release harness, five matched samples per condition. At 300000 commits and 32 applied overlays, median reset 414.544ms to 0.088375ms; complete cached rebinding 3.831028s to 3.409344s. Baseline-all then current-all; no alternating-run claim.",
+    "excludedLocalWork": "Two-line captured amend-menu repository fix and one-read regression remain uncommitted and excluded from the PR. Prepared working-tree analysis included these changes.",
+    "finalAcceptance": "Post-final-commit full profile preview, complete coverage, sanitizer/UI evidence and refreshed signature-verified app remain pending."
   }
 }
