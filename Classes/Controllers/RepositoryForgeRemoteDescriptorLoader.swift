@@ -21,6 +21,14 @@ final nonisolated class RepositoryForgeRemoteDescriptorCache: @unchecked Sendabl
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
 
+    func dependencyRevisions(for key: String, revision: String, dependencyRevision: (String) -> String) -> [String: String]? {
+        lock.lock()
+        let entry = entries[key]
+        lock.unlock()
+        guard let entry, entry.revision == revision else { return nil }
+        return Dictionary(uniqueKeysWithValues: entry.dependencyRevisions.keys.map { ($0, dependencyRevision($0)) })
+    }
+
     func descriptors(
         for key: String,
         revision: String,

@@ -630,6 +630,8 @@ final nonisolated class RepositoryPullRequestServiceResolver: Sendable {
 nonisolated protocol RepositoryPullRequestDraftPersisting: Sendable {
     func load(identity: ForgeDraftIdentity) async throws -> ForgeDraft?
     func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws -> ForgeDraft?
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date, matching snapshot: ForgeDraft?) async throws -> ForgeDraft?
     func delete(identity: ForgeDraftIdentity) async throws
     func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool
 }
@@ -640,6 +642,14 @@ nonisolated struct NullRepositoryPullRequestDraftStore: RepositoryPullRequestDra
     }
 
     func save(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws {}
+    func saveSnapshot(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws -> ForgeDraft? {
+        nil
+    }
+
+    func saveSnapshot(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date, matching _: ForgeDraft?) async throws -> ForgeDraft? {
+        nil
+    }
+
     func delete(identity _: ForgeDraftIdentity) async throws {}
     func delete(identity _: ForgeDraftIdentity, matching _: ForgeDraft) async throws -> Bool {
         false
@@ -669,23 +679,45 @@ nonisolated struct ForgeSQLitePullRequestDraftStore: RepositoryPullRequestDraftP
     }
 
     func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
+        _ = try await saveSnapshot(identity: identity, content: content, at: date)
+    }
+
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws -> ForgeDraft? {
         let existing = try await load(identity: identity)
-        let draft = if let existing {
-            try existing.editing(content, at: max(date, existing.lastActivityAt))
-        } else {
-            try ForgeDraft(identity: identity, content: content, createdAt: date, lastActivityAt: date)
-        }
+        let draft = try makeDraft(identity: identity, content: content, at: date, previous: existing)
+        try await database.saveDurableRecord(record(for: draft))
+        return draft
+    }
+
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date, matching snapshot: ForgeDraft?) async throws -> ForgeDraft? {
+        guard snapshot == nil || snapshot?.identity == identity else { return nil }
         let key = try ForgeSQLiteStore.encodedKey(identity)
-        let payload = try JSONEncoder().encode(draft)
-        try await database.saveDurableRecord(ForgeSQLiteDurableRecord(
+        let current = try await database.durableRecord(kind: .draft, accountID: identity.accountID, repository: identity.destination.repository, key: key)
+        let decoded = try current.map { try JSONDecoder().decode(ForgeDraft.self, from: $0.payload) }
+        guard decoded == snapshot else { return nil }
+        let draft = try makeDraft(identity: identity, content: content, at: date, previous: snapshot)
+        let saved = try await database.saveDurableRecord(record(for: draft), matchingPayload: current?.payload)
+        return saved ? draft : nil
+    }
+
+    private func makeDraft(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date, previous: ForgeDraft?) throws -> ForgeDraft {
+        if let previous {
+            return try previous.editing(content, at: max(date, previous.lastActivityAt))
+        }
+        return try ForgeDraft(identity: identity, content: content, createdAt: date, lastActivityAt: date)
+    }
+
+    private func record(for draft: ForgeDraft) throws -> ForgeSQLiteDurableRecord {
+        let identity = draft.identity
+        return try ForgeSQLiteDurableRecord(
             kind: .draft,
             accountID: identity.accountID,
             repository: identity.destination.repository,
-            key: key,
-            payload: payload,
+            key: ForgeSQLiteStore.encodedKey(identity),
+            payload: JSONEncoder().encode(draft),
             lastActivityAt: draft.lastActivityAt,
             expiresAt: draft.lastActivityAt.addingTimeInterval(ForgePolicyConstants.durableRecordExpiration)
-        ))
+        )
     }
 
     func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool {
@@ -708,6 +740,53 @@ nonisolated struct ForgeSQLitePullRequestDraftStore: RepositoryPullRequestDraftP
             repository: identity.destination.repository,
             key: key
         )
+    }
+}
+
+/// Each editor remembers only evidence it loaded or wrote itself. Ordinary
+/// autosaves retain their existing last-writer-wins policy; final saves do not.
+@MainActor
+final class RepositoryEditDraftSession {
+    private enum Observation { case known(ForgeDraft?), unavailable }
+    private var observation: Observation
+    let identity: ForgeDraftIdentity
+    private static let logger = Logger(subsystem: "com.gitx.gitx", category: "EditDraftSession")
+
+    init(identity: ForgeDraftIdentity, observed: ForgeDraft?) {
+        self.identity = identity
+        observation = .known(observed)
+    }
+
+    func autosave(_ content: ForgeDraftContent, drafts: any RepositoryPullRequestDraftPersisting, at date: Date) async {
+        do {
+            if let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date) {
+                observation = .known(saved)
+            } else {
+                observation = .unavailable
+            }
+        } catch {
+            observation = .unavailable
+            Self.logger.error("Edit autosave unavailable; final submission will preserve local evidence")
+        }
+    }
+
+    func saveSubmission(_ content: ForgeDraftContent, drafts: any RepositoryPullRequestDraftPersisting, at date: Date) async -> ForgeDraft? {
+        guard case let .known(expected) = observation else {
+            Self.logger.notice("Publishing without draft cleanup: editor snapshot unavailable")
+            return nil
+        }
+        do {
+            let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected)
+            if let saved {
+                observation = .known(saved)
+            }
+            Self.logger.notice("Final edit draft matched=\(saved != nil, privacy: .public); remote submission continues")
+            return saved
+        } catch {
+            observation = .unavailable
+            Self.logger.error("Final edit save failed; publishing without draft cleanup, code=\((error as NSError).code)")
+            return nil
+        }
     }
 }
 
@@ -858,10 +937,20 @@ nonisolated struct RepositoryPullRequestMutationCompletion: Sendable {
               identity: ForgeDraftIdentity) async throws -> RepositoryPullRequestEditOutcome
     {
         let snapshot = await submittedSnapshot(identity: identity, content: ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown))
+        return try await self.edit(accountID: accountID, edit: edit, destination: destination, identity: identity, submittedDraft: snapshot)
+    }
+
+    func edit(accountID: ForgeAccountID, edit: ForgePullRequestEdit, destination: ForgeDestination,
+              identity: ForgeDraftIdentity, submittedDraft: ForgeDraft?) async throws -> RepositoryPullRequestEditOutcome
+    {
         try Task.checkCancellation()
         let outcome = try await service.editPullRequest(accountID: accountID, edit: edit)
         guard outcome.destination == destination else { throw ForgePullRequestWorkflowError.mismatchedRepository }
-        await removePublishedSnapshot(snapshot)
+        if let submittedDraft, submittedDraft.identity == identity,
+           submittedDraft.content == ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown)
+        {
+            await removePublishedSnapshot(submittedDraft)
+        }
         return outcome
     }
 

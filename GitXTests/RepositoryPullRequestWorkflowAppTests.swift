@@ -1384,7 +1384,58 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await exerciseEdit(ownerState: .revoked, finalContent: ForgeDraftContent(title: "Submitted title", body: "Submitted body"), newerAfterAdmission: true)
     }
 
-    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false) async throws {
+    func testFinalEditPreservesANewerDraftWrittenBeforeSubmission() async throws {
+        try await exerciseEdit(ownerState: .released, finalContent: ForgeDraftContent(title: "Older editor title", body: "Older editor body"), newerBeforeSubmission: true)
+    }
+
+    func testConditionalEditSnapshotProtectsOtherConnectionsAndKeepsTimestampPolicy() async throws {
+        let fixture = try PullRequestAppFixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("conditional-edit-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let config = ForgeSQLiteConfiguration(databaseURL: root.appendingPathComponent("drafts.sqlite"), recoveryDirectoryURL: root.appendingPathComponent("Recovery"))
+        let first = try ForgeSQLiteStore(configuration: config)
+        let second = try ForgeSQLiteStore(configuration: config)
+        let store = ForgeSQLitePullRequestDraftStore(database: first)
+        let other = ForgeSQLitePullRequestDraftStore(database: second)
+        let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "Original", bodyMarkdown: "Original", updatedAt: Date(timeIntervalSince1970: 100))
+        let identity = try RepositoryPullRequestDraftPolicy.editIdentity(accountID: fixture.accountID, snapshot: snapshot)
+        let content = ForgeDraftContent(title: "Submitted", body: "Submitted")
+        let created = try await store.saveSnapshot(identity: identity, content: content, at: snapshot.updatedAt, matching: nil)
+        let original = try XCTUnwrap(created)
+        let collision = try await other.saveSnapshot(identity: identity, content: content, at: .distantFuture, matching: nil)
+        XCTAssertNil(collision)
+        let earlier = try await store.saveSnapshot(identity: identity, content: content, at: .distantPast, matching: original)
+        XCTAssertEqual(earlier, original)
+        let newer = ForgeDraftContent(title: "Another editor", body: "Keep these bytes")
+        try await other.save(identity: identity, content: newer, at: .distantFuture)
+        let conflict = try await store.saveSnapshot(identity: identity, content: content, at: .distantFuture, matching: original)
+        XCTAssertNil(conflict)
+        let retained = try await store.load(identity: identity)
+        XCTAssertEqual(retained?.content, newer)
+        XCTAssertEqual(retained?.createdAt, snapshot.updatedAt)
+        await first.close()
+        await second.close()
+    }
+
+    func testUnavailableEditorEvidenceCannotAdoptMatchingStoredContentForCleanup() async throws {
+        let fixture = try PullRequestAppFixture()
+        let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "Same", bodyMarkdown: "Same", updatedAt: Date(timeIntervalSince1970: 100))
+        let identity = try RepositoryPullRequestDraftPolicy.editIdentity(accountID: fixture.accountID, snapshot: snapshot)
+        let drafts = CompletionDraftStore()
+        let content = ForgeDraftContent(title: snapshot.title, body: snapshot.bodyMarkdown)
+        let editor = RepositoryEditDraftSession(identity: identity, observed: nil)
+        await drafts.failSaves(true)
+        await editor.autosave(content, drafts: drafts, at: snapshot.updatedAt)
+        await drafts.failSaves(false)
+        try await drafts.save(identity: identity, content: content, at: snapshot.updatedAt)
+        let eligible = await editor.saveSubmission(content, drafts: drafts, at: .distantFuture)
+        XCTAssertNil(eligible, "Matching text is insufficient after evidence became unavailable")
+        let retained = try await drafts.load(identity: identity)
+        XCTAssertEqual(retained?.lastActivityAt, snapshot.updatedAt)
+    }
+
+    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false, newerBeforeSubmission: Bool = false) async throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
@@ -1417,6 +1468,16 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         await fulfillment(of: [ready], timeout: 5)
         let sheet = try XCTUnwrap(window.attachedSheet)
         let button = try XCTUnwrap(find("GitX.PullRequest.Submit", in: XCTUnwrap(sheet.contentView)) as? NSButton)
+        let savesReady = expectation(description: "Initial editor autosave finishes")
+        Task {
+            await drafts.waitForSaves(2)
+            savesReady.fulfill()
+        }
+        await fulfillment(of: [savesReady], timeout: 5)
+        let newerContent = ForgeDraftContent(title: "Newer local title", body: "Keep the newer edit")
+        if newerBeforeSubmission {
+            try await drafts.save(identity: identity, content: newerContent, at: .distantFuture)
+        }
         if finalSaveFails {
             await drafts.failSaves(true)
         }
@@ -1430,7 +1491,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         await fulfillment(of: [started], timeout: 5)
         if let finalContent {
             let submittedDraft = try await drafts.load(identity: identity)
-            XCTAssertEqual(submittedDraft?.content, finalSaveFails ? initialContent : finalContent, "The exact final payload must be saved unless persistence fails")
+            XCTAssertEqual(submittedDraft?.content, newerBeforeSubmission ? newerContent : finalSaveFails ? initialContent : finalContent, "Final persistence must preserve another editor's newer draft")
         }
         let admitted = try XCTUnwrap(controller?.mutationTask)
         switch ownerState {
@@ -1442,7 +1503,6 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in weakController == nil && weakOwner == nil }, object: nil)
             await fulfillment(of: [released], timeout: 5)
         }
-        let newerContent = ForgeDraftContent(title: "Newer local title", body: "Keep the newer edit")
         if newerAfterAdmission {
             try await drafts.save(identity: identity, content: newerContent, at: .distantFuture)
         }
@@ -1453,7 +1513,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         let stored = try await drafts.load(identity: identity)
         if finalSaveFails {
             XCTAssertEqual(stored?.content, initialContent)
-        } else if newerAfterAdmission {
+        } else if newerAfterAdmission || newerBeforeSubmission {
             XCTAssertEqual(stored?.content, newerContent)
         } else {
             XCTAssertNil(stored)
@@ -1461,6 +1521,9 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         XCTAssertEqual(openings, ownerState == .current ? [destination] : [])
         let calls = await service.editCount
         XCTAssertEqual(calls, 1)
+        let submitted = await service.submittedEdit
+        XCTAssertEqual(submitted?.title, finalContent?.title ?? snapshot.title)
+        XCTAssertEqual(submitted?.bodyMarkdown, finalContent?.body ?? snapshot.bodyMarkdown)
     }
 
     private func characterizeSuccessfulCreation(existing: Bool, ownerState: OwnerState = .current, newerDraft: Bool = false, cancelAfterAdmission: Bool = false, revokeDuringOutcome: Bool = false) async throws {
@@ -1633,6 +1696,13 @@ private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
     private var deletionFails = false
     private var savesFail = false
     private(set) var conditionalDeletes = 0
+    private var saveCount = 0
+    private var saveWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    func waitForSaves(_ count: Int) async {
+        guard saveCount < count else { return }
+        await withCheckedContinuation { saveWaiters.append((count, $0)) }
+    }
 
     func failLoads(_ value: Bool) {
         loadsFail = value
@@ -1654,10 +1724,25 @@ private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
     }
 
     func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
+        _ = try await saveSnapshot(identity: identity, content: content, at: date)
+    }
+
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws -> ForgeDraft? {
         if savesFail {
             throw CompletionFixtureError.unavailable
         }
-        values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: date)
+        values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: max(date, values[identity]?.lastActivityAt ?? date))
+        let saved = values[identity]
+        saveCount += 1
+        let ready = saveWaiters.filter { $0.0 <= saveCount }
+        saveWaiters.removeAll { $0.0 <= saveCount }
+        ready.forEach { $0.1.resume() }
+        return saved
+    }
+
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date, matching snapshot: ForgeDraft?) async throws -> ForgeDraft? {
+        guard snapshot?.identity == identity || snapshot == nil, values[identity] == snapshot else { return nil }
+        return try await saveSnapshot(identity: identity, content: content, at: date)
     }
 
     func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool {
@@ -1682,6 +1767,7 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
     let gate = IgnoringCancellationGate<RepositoryPullRequestCreationOutcome>()
     private(set) var createCount = 0
     private(set) var editCount = 0
+    private(set) var submittedEdit: ForgePullRequestEdit?
     let editGate = IgnoringCancellationGate<RepositoryPullRequestEditOutcome>()
     private var rejectsMutation = false
 
@@ -1715,8 +1801,9 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
         return await gate.wait()
     }
 
-    func editPullRequest(accountID _: ForgeAccountID, edit _: ForgePullRequestEdit) async throws -> RepositoryPullRequestEditOutcome {
+    func editPullRequest(accountID _: ForgeAccountID, edit: ForgePullRequestEdit) async throws -> RepositoryPullRequestEditOutcome {
         editCount += 1
+        submittedEdit = edit
         started.fulfill()
         if rejectsMutation {
             throw CompletionFixtureError.unavailable
@@ -2837,6 +2924,14 @@ private actor CountingPullRequestDraftStore: RepositoryPullRequestDraftPersistin
     }
 
     func save(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws {}
+    func saveSnapshot(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws -> ForgeDraft? {
+        nil
+    }
+
+    func saveSnapshot(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date, matching _: ForgeDraft?) async throws -> ForgeDraft? {
+        nil
+    }
+
     func delete(identity _: ForgeDraftIdentity, matching _: ForgeDraft) async throws -> Bool {
         false
     }
@@ -2852,6 +2947,14 @@ private struct GatedPullRequestDraftStore: RepositoryPullRequestDraftPersisting 
     }
 
     func save(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws {}
+    func saveSnapshot(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws -> ForgeDraft? {
+        nil
+    }
+
+    func saveSnapshot(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date, matching _: ForgeDraft?) async throws -> ForgeDraft? {
+        nil
+    }
+
     func delete(identity _: ForgeDraftIdentity, matching _: ForgeDraft) async throws -> Bool {
         false
     }

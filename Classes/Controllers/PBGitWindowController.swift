@@ -102,6 +102,7 @@ private final class RepositoryWindowLifetime {
     var focus: RepositoryFocusRefreshCoordinator?
     var status: RepositoryLocalStatusLoader?
     var statusCoalescer: RefreshCoalescer?
+    var forgeMetadataCoalescer: RefreshCoalescer?
     var referenceStatusRefresh = RepositoryStatusReferenceRefreshPolicy()
     var notifications: [NSObjectProtocol] = []
     var observations: [NSKeyValueObservation] = []
@@ -127,6 +128,8 @@ private final class RepositoryWindowLifetime {
         status?.cancel()
         statusCoalescer?.cancel()
         statusCoalescer = nil
+        forgeMetadataCoalescer?.cancel()
+        forgeMetadataCoalescer = nil
         focus = nil
         status = nil
     }
@@ -616,7 +619,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         observe(.PBGitRepositoryEvent, repository) { owner, _ in
             owner.requestLocalStatusRefresh()
-            owner.prepareForgeQueryPresentation()
+            owner.requestForgeQueryRefresh()
         }
         observe(.forgeApplicationAvailabilityDidChange, nil) { owner, _ in owner.forgeApplicationAvailabilityDidChange(Notification(name: .forgeApplicationAvailabilityDidChange)) }
         observe(NSWindow.willCloseNotification, super.window) { owner, _ in
@@ -761,6 +764,19 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         scope.statusCoalescer?.requestRefresh()
     }
 
+    private final func requestForgeQueryRefresh() {
+        guard !ownership.closed, let scope = lifetime, scope.identity == currentOwnerIdentity() else { return }
+        if scope.forgeMetadataCoalescer == nil {
+            let generation = ownership.generation
+            scope.forgeMetadataCoalescer = RefreshCoalescer { [weak self, weak scope] in
+                guard let self, let scope, self.ownership.accepts(scope.identity, generation: generation),
+                      self.currentOwnerIdentity() == scope.identity else { return }
+                self.prepareForgeQueryPresentation()
+            }
+        }
+        scope.forgeMetadataCoalescer?.requestRefresh()
+    }
+
     final func recordWorktreeRepairOffer(for repository: PBGitRepository) {
         repairOfferedRepositories.add(repository)
         if worktreeRepairRepository === repository {
@@ -880,6 +896,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc public dynamic func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard !ownership.closed else { return false }
+        if menuItem.action == #selector(toggleRepositoryStatusBar(_:)) {
+            menuItem.state = ApplicationSettings.repositoryStatusBarVisible ? .on : .off
+            return true
+        }
         let queryRepository = queryRepository()
         if let action = RepositoryForgeLinkAction(selector: menuItem.action),
            let model = RepositoryForgeLinkMenuPresenter.itemModel(action: action, context: forgeLinkContext(for: queryRepository))
@@ -917,12 +938,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return repository?.isBare() != true
         }
         if menuItem.action == #selector(toggleAmendCommit(_:)) {
-            menuItem.state = repository?.index.isAmend == true ? .on : .off
-            return repository.map { CommitSubmissionEligibility.allowsMutation($0.index) } ?? false
-        }
-        if menuItem.action == #selector(toggleRepositoryStatusBar(_:)) {
-            menuItem.state = ApplicationSettings.repositoryStatusBarVisible ? .on : .off
-            return true
+            menuItem.state = queryRepository.index.isAmend ? .on : .off
+            return CommitSubmissionEligibility.allowsMutation(queryRepository.index)
         }
         if menuItem.action == #selector(fetchRemote(_:)) {
             return validateMenuItem(menuItem, remoteTitle: "Fetch “%@”", plainTitle: "Fetch")
@@ -995,17 +1012,17 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard !ownership.closed, !isReconcilingOwnership else { return nil }
         ensureActionCoordinators()
         _ = forgeCoordinator
-        guard prepareForgeQueryPresentation() != nil else { return nil }
+        guard prepareForgeQueryPresentation(force: true) != nil else { return nil }
         return repositoryForgeLinkUseCase
     }
 
     @discardableResult
-    private final func prepareForgeQueryPresentation() -> RepositoryForgeBindingResolution? {
+    private final func prepareForgeQueryPresentation(force: Bool = false) -> RepositoryForgeBindingResolution? {
         guard !ownership.closed, let repository, actionRepository == ObjectIdentifier(repository), let coordinator = repositoryForgeCoordinator else { return nil }
         let identity = currentOwnerIdentity()
         let generation = ownership.generation
         let selection = gitDiscovery.currentSelection
-        let resolution = coordinator.resolveBinding()
+        let resolution = force ? coordinator.resolveBinding() : coordinator.prepareQueryBinding(selection: selection)
         guard self.repository === repository, identity == currentOwnerIdentity(), generation == ownership.generation, selection == gitDiscovery.currentSelection, !ownership.closed else { return nil }
         forgeQueryPresentation = RepositoryForgeQueryPresentation(repository: ObjectIdentifier(repository), owner: identity, generation: generation, selection: selection,
                                                                   providerName: resolution.providerName, isAvailable: resolution.binding != nil || !resolution.candidates.isEmpty)

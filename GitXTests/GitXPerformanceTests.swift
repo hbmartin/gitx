@@ -68,34 +68,42 @@ final class GitXPerformanceTests: XCTestCase {
                 return commit
             }
             history.arranged.content = commits
-            for applied in [0, 32] {
-                for sample in 0 ..< 5 {
-                    let table = RebindingTable(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
-                    for identifier in ["ForgeCheckRollupColumn", "ForgePullRequestBadgeColumn"] {
-                        let column = NSTableColumn(identifier: .init(identifier))
-                        column.isHidden = true
-                        table.addTableColumn(column)
+            for visible in [false, true] {
+                for applied in [0, 32] {
+                    for sample in 0 ..< 5 {
+                        let table = RebindingTable(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+                        for identifier in ["ForgeCheckRollupColumn", "ForgePullRequestBadgeColumn"] {
+                            let column = NSTableColumn(identifier: .init(identifier))
+                            column.isHidden = !visible
+                            table.addTableColumn(column)
+                        }
+                        let session = GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .unsupported(identity), now: Date.init))
+                        for commit in commits.prefix(applied) {
+                            try session.requestHistoryOverlay(ForgeCommitID(commit.sha))
+                        }
+                        let coordinator = try XCTUnwrap(GitX.HistoryForgeOverlayCoordinator(owner: history, commitList: table, session: session, factsInspectorInitiallyExpanded: false, factsInspectorVisibilityDidChange: { _ in }))
+                        var observed = Set<ForgeCommitID>()
+                        let observation = session.observeHistory { commit, _ in observed.insert(commit) }
+                        let actualApplied = observed.count
+                        session.removeObserver(observation)
+                        XCTAssertEqual(actualApplied, visible ? 40 : applied, "Visible demand is part of the applied population")
+                        table.reloads = 0
+                        let reset = elapsed { coordinator.bind(to: nil) }
+                        let resetReloads = table.reloads
+                        XCTAssertEqual(resetReloads, visible && actualApplied > 0 ? 1 : 0)
+                        let replacement = GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .unsupported(identity), now: Date.init))
+                        let attach = elapsed { coordinator.bind(to: replacement) }
+                        // Re-establish the old session and seed the replacement outside timing.
+                        coordinator.bind(to: session)
+                        for commit in commits.prefix(applied) {
+                            try replacement.requestHistoryOverlay(ForgeCommitID(commit.sha))
+                        }
+                        let complete = elapsed { coordinator.bind(to: replacement) }
+                        measurements.append(["count": count, "seeded": applied, "applied": actualApplied, "visible": visible, "viewport": 40, "sample": sample, "resetSeconds": reset, "attachmentSeconds": attach, "completeRebindSeconds": complete, "resetReloads": resetReloads])
+                        coordinator.invalidate()
+                        session.invalidate()
+                        replacement.invalidate()
                     }
-                    let session = GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .unsupported(identity), now: Date.init))
-                    for commit in commits.prefix(applied) {
-                        try session.requestHistoryOverlay(ForgeCommitID(commit.sha))
-                    }
-                    let coordinator = try XCTUnwrap(GitX.HistoryForgeOverlayCoordinator(owner: history, commitList: table, session: session, factsInspectorInitiallyExpanded: false, factsInspectorVisibilityDidChange: { _ in }))
-                    table.reloads = 0
-                    let reset = elapsed { coordinator.bind(to: nil) }
-                    let resetReloads = table.reloads
-                    let replacement = GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .unsupported(identity), now: Date.init))
-                    let attach = elapsed { coordinator.bind(to: replacement) }
-                    // Re-establish the old session and seed the replacement outside timing.
-                    coordinator.bind(to: session)
-                    for commit in commits.prefix(applied) {
-                        try replacement.requestHistoryOverlay(ForgeCommitID(commit.sha))
-                    }
-                    let complete = elapsed { coordinator.bind(to: replacement) }
-                    measurements.append(["count": count, "applied": applied, "viewport": 40, "sample": sample, "resetSeconds": reset, "attachmentSeconds": attach, "completeRebindSeconds": complete, "resetReloads": resetReloads])
-                    coordinator.invalidate()
-                    session.invalidate()
-                    replacement.invalidate()
                 }
             }
         }

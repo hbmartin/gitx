@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "reviewTarget": {
+    "pullRequest": "https://github.com/hbmartin/gitx/pull/121",
+    "commit": "c633116c65ea0f38f2f4cf3dc9d16d058c156c33"
+  },
+  "integrationBase": "29b4e557eae11a3bc9e5cf1e7164ce0bf88ccfd1",
+  "policies": {
+    "draftConflict": "Continue remote submission, preserve newer local draft and withhold cleanup eligibility.",
+    "ordinaryAutosaves": "Retain last-writer-wins; update editor evidence from its exact own write.",
+    "delivery": "One ready follow-up PR on hbmartin/gitx:master; do not merge."
+  },
+  "triage": "artifacts/verification/pr-121-triage/decisions.json",
+  "regressionReproductions": {
+    "runIds": [
+      "draft-forge-regression-red",
+      "draft-forge-draining-red"
+    ],
+    "note": "First red: draft overwrite/deletion, global menu refusal and hidden viewport scan; carried amend passed. Diagnostic red temporarily restored only the reviewed draining log: actual add was labelled list. No failing expectations committed."
+  },
+  "historicalDevelopmentEvidence": {
+    "runIds": [
+      "draft-forge-red-build",
+      "draft-forge-package-baseline",
+      "draft-forge-focused-green",
+      "draft-forge-boundary-red-build2"
+    ],
+    "focusedNativeTests": 88,
+    "packageTests": 314,
+    "packageCoverage": "SQLite 99.66%, existing minimum 99.65%; no floor lowered."
+  },
+  "carriedAcceptance": "PR121 complete correctness, coverage floors, semantic lint, sanitizers/UI and staged app requirements remain mandatory. Three cross-language fixture declarations have exact documented semantic-lint annotations.",
+  "requiredFinalVerification": {
+    "runId": "draft-forge-final-full",
+    "profile": "full",
+    "cleanupMode": "preview",
+    "receipt": "artifacts/verification/draft-forge-final-full/workflow.json",
+    "rule": "Must execute after final implementation and eligible coverage commits; older focused evidence is historical."
+  },
+  "stagedApplication": "build/GitX.app"
+}

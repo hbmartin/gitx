@@ -1195,6 +1195,14 @@ nonisolated struct ForgeLazySQLitePullRequestDraftStore: RepositoryPullRequestDr
         try await store().save(identity: identity, content: content, at: date)
     }
 
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws -> ForgeDraft? {
+        try await store().saveSnapshot(identity: identity, content: content, at: date)
+    }
+
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date, matching snapshot: ForgeDraft?) async throws -> ForgeDraft? {
+        try await store().saveSnapshot(identity: identity, content: content, at: date, matching: snapshot)
+    }
+
     func delete(identity: ForgeDraftIdentity) async throws {
         try await store().delete(identity: identity)
     }

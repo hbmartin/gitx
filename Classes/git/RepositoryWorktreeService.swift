@@ -1007,7 +1007,8 @@ final class PBRepositoryWorktreeService: NSObject {
         pending.forEach { $0.markPreparationCancelled() }
         for operation in pending {
             if operation.drainsAfterOwnerChange {
-                logEvent(operation.eventArguments, stage: "draining", phase: operation.phaseName, count: 1)
+                logEvent(operation.mutationArguments.isEmpty ? operation.eventArguments : operation.mutationArguments,
+                         stage: "draining", phase: operation.phaseName, count: 1)
             }
             operation.cancelMarkedPreparation()
         }
