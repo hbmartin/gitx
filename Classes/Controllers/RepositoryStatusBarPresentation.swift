@@ -7,6 +7,18 @@ nonisolated struct RepositoryStatusReferenceIdentity: Equatable, Sendable {
     let headReference: Data?
     let headObject: Data?
     let references: [Data: Data]
+
+    static func capture(references snapshot: NSDictionary?, headReference: String?, headObject: String?) -> Self? {
+        guard let snapshot else { return nil }
+        var references: [Data: Data] = [:]
+        for (key, value) in snapshot {
+            guard let object = key as? GTOID, let refs = value as? [PBGitRef] else { return nil }
+            for ref in refs {
+                references[Data(ref.ref.utf8)] = Data(object.sha.utf8)
+            }
+        }
+        return Self(headReference: headReference.map { Data($0.utf8) }, headObject: headObject.map { Data($0.utf8) }, references: references)
+    }
 }
 
 nonisolated struct RepositoryStatusReferenceRefreshPolicy {

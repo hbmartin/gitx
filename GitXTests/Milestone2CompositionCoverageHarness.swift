@@ -435,6 +435,14 @@
             _ fixture: CompositionCoverageFixture,
             environment: CompositionCoverageEnvironment
         ) async throws -> Bool {
+            let drafts = ForgeLazySQLitePullRequestDraftStore(loader: environment.loader)
+            let draftIdentity = try ForgeDraftIdentity(accountID: fixture.accountID, destination: .pullRequest(repository: fixture.repository, number: ForgeItemNumber(42)))
+            let draftContent = ForgeDraftContent(title: "Explicit discard", body: "Remove this local draft")
+            try await drafts.save(identity: draftIdentity, content: draftContent, at: fixture.now)
+            let savedDraft = try await drafts.load(identity: draftIdentity)
+            try await drafts.delete(identity: draftIdentity)
+            let removedDraft = try await drafts.load(identity: draftIdentity)
+            let explicitDiscard = savedDraft?.content == draftContent && removedDraft == nil
             let services = environment.services
             let provider = ForgeGitHubPullRequestDependencyProvider(
                 loader: environment.loader,
@@ -634,7 +642,7 @@
                 )
             }
 
-            return missing && mismatch && capabilityIdentity && eligibilityDidNotPromote
+            return explicitDiscard && missing && mismatch && capabilityIdentity && eligibilityDidNotPromote
                 && submittedAuthorization && rotationRejected && removalRejected
                 && offline && limited && promoted
                 && nonAuthorizationFailureRetained && denied && evidenceCleared && loaderFailure

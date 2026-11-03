@@ -3927,6 +3927,57 @@ final class WorktreeRepairSafetyTests: XCTestCase {
     }
 
     #if DEBUG
+        func testPostAddInventoryFailureKeepsTheMutationDiagnosticIdentity() async throws {
+            let fixture = try RepairFixture(label: "reconcile-diagnostic")
+            var drained = false
+            defer {
+                if drained {
+                    fixture.cleanup()
+                } else {
+                    NSLog("Retaining undrained diagnostic fixture at %@", fixture.root.path)
+                }
+            }
+            let repository = try RepositoryTestGitRepository(url: fixture.main)
+            let failedInventory = ControlledWorktreeTask()
+            let inventoryStarted = expectation(description: "Inventory after the real add is gated")
+            var mutationAdmitted = false
+            let service = makeService(repository: repository, fixture: fixture, blocked: ControlledWorktreeTask(), launched: XCTestExpectation(description: "unused"), taskOverride: { arguments in
+                if arguments.prefix(2) == ["worktree", "add"] {
+                    mutationAdmitted = true
+                }
+                if mutationAdmitted, arguments == ["worktree", "list", "--porcelain", "-z"] {
+                    mutationAdmitted = false
+                    inventoryStarted.fulfill()
+                    return failedInventory
+                }
+                return nil
+            })
+            defer { service.cancel(); failedInventory.finish(nil, error: CancellationError()) }
+            try await ready(service)
+            let recorded = WorktreePublicEventRecorder()
+            service.lifecycleEventObserver = { recorded.events.append($0) }
+            defer { service.lifecycleEventObserver = nil }
+            let path = fixture.root.appendingPathComponent("added")
+            let completed = expectation(description: "The admitted add reports reconciliation failure exactly once")
+            completed.assertForOverFulfill = true
+            enqueue {
+                service.addWorktree(path: path.path, branch: "added", createBranch: true) { _, error in
+                    XCTAssertNotNil(error)
+                    completed.fulfill()
+                }
+            }
+            await fulfillment(of: [inventoryStarted], timeout: 10)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: path.appendingPathComponent(".git").path))
+            failedInventory.finish(nil, error: NSError(domain: "fixture.inventory", code: 5))
+            await fulfillment(of: [completed], timeout: 10)
+            XCTAssertEqual(recorded.events.filter { $0.contains(".failed phase=reconciling") }, ["worktree.add.failed phase=reconciling count=1 category=task"])
+            service.cancel()
+            let acknowledged = expectation(description: "Every fixture process and evidence worker acknowledges exit")
+            service.drainForTesting { drained = true; acknowledged.fulfill() }
+            await fulfillment(of: [acknowledged], timeout: 10)
+            XCTAssertTrue(drained)
+        }
+
         func testLifecyclePublicEventsExcludePrivateArgumentsAndOutputsFromRealRoutes() async throws {
             let fixture = try RepairFixture(label: "public-log-canaries")
             defer { fixture.cleanup() }

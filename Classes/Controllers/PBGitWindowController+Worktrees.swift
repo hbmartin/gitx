@@ -333,12 +333,12 @@ extension PBGitWindowController {
         repository?.worktreeService
     }
 
-    private func captureWorktreePresentation() -> WorktreePresentationContext? {
+    private func captureWorktreePresentation(reconciling: Bool = true) -> WorktreePresentationContext? {
         guard isWindowLoaded, let window, window.isVisible else {
             NSLog("[GitX] Ignored a worktree action without a loaded visible repository window")
             return nil
         }
-        guard let captured = reconciledWorktreeOwnership(), self.window === window else { return nil }
+        guard let captured = reconciling ? reconciledWorktreeOwnership() : currentWorktreeOwnership(), self.window === window else { return nil }
         NSLog("[GitX] Captured worktree presentation generation %llu (supported: %@)", worktreePresentationGeneration, captured.service.isSupported ? "yes" : "no")
         return WorktreePresentationContext(window: window, repository: captured.repository, service: captured.service, generation: worktreePresentationGeneration, operationOwner: captured.owner)
     }
@@ -714,8 +714,8 @@ extension PBGitWindowController {
         }
     }
 
-    func offerWorktreeRepairIfNeeded() {
-        guard let context = captureWorktreePresentation(), let repository = context.repository,
+    func offerWorktreeRepairIfNeeded(reconciling: Bool = true) {
+        guard let context = captureWorktreePresentation(reconciling: reconciling), let repository = context.repository,
               !offeredWorktreeRepair else { return }
         let service = context.service
         guard service.isSupported,

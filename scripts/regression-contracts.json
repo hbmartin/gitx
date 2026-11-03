@@ -2254,7 +2254,7 @@
     {
       "id": "DIAG-001",
       "family": "Credential-safe diagnostics",
-      "invariant": "Rendered and exported diagnostics redact credentials across every chunk/cutoff boundary while preserving ordinary URLs. Public worktree lifecycle diagnostics contain finite operation, phase and rejection categories plus counts; raw Git arguments, output, lock reasons, branch names and filesystem paths never enter those public events. Sensitive diagnostic details use existing redaction and private visibility while execution and authorization evidence stay raw. Each terminal lifecycle failure has one logging owner preserving its actual phase and finite category; removal consent rejection uses consent. Non-removal inventory admission uses typed eligibility reasons and the finite eligibility category, distinct from removal approval and executable context failures. Owner preparation cancellation emits one event for an actual transition with a valid phase and count; repeated or empty cancellation emits none.",
+      "invariant": "Rendered and exported diagnostics redact credentials across every chunk/cutoff boundary while preserving ordinary URLs. Public worktree lifecycle diagnostics contain finite operation, phase and rejection categories plus counts; raw Git arguments, output, lock reasons, branch names and filesystem paths never enter those public events. Sensitive diagnostic details use existing redaction and private visibility while execution and authorization evidence stay raw. Each terminal lifecycle failure has one logging owner preserving its actual phase and finite category; removal consent rejection uses consent. Non-removal inventory admission uses typed eligibility reasons and the finite eligibility category, distinct from removal approval and executable context failures. Owner preparation cancellation emits one event for an actual transition with a valid phase and count; repeated or empty cancellation emits none. Inventory reconciliation preserves an admitted mutation category independently of current subprocess arguments.",
       "rootCause": "Truncating before redaction or parsing only common userinfo shapes can expose secrets. Interpolating full lifecycle arguments or failed output publicly exposes user-authored lock reasons and repository details.",
       "sourcePaths": [
         "Classes/Util/PBTaskDiagnostic*",
@@ -2315,6 +2315,13 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Gate an owned worktree list, cancel and repeat cancellation, require one truthful cancellation event and no following writer until task acknowledgement; then require real unlock, fresh inventory and another successful refresh."
+        },
+        {
+          "source": "GitXTests/WorktreeServiceTests.swift",
+          "identifier": "GitXTests/WorktreeRepairSafetyTests/testPostAddInventoryFailureKeepsTheMutationDiagnosticIdentity",
+          "role": "failure",
+          "check": "correctness",
+          "oracle": "Perform a real local add, inject the subsequent inventory failure and require exactly worktree.add.failed phase=reconciling count=1 category=task; drain before fixture removal."
         }
       ]
     },
@@ -3063,7 +3070,7 @@
     {
       "id": "GIT-002",
       "family": "Responsive Git warnings and window executable refresh",
-      "invariant": "Warnings never block readiness or main-queue work. Replacement pending warning state is committed before dismissal or selection notifications can reenter presentation; only acknowledged unchanged warnings are deduplicated. One window ownership transition revokes generation before cancelling reads or removing subscriptions. Repository replacement rebuilds panes, actions, Forge sessions, worktree/index/remote observers and paired Git loaders; window-only replacement preserves browsing without attaching old outlets to an empty window. Uninstalled status clears immediately. Close and deallocation cancel owned reads, while admitted writes drain against their captured original repository and obsolete owners cannot admit further work. Action authority acquisition completes ownership reconciliation before admission, including dynamic repository overrides and unavailable replacements. Repair offers belong to the captured repository. Retained History rebinds facts and badges when its Forge session changes without losing browsing state. Unchanged History ref reloads do not launch status commands; actual HEAD and ref changes do. Nonterminal owner notifications return to their publisher before settings or presentation reconciliation.",
+      "invariant": "Warnings never block readiness or main-queue work. Replacement pending warning state is committed before dismissal or selection notifications can reenter presentation; only acknowledged unchanged warnings are deduplicated. One window ownership transition revokes generation before cancelling reads or removing subscriptions. Repository replacement rebuilds panes, actions, Forge sessions, worktree/index/remote observers and paired Git loaders; window-only replacement preserves browsing without attaching old outlets to an empty window. Uninstalled status clears immediately. Close and deallocation cancel owned reads, while admitted writes drain against their captured original repository and obsolete owners cannot admit further work. Action authority acquisition completes ownership reconciliation before admission, including dynamic repository overrides and unavailable replacements. Repair offers belong to the captured repository. Retained History rebinds facts and badges when its Forge session changes without losing browsing state. Unchanged History ref reloads do not launch status commands; actual HEAD and ref changes do. Nonterminal owner notifications return to their publisher before settings or presentation reconciliation. Read queries defer stale owners without installing panes, loading views or starting Git work. Controller-wide preference and activation intent survives replacement and temporary unavailability, applies preferences first, and is discarded only on terminal closure. Forge menu queries consume prepared owner-bound metadata without discovering remotes or persisting bindings; unavailable commands retain existing generic rendering. Authorized lifecycle and action boundaries refresh that metadata.",
       "rootCause": "Modal warnings delay queued work and immutable loaders retain obsolete executable paths after Settings changes.",
       "sourcePaths": [
         "Classes/git/GitBinaryDiscoveryPresenter.swift",
@@ -3373,13 +3380,76 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Use isolated credential contexts and local actor readers to render real first and replacement repository facts, check badges and PR numbers in the same retained History view; publish an actual old-session result and require replacement values and browsing state to remain."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testStaleSelectionQueriesDeferWithoutReplacingTheCurrentPresentation",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Switch a dynamically supplied repository before a selection getter; require unavailable synchronously, untouched original panes and selection, then deferred reconciliation."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testSelectionQueryLeavesMatchingUnloadedHistoryAndWindowUnloaded",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Supply matching unloaded metadata panes and require selection lookup to leave both window and History unloaded."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testGlobalPreferenceIntentSurvivesAnOwnerGenerationChangeBeforeDelivery",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Queue a preference, replace and restore the owner between admission and delivery, and require current rendered visibility to update."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testPreferenceIntentIsReplayedAfterReentrantReplacementDuringDelivery",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Replace ownership synchronously from AppKit visibility KVO during preference delivery; require valid replacement panes and replayed current visibility."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testColdForgeMenuQueryDoesNotInstallAResolverOrDiscoverRemotes",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Read an unloaded cold controller menu context and require zero remote discoveries and no nib load."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testForgeQueriesUsePreparedMetadataAndRefreshOnlyAtAuthorizedBoundaries",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Require generic cold menus, prepared provider labels, refreshed binding changes, cleared unavailable metadata, and rejected replacement or closed owners without query discovery."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/ForgeWindowPolicyTests/testForgeQueryPresentationBelongsToItsExactOwnerGenerationAndExecutable",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Use literal owner, generation and executable replacements to reject obsolete prepared metadata."
+        },
+        {
+          "source": "GitXTests/GitXSwiftFeatureTests.swift",
+          "identifier": "GitXTests/GitXSwiftFeatureTests/testForgeMenuValidationAndOrphanToolbarFallback",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Unavailable repository commands must reset stale labels and disable destinations without a live window or resolver."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAmendMenuValidationPreservesItsCurrentWindowAndIndexEligibility",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Require current-index amend eligibility and unchanged History, executable and window; closed owners refuse validation."
         }
       ]
     },
     {
       "id": "DRAFT-001",
       "family": "Mutation completion and conditional draft retirement",
-      "invariant": "Verified admitted create and edit outcomes retire only the exact submitted draft snapshot, independently of presentation ownership and post-success cancellation. Missing, unreadable or changed drafts survive. Cleanup failures never resubmit or change a successful remote result; revoked capabilities cannot present.",
+      "invariant": "Verified admitted create and edit outcomes retire only the exact submitted draft snapshot, independently of presentation ownership and post-success cancellation. Missing, unreadable or changed drafts survive. Cleanup failures never resubmit or change a successful remote result; revoked capabilities cannot present. Final edit submission serializes its exact title and body before capturing cleanup evidence; a failed local save does not block publication or retire an unverified snapshot. Harness activity timestamps never move backward and creation time is preserved.",
       "rootCause": "Controller-bound cleanup loses drafts after owner teardown; unconditional deletion removes newer edits and raw ownership closures outlive revocation.",
       "sourcePaths": [
         "Classes/Controllers/RepositoryPullRequestWorkflow.swift",
@@ -3469,6 +3539,87 @@
           "role": "valid",
           "check": "correctness",
           "oracle": "Submit through the actual native sheet; require exact draft cleanup before the current owner opens the verified destination."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testEditPersistsItsFinalSubmittedPayloadBeforePublication",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Submit native editor text differing from its prior autosave; inspect stored final content at service admission and require conditional deletion after verified success."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testFinalEditSaveFailureStillPublishesAndPreservesUnverifiedDraft",
+          "role": "failure",
+          "check": "correctness",
+          "oracle": "Refuse the final local save, admit the service exactly once, and preserve the previous draft after successful publication."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testFinalEditPublicationPreservesANewerDraftWrittenAfterAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Gate the admitted edit, persist a newer snapshot, revoke presentation, and require newer content to survive server completion."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/ForgeHarnessDraftStoreRegressionTests/testHarnessSaveKeepsActivityMonotonicForOutOfOrderDates",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Use literal out-of-order dates, including one before creation, and require the original creation time and greatest activity timestamp."
+        },
+        {
+          "source": "GitXTests/Milestone2CompositionCoverageHarnessTests.swift",
+          "identifier": "GitXTests/Milestone2CompositionCoverageHarnessTests/testShippedAsyncCompositionCoverageProof",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Run the app-target lazy SQLite draft store through save, verified load, explicit discard and absent reload, preserving unconditional discard alongside conditional publication cleanup."
+        }
+      ]
+    },
+    {
+      "id": "HISTORY-002",
+      "family": "Bounded Forge presentation reset",
+      "invariant": "Session replacement clears only weakly tracked commit objects which actually received presentations, including replay. Clear backing and KVO state before revealing rows, batch affected visible rows once for visible Forge columns, and preserve unloaded History and browsing state.",
+      "rootCause": "Resetting arranged history rather than applied objects performs main-thread work proportional to repository history and misses replayed ownership.",
+      "sourcePaths": [
+        "Classes/Controllers/HistoryForgeOverlayPresentation.swift",
+        "Classes/Controllers/HistoryTableInteractionCoordinator.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "ui",
+        "performance",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testForgeRebindingDoesNotResetOrReloadUntouchedHiddenRows",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Use an isolated History owner with untouched commit objects and hidden columns; require no reset KVO or row reload."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testForgeRebindingClearsEveryReplayedCommitObjectWithoutReloadingHiddenColumns",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Replay one SHA onto duplicate commit objects before demand; require every applied object to clear once with no hidden-column reload."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testForgeRebindingBatchesVisibleReplayedRowsAndIsIdempotent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Use visible replayed objects; require one exact IndexSet batch and no further KVO or reload on repeated nil binding."
+        },
+        {
+          "source": "GitXTests/GitXPerformanceTests.swift",
+          "identifier": "GitXTests/GitXPerformanceTests/testHistoryForgeResetAndRebindScaling",
+          "role": "performance",
+          "check": "performance",
+          "oracle": "Five matched Release samples at 1k, 10k and 300k synthetic arranged commits, fixed applied-overlay counts and viewport; time reset and complete rebind separately outside fixture creation. Retain merged-base comparison and existing performance ceilings."
         }
       ]
     }

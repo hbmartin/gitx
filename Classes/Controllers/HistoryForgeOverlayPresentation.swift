@@ -208,13 +208,15 @@ private nonisolated enum HistoryForgeOverlayRegistry {
     private nonisolated(unsafe) static let presentations =
         NSMapTable<PBGitCommit, HistoryForgeBadgeBox>.weakToStrongObjects()
 
-    #if GITX_APP_TARGET
-        static func presentation(for commit: PBGitCommit) -> HistoryForgeBadgePresentation {
-            lock.withLock {
-                presentations.object(forKey: commit)?.presentation ?? HistoryForgeBadgePresenter.unavailable
-            }
+    static func presentation(for commit: PBGitCommit) -> HistoryForgeBadgePresentation {
+        lock.withLock {
+            presentations.object(forKey: commit)?.presentation ?? HistoryForgeBadgePresenter.unavailable
         }
-    #endif
+    }
+
+    static func remove(for commit: PBGitCommit) {
+        lock.withLock { presentations.removeObject(forKey: commit) }
+    }
 
     static func set(_ presentation: HistoryForgeBadgePresentation, for commit: PBGitCommit) {
         lock.withLock { presentations.setObject(HistoryForgeBadgeBox(presentation), forKey: commit) }
@@ -431,6 +433,7 @@ final class HistoryForgeOverlayCoordinator: NSObject {
     private var arrangedObjectsObservation: NSKeyValueObservation?
     private var boundsObserver: NSObjectProtocol?
     private var requestedCommits: Set<ForgeCommitID> = []
+    private let presentedCommits = NSHashTable<PBGitCommit>(options: [.weakMemory, .objectPointerPersonality])
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "HistoryForgeOverlay")
 
     init?(
@@ -468,9 +471,7 @@ final class HistoryForgeOverlayCoordinator: NSObject {
         session = replacement
         requestedCommits.removeAll()
         inspector.apply(.unavailable(.notRequested))
-        if let commitList, let commits = owner?.commitController.arrangedObjects as? [PBGitCommit] {
-            apply(HistoryForgeBadgePresenter.unavailable, to: Array(commits.enumerated()), in: commitList)
-        }
+        clearPresentedCommits()
         guard let replacement else { return }
         factsToken = replacement.observeFacts { [weak self] state in
             guard let self, bindingGeneration == generation else { return }
@@ -530,6 +531,7 @@ final class HistoryForgeOverlayCoordinator: NSObject {
     }
 
     private func requestVisibleOverlays() {
+        refreshVisibleAccessibility()
         guard let session, let owner, let commitList, forgeColumnsAreVisible(in: commitList),
               let commits = owner.commitController.arrangedObjects as? [PBGitCommit]
         else { return }
@@ -568,25 +570,72 @@ final class HistoryForgeOverlayCoordinator: NSObject {
         apply(presentation, to: matchingRows, in: commitList)
     }
 
+    private func clearPresentedCommits() {
+        let stale = presentedCommits.allObjects
+        presentedCommits.removeAllObjects()
+        guard !stale.isEmpty else { return }
+        for commit in stale {
+            commit.willChangeValue(forKey: "forgeCheckRollupText")
+            commit.willChangeValue(forKey: "forgePullRequestBadgeText")
+        }
+        for commit in stale {
+            HistoryForgeOverlayRegistry.remove(for: commit)
+        }
+        for commit in stale {
+            commit.didChangeValue(forKey: "forgePullRequestBadgeText")
+            commit.didChangeValue(forKey: "forgeCheckRollupText")
+        }
+        let identities = Set(stale.map(ObjectIdentifier.init))
+        let rows = visibleCommits().filter { identities.contains(ObjectIdentifier($0.element)) }
+        reload(rows: rows, in: commitList)
+        logger.debug("Cleared applied Forge presentations count=\(stale.count, privacy: .public), visible=\(rows.count, privacy: .public)")
+    }
+
+    private func visibleCommits() -> [(offset: Int, element: PBGitCommit)] {
+        guard let commitList, let commits = owner?.commitController.arrangedObjects as? NSArray else { return [] }
+        let range = commitList.rows(in: commitList.visibleRect)
+        guard range.location != NSNotFound, range.location >= 0, range.location < commits.count else { return [] }
+        return (range.location ..< min(NSMaxRange(range), commits.count)).compactMap { row in
+            (commits[row] as? PBGitCommit).map { (row, $0) }
+        }
+    }
+
+    private func refreshVisibleAccessibility() {
+        guard let commitList else { return }
+        for (row, commit) in visibleCommits() {
+            applyAccessibility(HistoryForgeOverlayRegistry.presentation(for: commit), toRow: row, in: commitList)
+        }
+    }
+
     private func apply(_ presentation: HistoryForgeBadgePresentation, to matchingRows: [(offset: Int, element: PBGitCommit)], in commitList: PBCommitList) {
-        let columns = IndexSet([
-            commitList.column(withIdentifier: NSUserInterfaceItemIdentifier("ForgeCheckRollupColumn")),
-            commitList.column(withIdentifier: NSUserInterfaceItemIdentifier("ForgePullRequestBadgeColumn")),
-        ].filter { $0 >= 0 })
         for (_, item) in matchingRows {
+            presentedCommits.add(item)
             item.willChangeValue(forKey: "forgeCheckRollupText")
             item.willChangeValue(forKey: "forgePullRequestBadgeText")
         }
         for (_, item) in matchingRows {
             HistoryForgeOverlayRegistry.set(presentation, for: item)
         }
-        for (row, item) in matchingRows {
+        for (_, item) in matchingRows {
             item.didChangeValue(forKey: "forgePullRequestBadgeText")
             item.didChangeValue(forKey: "forgeCheckRollupText")
-            if !columns.isEmpty {
-                commitList.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: columns)
-            }
-            applyAccessibility(presentation, toRow: row, in: commitList)
+        }
+        reload(rows: matchingRows, in: commitList)
+    }
+
+    private func reload(rows: [(offset: Int, element: PBGitCommit)], in table: PBCommitList?) {
+        guard let table else { return }
+        let columns = IndexSet(["ForgeCheckRollupColumn", "ForgePullRequestBadgeColumn"].compactMap { identifier in
+            guard let column = table.tableColumn(withIdentifier: .init(identifier)), !column.isHidden else { return nil }
+            let index = table.column(withIdentifier: column.identifier)
+            return index >= 0 ? index : nil
+        })
+        let indexes = IndexSet(rows.map(\.offset))
+        if !columns.isEmpty, !indexes.isEmpty {
+            table.reloadData(forRowIndexes: indexes, columnIndexes: columns)
+        }
+        for (row, commit) in rows {
+            applyAccessibility(HistoryForgeOverlayRegistry.presentation(for: commit), toRow: row, in: table)
         }
     }
 

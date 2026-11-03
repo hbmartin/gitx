@@ -1117,6 +1117,7 @@ final class RepositoryPullRequestUIController {
         guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
         let identity = authority.beginMutation()
+        saveDraft(identity: draftIdentity, content: ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown))
         let pendingDraftSave = draftSaveTask
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
         mutationTask = Task { [weak self] in
