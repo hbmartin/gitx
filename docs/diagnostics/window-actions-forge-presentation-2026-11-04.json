@@ -55,6 +55,18 @@
     {
       "runId": "window-forge-preference-green3",
       "result": "256 tests passed, zero failures or skips. Result-bundle summary and workflow receipt confirm no initialization crash, both legacy feature repairs, zero preference task starts and preserved action/toolbar boundaries."
+    },
+    {
+      "runId": "window-forge-postcommit-correctness2",
+      "result": "All 2232 correctness tests passed, with no restarts. Coverage alone blocked: controller2307/2309 =99.91% against unchanged100% floor. The uncovered regions were remote-name string admission and a History fallback no caller can request."
+    },
+    {
+      "runId": "window-forge-remote-sender-characterization",
+      "result": "Both consumers and two focused cases passed against unchanged production. Commit482990cc preserves configured remote routing, missing/empty rejection and unavailable input behavior."
+    },
+    {
+      "runId": "window-forge-sender-cleanup-green",
+      "result": "Both Debug/Release consumers and both characterized sender cases passed after narrowing the private helper. Generic History selection remains untouched."
     }
   ],
   "iterationEvidence": {
@@ -79,7 +91,8 @@
     "supplementalReport": "artifacts/verification/window-actions-forge-implementation/source-breakdown.json",
     "reportMeaning": "Production, fixture and other target-source counts are supplemental; official gates and ratchet calculations remain unchanged.",
     "outputProtectionTests": "artifacts/verification/window-actions-forge-implementation/coverage-evidence-green.log",
-    "failedMeasurement": "The failed complete run is diagnostic only. A successful fresh complete run is required before recording any improvement."
+    "failedMeasurement": "The failed complete run is diagnostic only. A successful fresh complete run is required before recording any improvement.",
+    "remainingCleanup": "The private sender helper accepts only concrete reference-kind arrays; its unreachable History/optional-types branch is removed. Generic History resolution remains in RepositoryActionContextResolver. A fresh complete run must establish every unchanged floor."
   },
   "performance": {
     "frozenBase": "29b4e557eae11a3bc9e5cf1e7164ce0bf88ccfd1",
@@ -94,7 +107,7 @@
     "GitXUITests/WorktreeWorkflowUITests/testExplicitHistoryShortcutAdoptsNewestCapturedDetachedHead"
   ],
   "deliveryRequiredEvidence": {
-    "postCommitCorrectnessRunId": "window-forge-postcommit-correctness2",
+    "postCommitCorrectnessRunId": "window-forge-postcommit-correctness3",
     "finalFullRunId": "window-forge-final-full",
     "cleanupMode": "preview",
     "authority": "The final workflow receipt must pass at the final commit, including coverage, packages, sanitizers, UI, performance, analysis and Debug app staging. Iteration receipts do not establish delivery readiness.",

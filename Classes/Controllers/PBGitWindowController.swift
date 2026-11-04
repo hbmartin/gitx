@@ -432,14 +432,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
-    private final func hasReferenceIntent(_ sender: Any?, types: [String]?) -> Bool {
-        if let represented = (sender as? NSMenuItem)?.representedObject {
-            if let ref = represented as? PBGitRefish {
-                return types == nil || ref.refishType().map { types?.contains($0) == true } == true
-            }
-            return (represented as? String)?.isEmpty == false && types?.contains(kGitXRemoteType) == true
+    private final func hasReferenceIntent(_ sender: Any?, types: [String]) -> Bool {
+        guard let represented = (sender as? NSMenuItem)?.representedObject else { return false }
+        if let ref = represented as? PBGitRefish {
+            return ref.refishType().map { types.contains($0) } == true
         }
-        return (types == nil || types?.contains(kGitXCommitType) == true) && _historyViewController?.selectedCommits.first != nil
+        return (represented as? String)?.isEmpty == false && types.contains(kGitXRemoteType)
     }
 
     private final func installActionCoordinators(repository: PBGitRepository?, identity: RepositoryWindowOwnership.Identity?, gitAvailable: Bool) {

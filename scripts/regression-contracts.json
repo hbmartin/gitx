@@ -3605,6 +3605,13 @@
           "role": "compatibility",
           "check": "correctness",
           "oracle": "Cold-start the Swift-backed window fixture through its Objective-C factory; missing, opened and existing notification destinations preserve truthful completion, History selection and focus counts without a class-layout crash."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testRemoteNameSenderUsesConfiguredRemoteAndRejectsMissingOrWrongKinds",
+          "role": "valid",
+          "check": "correctness",
+          "oracle": "Configure an actual origin remote, invoke sender actions, and inspect the captured refs/remotes/origin plus original repository. Missing/empty names and branch-only actions never dispatch a remote mutation."
         }
       ]
     },
