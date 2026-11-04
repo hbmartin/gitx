@@ -67,6 +67,10 @@
     {
       "runId": "window-forge-sender-cleanup-green",
       "result": "Both Debug/Release consumers and both characterized sender cases passed after narrowing the private helper. Generic History selection remains untouched."
+    },
+    {
+      "runId": "window-forge-postcommit-correctness3",
+      "result": "All 2,233 correctness tests passed. Every target/group/file floor passed, including 100% for PBGitWindowController. Recording improvements and the subsequent plain checker both passed."
     }
   ],
   "iterationEvidence": {
@@ -91,8 +95,25 @@
     "supplementalReport": "artifacts/verification/window-actions-forge-implementation/source-breakdown.json",
     "reportMeaning": "Production, fixture and other target-source counts are supplemental; official gates and ratchet calculations remain unchanged.",
     "outputProtectionTests": "artifacts/verification/window-actions-forge-implementation/coverage-evidence-green.log",
-    "failedMeasurement": "The failed complete run is diagnostic only. A successful fresh complete run is required before recording any improvement.",
-    "remainingCleanup": "The private sender helper accepts only concrete reference-kind arrays; its unreachable History/optional-types branch is removed. Generic History resolution remains in RepositoryActionContextResolver. A fresh complete run must establish every unchanged floor."
+    "eligibleEvidence": {
+      "runId": "window-forge-postcommit-correctness3",
+      "receipt": "artifacts/verification/window-forge-postcommit-correctness3-correctness-f4842d47/receipt.json",
+      "tests": 2233,
+      "appFloorBefore": 0.9372,
+      "appFloorAfter": 0.9375,
+      "controllerFloor": 1.0,
+      "raisedFileFloors": 7,
+      "productionCoveredLines": 68025,
+      "productionExecutableLines": 72544,
+      "fixtureCoveredLines": 9460,
+      "fixtureExecutableLines": 10054,
+      "otherCoveredLines": 181,
+      "otherExecutableLines": 240,
+      "plainChecker": "passed",
+      "supplementalOnly": true
+    },
+    "packageRunId": "window-forge-current-packages",
+    "packageResults": "Core 164 and ForgeKit 314 tests passed, with all existing floors intact. Eligible record-improvements and subsequent plain checkers passed. Core target floor rose from99.94% to99.95%, matching both retained complete package runs; ForgeKit policy did not change."
   },
   "performance": {
     "frozenBase": "29b4e557eae11a3bc9e5cf1e7164ce0bf88ccfd1",
