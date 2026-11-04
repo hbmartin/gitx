@@ -13,6 +13,37 @@ class CoveragePolicyTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.module = load_script("check_coverage.py")
 
+    def test_source_breakdown_separates_fixtures_without_changing_target_evidence(self):
+        root = pathlib.Path("/fixture")
+        target = {"name": "Half Dark.app", "coveredLines": 29, "executableLines": 40, "lineCoverage": .725,
+                  "files": [{"path": str(root / path), "coveredLines": covered, "executableLines": total}
+                            for path, covered, total in [("Classes/Controller.swift", 5, 10),
+                                                        ("GitXTests/Harness.swift", 10, 10),
+                                                        ("Classes/Controllers/Milestone2UITestHarness.swift", 9, 10),
+                                                        ("External/Library.m", 5, 10)]]}
+        original = dict(target)
+        result = self.module.source_breakdown(target, root)
+        self.assertEqual(result["groups"]["production"]["coveredLines"], 5)
+        self.assertEqual(result["groups"]["production"]["lineCoverage"], .5)
+        self.assertEqual(result["groups"]["fixtures"]["coveredLines"], 19)
+        self.assertEqual(result["groups"]["fixtures"]["executableLines"], 20)
+        self.assertEqual(result["groups"]["other"]["coveredLines"], 5)
+        self.assertEqual(result["target"]["lineCoverage"], .725)
+        self.assertTrue(result["matchesTargetCounts"])
+        self.assertEqual(target, original)
+
+    def test_source_breakdown_reports_unknown_paths_and_empty_groups_explicitly(self):
+        result = self.module.source_breakdown({"name": "App", "files": [
+            {"path": "/unrelated/Unknown.swift", "coveredLines": 1, "executableLines": 3}]}, pathlib.Path("/fixture"))
+        self.assertIsNone(result["groups"]["production"]["lineCoverage"])
+        self.assertEqual(result["groups"]["other"]["files"][0]["path"], "/unrelated/Unknown.swift")
+        self.assertIsNone(result["matchesTargetCounts"])
+
+    def test_source_breakdown_flag_is_additive_to_the_ordinary_check(self):
+        parsed = self.module.parse_arguments(["result.xcresult", "--source-breakdown", "breakdown.json"])
+        self.assertEqual(parsed.source_breakdown, pathlib.Path("breakdown.json"))
+        self.assertFalse(parsed.record_improvements)
+
     def test_policy_is_loaded_from_checked_in_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "coverage.json"

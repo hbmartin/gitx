@@ -13,6 +13,38 @@ from support import load_script
 
 
 class CoverageTransactionTests(unittest.TestCase):
+    def test_source_breakdown_refuses_to_overwrite_its_policy_input(self):
+        coverage = load_script("check_coverage.py")
+        with tempfile.TemporaryDirectory() as directory:
+            policy = pathlib.Path(directory) / "policy.json"
+            original = b'{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.5,"files":{}}\n'
+            policy.write_bytes(original)
+            report = {"targets": [{"name": "Half Dark.app", "lineCoverage": 1.0, "files": []}]}
+            with mock.patch.object(coverage, "xccov_report", return_value=report):
+                status = coverage.main([directory, "--policy", str(policy), "--source-breakdown", str(policy)])
+            self.assertEqual(status, 1)
+            self.assertEqual(policy.read_bytes(), original)
+
+    def test_supplemental_breakdown_does_not_bypass_a_failure_or_rewrite_the_policy(self):
+        coverage = load_script("check_coverage.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            policy = root / "policy.json"
+            original = b'{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.9,"files":{}}\n'
+            policy.write_bytes(original)
+            output = root / "breakdown.json"
+            report = {"targets": [{"name": "Half Dark.app", "lineCoverage": .5, "coveredLines": 5,
+                                   "executableLines": 10, "files": [{"path": "/unrelated/Unknown.swift",
+                                   "coveredLines": 5, "executableLines": 10, "lineCoverage": .5}]}]}
+            with mock.patch.object(coverage, "xccov_report", return_value=report), mock.patch.object(coverage, "coverage_diagnostics"):
+                status = coverage.main([str(root / "result.xcresult"), "--policy", str(policy), "--source-breakdown", str(output)])
+            self.assertEqual(status, 1)
+            self.assertEqual(policy.read_bytes(), original)
+            result = json.loads(output.read_text())
+            self.assertTrue(result["supplementalOnly"])
+            self.assertEqual(result["groups"]["other"]["coveredLines"], 5)
+            self.assertTrue(result["matchesTargetCounts"])
+
     def test_pending_current_evidence_skips_automatic_historical_discovery(self):
         coverage = load_script("check_coverage.py")
         with tempfile.TemporaryDirectory() as directory:
