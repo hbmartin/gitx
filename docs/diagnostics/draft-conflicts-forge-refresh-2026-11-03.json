@@ -26,7 +26,10 @@
       "draft-forge-focused-green",
       "draft-forge-boundary-red-build2",
       "draft-forge-cache-fix-internal-build",
-      "draft-forge-cache-fix-green2"
+      "draft-forge-cache-fix-green2",
+      "draft-forge-final-full",
+      "draft-forge-ui-regression-build2",
+      "draft-forge-refresh-routing-red"
     ],
     "focusedNativeTests": 88,
     "packageTests": 314,
@@ -35,10 +38,10 @@
   },
   "carriedAcceptance": "PR121 complete correctness, coverage floors, semantic lint, sanitizers/UI and staged app requirements remain mandatory. Three cross-language fixture declarations have exact documented semantic-lint annotations.",
   "requiredFinalVerification": {
-    "runId": "draft-forge-final-full",
+    "runId": "draft-forge-final-full2",
     "profile": "full",
     "cleanupMode": "preview",
-    "receipt": "artifacts/verification/draft-forge-final-full/workflow.json",
+    "receipt": "artifacts/verification/draft-forge-final-full2/workflow.json",
     "rule": "Must execute after final implementation and eligible coverage commits; older focused evidence is historical."
   },
   "stagedApplication": "build/GitX.app",
@@ -69,5 +72,14 @@
     "base": "29b4e557eae11a3bc9e5cf1e7164ce0bf88ccfd1",
     "identicalHarnessSHA256": "5cd1fb933a45465f7d8853ffeb64a0f128a1073055ea30a6cfd68d57fb5edb06",
     "method": "Frozen base first, current samples from the final canonical full performance plan. Five matched sample indices per count/visibility/applied condition; fixture creation and drawing excluded. No alternating-run claim."
+  },
+  "finalUIRecovery": {
+    "failedRunID": "draft-forge-final-full",
+    "passed": 48,
+    "failed": 3,
+    "routingRedRunID": "draft-forge-refresh-routing-red",
+    "routingRed": "One focused test failed only at the expected actual AppKit target assertion; dispatch succeeded. The global menu now uses a distinct window entry point while preserving refresh: selectors. Green and real journey checks remain required.",
+    "watcherEvidence": "An empty CFFIXED_USER_HOME still read host refresh preferences on this macOS installation. Two watcher-dependent UI fixtures now set launch-domain watcher/focus arguments; original assertions and timeouts preserved, real preferences untouched.",
+    "languageException": "Retain existing Objective-C screenshot fixture helpers; no production Objective-C edit or conversion."
   }
 }

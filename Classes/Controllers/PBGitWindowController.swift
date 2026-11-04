@@ -88,10 +88,30 @@ nonisolated struct RepositoryForgeQueryPresentation {
     let selection: GitBinarySelection?
     let providerName: String?
     let isAvailable: Bool
+    var binding: ForgeRepositoryBinding? = nil
 
     func matches(repository: ObjectIdentifier, owner: RepositoryWindowOwnership.Identity?, generation: UInt64, selection: GitBinarySelection?) -> Bool {
         self.repository == repository && self.owner == owner && self.generation == generation && self.selection == selection
     }
+}
+
+/// One synchronous decision retains its repository and presentation facets together.
+@MainActor
+private struct RepositoryWindowContext {
+    let repository: PBGitRepository
+    let owner: RepositoryWindowOwnership.Identity?
+    let generation: UInt64
+    let selection: GitBinarySelection?
+    let window: NSWindow?
+    let history: PBGitHistoryController?
+    let sidebar: PBGitSidebarController?
+}
+
+nonisolated struct RepositoryWindowPreferenceRevision: Equatable {
+    let repository: ObjectIdentifier?
+    let refreshOnFocus: Bool
+    let statusBarVisible: Bool
+    let binding: ForgeRepositoryBinding?
 }
 
 /// Retains the repository until its reads and subscriptions have been revoked.
@@ -183,6 +203,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var pendingOwnershipReconciliation = false
     private var pendingRefreshIntents = RepositoryWindowRefreshIntents()
     private var isDeliveringRefreshIntents = false
+    private var observedPreferenceRevision: RepositoryWindowPreferenceRevision?
+    private var synchronousActionContext: RepositoryWindowContext?
+    private var synchronousQueryContext: RepositoryWindowContext?
     private var globalOwnerNotifications: [NSObjectProtocol] = []
     private var ownerNotifications = NotificationCenter.default
     private weak var worktreeRepairRepository: PBGitRepository?
@@ -334,24 +357,89 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         reconcileOwnership()
     }
 
-    private final func queryRepository() -> PBGitRepository? {
+    private final func context(for repository: PBGitRepository) -> RepositoryWindowContext {
+        RepositoryWindowContext(repository: repository, owner: ownerIdentity(for: repository), generation: ownership.generation,
+                                selection: gitDiscovery.currentSelection, window: isWindowLoaded ? super.window : nil,
+                                history: _historyViewController, sidebar: _sidebarController)
+    }
+
+    private final func queryContext() -> RepositoryWindowContext? {
         let repository = repository
-        let identity = ownerIdentity(for: repository)
+        let captured = repository.map { context(for: $0) }
         let policy = RepositoryWindowQueryPolicy(
             closed: ownership.closed, reconciling: isReconcilingOwnership,
-            repository: repository.map(ObjectIdentifier.init), currentOwner: identity,
+            repository: repository.map(ObjectIdentifier.init), currentOwner: captured?.owner,
             installedOwner: lifetime?.identity, paneRepository: paneRepository, actionRepository: actionRepository,
             facetsMatch: ((_historyViewController?.repository).map { $0 === repository } ?? true) &&
                 ((_sidebarController?.repository).map { $0 === repository } ?? true),
-            selectionMatches: gitLoaderSelection == nil || gitLoaderSelection == gitDiscovery.currentSelection
+            selectionMatches: gitLoaderSelection == nil || gitLoaderSelection == captured?.selection
         )
         switch policy.decision {
-        case .current: return repository
+        case .current: return captured
         case .reconcileLater:
             scheduleOwnershipReconciliation()
             return nil
         case .unavailable: return nil
         }
+    }
+
+    private final func acceptsAction(_ context: RepositoryWindowContext) -> Bool {
+        !ownership.closed && !isReconcilingOwnership && ownership.generation == context.generation &&
+            repository === context.repository && ownerIdentity(for: context.repository) == context.owner &&
+            gitDiscovery.currentSelection == context.selection
+    }
+
+    /// Nested dynamic facades share the admitted capture rather than retargeting it.
+    private final func withActionContext(requiresGit: Bool, validIntent: Bool = true, _ action: (RepositoryWindowContext) -> Void) {
+        guard validIntent, !ownership.closed, !isReconcilingOwnership else { return }
+        if let captured = synchronousActionContext {
+            guard acceptsAction(captured) else { return }
+            guard !requiresGit || captured.selection != nil else {
+                presentActionAvailabilityError(gitUnavailable: true)
+                return
+            }
+            action(captured)
+            return
+        }
+        reconcileOwnership()
+        guard let captured = queryContext() else {
+            presentActionAvailabilityError(gitUnavailable: false)
+            return
+        }
+        guard !requiresGit || captured.selection != nil else {
+            presentActionAvailabilityError(gitUnavailable: true)
+            return
+        }
+        synchronousActionContext = captured
+        defer { synchronousActionContext = nil }
+        action(captured)
+    }
+
+    private final func presentActionAvailabilityError(gitUnavailable: Bool) {
+        guard !ownership.closed, !isReconcilingOwnership, isWindowLoaded,
+              ownership.identity == currentOwnerIdentity(), ownership.identity != nil else { return }
+        let message = gitUnavailable ? "Git is not ready for this action. Try again when Git becomes available." :
+            "The repository is not available for this action. Try again after the window finishes updating."
+        NSLog("[GitX] Refused unavailable explicit action; Git unavailable %@", gitUnavailable ? "yes" : "no")
+        showErrorSheet(NSError(domain: gitUnavailable ? "PBGitBinaryErrorDomain" : "GitX.WindowAction", code: gitUnavailable ? 3 : 1,
+                               userInfo: [NSLocalizedDescriptionKey: NSLocalizedString(message, comment: "Unavailable repository action")]))
+    }
+
+    final func performCheckedOutBranchAction(_ action: (PBGitRef) -> Void) {
+        withActionContext(requiresGit: false) { context in
+            guard let head = context.repository.headRef()?.ref(), head.isBranch else { return }
+            action(head)
+        }
+    }
+
+    private final func hasReferenceIntent(_ sender: Any?, types: [String]?) -> Bool {
+        if let represented = (sender as? NSMenuItem)?.representedObject {
+            if let ref = represented as? PBGitRefish {
+                return types == nil || ref.refishType().map { types?.contains($0) == true } == true
+            }
+            return (represented as? String)?.isEmpty == false && types?.contains(kGitXRemoteType) == true
+        }
+        return (types == nil || types?.contains(kGitXCommitType) == true) && _historyViewController?.selectedCommits.first != nil
     }
 
     private final func installActionCoordinators(repository: PBGitRepository?, identity: RepositoryWindowOwnership.Identity?, gitAvailable: Bool) {
@@ -501,6 +589,19 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             scope.worktreeServices.append(service)
         }
         return (scope.repository, service, scope.worktreeOwner)
+    }
+
+    /// Presentation construction captures authority without installing an owner or starting Git.
+    final func repositoryPresentationValidation(for repository: PBGitRepository?) -> () -> Bool {
+        guard let repository else { return { false } }
+        let generation = ownership.generation
+        let identity = ownerIdentity(for: repository)
+        let selection = gitDiscovery.currentSelection
+        return { [weak self, weak repository] in
+            guard let self, let repository, !self.ownership.closed, self.ownership.generation == generation,
+                  self.repository === repository, self.gitDiscovery.currentSelection == selection else { return false }
+            return self.currentOwnerIdentity() == identity
+        }
     }
 
     /// Captured before asynchronous confirmation or work admission, never retargeted.
@@ -655,7 +756,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @discardableResult
-    private final func reconcileOwnership() -> Bool {
+    private final func reconcileOwnership(prepareForgeMetadata: Bool = true) -> Bool {
         guard !ownership.closed else { return false }
         installGlobalOwnerNotificationsIfNeeded()
         guard !isReconcilingOwnership else {
@@ -665,6 +766,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         isReconcilingOwnership = true
         defer {
             isReconcilingOwnership = false
+            if observedPreferenceRevision == nil {
+                observedPreferenceRevision = capturePreferenceRevision()
+            }
             if !isDeliveringRefreshIntents, pendingRefreshIntents.hasPending, hasCurrentLifetime {
                 scheduleOwnershipReconciliation()
             }
@@ -679,6 +783,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         installActionCoordinators(repository: repository, identity: identity, gitAvailable: repositoryAvailable)
         guard lifetime != nil else {
+            if prepareForgeMetadata {
+                prepareForgeQueryPresentation()
+            }
             if isWindowLoaded {
                 super.window?.representedURL = nil
             }
@@ -686,7 +793,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         installRepositoryPanesIfReady()
         let capturedInitialFocus = reconcileGitLoaders()
-        if !forgeQueryPresentationIsCurrent(for: repository) {
+        if prepareForgeMetadata, !forgeQueryPresentationIsCurrent(for: repository) {
             prepareForgeQueryPresentation()
         }
         return capturedInitialFocus
@@ -703,11 +810,25 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 // Global intent belongs to the controller, not an obsolete repository generation.
                 // Defer all settings access until the notification publisher has returned.
                 DispatchQueue.main.async { [weak self] in
-                    self?.scheduleOwnershipReconciliation(activated: activated, preferences: preferences)
+                    guard let self else { return }
+                    if preferences {
+                        let revision = self.capturePreferenceRevision()
+                        guard revision != self.observedPreferenceRevision else { return }
+                        self.observedPreferenceRevision = revision
+                    }
+                    self.scheduleOwnershipReconciliation(activated: activated, preferences: preferences)
                 }
             }
             globalOwnerNotifications.append(token)
         }
+    }
+
+    private final func capturePreferenceRevision() -> RepositoryWindowPreferenceRevision {
+        let repository = repository
+        return RepositoryWindowPreferenceRevision(repository: repository.map(ObjectIdentifier.init),
+                                                  refreshOnFocus: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation(),
+                                                  statusBarVisible: ApplicationSettings.repositoryStatusBarVisible,
+                                                  binding: repository.flatMap { ApplicationComposition.shared.repositoryViewState(for: $0).forgeRepositoryBinding })
     }
 
     private final func scheduleOwnershipReconciliation(activated: Bool = false, preferences: Bool = false) {
@@ -726,7 +847,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                     self.scheduleOwnershipReconciliation()
                 }
             }
-            let capturedInitialFocus = self.reconcileOwnership()
+            let capturedInitialFocus = self.reconcileOwnership(prepareForgeMetadata: false)
             guard let intent = self.pendingRefreshIntents.consume(ready: self.hasCurrentLifetime) else { return }
             let generation = self.ownership.generation
             if intent.preferences {
@@ -736,8 +857,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 self.pendingRefreshIntents.record(activated: intent.activated, preferences: intent.preferences)
                 return
             }
+            self.prepareForgeQueryPresentation()
             if intent.activated {
-                self.requestForgeQueryRefresh()
                 if !capturedInitialFocus {
                     self.focusRefreshCoordinator?.applicationDidBecomeActive()
                 }
@@ -756,7 +877,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard !ownership.closed, let scope = lifetime, scope.identity == currentOwnerIdentity() else { return }
         if scope.statusCoalescer == nil {
             let generation = ownership.generation
-            scope.statusCoalescer = RefreshCoalescer { [weak self, weak scope] in
+            scope.statusCoalescer = RefreshCoalescer(label: "repository-status") { [weak self, weak scope] in
                 guard let self, let scope, self.ownership.accepts(scope.identity, generation: generation),
                       self.currentOwnerIdentity() == scope.identity else { return }
                 self.repositoryLocalStatusLoader?.refresh()
@@ -769,7 +890,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard !ownership.closed, let scope = lifetime, scope.identity == currentOwnerIdentity() else { return }
         if scope.forgeMetadataCoalescer == nil {
             let generation = ownership.generation
-            scope.forgeMetadataCoalescer = RefreshCoalescer { [weak self, weak scope] in
+            scope.forgeMetadataCoalescer = RefreshCoalescer(label: "Forge-metadata") { [weak self, weak scope] in
                 guard let self, let scope, self.ownership.accepts(scope.identity, generation: generation),
                       self.currentOwnerIdentity() == scope.identity else { return }
                 self.prepareForgeQueryPresentation()
@@ -839,8 +960,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             panePresentationWindow = window
         }
         if repositoryToolbarController == nil {
-            repositoryToolbarController = RepositoryToolbarController(windowController: self)
+            repositoryToolbarController = RepositoryToolbarController(windowController: self, repository: repository)
         }
+        updatePreparedToolbarForgePresentation()
         repositoryToolbarController?.install()
         if repositoryStatusBarController == nil {
             installRepositoryStatusBar()
@@ -902,20 +1024,24 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             menuItem.state = ApplicationSettings.repositoryStatusBarVisible ? .on : .off
             return true
         }
-        let queryRepository = queryRepository()
+        let context = queryContext()
+        let previous = synchronousQueryContext
+        synchronousQueryContext = context
+        defer { synchronousQueryContext = previous }
         if let action = RepositoryForgeLinkAction(selector: menuItem.action),
-           let model = RepositoryForgeLinkMenuPresenter.itemModel(action: action, context: forgeLinkContext(for: queryRepository))
+           let model = RepositoryForgeLinkMenuPresenter.itemModel(action: action, context: forgeLinkContext(for: context))
         {
             RepositoryForgeLinkMenuPresenter.apply(model: model, to: menuItem)
             return model.isEnabled
         }
-        guard let queryRepository else { return false }
+        guard let context else { return false }
+        let queryRepository = context.repository
         if let action = menuItem.action,
            ["checkout:", "merge:", "rebase:", "rebaseHeadBranch:", "cherryPick:", "resetSoft:",
             "stashSave:", "stashSaveWithKeepIndex:", "stashPop:", "stashApply:", "stashDrop:",
             "pullRemote:", "pullDefaultRemote:", "pullRebaseRemote:", "pullRebaseDefaultRemote:", "toolbarPull:",
             "deleteRef:", "createBranch:", "createTag:"].contains(NSStringFromSelector(action)),
-           repository.map({ !CommitSubmissionEligibility.allowsMutation($0.index) }) != false
+           !CommitSubmissionEligibility.allowsMutation(queryRepository.index)
         {
             return false
         }
@@ -932,11 +1058,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         if menuItem.action == #selector(showUncommittedChanges(_:)) {
             menuItem.state = isUncommittedChangesSelected ? .on : .off
-            return repository?.isBare() != true
+            return !queryRepository.isBare()
         }
         if menuItem.action == #selector(showHistoryView(_:)) || menuItem.action == #selector(returnToHistory(_:)) {
             menuItem.state = isUncommittedChangesSelected ? .off : .on
-            return repository?.isBare() != true
+            return !queryRepository.isBare()
         }
         if menuItem.action == #selector(toggleAmendCommit(_:)) {
             menuItem.state = queryRepository.index.isAmend ? .on : .off
@@ -946,7 +1072,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return validateMenuItem(menuItem, remoteTitle: "Fetch “%@”", plainTitle: "Fetch")
         }
         if menuItem.action == #selector(showRepositorySettings(_:)) {
-            return repository != nil
+            return true
         }
         if menuItem.action == #selector(pullRemote(_:)) {
             return validateMenuItem(menuItem, remoteTitle: "Pull From “%@”", plainTitle: "Pull")
@@ -962,21 +1088,24 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     final var forgeLinkContext: RepositoryForgeLinkContext {
-        forgeLinkContext(for: queryRepository())
+        forgeLinkContext(for: queryContext())
     }
 
     private final func forgeQueryPresentationIsCurrent(for repository: PBGitRepository?) -> Bool {
         guard let repository else { return false }
-        return forgeQueryPresentation?.matches(repository: ObjectIdentifier(repository), owner: currentOwnerIdentity(), generation: ownership.generation, selection: gitDiscovery.currentSelection) == true
+        return forgeQueryPresentation?.matches(repository: ObjectIdentifier(repository), owner: ownerIdentity(for: repository), generation: ownership.generation, selection: gitDiscovery.currentSelection) == true
     }
 
-    private final func forgeLinkContext(for repository: PBGitRepository?) -> RepositoryForgeLinkContext {
-        guard let repository, forgeQueryPresentationIsCurrent(for: repository), let presentation = forgeQueryPresentation else {
-            if repository != nil {
+    private final func forgeLinkContext(for context: RepositoryWindowContext?) -> RepositoryForgeLinkContext {
+        guard let context, let presentation = forgeQueryPresentation,
+              presentation.matches(repository: ObjectIdentifier(context.repository), owner: context.owner, generation: context.generation, selection: context.selection)
+        else {
+            if context != nil {
                 scheduleOwnershipReconciliation()
             }
             return RepositoryForgeLinkContext(providerName: nil, isForgeAvailable: false, checkedOutRevision: nil, selectedCommitIdentifiers: [])
         }
+        let repository = context.repository
         let headRef = repository.headRef()?.ref()
         let checkedOutRevision: RepositoryForgeLinkRevision?
         if let headRef, headRef.isBranch, let branchName = headRef.branchName {
@@ -986,7 +1115,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         } else {
             checkedOutRevision = nil
         }
-        let selectedCommitIdentifiers = (_historyViewController?.selectedCommits ?? []).compactMap { commit in
+        let selectedCommitIdentifiers = (context.history?.selectedCommits ?? []).compactMap { commit in
             commit is PBUncommittedChanges ? nil : commit.sha
         }
         return RepositoryForgeLinkContext(
@@ -1019,21 +1148,46 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @discardableResult
     private final func prepareForgeQueryPresentation(force: Bool = false) -> RepositoryForgeBindingResolution? {
-        guard !ownership.closed, let repository, actionRepository == ObjectIdentifier(repository), let coordinator = repositoryForgeCoordinator else { return nil }
-        let identity = currentOwnerIdentity()
+        guard !ownership.closed, let repository else { return nil }
+        let identity = ownerIdentity(for: repository)
         let generation = ownership.generation
         let selection = gitDiscovery.currentSelection
+        guard actionRepository == ObjectIdentifier(repository), let coordinator = repositoryForgeCoordinator else {
+            forgeQueryPresentation = RepositoryForgeQueryPresentation(repository: ObjectIdentifier(repository), owner: identity, generation: generation,
+                                                                      selection: selection, providerName: nil, isAvailable: false)
+            updatePreparedToolbarForgePresentation()
+            return nil
+        }
         let resolution = force ? coordinator.resolveBinding() : coordinator.prepareQueryBinding(selection: selection)
         guard self.repository === repository, identity == currentOwnerIdentity(), generation == ownership.generation, selection == gitDiscovery.currentSelection, !ownership.closed else { return nil }
         forgeQueryPresentation = RepositoryForgeQueryPresentation(repository: ObjectIdentifier(repository), owner: identity, generation: generation, selection: selection,
-                                                                  providerName: resolution.providerName, isAvailable: resolution.binding != nil || !resolution.candidates.isEmpty)
+                                                                  providerName: resolution.providerName, isAvailable: resolution.binding != nil || !resolution.candidates.isEmpty, binding: resolution.binding)
+        updatePreparedToolbarForgePresentation()
         NSLog("[GitX] Prepared Forge menu metadata generation %llu, available %@", generation, forgeQueryPresentation?.isAvailable == true ? "yes" : "no")
         return resolution
     }
 
+    private final func updatePreparedToolbarForgePresentation() {
+        guard let presentation = forgeQueryPresentation else { return }
+        let generation = presentation.generation
+        let identity = presentation.owner
+        let selection = presentation.selection
+        let repositoryID = presentation.repository
+        repositoryToolbarController?.applyForgeMetadata(providerName: presentation.providerName, binding: presentation.binding) { [weak self] in
+            guard let self, !self.ownership.closed, self.ownership.generation == generation,
+                  self.gitDiscovery.currentSelection == selection, let repository = self.repository else { return false }
+            return ObjectIdentifier(repository) == repositoryID && self.ownerIdentity(for: repository) == identity
+        }
+    }
+
     @objc(validateMenuItem:remoteTitle:plainTitle:)
     dynamic func validateMenuItem(_ menuItem: NSMenuItem, remoteTitle: String, plainTitle: String) -> Bool {
-        guard let repository = queryRepository(), let ref = selectedRef else { return false }
+        guard let context = synchronousQueryContext ?? queryContext() else { return false }
+        let previous = synchronousQueryContext
+        synchronousQueryContext = context
+        defer { synchronousQueryContext = previous }
+        let repository = context.repository
+        guard let ref = selectedRef else { return false }
         let remoteRef = try? repository.remoteRef(forBranch: ref)
         if ref.isRemote || remoteRef != nil {
             let displayRef: PBGitRef
@@ -1113,12 +1267,13 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func applyRefreshPreferences() {
-        reconcileOwnership()
+        reconcileOwnership(prepareForgeMetadata: false)
         applyRefreshPreferencePresentation()
+        prepareForgeQueryPresentation()
+        observedPreferenceRevision = capturePreferenceRevision()
     }
 
     private func applyRefreshPreferencePresentation() {
-        prepareForgeQueryPresentation()
         focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
         repositoryStatusBarController?.setVisible(ApplicationSettings.repositoryStatusBarVisible)
         updateToolbarForgeDiagnostic()
@@ -1273,8 +1428,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc(selectedURLsFromSender:)
     dynamic func selectedURLs(from sender: Any?) -> [URL]? {
-        guard let repository = queryRepository() else { return nil }
-        return WorkspaceActionCoordinator(repository: repository).selectedURLs(from: representedObject(from: sender))
+        guard let context = synchronousActionContext ?? queryContext() else { return nil }
+        return WorkspaceActionCoordinator(repository: context.repository).selectedURLs(from: representedObject(from: sender))
     }
 
     private func representedObject(from sender: Any?) -> Any? {
@@ -1285,24 +1440,31 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc(openURLs:)
     open dynamic func open(_ fileURLs: [URL]?) {
-        ensureActionCoordinators()
-        let urls = fileURLs ?? []
-        workspaceActionCoordinator?.open(urls)
+        guard let fileURLs, !fileURLs.isEmpty else { return }
+        withActionContext(requiresGit: false) { context in
+            WorkspaceActionCoordinator(repository: context.repository).open(fileURLs)
+        }
     }
 
     @objc(revealURLsInFinder:)
     open dynamic func revealURLs(inFinder fileURLs: [URL]?) {
-        ensureActionCoordinators()
-        let urls = fileURLs ?? []
-        workspaceActionCoordinator?.revealInFinder(urls)
+        guard let fileURLs, !fileURLs.isEmpty else { return }
+        withActionContext(requiresGit: false) { context in
+            WorkspaceActionCoordinator(repository: context.repository).revealInFinder(fileURLs)
+        }
     }
 
     @objc(refishForSender:refishTypes:)
     dynamic func refish(for sender: Any?, refishTypes types: [String]?) -> PBGitRefish? {
-        guard let repository = queryRepository() else { return nil }
+        guard let context = synchronousActionContext ?? queryContext() else { return nil }
+        return refish(for: sender, types: types, context: context)
+    }
+
+    private final func refish(for sender: Any?, types: [String]?, context: RepositoryWindowContext) -> PBGitRefish? {
+        let repository = context.repository
         let resolver = actionContextResolver ?? RepositoryActionContextResolver()
         let menuItem = sender as? NSMenuItem
-        let selectedCommit = menuItem == nil ? _historyViewController?.selectedCommits.first : nil
+        let selectedCommit = menuItem == nil ? context.history?.selectedCommits.first : nil
         return resolver.refish(
             representedObject: menuItem?.representedObject,
             selectedCommit: selectedCommit,
@@ -1312,13 +1474,17 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc dynamic var selectedRef: PBGitRef? {
-        guard queryRepository() != nil else { return nil }
-        let queryWindow = isWindowLoaded ? super.window : nil
+        guard let context = synchronousQueryContext ?? queryContext() else { return nil }
+        return selectedRef(in: context)
+    }
+
+    private final func selectedRef(in context: RepositoryWindowContext) -> PBGitRef? {
+        let queryWindow = context.window
         let resolver = actionContextResolver ?? RepositoryActionContextResolver()
         var sidebarRef: PBGitRef?
         var sidebarRemoteName: String?
         var historyRefs: [PBGitRef]?
-        if let sidebarViewController,
+        if let sidebarViewController = context.sidebar,
            let sidebarSourceView = sidebarViewController.sourceView,
            queryWindow?.firstResponder === sidebarSourceView,
            let item = sidebarSourceView.item(atRow: sidebarSourceView.selectedRow) as? PBSourceViewItem
@@ -1328,7 +1494,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             } else {
                 sidebarRef = item.ref()
             }
-        } else if let history = _historyViewController,
+        } else if let history = context.history,
                   // Subclasses may provide a table without loading their History view.
                   // KVC keeps a missing nonnull-declared weak outlet safely optional.
                   let table = history.value(forKey: "commitList") as? NSView,
@@ -1346,14 +1512,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc(performFetchForRef:)
     dynamic func performFetch(for ref: PBGitRef?) {
-        ensureActionCoordinators()
-        remoteActionCoordinator?.performFetch(for: ref)
+        withActionContext(requiresGit: true) { _ in remoteActionCoordinator?.performFetch(for: ref) }
     }
 
     @objc(performPullForBranch:remote:rebase:)
     dynamic func performPull(forBranch branch: PBGitRef, remote: PBGitRef?, rebase: Bool) {
-        ensureActionCoordinators()
-        remoteActionCoordinator?.performPull(branch: branch, remote: remote, rebase: rebase)
+        withActionContext(requiresGit: true) { _ in remoteActionCoordinator?.performPull(branch: branch, remote: remote, rebase: rebase) }
     }
 
     @objc(performPushForBranch:toRemote:)
@@ -1367,13 +1531,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         toRemote remote: PBGitRef?,
         requiresConfirmation: Bool
     ) {
-        ensureActionCoordinators()
-        pullRequestUIController?.performPush(
-            branch: branch,
-            remote: remote,
-            requiresConfirmation: requiresConfirmation,
-            initiallyCreatePullRequest: false
-        )
+        withActionContext(requiresGit: true) { _ in
+            pullRequestUIController?.performPush(
+                branch: branch,
+                remote: remote,
+                requiresConfirmation: requiresConfirmation,
+                initiallyCreatePullRequest: false
+            )
+        }
     }
 
     @objc(performPushForBranch:toRemote:requiresConfirmation:initiallyCreatePullRequest:)
@@ -1383,13 +1548,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         requiresConfirmation: Bool,
         initiallyCreatePullRequest: Bool
     ) {
-        ensureActionCoordinators()
-        pullRequestUIController?.performPush(
-            branch: branch,
-            remote: remote,
-            requiresConfirmation: requiresConfirmation,
-            initiallyCreatePullRequest: initiallyCreatePullRequest
-        )
+        withActionContext(requiresGit: true) { _ in
+            pullRequestUIController?.performPush(
+                branch: branch,
+                remote: remote,
+                requiresConfirmation: requiresConfirmation,
+                initiallyCreatePullRequest: initiallyCreatePullRequest
+            )
+        }
     }
 
     @objc(presentNewPullRequest)
@@ -1438,9 +1604,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @IBAction dynamic func fetchRemote(_ sender: Any?) {
-        let ref = refish(for: sender, refishTypes: [kGitXBranchType, kGitXRemoteBranchType, kGitXRemoteType])
-        if let ref = ref as? PBGitRef {
-            performFetch(for: ref)
+        withActionContext(requiresGit: true, validIntent: hasReferenceIntent(sender, types: [kGitXBranchType, kGitXRemoteBranchType, kGitXRemoteType])) { _ in
+            let ref = refish(for: sender, refishTypes: [kGitXBranchType, kGitXRemoteBranchType, kGitXRemoteType])
+            if let ref = ref as? PBGitRef {
+                performFetch(for: ref)
+            }
         }
     }
 
@@ -1465,30 +1633,38 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func pull(from sender: Any?, rebase: Bool) {
-        if let ref = refish(for: sender, refishTypes: [kGitXBranchType]) as? PBGitRef {
-            performPull(forBranch: ref, remote: nil, rebase: rebase)
+        withActionContext(requiresGit: true, validIntent: hasReferenceIntent(sender, types: [kGitXBranchType])) { _ in
+            if let ref = refish(for: sender, refishTypes: [kGitXBranchType]) as? PBGitRef {
+                performPull(forBranch: ref, remote: nil, rebase: rebase)
+            }
         }
     }
 
     @IBAction dynamic func pushUpdatesToRemote(_ sender: Any?) {
-        if let ref = refish(for: sender, refishTypes: [kGitXRemoteType]) as? PBGitRef {
-            performPush(forBranch: nil, toRemote: ref.remote())
+        withActionContext(requiresGit: true, validIntent: hasReferenceIntent(sender, types: [kGitXRemoteType])) { _ in
+            if let ref = refish(for: sender, refishTypes: [kGitXRemoteType]) as? PBGitRef {
+                performPush(forBranch: nil, toRemote: ref.remote())
+            }
         }
     }
 
     @IBAction dynamic func pushDefaultRemoteForRef(_ sender: Any?) {
-        if let ref = refish(for: sender, refishTypes: [kGitXBranchType]) as? PBGitRef {
-            performPush(forBranch: ref, toRemote: nil)
+        withActionContext(requiresGit: true, validIntent: hasReferenceIntent(sender, types: [kGitXBranchType])) { _ in
+            if let ref = refish(for: sender, refishTypes: [kGitXBranchType]) as? PBGitRef {
+                performPush(forBranch: ref, toRemote: nil)
+            }
         }
     }
 
     @IBAction dynamic func pushToRemote(_ sender: Any?) {
-        guard let item = sender as? NSMenuItem,
-              let ref = refish(for: item.parent, refishTypes: nil) as? PBGitRef,
-              let remote = refish(for: item, refishTypes: [kGitXRemoteType]) as? PBGitRef,
-              ReferenceActionPolicy.canPushToNamedRemote(refishType: ref.refishType())
-        else { return }
-        performPush(forBranch: ref, toRemote: remote)
+        withActionContext(requiresGit: true, validIntent: (sender as? NSMenuItem)?.parent?.representedObject is PBGitRefish && (sender as? NSMenuItem)?.representedObject != nil) { _ in
+            guard let item = sender as? NSMenuItem,
+                  let ref = refish(for: item.parent, refishTypes: nil) as? PBGitRef,
+                  let remote = refish(for: item, refishTypes: [kGitXRemoteType]) as? PBGitRef,
+                  ReferenceActionPolicy.canPushToNamedRemote(refishType: ref.refishType())
+            else { return }
+            performPush(forBranch: ref, toRemote: remote)
+        }
     }
 
     @IBAction dynamic func checkout(_ sender: Any?) {
@@ -1597,17 +1773,27 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @IBAction dynamic func openFiles(_ sender: Any?) {
-        open(selectedURLs(from: sender))
+        let represented = representedObject(from: sender)
+        withActionContext(requiresGit: false, validIntent: (represented as? [Any])?.isEmpty == false) { _ in
+            open(selectedURLs(from: sender))
+        }
     }
 
     @IBAction dynamic func revealInFinder(_ sender: Any?) {
-        ensureActionCoordinators()
-        revealURLs(inFinder: workspaceActionCoordinator?.revealURLs(from: representedObject(from: sender)))
+        withActionContext(requiresGit: false) { context in
+            revealURLs(inFinder: WorkspaceActionCoordinator(repository: context.repository).revealURLs(from: representedObject(from: sender)))
+        }
     }
 
     @IBAction dynamic func openInTerminal(_ sender: Any?) {
-        ensureActionCoordinators()
-        workspaceActionCoordinator?.openRepositoryInTerminal()
+        withActionContext(requiresGit: false) { context in
+            WorkspaceActionCoordinator(repository: context.repository).openRepositoryInTerminal()
+        }
+    }
+
+    @IBAction dynamic func refreshRepositoryWindow(_ sender: Any?) {
+        NSLog("[GitX] Global Refresh reached the repository window")
+        refresh(sender)
     }
 
     @IBAction dynamic func refresh(_ sender: Any?) {

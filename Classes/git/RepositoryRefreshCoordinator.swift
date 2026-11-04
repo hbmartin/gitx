@@ -50,18 +50,27 @@ private final nonisolated class DispatchRepositoryRefreshScheduler: RepositoryRe
 @objc(PBRefreshCoalescer)
 final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declaration
     private let deliveryHandler: () -> Void
+    private let label: String
+    private let log: (String) -> Void
     private var generation: UInt64 = 0
     private var scheduledGeneration: UInt64?
 
     @objc(initWithDeliveryHandler:)
-    init(deliveryHandler: @escaping () -> Void) {
+    convenience init(deliveryHandler: @escaping () -> Void) {
+        self.init(label: "stage-diff", deliveryHandler: deliveryHandler)
+    }
+
+    init(label: String, log: @escaping (String) -> Void = { NSLog("%@", $0) }, deliveryHandler: @escaping () -> Void) {
+        self.label = label
+        self.log = log
         self.deliveryHandler = deliveryHandler
+        super.init()
     }
 
     @objc
     func requestRefresh() {
         guard scheduledGeneration == nil else {
-            NSLog("[GitX] Coalesced a duplicate stage-diff refresh request")
+            log("[GitX] Coalesced a duplicate \(label) refresh request")
             return
         }
 
@@ -69,7 +78,7 @@ final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declar
         let requestedGeneration = generation
         scheduledGeneration = requestedGeneration
 
-        NSLog("[GitX] Scheduled a stage-diff refresh for the next main-loop turn")
+        log("[GitX] Scheduled a \(label) refresh for the next main-loop turn")
 
         DispatchQueue.main.async { [weak self] in
             self?.deliver(generation: requestedGeneration)
@@ -80,7 +89,7 @@ final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declar
     func cancel() {
         generation &+= 1
         scheduledGeneration = nil
-        NSLog("[GitX] Cancelled the pending stage-diff refresh")
+        log("[GitX] Cancelled the pending \(label) refresh")
     }
 
     private func deliver(generation requestedGeneration: UInt64) {
@@ -89,7 +98,7 @@ final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declar
         }
         scheduledGeneration = nil
 
-        NSLog("[GitX] Delivering one coalesced stage-diff refresh")
+        log("[GitX] Delivering one coalesced \(label) refresh")
         deliveryHandler()
     }
 }

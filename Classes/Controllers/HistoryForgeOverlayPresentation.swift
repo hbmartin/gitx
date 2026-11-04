@@ -533,15 +533,9 @@ final class HistoryForgeOverlayCoordinator: NSObject {
     private func requestVisibleOverlays() {
         guard let commitList, forgeColumnsAreVisible(in: commitList) else { return }
         refreshVisibleAccessibility()
-        guard let session, let owner,
-              let commits = owner.commitController.arrangedObjects as? [PBGitCommit]
-        else { return }
-        let rows = commitList.rows(in: commitList.visibleRect)
-        guard rows.location != NSNotFound else { return }
-        let visibleRange = rows.location ..< min(rows.location + rows.length, commits.count)
+        guard let session else { return }
         var requestCount = 0
-        for row in visibleRange {
-            let commit = commits[row]
+        for (_, commit) in visibleCommits() {
             guard !(commit is PBUncommittedChanges), let identifier = try? ForgeCommitID(commit.sha) else { continue }
             if requestedCommits.insert(identifier).inserted {
                 requestCount += 1

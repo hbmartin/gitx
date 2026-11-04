@@ -56,6 +56,7 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 - (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
 - (void)openPreferencesWaitingForElement:(XCUIElement *)element;
 - (void)launchWithStagingLayout:(NSInteger)layout;
+- (void)setLaunchPreference:(NSString *)key value:(NSString *)value;
 - (void)openStagingViewWaitingForTable:(NSString *)tableIdentifier;
 - (NSDictionary<NSString *, NSString *> *)launchEnvironmentForRepository:(NSString *)repositoryPath;
 @end
@@ -280,20 +281,25 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	return table;
 }
 
-- (void)launchWithStagingLayout:(NSInteger)layout
+- (void)setLaunchPreference:(NSString *)key value:(NSString *)value
 {
-	[self.app terminate];
 	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
-	NSString *layoutFlag = @"-PBStagingFileListLayout";
+	NSString *flag = [@"-" stringByAppendingString:key];
 	for (NSInteger index = (NSInteger)arguments.count - 1; index >= 0; index--) {
-		if (![arguments[index] isEqualToString:layoutFlag])
+		if (![arguments[index] isEqualToString:flag])
 			continue;
 		[arguments removeObjectAtIndex:(NSUInteger)index];
 		if ((NSUInteger)index < arguments.count)
 			[arguments removeObjectAtIndex:(NSUInteger)index];
 	}
-	[arguments addObjectsFromArray:@[ @"-PBStagingFileListLayout", [NSString stringWithFormat:@"%ld", layout] ]];
+	[arguments addObjectsFromArray:@[ flag, value ]];
 	self.app.launchArguments = arguments;
+}
+
+- (void)launchWithStagingLayout:(NSInteger)layout
+{
+	[self.app terminate];
+	[self setLaunchPreference:@"PBStagingFileListLayout" value:[NSString stringWithFormat:@"%ld", layout]];
 	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 }
@@ -697,6 +703,9 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 - (void)testPushControlsRefreshForRemotesAndDisableForDetachedHead
 {
 	[self.app terminate];
+	// This journey verifies continuous filesystem updates, independently of the host's refresh preferences.
+	[self setLaunchPreference:@"PBUseRepositoryWatcher" value:@"YES"];
+	[self setLaunchPreference:@"PBRefreshOnApplicationFocus" value:@"NO"];
 	NSString *repositoryPath = [self makeDirtyRepositoryFixture];
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:repositoryPath];
 	[self launchWithStagingLayout:0];
@@ -742,6 +751,8 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 - (void)testWorkingStateInsertionPreservesAnOlderCommitSelection
 {
 	[self.app terminate];
+	[self setLaunchPreference:@"PBUseRepositoryWatcher" value:@"YES"];
+	[self setLaunchPreference:@"PBRefreshOnApplicationFocus" value:@"NO"];
 	NSString *fixture = [self makeDirtyRepositoryFixture];
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
@@ -802,12 +813,8 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 - (void)testGeneralPreferencesOfferRefreshOnFocusWithoutCommitGuides
 {
 	[self.app terminate];
-	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
-	[arguments addObjectsFromArray:@[
-		@"-PBUseRepositoryWatcher", @"NO",
-		@"-PBRefreshOnApplicationFocus", @"YES"
-	]];
-	self.app.launchArguments = arguments;
+	[self setLaunchPreference:@"PBUseRepositoryWatcher" value:@"NO"];
+	[self setLaunchPreference:@"PBRefreshOnApplicationFocus" value:@"YES"];
 	[self prepareDefaultLaunchEnvironment];
 	[self.app launch];
 

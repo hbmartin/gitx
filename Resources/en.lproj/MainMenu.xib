@@ -647,7 +647,7 @@ DQ
                             </menuItem>
                             <menuItem title="Refresh" keyEquivalent="r" id="915">
                                 <connections>
-                                    <action selector="refresh:" target="-1" id="926"/>
+                                    <action selector="refreshRepositoryWindow:" target="-1" id="926"/>
                                 </connections>
                             </menuItem>
                         </items>

@@ -221,6 +221,40 @@ def extract_coverage(
     return float(target["lineCoverage"]), files, line_counts
 
 
+def source_breakdown(target: dict[str, object], root: pathlib.Path) -> dict[str, object]:
+    """Supplemental source accounting; never an input to floors or ratchets."""
+    harnesses = {
+        "Classes/Controllers/Milestone2UITestHarness.swift",
+        "Classes/Controllers/Milestone3UITestHarness.swift",
+    }
+    groups = {name: {"files": [], "coveredLines": 0, "executableLines": 0}
+              for name in ("production", "fixtures", "other")}
+    for item in target.get("files", []):
+        path = relative_source_path(item["path"], root)
+        category = "other"
+        if path in harnesses or (path is not None and pathlib.PurePosixPath(path).parts[0] == "GitXTests"):
+            category = "fixtures"
+        elif path is not None and is_first_party_source(path):
+            category = "production"
+        covered, executable = int(item["coveredLines"]), int(item["executableLines"])
+        if covered < 0 or executable < covered:
+            raise ValueError(f"Invalid coverage line counts for {item['path']}")
+        group = groups[category]
+        group["files"].append({"path": path or item["path"], "coveredLines": covered, "executableLines": executable})
+        group["coveredLines"] += covered
+        group["executableLines"] += executable
+    for group in groups.values():
+        group["files"].sort(key=lambda item: item["path"])
+        group["lineCoverage"] = group["coveredLines"] / group["executableLines"] if group["executableLines"] else None
+    matches = None
+    if "coveredLines" in target and "executableLines" in target:
+        matches = all(sum(group[key] for group in groups.values()) == target[key]
+                      for key in ("coveredLines", "executableLines"))
+    return {"schemaVersion": 1, "supplementalOnly": True,
+            "target": {key: target.get(key) for key in ("name", "coveredLines", "executableLines", "lineCoverage")},
+            "fixturePaths": ["GitXTests/**", *sorted(harnesses)], "groups": groups, "matchesTargetCounts": matches}
+
+
 def render_markdown(
     policy: CoveragePolicy,
     *,
@@ -314,6 +348,8 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--receipt", type=pathlib.Path, help="Validated complete correctness receipt required for a ratchet.")
     parser.add_argument("--compare", type=pathlib.Path, help="Previous local correctness receipt with compatible instrumentation.")
     parser.add_argument("--base", help="Commit used to classify changed source paths (default: origin/master merge base).")
+    parser.add_argument("--source-breakdown", type=pathlib.Path, metavar="OUTPUT",
+                        help="Write supplemental production/fixture/other counts without changing coverage policy.")
     return parser.parse_args(argv)
 
 
@@ -415,6 +451,13 @@ def comparison_receipt(path):
 def check(args) -> int:
 
     root = pathlib.Path(__file__).resolve().parent.parent
+    if args.source_breakdown:
+        receipt = args.receipt or args.result_bundle.parent.parent / "receipt.json"
+        protected_inputs = [args.policy, args.result_bundle, receipt, args.compare]
+        output = args.source_breakdown.resolve()
+        if output.is_relative_to(args.result_bundle.resolve()) or any(path is not None and output == path.resolve() for path in protected_inputs):
+            print("Source breakdown must not replace a coverage input.", file=sys.stderr)
+            return 1
     policy = load_policy(args.policy)
     try:
         report = xccov_report(args.result_bundle)
@@ -427,6 +470,9 @@ def check(args) -> int:
         print(error, file=sys.stderr)
         return 1
     target = next(item for item in report.get("targets", []) if item.get("name") == policy.target)
+    if args.source_breakdown:
+        write_json_atomic(args.source_breakdown, source_breakdown(target, root))
+        print(f"Wrote supplemental source breakdown to {args.source_breakdown}")
     print(f"Exact target lines: {target.get('coveredLines', sum(v[0] for v in file_line_counts.values()))}/{target.get('executableLines', sum(v[1] for v in file_line_counts.values()))}")
 
     print(f"{policy.target}: {target_coverage:.2%} (minimum {policy.minimum_line_coverage:.2%})")
