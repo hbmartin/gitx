@@ -697,14 +697,16 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         private var suppliedRepository: PBGitRepository?
         var pushes = 0
         var fetches = 0
+        var fetchedRef: PBGitRef?
         var pulls = 0
         var routedRepository: PBGitRepository?
         var openedURLs: [URL] = []
         var selectedURLRequests = 0
         var forwardsPushToProduction = false
         var errors: [NSError] = []
-        override func performFetch(for _: PBGitRef?) {
+        override func performFetch(for ref: PBGitRef?) {
             fetches += 1
+            fetchedRef = ref
             routedRepository = repository
         }
 
@@ -1935,6 +1937,32 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(files.selectedURLRequests, 1, "Explicit actions retain the dynamic selection facade")
         XCTAssertEqual(files.openedURLs.map { $0.resolvingSymlinksInPath() }, [trackedFile.resolvingSymlinksInPath()])
         XCTAssertTrue(files.historyViewController?.repository === replacement.repository)
+    }
+
+    func testRemoteNameSenderUsesConfiguredRemoteAndRejectsMissingOrWrongKinds() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        try GitXTestGitFixture.run(["remote", "add", "origin", directory.appendingPathComponent("remote.git").path], in: directory)
+        let actual = SenderActionWindowProbe()
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        let menu = NSMenuItem()
+        menu.representedObject = "origin"
+        actual.fetchRemote(menu)
+        XCTAssertEqual(actual.fetches, 1)
+        XCTAssertEqual(actual.fetchedRef?.ref, "refs/remotes/origin")
+        XCTAssertTrue(actual.routedRepository === document.repository)
+        actual.pushDefaultRemoteForRef(menu)
+        actual.pullRemote(menu)
+        XCTAssertEqual(actual.pushes, 0)
+        XCTAssertEqual(actual.pulls, 0)
+        menu.representedObject = "missing"
+        actual.fetchRemote(menu)
+        menu.representedObject = ""
+        actual.fetchRemote(menu)
+        XCTAssertEqual(actual.fetches, 1, "Only a configured nonempty remote reaches command admission")
+        XCTAssertTrue(actual.errors.isEmpty)
     }
 
     func testExplicitActionRefusesRepositoryRemovalDuringAdmissionWithoutReplay() throws {
