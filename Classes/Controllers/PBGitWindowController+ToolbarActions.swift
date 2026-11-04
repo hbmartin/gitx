@@ -4,13 +4,15 @@ extension PBGitWindowController {
     }
 
     @IBAction dynamic func toolbarPull(_ sender: Any?) {
-        guard let head = repository?.headRef()?.ref(), head.isBranch else { return }
-        performPull(forBranch: head, remote: nil, rebase: false)
+        performCheckedOutBranchAction { head in
+            performPull(forBranch: head, remote: nil, rebase: false)
+        }
     }
 
     @IBAction dynamic func toolbarPush(_ sender: Any?) {
-        guard let head = repository?.headRef()?.ref(), head.isBranch else { return }
-        performPush(forBranch: head, toRemote: nil)
+        performCheckedOutBranchAction { head in
+            performPush(forBranch: head, toRemote: nil)
+        }
     }
 
     @IBAction dynamic func newPullRequest(_ sender: Any?) {

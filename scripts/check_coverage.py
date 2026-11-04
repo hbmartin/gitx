@@ -452,8 +452,10 @@ def check(args) -> int:
 
     root = pathlib.Path(__file__).resolve().parent.parent
     if args.source_breakdown:
-        protected_inputs = [args.policy, args.result_bundle, args.receipt, args.compare]
-        if any(path is not None and args.source_breakdown.resolve() == path.resolve() for path in protected_inputs):
+        receipt = args.receipt or args.result_bundle.parent.parent / "receipt.json"
+        protected_inputs = [args.policy, args.result_bundle, receipt, args.compare]
+        output = args.source_breakdown.resolve()
+        if output.is_relative_to(args.result_bundle.resolve()) or any(path is not None and output == path.resolve() for path in protected_inputs):
             print("Source breakdown must not replace a coverage input.", file=sys.stderr)
             return 1
     policy = load_policy(args.policy)

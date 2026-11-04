@@ -25,6 +25,24 @@ class CoverageTransactionTests(unittest.TestCase):
             self.assertEqual(status, 1)
             self.assertEqual(policy.read_bytes(), original)
 
+    def test_source_breakdown_preserves_bundle_contents_and_the_implicit_receipt(self):
+        coverage = load_script("check_coverage.py")
+        for name in ("bundle", "implicit-receipt"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                result = root / "run/Results/GitX.xcresult"
+                result.mkdir(parents=True)
+                output = result / "Info.plist" if name == "bundle" else root / "run/receipt.json"
+                original = b"preserve verification evidence"
+                output.write_bytes(original)
+                policy = root / "policy.json"
+                policy.write_text(json.dumps({"version": 1, "target": "Half Dark.app", "minimumLineCoverage": .5, "files": {}}))
+                with mock.patch.object(coverage, "xccov_report") as report:
+                    status = coverage.main([str(result), "--policy", str(policy), "--source-breakdown", str(output)])
+                self.assertEqual(status, 1)
+                self.assertEqual(output.read_bytes(), original)
+                report.assert_not_called()
+
     def test_supplemental_breakdown_does_not_bypass_a_failure_or_rewrite_the_policy(self):
         coverage = load_script("check_coverage.py")
         with tempfile.TemporaryDirectory() as directory:

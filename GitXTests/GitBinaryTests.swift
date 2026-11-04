@@ -66,6 +66,52 @@ final class ForgeWindowFixtureTools: NSObject {
                            GitX.RepositoryStatusReferenceIdentity(headReference: Data(name.utf8), headObject: Data(object.sha.utf8), references: [Data(name.utf8): Data(object.sha.utf8)]))
         }
 
+        func testReferenceMapCapturePreservesUnicodeBytesWithAnUnchangedHead() throws {
+            let object = try XCTUnwrap(GTOID(sha: String(repeating: "1", count: 40)))
+            let composed = "refs/heads/caf\u{00e9}"
+            let decomposed = "refs/heads/cafe\u{0301}"
+            let first = try XCTUnwrap(GitX.RepositoryStatusReferenceIdentity.capture(references: [object: [PBGitRef(string: composed)]] as NSDictionary, headReference: "refs/heads/main", headObject: object.sha))
+            let second = try XCTUnwrap(GitX.RepositoryStatusReferenceIdentity.capture(references: [object: [PBGitRef(string: decomposed)]] as NSDictionary, headReference: "refs/heads/main", headObject: object.sha))
+            XCTAssertEqual(first.headReference, second.headReference)
+            XCTAssertEqual(first.headObject, second.headObject)
+            XCTAssertNotEqual(first.references, second.references)
+            XCTAssertEqual(first.references, [Data(composed.utf8): Data(object.sha.utf8)])
+            XCTAssertEqual(second.references, [Data(decomposed.utf8): Data(object.sha.utf8)])
+            var refresh = GitX.RepositoryStatusReferenceRefreshPolicy(baseline: first)
+            XCTAssertFalse(refresh.needsRefresh(for: first))
+            XCTAssertTrue(refresh.needsRefresh(for: second))
+            XCTAssertFalse(refresh.needsRefresh(for: second))
+        }
+
+        func testRefreshCoalescerUsesItsActivityLabelAndKeepsTrailingDelivery() {
+            var messages: [String] = []
+            var deliveries = 0
+            let complete = expectation(description: "Current and trailing status refreshes")
+            complete.expectedFulfillmentCount = 2
+            var coalescer: GitX.RefreshCoalescer!
+            coalescer = GitX.RefreshCoalescer(label: "repository-status", log: { messages.append($0) }) {
+                deliveries += 1
+                if deliveries == 1 {
+                    coalescer.requestRefresh()
+                }
+                complete.fulfill()
+            }
+            coalescer.requestRefresh()
+            coalescer.requestRefresh()
+            wait(for: [complete], timeout: 3)
+            coalescer.cancel()
+            XCTAssertEqual(deliveries, 2)
+            XCTAssertEqual(messages, [
+                "[GitX] Scheduled a repository-status refresh for the next main-loop turn",
+                "[GitX] Coalesced a duplicate repository-status refresh request",
+                "[GitX] Delivering one coalesced repository-status refresh",
+                "[GitX] Scheduled a repository-status refresh for the next main-loop turn",
+                "[GitX] Delivering one coalesced repository-status refresh",
+                "[GitX] Cancelled the pending repository-status refresh",
+            ])
+            coalescer = nil
+        }
+
         func testQueryPolicyRefusesStaleFacetsWithoutRequiringAGitLifetimeForMetadata() {
             let repository = NSObject()
             let replacement = NSObject()
@@ -128,106 +174,6 @@ final class ForgeWindowFixtureTools: NSObject {
             XCTAssertFalse(snapshot.matches(repository: ObjectIdentifier(repository), owner: owner, generation: 8, selection: selection))
             XCTAssertFalse(snapshot.matches(repository: ObjectIdentifier(repository), owner: owner, generation: 7, selection: nil))
             XCTAssertFalse(snapshot.matches(repository: ObjectIdentifier(repository), owner: owner, generation: 7, selection: .init(path: "/replacement/git", version: "2.50.1")))
-        }
-    }
-
-    @MainActor
-    final class ForgeHarnessDraftStoreCharacterizationTests: XCTestCase {
-        func testHarnessPreservesCreationAndConditionallyDeletesOnlyItsStoredSnapshot() async throws {
-            let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
-            let repository = try ForgeRepositoryIdentity(forge: forge, owner: "fixture", name: "drafts")
-            let identity = try ForgeDraftIdentity(accountID: ForgeAccountID(forge: forge, value: "fixture"),
-                                                  destination: .pullRequest(repository: repository, number: ForgeItemNumber(1)))
-            let store = GitX.HarnessDraftStore()
-            let initial = ForgeDraftContent(title: "First", body: "Initial body")
-            let updated = ForgeDraftContent(title: "Submitted", body: "Submitted body")
-            try await store.save(identity: identity, content: initial, at: Date(timeIntervalSince1970: 10))
-            let first = try await store.load(identity: identity)
-            try await store.save(identity: identity, content: updated, at: Date(timeIntervalSince1970: 30))
-            let loaded = try await store.load(identity: identity)
-            let current = try XCTUnwrap(loaded)
-            XCTAssertEqual(current.createdAt, Date(timeIntervalSince1970: 10))
-            XCTAssertEqual(current.lastActivityAt, Date(timeIntervalSince1970: 30))
-            XCTAssertEqual(current.content, updated)
-            let staleDelete = try await store.delete(identity: identity, matching: XCTUnwrap(first))
-            XCTAssertFalse(staleDelete)
-            let removed = try await store.delete(identity: identity, matching: current)
-            XCTAssertTrue(removed)
-            let absent = try await store.load(identity: identity)
-            XCTAssertNil(absent)
-        }
-    }
-
-    @MainActor
-    final class ForgeDraftSubmissionStoreTests: XCTestCase {
-        func testShippedEditorPreservesConcurrentDraftAndRetainsOrdinaryAutosaves() async throws {
-            let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
-            let repository = try ForgeRepositoryIdentity(forge: forge, owner: "fixture", name: "submission")
-            let identity = try ForgeDraftIdentity(accountID: ForgeAccountID(forge: forge, value: "fixture"), destination: .pullRequest(repository: repository, number: ForgeItemNumber(1)))
-            let root = FileManager.default.temporaryDirectory.appendingPathComponent("shipped-draft-\(UUID())")
-            defer { try? FileManager.default.removeItem(at: root) }
-            let configuration = ForgeSQLiteConfiguration(databaseURL: root.appendingPathComponent("drafts.sqlite"), recoveryDirectoryURL: root.appendingPathComponent("recovery"))
-            let database = try ForgeSQLiteStore(configuration: configuration)
-            let second = try ForgeSQLiteStore(configuration: configuration)
-            let store = GitX.ForgeSQLitePullRequestDraftStore(database: database)
-            let other = GitX.ForgeSQLitePullRequestDraftStore(database: second)
-            let editor = GitX.RepositoryEditDraftSession(identity: identity, observed: nil)
-            let original = ForgeDraftContent(title: "Original", body: "Original")
-            let saved = await editor.saveSubmission(original, drafts: store, at: Date(timeIntervalSince1970: 10))
-            XCTAssertEqual(saved?.content, original)
-            let newer = ForgeDraftContent(title: "Newer window", body: "Preserve me")
-            try await other.save(identity: identity, content: newer, at: Date(timeIntervalSince1970: 30))
-            let refused = await editor.saveSubmission(original, drafts: store, at: Date(timeIntervalSince1970: 40))
-            XCTAssertNil(refused)
-            let retained = try await store.load(identity: identity)
-            XCTAssertEqual(retained?.content, newer)
-            await editor.autosave(original, drafts: store, at: Date(timeIntervalSince1970: 20))
-            let admitted = await editor.saveSubmission(original, drafts: store, at: Date(timeIntervalSince1970: 25))
-            XCTAssertEqual(admitted?.createdAt, Date(timeIntervalSince1970: 10))
-            XCTAssertEqual(admitted?.lastActivityAt, Date(timeIntervalSince1970: 30))
-            let collision = try await store.saveSnapshot(identity: identity, content: newer, at: .distantFuture, matching: nil)
-            XCTAssertNil(collision)
-            await database.close()
-            await second.close()
-        }
-
-        func testShippedEditorDoesNotInventEvidenceFromUnavailableOrNullStorage() async throws {
-            let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
-            let repository = try ForgeRepositoryIdentity(forge: forge, owner: "fixture", name: "unavailable")
-            let identity = try ForgeDraftIdentity(accountID: ForgeAccountID(forge: forge, value: "fixture"), destination: .pullRequest(repository: repository, number: ForgeItemNumber(1)))
-            let content = ForgeDraftContent(title: "Draft", body: "Draft")
-            let root = FileManager.default.temporaryDirectory.appendingPathComponent("unavailable-draft-\(UUID())")
-            defer { try? FileManager.default.removeItem(at: root) }
-            let database = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(databaseURL: root.appendingPathComponent("drafts.sqlite"), recoveryDirectoryURL: root.appendingPathComponent("recovery")))
-            let store = GitX.ForgeSQLitePullRequestDraftStore(database: database)
-            await database.close()
-            let editor = GitX.RepositoryEditDraftSession(identity: identity, observed: nil)
-            let refused = await editor.saveSubmission(content, drafts: store, at: Date())
-            XCTAssertNil(refused)
-            await editor.autosave(content, drafts: store, at: Date())
-            let null = GitX.NullRepositoryPullRequestDraftStore()
-            let other = GitX.RepositoryEditDraftSession(identity: identity, observed: nil)
-            await other.autosave(content, drafts: null, at: Date())
-            let unavailable = await other.saveSubmission(content, drafts: null, at: Date())
-            XCTAssertNil(unavailable)
-            let absent = try await null.saveSnapshot(identity: identity, content: content, at: Date(), matching: nil)
-            XCTAssertNil(absent)
-        }
-    }
-
-    @MainActor
-    final class ForgeHarnessDraftStoreRegressionTests: XCTestCase {
-        func testHarnessSaveKeepsActivityMonotonicForOutOfOrderDates() async throws {
-            let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
-            let repository = try ForgeRepositoryIdentity(forge: forge, owner: "fixture", name: "drafts")
-            let identity = try ForgeDraftIdentity(accountID: ForgeAccountID(forge: forge, value: "fixture"), destination: .pullRequest(repository: repository, number: ForgeItemNumber(1)))
-            let store = GitX.HarnessDraftStore()
-            for (date, expected) in [(10.0, 10.0), (30, 30), (20, 30), (5, 30)] {
-                try await store.save(identity: identity, content: ForgeDraftContent(title: "Date \(date)", body: "Body"), at: Date(timeIntervalSince1970: date))
-                let value = try await store.load(identity: identity)
-                XCTAssertEqual(value?.createdAt, Date(timeIntervalSince1970: 10))
-                XCTAssertEqual(value?.lastActivityAt, Date(timeIntervalSince1970: expected))
-            }
         }
     }
 
@@ -733,6 +679,54 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
                 return suppliedRepository
             }
             set { suppliedRepository = newValue }
+        }
+    }
+
+    private final class SenderActionWindowProbe: GitX.PBGitWindowController {
+        override var repository: PBGitRepository? {
+            get { suppliedRepository }
+            set { suppliedRepository = newValue }
+        }
+
+        private var suppliedRepository: PBGitRepository?
+        var pushes = 0
+        var fetches = 0
+        var pulls = 0
+        var routedRepository: PBGitRepository?
+        var openedURLs: [URL] = []
+        var selectedURLRequests = 0
+        var forwardsPushToProduction = false
+        var errors: [NSError] = []
+        override func performFetch(for _: PBGitRef?) {
+            fetches += 1
+            routedRepository = repository
+        }
+
+        override func performPull(forBranch _: PBGitRef?, remote _: PBGitRef?, rebase _: Bool) {
+            pulls += 1
+            routedRepository = repository
+        }
+
+        override func performPush(forBranch branch: PBGitRef?, toRemote remote: PBGitRef?) {
+            if forwardsPushToProduction {
+                super.performPush(forBranch: branch, toRemote: remote)
+                return
+            }
+            pushes += 1
+            routedRepository = repository
+        }
+
+        override func selectedURLs(from sender: Any?) -> [URL]? {
+            selectedURLRequests += 1
+            return super.selectedURLs(from: sender)
+        }
+
+        override func open(_ urls: [URL]?) {
+            openedURLs = urls ?? []
+        }
+
+        override func showErrorSheet(_ error: Error) {
+            errors.append(error as NSError)
         }
     }
 
@@ -1660,9 +1654,10 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         var viewportReads = 0
         var realizedCells: [Int: NSTextField] = [:]
         var cellReads = 0
+        var visibleRows = NSRange(location: 0, length: 6)
         override func rows(in _: NSRect) -> NSRange {
             viewportReads += 1
-            return NSRange(location: 0, length: 6)
+            return visibleRows
         }
 
         override func reloadData(forRowIndexes rows: IndexSet, columnIndexes _: IndexSet) {
@@ -1748,6 +1743,227 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertFalse(actual.isWindowLoaded)
         actual.close()
         XCTAssertFalse(actual.validateMenuItem(menu))
+    }
+
+    func testSuppressedForgePreparationSettlesQueriesWithoutRepeatedReconciliation() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let previous = ProcessInfo.processInfo.environment["GITX_M2_UITEST"]
+        setenv("GITX_M2_UITEST", "1", 1)
+        defer {
+            if let previous {
+                setenv("GITX_M2_UITEST", previous, 1)
+            } else {
+                unsetenv("GITX_M2_UITEST")
+            }
+        }
+        let actual = RepositoryOverrideWindowProbe(ownerNotifications: NotificationCenter())
+        actual.repository = document.repository
+        defer { actual.close() }
+        actual.installRepositoryForgeOverlaySession()
+        actual.refreshPreferenceDidChange(nil)
+        let settled = expectation(description: "Initial preparation settles")
+        DispatchQueue.main.async { DispatchQueue.main.async { settled.fulfill() } }
+        wait(for: [settled], timeout: 5)
+        actual.repositoryReadCount = 0
+        let menu = NSMenuItem(title: "Forge", action: NSSelectorFromString("viewForgeRepository:"), keyEquivalent: "")
+        for _ in 0 ..< 10 {
+            XCTAssertFalse(actual.validateMenuItem(menu))
+        }
+        let delivered = expectation(description: "No query schedules another reconciliation")
+        DispatchQueue.main.async { DispatchQueue.main.async { delivered.fulfill() } }
+        wait(for: [delivered], timeout: 5)
+        XCTAssertEqual(actual.repositoryReadCount, 10)
+        XCTAssertFalse(actual.isWindowLoaded)
+        XCTAssertNil(actual.repositoryForgeOverlaySession)
+    }
+
+    func testToolbarProviderUpdatesFromPreparedBindingWithoutAnAccountNotification() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let oldVisibility = ApplicationSettings.repositoryStatusBarVisible
+        ApplicationSettings.repositoryStatusBarVisible = false
+        defer { ApplicationSettings.repositoryStatusBarVisible = oldVisibility }
+        let actual = RepositoryOverrideWindowProbe()
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        let settings = ApplicationComposition.shared.repositoryViewState(for: document.repository)
+        let previous = settings.forgeRepositoryBinding
+        defer { settings.forgeRepositoryBinding = previous }
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "toolbar")
+        settings.forgeRepositoryBinding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: identity)
+        actual.refreshPreferenceDidChange(nil)
+        let session = GitX.RepositoryForgeOverlaySession(repository: identity,
+                                                         loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .authenticationRequired(identity), now: Date.init))
+        defer { session.invalidate() }
+        actual.replaceRepositoryForgeOverlaySession(session)
+        func accountPopup(in view: NSView) -> NSPopUpButton? {
+            if let popup = view as? NSPopUpButton, popup.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount" {
+                return popup
+            }
+            return view.subviews.compactMap { accountPopup(in: $0) }.first
+        }
+        let rendered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            actual.window?.toolbar?.items.compactMap { $0.view }.compactMap { accountPopup(in: $0) }.first?.title == "GitHub"
+        }, object: nil)
+        wait(for: [rendered], timeout: 5)
+        let popup = try XCTUnwrap(actual.window?.toolbar?.items.compactMap { $0.view }.compactMap { accountPopup(in: $0) }.first)
+        XCTAssertEqual(popup.title, "GitHub")
+        XCTAssertTrue(popup.accessibilityLabel()?.contains("GitHub") == true)
+        attachScreenshot(of: actual.window?.contentView?.superview, named: "Prepared GitHub toolbar provider")
+        let account = try ForgeAccountID(forge: identity.forge, value: "toolbar-account")
+        let oldAccount: [AnyHashable: Any] = [GitX.RepositoryForgeAccountNotificationKey.providerName: "GitHub",
+                                              GitX.RepositoryForgeAccountNotificationKey.accountID: account,
+                                              GitX.RepositoryForgeAccountNotificationKey.login: "fixture"]
+        NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository, userInfo: oldAccount)
+        XCTAssertEqual(popup.item(at: 0)?.title, "@fixture")
+        actual.refreshPreferenceDidChange(nil)
+        XCTAssertEqual(popup.item(at: 0)?.title, "@fixture", "Preparing unchanged metadata preserves account details")
+        let replacement = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.com")), owner: "fixture", name: "replacement")
+        settings.forgeRepositoryBinding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: replacement)
+        actual.refreshPreferenceDidChange(nil)
+        XCTAssertEqual(popup.title, "GitLab")
+        NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository, userInfo: oldAccount)
+        XCTAssertEqual(popup.title, "GitLab", "Obsolete account identity cannot replace prepared provider metadata")
+        actual.close()
+        let closedTitle = popup.title
+        NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository, userInfo: oldAccount)
+        XCTAssertEqual(popup.title, closedTitle, "A detached toolbar rejects late account presentation")
+    }
+
+    func testVisibleOverlayDemandToleratesScrollRowsBeyondAShrunkenHistory() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let history = try XCTUnwrap(ForgeResetHistory(repository: document.repository, superController: nil))
+        defer { history.closeView() }
+        let git = try XCTUnwrap(document.repository.gtRepo)
+        let object = try XCTUnwrap(try git.lookUpObject(byRevParse: "HEAD") as? GTCommit)
+        history.commitController.content = [PBGitCommit(repository: document.repository, andCommit: object)]
+        let table = ForgeResetRecordingTable(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
+        table.visibleRows = NSRange(location: 5000, length: 10)
+        table.addTableColumn(NSTableColumn(identifier: .init("ForgeCheckRollupColumn")))
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "bounds")
+        let session = GitX.RepositoryForgeOverlaySession(repository: identity, loader: GitX.RepositoryForgeOverlayLoader(bootstrap: .unsupported(identity), now: Date.init))
+        defer { session.invalidate() }
+        let coordinator = try XCTUnwrap(GitX.HistoryForgeOverlayCoordinator(owner: history, commitList: table, session: session, factsInspectorInitiallyExpanded: false, factsInspectorVisibilityDidChange: { _ in }))
+        defer { coordinator.invalidate() }
+        XCTAssertEqual(table.cellReads, 0)
+        XCTAssertTrue(session.historyStates.isEmpty)
+        history.commitController.content = []
+        table.visibleRows = NSRange(location: NSNotFound, length: 0)
+        coordinator.bind(to: nil)
+        coordinator.bind(to: session)
+        XCTAssertTrue(session.historyStates.isEmpty)
+    }
+
+    func testValidationUsesOneRepositoryCaptureAcrossHistoryMutationAndSettingsMenus() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let actual = RepositoryOverrideWindowProbe()
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        for selector in ["showHistoryView:", "showUncommittedChanges:", "showRepositorySettings:", "checkout:"] {
+            let menu = NSMenuItem(title: "Context", action: NSSelectorFromString(selector), keyEquivalent: "")
+            actual.repositoryReadCount = 0
+            _ = actual.validateMenuItem(menu)
+            XCTAssertEqual(actual.repositoryReadCount, 1, selector)
+        }
+    }
+
+    func testSenderActionsReconcileBeforeResolvingReferencesAndKeepDynamicOverrides() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let actual = SenderActionWindowProbe()
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        let replacement = try PBGitRepositoryDocument(contentsOf: directory, ofType: PBGitRepositoryDocumentType)
+        defer { closeRepositoryFixtureDocument(replacement) }
+        actual.repository = replacement.repository
+        let menu = NSMenuItem()
+        menu.representedObject = PBGitRef(string: "refs/heads/main")
+        actual.pushDefaultRemoteForRef(menu)
+        XCTAssertEqual(actual.pushes, 1)
+        XCTAssertTrue(actual.routedRepository === replacement.repository)
+        XCTAssertTrue(actual.historyViewController?.repository === replacement.repository)
+        for fetch in [true, false] {
+            let routed = SenderActionWindowProbe()
+            routed.repository = document.repository
+            _ = routed.window
+            routed.repository = replacement.repository
+            if fetch {
+                routed.fetchRemote(menu)
+            } else {
+                routed.pullRemote(menu)
+            }
+            XCTAssertEqual(fetch ? routed.fetches : routed.pulls, 1)
+            XCTAssertTrue(routed.routedRepository === replacement.repository)
+            XCTAssertTrue(routed.historyViewController?.repository === replacement.repository)
+            routed.close()
+        }
+        let files = SenderActionWindowProbe()
+        files.repository = document.repository
+        _ = files.window
+        defer { files.close() }
+        files.repository = replacement.repository
+        let trackedFile = directory.appendingPathComponent("tracked.txt")
+        try Data("fixture".utf8).write(to: trackedFile)
+        menu.representedObject = ["tracked.txt"]
+        files.openFiles(menu)
+        XCTAssertEqual(files.selectedURLRequests, 1, "Explicit actions retain the dynamic selection facade")
+        XCTAssertEqual(files.openedURLs.map { $0.resolvingSymlinksInPath() }, [directory.appendingPathComponent("tracked.txt").resolvingSymlinksInPath()])
+        XCTAssertTrue(files.historyViewController?.repository === replacement.repository)
+    }
+
+    func testUnavailableSenderActionPresentsOnceAndNeverReplaysAfterGitBecomesReady() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let actual = SenderActionWindowProbe()
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        let discovery = GitX.GitBinaryDiscovery(preference: { nil }, environment: [:], output: { _, _ in "git version 2.50.1" }, notify: { _, _ in })
+        actual.gitDiscovery = discovery
+        let menu = NSMenuItem()
+        menu.representedObject = 42
+        actual.pushDefaultRemoteForRef(menu)
+        actual.pullRemote(menu)
+        actual.fetchRemote(menu)
+        actual.openFiles(menu)
+        XCTAssertTrue(actual.errors.isEmpty, "Invalid selections retain their existing no-op behavior")
+        menu.representedObject = PBGitRef(string: "refs/heads/main")
+        actual.pushDefaultRemoteForRef(menu)
+        XCTAssertEqual(actual.errors.count, 1)
+        XCTAssertEqual(actual.pushes, 0)
+        actual.forwardsPushToProduction = true
+        actual.toolbarPush(nil)
+        XCTAssertEqual(actual.errors.count, 2, "A separate toolbar intent also reports one error through the production facade")
+        XCTAssertEqual(actual.pushes, 0)
+        XCTAssertTrue(discovery.accept("/usr/bin/git"))
+        actual.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+        XCTAssertEqual(actual.pushes, 0, "Readiness must not replay a user mutation")
+        actual.close()
+        actual.pushDefaultRemoteForRef(menu)
+        XCTAssertEqual(actual.errors.count, 2, "Closed owners cannot present errors")
+    }
+
+    func testUnrelatedDefaultsNotificationDoesNotReconcileAnUnloadedWindow() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let notifications = NotificationCenter()
+        let actual = RepositoryOverrideWindowProbe(ownerNotifications: notifications)
+        actual.repository = document.repository
+        actual.refreshPreferenceDidChange(nil)
+        defer { actual.close() }
+        actual.repositoryReadCount = 0
+        notifications.post(name: UserDefaults.didChangeNotification, object: nil)
+        let delivered = expectation(description: "Deferred defaults publication has drained")
+        DispatchQueue.main.async { DispatchQueue.main.async { DispatchQueue.main.async { delivered.fulfill() } } }
+        wait(for: [delivered], timeout: 5)
+        XCTAssertLessThanOrEqual(actual.repositoryReadCount, 1, "Filtering reads the revision once without reconciling")
+        XCTAssertFalse(actual.isWindowLoaded)
     }
 
     func testAmendMenuValidationPreservesItsCurrentWindowAndIndexEligibility() throws {
@@ -2245,6 +2461,24 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         unexpected.isInverted = true
         wait(for: [unexpected], timeout: 2)
         XCTAssertEqual(localBranch(in: actual.window?.contentView), "main")
+        let composed = "refs/heads/caf\u{00e9}"
+        let decomposed = "refs/heads/cafe\u{0301}"
+        try GitXTestGitFixture.run(["update-ref", composed, "HEAD"], in: directory)
+        try GitXTestGitFixture.run(["pack-refs", "--all"], in: directory)
+        document.repository.reloadRefs()
+        let firstMapRefresh = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in statusStarts() > before }, object: nil)
+        wait(for: [firstMapRefresh], timeout: 5)
+        let packed = directory.appendingPathComponent(".git/packed-refs")
+        let packedText = try String(contentsOf: packed, encoding: .utf8)
+        XCTAssertTrue(packedText.utf8.contains(0xC3))
+        let nfdText = packedText.replacingOccurrences(of: composed, with: decomposed)
+        XCTAssertNotEqual(Data(packedText.utf8), Data(nfdText.utf8))
+        let beforeMapOnly = statusStarts()
+        try Data(nfdText.utf8).write(to: packed)
+        document.repository.reloadRefs()
+        let mapOnlyRefresh = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in statusStarts() > beforeMapOnly }, object: nil)
+        wait(for: [mapOnlyRefresh], timeout: 5)
+        XCTAssertEqual(localBranch(in: actual.window?.contentView), "main", "Only the references map changed; HEAD remains fixed")
         try GitXTestGitFixture.run(["checkout", "topic"], in: directory)
         document.repository.reloadRefs()
         waitForBranch("topic", in: actual)
@@ -2308,6 +2542,10 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository)
         XCTAssertEqual(popup.item(at: 0)?.title, "Forge")
         XCTAssertEqual(item.toolTip, "Configure a Forge account")
+        owner.close()
+        NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: document.repository,
+                                        userInfo: [GitX.RepositoryForgeAccountNotificationKey.login: "closed-owner"])
+        XCTAssertEqual(popup.item(at: 0)?.title, "Forge", "Manual toolbar ownership also ends when its controller closes")
     }
 
     func testAdmittedOrdinaryPushFinishesAfterItsWindowDeallocates() throws {

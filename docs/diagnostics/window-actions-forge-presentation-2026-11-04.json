@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "scope": "Coherent window actions and Forge presentation",
+  "repository": "hbmartin/gitx",
+  "branch": "codex/window-actions-and-forge-presentation",
+  "integrationBase": "2227cf28896042ff7b43d81a1c4c00183692cc6b",
+  "reviewTargets": {
+    "120": "1bd2335b01717ecde8b2caaec09b42904c9add67",
+    "121": "c633116c65ea0f38f2f4cf3dc9d16d058c156c33"
+  },
+  "policies": {
+    "queries": "Stale queries return unavailable and defer reconciliation. Validation shares one captured context and preserves dynamic selectors.",
+    "actions": "Explicit actions reconcile before resolving intent, report unavailable infrastructure once and do not replay.",
+    "fixtures": "Keep the DEBUG harness and report its coverage separately without changing official floors.",
+    "activation": "Preserve controller-wide activation and preference intent across repository replacement."
+  },
+  "regressionEvidence": [
+    {
+      "runId": "window-forge-context-red2",
+      "result": "Four tests failed against unchanged affected production behavior: mixed validation capture, stale sender routing, silent unavailable intent and irrelevant-default reconciliation."
+    },
+    {
+      "runId": "window-forge-presentation-red",
+      "result": "Toolbar remained Forge instead of GitHub; stale History scroll rows crashed with Range requires lowerBound <= upperBound.",
+      "summary": "artifacts/verification/window-actions-forge-implementation/presentation-red-summary.json"
+    },
+    {
+      "runId": "window-forge-expanded-native",
+      "result": "163 of 164 passed; manual toolbar account notification exposed installation revoking its authority."
+    },
+    {
+      "runId": "window-forge-focused-green",
+      "result": "Debug and Release consumers passed; all 164 selected tests passed after the toolbar correction."
+    }
+  ],
+  "iterationEvidence": {
+    "runIds": [
+      "window-forge-static",
+      "window-forge-packages",
+      "window-forge-expanded-build",
+      "window-forge-facade-build"
+    ],
+    "staticScriptTests": 869,
+    "coreTests": 164,
+    "forgeKitTests": 314,
+    "note": "Iteration receipts retain their exact input snapshots. Subsequent source or commit changes require fresh final evidence."
+  },
+  "coverage": {
+    "policy": "scripts/coverage-baseline.json",
+    "floors": "Preserve every historical target, group and file floor.",
+    "supplementalReport": "artifacts/verification/window-actions-forge-implementation/source-breakdown.json",
+    "reportMeaning": "Production, fixture and other target-source counts are supplemental; official gates and ratchet calculations remain unchanged.",
+    "outputProtectionTests": "artifacts/verification/window-actions-forge-implementation/coverage-evidence-green.log"
+  },
+  "performance": {
+    "frozenBase": "29b4e557eae11a3bc9e5cf1e7164ce0bf88ccfd1",
+    "harnessSHA256": "5cd1fb933a45465f7d8853ffeb64a0f128a1073055ea30a6cfd68d57fb5edb06",
+    "identityEvidence": "artifacts/verification/window-actions-forge-implementation/benchmark-harness-identity.json",
+    "comparison": "artifacts/verification/window-actions-forge-implementation/rebinding-comparison.json",
+    "method": "Five matched sample indices at 1k, 10k and 300k commits, hidden/visible columns and fixed viewport/applied counts. Historical base-all followed by current-all; no alternating or randomized claim. Fixture construction and drawing are excluded. Reset and complete rebinding remain separate; existing ceilings remain unchanged."
+  },
+  "carriedUIJourneys": [
+    "GitXUITests/GitXScreenshotTests/testPushControlsRefreshForRemotesAndDisableForDetachedHead",
+    "GitXUITests/GitXScreenshotTests/testWorkingStateInsertionPreservesAnOlderCommitSelection",
+    "GitXUITests/WorktreeWorkflowUITests/testExplicitHistoryShortcutAdoptsNewestCapturedDetachedHead"
+  ],
+  "deliveryRequiredEvidence": {
+    "postCommitCorrectnessRunId": "window-forge-postcommit-correctness",
+    "finalFullRunId": "window-forge-final-full",
+    "cleanupMode": "preview",
+    "authority": "The final workflow receipt must pass at the final commit, including coverage, packages, sanitizers, UI, performance, analysis and Debug app staging. Iteration receipts do not establish delivery readiness.",
+    "stagedApp": "/Volumes/Pro2T/gitx/build/GitX.app"
+  },
+  "delivery": "One ready PR against hbmartin/gitx master after passing verification; do not merge."
+}

@@ -35,6 +35,30 @@ private final class SidebarMenuActionRecorder: NSResponder {
 
 @MainActor
 final class WorktreeAppKitTests: XCTestCase {
+    func testMainMenuRefreshReachesWindowWithHistoryFirstResponder() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try RepositoryTestGitRepository(url: fixture.main)
+        let service = try XCTUnwrap(repository.worktreeService)
+        await ready(service)
+        let controller = PBGitWindowController()
+        controller.repository = repository
+        defer { controller.close(); service.cancel() }
+        await showForegroundWindow(controller)
+        let window = try XCTUnwrap(controller.window)
+        let history = try XCTUnwrap(controller.historyViewController)
+        let table = try XCTUnwrap(history.commitList as NSTableView?)
+        await waitUntil { table.window === window }
+        XCTAssertTrue(window.makeFirstResponder(table))
+        let viewMenu = try XCTUnwrap(NSApp.mainMenu?.item(withTitle: "View")?.submenu)
+        let refresh = try XCTUnwrap(viewMenu.item(withTitle: "Refresh"))
+        let action = try XCTUnwrap(refresh.action)
+        let target = NSApp.target(forAction: action, to: refresh.target, from: refresh)
+        XCTAssertTrue((target as AnyObject?) === controller,
+                      "The global Refresh command must include worktree inventory and window status, even when History handles local refreshes")
+        XCTAssertTrue(NSApp.sendAction(action, to: refresh.target, from: refresh))
+    }
+
     func testClosingSidebarBeforeNibLoadRemainsTerminalWithoutMountingContent() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

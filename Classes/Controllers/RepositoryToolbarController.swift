@@ -257,6 +257,10 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private var forgePersistentFailureText: String?
     private var isRepositoryStatusBarVisible = true
     private var forgeProviderName: String
+    private var preparedForgeProviderName: String?
+    private weak var boundRepository: PBGitRepository?
+    private var forgeBinding: ForgeRepositoryBinding?
+    private var presentationOwnerIsCurrent: () -> Bool
     private var forgeAccountLogin: String?
     private var forgeAccountID: ForgeAccountID?
     private var forgeAccountChoices: [RepositoryForgeAccountChoice] = []
@@ -268,22 +272,28 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryToolbar")
 
     @objc(initWithWindowController:)
-    init(windowController: PBGitWindowController) {
+    convenience init(windowController: PBGitWindowController) {
+        self.init(windowController: windowController, repository: windowController.repository)
+    }
+
+    init(windowController: PBGitWindowController, repository: PBGitRepository?) {
         self.windowController = windowController
+        boundRepository = repository
+        presentationOwnerIsCurrent = windowController.repositoryPresentationValidation(for: repository)
         createPullRequestControl = windowController.createPullRequestControl
-        forgeProviderName = windowController.forgeLinkContext.providerName ?? "Forge"
+        forgeProviderName = "Forge"
         super.init()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(attentionUnseenDidChange(_:)),
             name: .repositoryAttentionUnseenDidChange,
-            object: windowController.repository
+            object: repository
         )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(repositoryForgeAccountDidChange(_:)),
             name: .repositoryForgeAccountDidChange,
-            object: windowController.repository
+            object: repository
         )
     }
 
@@ -297,6 +307,11 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     }
 
     func uninstall() {
+        presentationOwnerIsCurrent = { false }
+        detachToolbar()
+    }
+
+    private func detachToolbar() {
         let previous = installedWindow
         installedWindow = nil
         guard let previous else { return }
@@ -338,7 +353,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
 
     private func installToolbar() {
         guard let window = windowController?.window, !isInstalled(in: window) else { return }
-        uninstall()
+        detachToolbar()
         let start = ProcessInfo.processInfo.systemUptime
         let reused = toolbar != nil
         let installed = toolbar ?? makeToolbar()
@@ -659,14 +674,37 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             .setAccessibilityLabel(presentation.toolbarAccessibilityLabel)
     }
 
+    /// Apply the prepared provider without querying a half-installed window.
+    func applyForgeMetadata(providerName: String?, binding: ForgeRepositoryBinding?, ownerIsCurrent: @escaping () -> Bool) {
+        guard ownerIsCurrent() else { return }
+        presentationOwnerIsCurrent = ownerIsCurrent
+        if forgeBinding != binding {
+            forgeAccountSelectionTask?.cancel()
+            forgeAccountLogin = nil
+            forgeAccountID = nil
+            forgeAccountChoices = []
+            isPublicForgeAccess = false
+            isForgeAccountRebindingEnabled = true
+            forgeAccountRebindingCooldownDeadline = nil
+        }
+        forgeBinding = binding
+        preparedForgeProviderName = providerName
+        forgeProviderName = providerName ?? "Forge"
+        applyForgeAccountPresentation()
+    }
+
     @objc private func repositoryForgeAccountDidChange(_ notification: Notification) {
-        guard let repository = windowController?.repository,
+        guard presentationOwnerIsCurrent(), let repository = boundRepository,
+              windowController?.repository === repository,
               let sourceRepository = notification.object as? PBGitRepository,
-              sourceRepository === repository
-        else { return }
-        forgeProviderName = notification.userInfo?[RepositoryForgeAccountNotificationKey.providerName] as? String
-            ?? windowController?.forgeLinkContext.providerName
-            ?? "Forge"
+              sourceRepository === repository else { return }
+        if let expected = forgeBinding,
+           let account = notification.userInfo?[RepositoryForgeAccountNotificationKey.accountID] as? ForgeAccountID,
+           account.forge != expected.primaryRepository.forge || (expected.preferredAccount != nil && account != expected.preferredAccount)
+        {
+            return
+        }
+        forgeProviderName = notification.userInfo?[RepositoryForgeAccountNotificationKey.providerName] as? String ?? preparedForgeProviderName ?? "Forge"
         forgeAccountLogin = notification.userInfo?[RepositoryForgeAccountNotificationKey.login] as? String
         forgeAccountID = notification.userInfo?[RepositoryForgeAccountNotificationKey.accountID] as? ForgeAccountID
         forgeAccountChoices = RepositoryForgeAccountChoice.notificationChoices(
