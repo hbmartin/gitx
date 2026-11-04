@@ -934,13 +934,6 @@ nonisolated struct RepositoryPullRequestMutationCompletion: Sendable {
     }
 
     func edit(accountID: ForgeAccountID, edit: ForgePullRequestEdit, destination: ForgeDestination,
-              identity: ForgeDraftIdentity) async throws -> RepositoryPullRequestEditOutcome
-    {
-        let snapshot = await submittedSnapshot(identity: identity, content: ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown))
-        return try await self.edit(accountID: accountID, edit: edit, destination: destination, identity: identity, submittedDraft: snapshot)
-    }
-
-    func edit(accountID: ForgeAccountID, edit: ForgePullRequestEdit, destination: ForgeDestination,
               identity: ForgeDraftIdentity, submittedDraft: ForgeDraft?) async throws -> RepositoryPullRequestEditOutcome
     {
         try Task.checkCancellation()

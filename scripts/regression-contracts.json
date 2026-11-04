@@ -3478,6 +3478,27 @@
           "oracle": "Resolution identity and independent remote-read counts distinguish reuse, changed dependencies and uncacheable discovery.",
           "role": "boundary",
           "check": "correctness"
+        },
+        {
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testPassiveForgeResolutionCannotTagAnOldResultWithANewerPreferenceRevision",
+          "source": "GitXTests/GitBinaryTests.swift",
+          "oracle": "Change binding evidence during resolution; the next demand must resolve the new provider rather than reuse an old result tagged with its revision.",
+          "role": "boundary",
+          "check": "correctness"
+        },
+        {
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testPassiveForgePreparationRetriesUnavailableDiscoveryAfterADependencyChange",
+          "source": "GitXTests/GitBinaryTests.swift",
+          "oracle": "A changed dependency followed by failed discovery remains uncertified; later demand retries and discovers the real replacement remote.",
+          "role": "boundary",
+          "check": "correctness"
+        },
+        {
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testActivationRefreshesUnavailableMetadataAfterAnExternalRemoteChange",
+          "source": "GitXTests/GitBinaryTests.swift",
+          "oracle": "Activation after an external remote change refreshes current menu metadata without requiring a repository notification or a Git-selection change.",
+          "role": "boundary",
+          "check": "correctness"
         }
       ]
     },

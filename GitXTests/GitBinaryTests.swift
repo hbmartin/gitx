@@ -1692,6 +1692,38 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
     }
 
+    /// Returns a different preference snapshot at a deterministic read boundary,
+    /// without posting notifications while RepositoryUISettings holds its lock.
+    private final nonisolated class SwitchingForgeDefaults: UserDefaults, @unchecked Sendable {
+        private let snapshotLock = NSLock()
+        private var remainingReads = Int.max
+        private var replacement: [String: Any]?
+        private var currentSnapshot: [String: Any]?
+
+        func replaceSnapshot(afterReads count: Int, with dictionary: [String: Any]) {
+            snapshotLock.lock()
+            defer { snapshotLock.unlock() }
+            remainingReads = count
+            replacement = dictionary
+            currentSnapshot = nil
+        }
+
+        override func dictionary(forKey key: String) -> [String: Any]? {
+            let fallback = super.dictionary(forKey: key)
+            guard key == "PBRepositoryUISettings" else { return fallback }
+            snapshotLock.lock()
+            defer { snapshotLock.unlock() }
+            let result = currentSnapshot ?? fallback
+            remainingReads -= 1
+            if remainingReads == 0 {
+                currentSnapshot = replacement
+                replacement = nil
+                remainingReads = Int.max
+            }
+            return result
+        }
+    }
+
     func testColdForgeMenuQueryDoesNotInstallAResolverOrDiscoverRemotes() throws {
         let repository = ColdForgeQueryRepository()
         try FileManager.default.createDirectory(at: repository.location, withIntermediateDirectories: true)
@@ -1810,7 +1842,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
                                                           remoteConfigurationRevision: { revision }, remoteConfigurationDependencies: { ["included.config"] },
                                                           remoteDependencyRevision: { _ in dependency }, remoteNames: { reads += 1; return namesAvailable ? [] : nil }, remoteURL: { _ in nil })
         let first = coordinator.prepareQueryBinding(selection: nil)
-        XCTAssertTrue(first === coordinator.prepareQueryBinding(selection: nil))
+        let verified = coordinator.prepareQueryBinding(selection: nil)
+        XCTAssertFalse(first === verified, "The first discovery establishes evidence; a stable later preparation certifies reuse")
+        XCTAssertTrue(verified === coordinator.prepareQueryBinding(selection: nil))
         XCTAssertEqual(reads, 1)
         dependency = "dependency-b"
         let changed = coordinator.prepareQueryBinding(selection: nil)
@@ -1824,6 +1858,60 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let unavailable = coordinator.prepareQueryBinding(selection: nil)
         XCTAssertFalse(unavailable === coordinator.prepareQueryBinding(selection: nil), "Failed discovery cannot become a permanent cached absence")
         XCTAssertEqual(reads, 5)
+    }
+
+    func testPassiveForgeResolutionCannotTagAnOldResultWithANewerPreferenceRevision() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let repository = try XCTUnwrap(document.repository)
+        let suite = "GitX-Forge-Revision-\(UUID())"
+        let defaults = try XCTUnwrap(SwitchingForgeDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = GitX.RepositoryUISettings(repository: repository, preferences: GitX.ApplicationPreferences(userDefaults: defaults))
+        let github = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "old")
+        let gitlab = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.com")), owner: "fixture", name: "new")
+        settings.forgeRepositoryBinding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: gitlab)
+        let replacement = try XCTUnwrap(defaults.dictionary(forKey: "PBRepositoryUISettings"))
+        settings.forgeRepositoryBinding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: github)
+        let coordinator = GitX.RepositoryForgeCoordinator(repository: repository, settings: settings,
+                                                          remoteDescriptorCache: GitX.RepositoryForgeRemoteDescriptorCache(), remoteCacheKey: UUID().uuidString,
+                                                          remoteConfigurationRevision: { "unchanged" }, remoteNames: { [] }, remoteURL: { _ in nil })
+        defaults.replaceSnapshot(afterReads: 2, with: replacement)
+        let first = coordinator.prepareQueryBinding(selection: nil)
+        XCTAssertEqual(first.providerName, "GitHub", "The resolution read observes the old snapshot")
+        let next = coordinator.prepareQueryBinding(selection: nil)
+        XCTAssertEqual(next.providerName, "GitLab", "The newer revision cannot authorize reuse of the old result")
+        XCTAssertFalse(first === next)
+        XCTAssertTrue(next === coordinator.prepareQueryBinding(selection: nil))
+    }
+
+    func testPassiveForgePreparationRetriesUnavailableDiscoveryAfterADependencyChange() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let repository = try XCTUnwrap(document.repository)
+        let suite = "GitX-Forge-Dependencies-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = GitX.RepositoryUISettings(repository: repository, preferences: GitX.ApplicationPreferences(userDefaults: defaults))
+        var dependency = "original"
+        var names: [String]? = []
+        var reads = 0
+        let coordinator = GitX.RepositoryForgeCoordinator(repository: repository, settings: settings,
+                                                          remoteDescriptorCache: GitX.RepositoryForgeRemoteDescriptorCache(), remoteCacheKey: UUID().uuidString,
+                                                          remoteConfigurationRevision: { "unchanged" }, remoteConfigurationDependencies: { ["included.config"] },
+                                                          remoteDependencyRevision: { _ in dependency }, remoteNames: { reads += 1; return names },
+                                                          remoteURL: { _ in "https://github.com/fixture/recovered.git" })
+        XCTAssertNil(coordinator.prepareQueryBinding(selection: nil).binding)
+        XCTAssertEqual(reads, 1)
+        dependency = "replacement"
+        names = nil
+        XCTAssertNil(coordinator.prepareQueryBinding(selection: nil).binding)
+        XCTAssertEqual(reads, 2, "The changed dependency forces discovery, which is temporarily unavailable")
+        names = ["origin"]
+        let recovered = coordinator.prepareQueryBinding(selection: nil)
+        XCTAssertEqual(reads, 3, "Failed discovery cannot certify the dependency revision of old descriptors")
+        XCTAssertEqual(recovered.binding?.primaryRepository.name, "recovered")
+        XCTAssertEqual(recovered.providerName, "GitHub")
     }
 
     func testActualDefaultsNotificationRefreshesThePreparedForgeMenu() throws {
@@ -1849,8 +1937,20 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     func testGitDirectoryEventBurstRefreshesUnavailableMetadataAndExternalRemoteChanges() throws {
+        try exercisePassiveForgeRemoteChange(activate: false)
+    }
+
+    func testActivationRefreshesUnavailableMetadataAfterAnExternalRemoteChange() throws {
+        try exercisePassiveForgeRemoteChange(activate: true)
+    }
+
+    private func exercisePassiveForgeRemoteChange(activate: Bool) throws {
         try prepareFixture()
         defer { try? removeFixture() }
+        let ready = expectation(description: "Git selection is ready before the owner is installed")
+        GitX.GitBinaryDiscovery.shared.whenSelectionAvailable { _, _ in ready.fulfill() }
+        wait(for: [ready], timeout: 35)
+        XCTAssertNotNil(GitX.GitBinaryDiscovery.shared.currentSelection)
         let repository = try XCTUnwrap(document.repository)
         let settings = ApplicationComposition.shared.repositoryViewState(for: repository)
         let previous = settings.forgeRepositoryBinding
@@ -1862,9 +1962,13 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         _ = actual.window
         XCTAssertFalse(actual.forgeLinkContext.isForgeAvailable)
         try GitXTestGitFixture.run(["remote", "add", "upstream", "https://gitlab.com/fixture/metadata.git"], in: directory)
-        for _ in 0 ..< 20 {
-            notifications.post(name: .PBGitRepositoryEvent, object: repository,
-                               userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: PBGitRepositoryWatcherEventType.gitDirectory.rawValue)])
+        if activate {
+            actual.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        } else {
+            for _ in 0 ..< 20 {
+                notifications.post(name: .PBGitRepositoryEvent, object: repository,
+                                   userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: PBGitRepositoryWatcherEventType.gitDirectory.rawValue)])
+            }
         }
         let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.forgeLinkContext.providerName == "GitLab" }, object: nil)
         wait(for: [refreshed], timeout: 5)

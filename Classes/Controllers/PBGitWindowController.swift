@@ -737,6 +737,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 return
             }
             if intent.activated {
+                self.requestForgeQueryRefresh()
                 if !capturedInitialFocus {
                     self.focusRefreshCoordinator?.applicationDidBecomeActive()
                 }
@@ -1074,6 +1075,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc(applicationDidBecomeActive:)
     dynamic func applicationDidBecomeActive(_ notification: Notification) {
         let capturedInitialFocus = reconcileOwnership()
+        requestForgeQueryRefresh()
         if !capturedInitialFocus {
             focusRefreshCoordinator?.applicationDidBecomeActive()
         }

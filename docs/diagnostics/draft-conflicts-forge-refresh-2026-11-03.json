@@ -14,20 +14,24 @@
   "regressionReproductions": {
     "runIds": [
       "draft-forge-regression-red",
-      "draft-forge-draining-red"
+      "draft-forge-draining-red",
+      "draft-forge-cache-race-red2"
     ],
-    "note": "First red: draft overwrite/deletion, global menu refusal and hidden viewport scan; carried amend passed. Diagnostic red temporarily restored only the reviewed draining log: actual add was labelled list. No failing expectations committed."
+    "note": "First red: draft overwrite/deletion, global menu refusal and hidden viewport scan; carried amend passed. Diagnostic red temporarily restored only the reviewed draining log: actual add was labelled list. No failing expectations committed. Cache red: all three new cases failed at seven expected assertions (preference revision race, dependency failure cached permanently, activation omission). The preceding startup timeout did not execute tests and is not a regression result."
   },
   "historicalDevelopmentEvidence": {
     "runIds": [
       "draft-forge-red-build",
       "draft-forge-package-baseline",
       "draft-forge-focused-green",
-      "draft-forge-boundary-red-build2"
+      "draft-forge-boundary-red-build2",
+      "draft-forge-cache-fix-internal-build",
+      "draft-forge-cache-fix-green2"
     ],
     "focusedNativeTests": 88,
     "packageTests": 314,
-    "packageCoverage": "SQLite 99.66%, existing minimum 99.65%; no floor lowered."
+    "packageCoverage": "SQLite 99.66%, existing minimum 99.65%; no floor lowered.",
+    "cacheBoundaryNativeTests": 91
   },
   "carriedAcceptance": "PR121 complete correctness, coverage floors, semantic lint, sanitizers/UI and staged app requirements remain mandatory. Three cross-language fixture declarations have exact documented semantic-lint annotations.",
   "requiredFinalVerification": {
@@ -37,5 +41,6 @@
     "receipt": "artifacts/verification/draft-forge-final-full/workflow.json",
     "rule": "Must execute after final implementation and eligible coverage commits; older focused evidence is historical."
   },
-  "stagedApplication": "build/GitX.app"
+  "stagedApplication": "build/GitX.app",
+  "nativeCacheNote": "External framework lookups encountered a macOS removable-volume prompt before app startup. Retained the failures and targeted TCC evidence; native consumers and tests pass in the existing internal cache without changing security settings."
 }

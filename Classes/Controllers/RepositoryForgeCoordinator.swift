@@ -234,9 +234,10 @@ final class RepositoryForgeCoordinator: NSObject {
             return queryResolution
         }
         let resolution = resolveBinding()
-        queryResolution = resolution
-        queryRefreshPolicy.didPrepare(queryRevision(selection: selection))
-        let verifiable = queryRefreshPolicy.prepared != nil
+        let after = queryRevision(selection: selection)
+        let verifiable = before != nil && before == after && resolution.binding == after?.binding
+        queryResolution = verifiable ? resolution : nil
+        queryRefreshPolicy.didPrepare(verifiable ? after : nil)
         logger.debug("Prepared passive Forge metadata; verifiable=\(verifiable, privacy: .public)")
         return resolution
     }

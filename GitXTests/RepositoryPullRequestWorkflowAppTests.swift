@@ -1201,7 +1201,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         let original = try await fixture.drafts.load(identity: identity)
         try await fixture.service.releaseEdit(RepositoryPullRequestEditOutcome(snapshot: snapshot, destination: .pullRequest(fixture.app.repository, ForgeItemNumber(43))))
         do {
-            _ = try await fixture.operation.edit(accountID: fixture.app.accountID, edit: edit, destination: .pullRequest(fixture.app.repository, snapshot.number), identity: identity)
+            _ = try await fixture.operation.edit(accountID: fixture.app.accountID, edit: edit, destination: .pullRequest(fixture.app.repository, snapshot.number), identity: identity, submittedDraft: original)
             XCTFail("Another destination cannot certify this edit")
         } catch { XCTAssertEqual(error as? ForgePullRequestWorkflowError, .mismatchedRepository) }
         let retained = try await fixture.drafts.load(identity: identity)
@@ -1455,8 +1455,13 @@ final class RepositoryMutationCompletionTests: XCTestCase {
                                                                                                    remoteActions: RecordingRepositoryRemoteActions(events: []), service: service, drafts: drafts,
                                                                                                    destinationOpening: { openings.append($0); return true }, bindingResolving: { nil }, postPushBrowserFallback: { _ in XCTFail("An edit never opens push fallback") })
         weak let weakController = controller
+        var saveWait: Task<Void, Never>?
         defer {
-            Task { await service.releaseEdit(outcome) }
+            saveWait?.cancel()
+            Task {
+                await drafts.releaseSaveWaiters()
+                await service.releaseEdit(outcome)
+            }
             controller?.invalidateOwner()
             owner?.close()
             window.close()
@@ -1469,8 +1474,9 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         let sheet = try XCTUnwrap(window.attachedSheet)
         let button = try XCTUnwrap(find("GitX.PullRequest.Submit", in: XCTUnwrap(sheet.contentView)) as? NSButton)
         let savesReady = expectation(description: "Initial editor autosave finishes")
-        Task {
+        saveWait = Task {
             await drafts.waitForSaves(2)
+            guard !Task.isCancelled else { return }
             savesReady.fulfill()
         }
         await fulfillment(of: [savesReady], timeout: 5)
@@ -1702,6 +1708,12 @@ private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
     func waitForSaves(_ count: Int) async {
         guard saveCount < count else { return }
         await withCheckedContinuation { saveWaiters.append((count, $0)) }
+    }
+
+    func releaseSaveWaiters() {
+        let pending = saveWaiters
+        saveWaiters.removeAll()
+        pending.forEach { $0.1.resume() }
     }
 
     func failLoads(_ value: Bool) {
