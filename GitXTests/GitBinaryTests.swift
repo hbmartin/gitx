@@ -1694,6 +1694,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
 
     /// Returns a different preference snapshot at a deterministic read boundary,
     /// without posting notifications while RepositoryUISettings holds its lock.
+    // swift6-safety-justification: snapshotLock protects the mutable test snapshot and read gate.
     private final nonisolated class SwitchingForgeDefaults: UserDefaults, @unchecked Sendable {
         private let snapshotLock = NSLock()
         private var remainingReads = Int.max

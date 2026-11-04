@@ -42,5 +42,32 @@
     "rule": "Must execute after final implementation and eligible coverage commits; older focused evidence is historical."
   },
   "stagedApplication": "build/GitX.app",
-  "nativeCacheNote": "External framework lookups encountered a macOS removable-volume prompt before app startup. Retained the failures and targeted TCC evidence; native consumers and tests pass in the existing internal cache without changing security settings."
+  "nativeCacheNote": "External framework lookups encountered a macOS removable-volume prompt before app startup. Retained the failures and targeted TCC evidence; native consumers and tests pass in the existing internal cache without changing security settings.",
+  "eligibleCoverageEvidence": {
+    "runIds": [
+      "draft-forge-complete-correctness",
+      "draft-forge-complete-package"
+    ],
+    "implementationCommit": "708bbf37",
+    "nativeTests": 2218,
+    "packageTests": 314,
+    "failedTests": 0,
+    "appLines": {
+      "covered": 77366,
+      "executable": 82542
+    },
+    "allHistoricalFloorsPassed": true,
+    "appMinimumFrom": 0.9361,
+    "appMinimumTo": 0.9372,
+    "appFileFloorsRaised": 8,
+    "sqliteMinimumFrom": 0.9965,
+    "sqliteMinimumTo": 0.9966,
+    "plainCheckRequired": true,
+    "note": "Exclude the incidental 0.01-point Worktrees-extension candidate; preserve its prior floor. Final post-commit full profile remains required."
+  },
+  "performanceComparison": {
+    "base": "29b4e557eae11a3bc9e5cf1e7164ce0bf88ccfd1",
+    "identicalHarnessSHA256": "5cd1fb933a45465f7d8853ffeb64a0f128a1073055ea30a6cfd68d57fb5edb06",
+    "method": "Frozen base first, current samples from the final canonical full performance plan. Five matched sample indices per count/visibility/applied condition; fixture creation and drawing excluded. No alternating-run claim."
+  }
 }
