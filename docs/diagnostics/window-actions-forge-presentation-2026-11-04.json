@@ -31,6 +31,30 @@
     {
       "runId": "window-forge-focused-green",
       "result": "Debug and Release consumers passed; all 164 selected tests passed after the toolbar correction."
+    },
+    {
+      "runId": "window-forge-postcommit-correctness",
+      "result": "Complete run: 2226 passed, 2 related legacy fixture failures. Preference revision construction invoked Git-directory discovery for a locationless repository; no ratchet is eligible."
+    },
+    {
+      "runId": "window-forge-preference-red",
+      "result": "The independent task-factory regression recorded 22 starts instead of zero; the two legacy exceptions reproduced with unchanged affected production behavior."
+    },
+    {
+      "runId": "window-forge-preference-green",
+      "result": "The result bundle records 254 passed and two failures: an auto-fetch fixture initialization crash plus the new orphan-toolbar assertion. The fixture assertion is corrected; preserve the failed receipt."
+    },
+    {
+      "runId": "window-forge-preference-green2",
+      "result": "255 passed, one initialization crash in the Objective-C auto-fetch fixture. Subsequent test output was green, but the xcresult records the crash; this is not passing evidence."
+    },
+    {
+      "runId": "window-forge-autofetch-init-isolation",
+      "result": "The single notification-activation case reproduces the AppKit class-property inspection crash during cold initialization. Move only its fixture implementation to Swift; preserve Objective-C assertions and selectors."
+    },
+    {
+      "runId": "window-forge-preference-green3",
+      "result": "256 tests passed, zero failures or skips. Result-bundle summary and workflow receipt confirm no initialization crash, both legacy feature repairs, zero preference task starts and preserved action/toolbar boundaries."
     }
   ],
   "iterationEvidence": {
@@ -38,7 +62,11 @@
       "window-forge-static",
       "window-forge-packages",
       "window-forge-expanded-build",
-      "window-forge-facade-build"
+      "window-forge-facade-build",
+      "window-forge-preference-build",
+      "window-forge-preference-fixture-build",
+      "window-forge-autofetch-factory-build",
+      "window-forge-preference-green3"
     ],
     "staticScriptTests": 869,
     "coreTests": 164,
@@ -50,7 +78,8 @@
     "floors": "Preserve every historical target, group and file floor.",
     "supplementalReport": "artifacts/verification/window-actions-forge-implementation/source-breakdown.json",
     "reportMeaning": "Production, fixture and other target-source counts are supplemental; official gates and ratchet calculations remain unchanged.",
-    "outputProtectionTests": "artifacts/verification/window-actions-forge-implementation/coverage-evidence-green.log"
+    "outputProtectionTests": "artifacts/verification/window-actions-forge-implementation/coverage-evidence-green.log",
+    "failedMeasurement": "The failed complete run is diagnostic only. A successful fresh complete run is required before recording any improvement."
   },
   "performance": {
     "frozenBase": "29b4e557eae11a3bc9e5cf1e7164ce0bf88ccfd1",
@@ -65,11 +94,11 @@
     "GitXUITests/WorktreeWorkflowUITests/testExplicitHistoryShortcutAdoptsNewestCapturedDetachedHead"
   ],
   "deliveryRequiredEvidence": {
-    "postCommitCorrectnessRunId": "window-forge-postcommit-correctness",
+    "postCommitCorrectnessRunId": "window-forge-postcommit-correctness2",
     "finalFullRunId": "window-forge-final-full",
     "cleanupMode": "preview",
     "authority": "The final workflow receipt must pass at the final commit, including coverage, packages, sanitizers, UI, performance, analysis and Debug app staging. Iteration receipts do not establish delivery readiness.",
     "stagedApp": "/Volumes/Pro2T/gitx/build/GitX.app"
   },
-  "delivery": "One ready PR against hbmartin/gitx master after passing verification; do not merge."
+  "delivery": "PR123 merged at c4b094e9 before continuing verification. The preference correction and Swift-backed test fixture are local follow-up work; delivery destination is awaiting user direction. Full post-commit evidence remains required."
 }

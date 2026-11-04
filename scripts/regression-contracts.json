@@ -3534,7 +3534,7 @@
           "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testSenderActionsReconcileBeforeResolvingReferencesAndKeepDynamicOverrides",
           "role": "boundary",
           "check": "correctness",
-          "oracle": "Invoke actual Push, Fetch, Pull and Open Files actions after replacement; dynamic facades observe the new mounted repository and canonical fixture URL."
+          "oracle": "Invoke actual Push, Fetch, Pull and Open Files actions after replacement with a distinct working directory; dynamic facades observe the new mounted repository and its exact canonical fixture URL."
         },
         {
           "source": "GitXTests/GitBinaryTests.swift",
@@ -3577,6 +3577,34 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Require literal repository-status logs and exactly two current/trailing deliveries."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testPreferenceRevisionDoesNotDiscoverAnUnavailableRepository",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "An independent task-factory counter stays zero while immediate preferences and a defaults burst inspect an unavailable repository; its window stays unloaded and closed owners perform no repository reads."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testExplicitActionRefusesRepositoryRemovalDuringAdmissionWithoutReplay",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Remove the repository at action capture; no URLs open, revoked presentation stays silent, panes clear and restoration never replays intent."
+        },
+        {
+          "source": "GitXTests/GitXSwiftFeatureTests.swift",
+          "identifier": "GitXTests/GitXSwiftFeatureTests/testOrphanToolbarAccountsActionPreservesItsUnavailablePreferencesFallback",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "After releasing the presentation owner, the actual private Objective-C toolbar action selects the Accounts pane with no preferences responder and never resurrects its owner."
+        },
+        {
+          "source": "GitXTests/GitXFeatureTests.m",
+          "identifier": "GitXTests/GitXFeatureTests/testAutoFetchNotificationActivationHandlesMissingOpenAndExistingRepositories",
+          "role": "compatibility",
+          "check": "correctness",
+          "oracle": "Cold-start the Swift-backed window fixture through its Objective-C factory; missing, opened and existing notification destinations preserve truthful completion, History selection and focus counts without a class-layout crash."
         }
       ]
     },

@@ -221,6 +221,11 @@ final class RepositoryForgeCoordinator: NSObject {
         super.init()
     }
 
+    /// Reading a known preference must not repeat Git-directory discovery.
+    var storedBinding: ForgeRepositoryBinding? {
+        settings.forgeRepositoryBinding
+    }
+
     @objc func resolveBinding() -> RepositoryForgeBindingResolution {
         resolveBinding(persistAutomaticBinding: true)
     }

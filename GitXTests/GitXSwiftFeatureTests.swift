@@ -505,6 +505,29 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
     }
 
+    func testOrphanToolbarAccountsActionPreservesItsUnavailablePreferencesFallback() {
+        let key = "PBGitXPreferenceViewIdentifier"
+        let restore = preservePersistentDefault(forKey: key)
+        defer { restore() }
+        let previousDelegate = NSApp.delegate
+        NSApp.delegate = nil
+        defer { NSApp.delegate = previousDelegate }
+        var toolbar: PBRepositoryToolbarController?
+        weak var releasedOwner: PBGitWindowController?
+        autoreleasepool {
+            let owner = PBGitWindowController(window: nil)
+            releasedOwner = owner
+            toolbar = PBRepositoryToolbarController(windowController: owner)
+        }
+        XCTAssertNil(releasedOwner, "An orphaned toolbar must not retain its presentation owner")
+        let action = NSSelectorFromString("openForgeAccountsPreferences:")
+        XCTAssertTrue(toolbar?.responds(to: action) == true)
+        XCTAssertNil(NSApp.target(forAction: NSSelectorFromString("openPreferencesWindow:")))
+        _ = toolbar?.perform(action, with: nil)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: key), "Accounts")
+        XCTAssertNil(releasedOwner)
+    }
+
     func testForgeLinkPresenterUsesProviderFamilyAndOneSelectedCommit() {
         for provider in ["GitHub", "GitLab", "Bitbucket"] {
             let items = PBRepositoryForgeLinkMenuPresenter.menuItems(

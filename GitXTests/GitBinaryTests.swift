@@ -683,8 +683,14 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     private final class SenderActionWindowProbe: GitX.PBGitWindowController {
+        var beforeRepositoryRead: (() -> Void)?
         override var repository: PBGitRepository? {
-            get { suppliedRepository }
+            get {
+                let callback = beforeRepositoryRead
+                beforeRepositoryRead = nil
+                callback?()
+                return suppliedRepository
+            }
             set { suppliedRepository = newValue }
         }
 
@@ -1670,6 +1676,16 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
     }
 
+    private final nonisolated class PreferenceOnlyRepository: PBGitRepository {
+        let taskStarts = Mutex(0)
+        override func task(withArguments _: [Any]?) -> PBTask {
+            taskStarts.withLock { $0 += 1 }
+            let task = PBTask(launchPath: "/usr/bin/false", arguments: [], inDirectory: nil)
+            task.timeout = 1
+            return task
+        }
+    }
+
     private final nonisolated class ColdForgeQueryRepository: PBGitRepository {
         let location = FileManager.default.temporaryDirectory.appendingPathComponent("cold-forge-query-\(UUID())")
         let remoteReads = Mutex(0)
@@ -1879,7 +1895,11 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         actual.repository = document.repository
         _ = actual.window
         defer { actual.close() }
-        let replacement = try PBGitRepositoryDocument(contentsOf: directory, ofType: PBGitRepositoryDocumentType)
+        let replacementDirectory = directory.appendingPathComponent("replacement", isDirectory: true)
+        try FileManager.default.createDirectory(at: replacementDirectory, withIntermediateDirectories: true)
+        try GitXTestGitFixture.run(["init", "--initial-branch=main"], in: replacementDirectory)
+        try GitXTestGitFixture.run(["commit", "--allow-empty", "-m", "replacement"], in: replacementDirectory)
+        let replacement = try PBGitRepositoryDocument(contentsOf: replacementDirectory, ofType: PBGitRepositoryDocumentType)
         defer { closeRepositoryFixtureDocument(replacement) }
         actual.repository = replacement.repository
         let menu = NSMenuItem()
@@ -1908,13 +1928,32 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         _ = files.window
         defer { files.close() }
         files.repository = replacement.repository
-        let trackedFile = directory.appendingPathComponent("tracked.txt")
+        let trackedFile = replacementDirectory.appendingPathComponent("tracked.txt")
         try Data("fixture".utf8).write(to: trackedFile)
         menu.representedObject = ["tracked.txt"]
         files.openFiles(menu)
         XCTAssertEqual(files.selectedURLRequests, 1, "Explicit actions retain the dynamic selection facade")
-        XCTAssertEqual(files.openedURLs.map { $0.resolvingSymlinksInPath() }, [directory.appendingPathComponent("tracked.txt").resolvingSymlinksInPath()])
+        XCTAssertEqual(files.openedURLs.map { $0.resolvingSymlinksInPath() }, [trackedFile.resolvingSymlinksInPath()])
         XCTAssertTrue(files.historyViewController?.repository === replacement.repository)
+    }
+
+    func testExplicitActionRefusesRepositoryRemovalDuringAdmissionWithoutReplay() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let actual = SenderActionWindowProbe()
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        actual.beforeRepositoryRead = { [weak actual] in actual?.repository = nil }
+        let menu = NSMenuItem()
+        menu.representedObject = ["tracked.txt"]
+        actual.openFiles(menu)
+        XCTAssertTrue(actual.openedURLs.isEmpty)
+        XCTAssertTrue(actual.errors.isEmpty, "A revoked owner cannot present an availability error")
+        XCTAssertNil(actual.historyViewController)
+        actual.repository = document.repository
+        actual.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+        XCTAssertTrue(actual.openedURLs.isEmpty, "Restoration does not replay the refused user intent")
     }
 
     func testUnavailableSenderActionPresentsOnceAndNeverReplaysAfterGitBecomesReady() throws {
@@ -1932,6 +1971,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         actual.pullRemote(menu)
         actual.fetchRemote(menu)
         actual.openFiles(menu)
+        actual.fetchRemote(nil)
+        actual.pullRemote(nil)
+        actual.pushDefaultRemoteForRef(nil)
         XCTAssertTrue(actual.errors.isEmpty, "Invalid selections retain their existing no-op behavior")
         menu.representedObject = PBGitRef(string: "refs/heads/main")
         actual.pushDefaultRemoteForRef(menu)
@@ -1947,6 +1989,32 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         actual.close()
         actual.pushDefaultRemoteForRef(menu)
         XCTAssertEqual(actual.errors.count, 2, "Closed owners cannot present errors")
+    }
+
+    func testPreferenceRevisionDoesNotDiscoverAnUnavailableRepository() {
+        let repository = PreferenceOnlyRepository()
+        XCTAssertNil(repository.gitURL())
+        let notifications = NotificationCenter()
+        let actual = RepositoryOverrideWindowProbe(ownerNotifications: notifications)
+        actual.repository = repository
+        defer { actual.close() }
+        actual.refreshPreferenceDidChange(nil)
+        for _ in 0 ..< 20 {
+            notifications.post(name: UserDefaults.didChangeNotification, object: nil)
+        }
+        let delivered = expectation(description: "Preference-only notifications drain without Git")
+        DispatchQueue.main.async { DispatchQueue.main.async { delivered.fulfill() } }
+        wait(for: [delivered], timeout: 5)
+        XCTAssertEqual(repository.taskStarts.withLock { $0 }, 0)
+        XCTAssertFalse(actual.isWindowLoaded)
+        XCTAssertFalse(actual.forgeLinkContext.isForgeAvailable)
+        actual.close()
+        actual.repositoryReadCount = 0
+        notifications.post(name: UserDefaults.didChangeNotification, object: nil)
+        let closed = expectation(description: "Closed owners refuse notification inspection")
+        DispatchQueue.main.async { closed.fulfill() }
+        wait(for: [closed], timeout: 5)
+        XCTAssertEqual(actual.repositoryReadCount, 0)
     }
 
     func testUnrelatedDefaultsNotificationDoesNotReconcileAnUnloadedWindow() throws {

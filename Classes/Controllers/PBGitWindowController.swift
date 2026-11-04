@@ -810,7 +810,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 // Global intent belongs to the controller, not an obsolete repository generation.
                 // Defer all settings access until the notification publisher has returned.
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+                    guard let self, !self.ownership.closed else { return }
                     if preferences {
                         let revision = self.capturePreferenceRevision()
                         guard revision != self.observedPreferenceRevision else { return }
@@ -828,7 +828,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         return RepositoryWindowPreferenceRevision(repository: repository.map(ObjectIdentifier.init),
                                                   refreshOnFocus: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation(),
                                                   statusBarVisible: ApplicationSettings.repositoryStatusBarVisible,
-                                                  binding: repository.flatMap { ApplicationComposition.shared.repositoryViewState(for: $0).forgeRepositoryBinding })
+                                                  binding: repository.flatMap { actionRepository == ObjectIdentifier($0) ? repositoryForgeCoordinator?.storedBinding : nil })
     }
 
     private final func scheduleOwnershipReconciliation(activated: Bool = false, preferences: Bool = false) {

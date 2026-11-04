@@ -1158,6 +1158,38 @@ final class GitDiscoveryPresentationTests: XCTestCase {
     }
 }
 
+/// The Objective-C notification tests call these selectors through their existing fixture interface.
+@objc(PBAutoFetchWindowControllerSpy)
+private final class AutoFetchNotificationWindowFixture: GitX.PBGitWindowController {
+    @objc var showHistoryCount = 0
+    @objc var testHistoryViewController: PBGitHistoryController?
+
+    override func showHistoryView(_: Any?) {
+        showHistoryCount += 1
+    }
+
+    override var window: NSWindow? {
+        get { nil }
+        set { super.window = newValue }
+    }
+
+    override var historyViewController: PBGitHistoryController? {
+        testHistoryViewController
+    }
+}
+
+@MainActor
+@objc(PBAutoFetchWindowFixtureFactory)
+// Called by GitXFeatureTests.m; the factory initializes resilient Swift metadata before Objective-C use.
+// swiftlint:disable:next unused_declaration
+final class AutoFetchWindowFixtureFactory: NSObject {
+    // Objective-C fixture callers are invisible to semantic Swift analysis.
+    // swiftlint:disable:next unused_declaration
+    @objc static func makeWindow() -> GitX.PBGitWindowController {
+        AutoFetchNotificationWindowFixture(window: nil)
+    }
+}
+
 final class AutoFetchGitSelectionTests: XCTestCase {
     // swift6-safety-justification: Evaluation state stays on MainActor; inherited lifecycle fields use the manager's lock.
     private final nonisolated class EvaluationProbe: GitX.PBAutoFetchManager, @unchecked Sendable {
