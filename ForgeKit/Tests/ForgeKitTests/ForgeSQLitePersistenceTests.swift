@@ -540,6 +540,59 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         await writer.close()
     }
 
+    func testConditionalDurableSaveRequiresAbsenceOrExactPayloadAcrossConnections() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let first = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let second = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let original = try fixture.record(.draft, key: "editor", payload: "", activity: 1)
+        let submitted = try fixture.record(.draft, key: "editor", payload: "submitted", activity: 2)
+        let newer = try fixture.record(.draft, key: "editor", payload: "newer", activity: 3)
+        let inserted = try await first.saveDurableRecord(original, matchingPayload: nil)
+        XCTAssertTrue(inserted)
+        let collision = try await second.saveDurableRecord(submitted, matchingPayload: nil)
+        XCTAssertFalse(collision)
+        let updated = try await first.saveDurableRecord(submitted, matchingPayload: Data())
+        XCTAssertTrue(updated)
+        try await second.saveDurableRecord(newer)
+        let stale = try await first.saveDurableRecord(submitted, matchingPayload: submitted.payload)
+        XCTAssertFalse(stale)
+        let retained = try await second.durableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository, key: original.key)
+        XCTAssertEqual(retained, newer)
+        let missing = try fixture.record(.draft, key: "missing", payload: "unproven", activity: 4)
+        let cannotRecreate = try await first.saveDurableRecord(missing, matchingPayload: newer.payload)
+        XCTAssertFalse(cannotRecreate)
+        await first.close()
+        await second.close()
+        await XCTAssertThrowsErrorAsync {
+            _ = try await first.saveDurableRecord(original, matchingPayload: nil)
+        }
+    }
+
+    func testConcurrentConditionalSavesAdmitOnlyOneWriter() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let first = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let second = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let original = try fixture.record(.draft, key: "race", payload: "original", activity: 1)
+        let left = try fixture.record(.draft, key: "race", payload: "left", activity: 2)
+        let right = try fixture.record(.draft, key: "race", payload: "right", activity: 2)
+        try await first.saveDurableRecord(original)
+        async let a = first.saveDurableRecord(left, matchingPayload: original.payload)
+        async let b = second.saveDurableRecord(right, matchingPayload: original.payload)
+        let outcomes = try await[a, b]
+        XCTAssertEqual(outcomes.filter { $0 }.count, 1)
+        let retained = try await first.durableRecord(kind: .draft, accountID: fixture.firstAccount, repository: fixture.repository, key: original.key)
+        XCTAssertEqual(retained, outcomes[0] ? left : right)
+        let other = try ForgeSQLiteDurableRecord(kind: .draft, accountID: fixture.secondAccount, repository: fixture.repository, key: original.key, payload: Data(), lastActivityAt: .distantPast)
+        let otherInserted = try await second.saveDurableRecord(other, matchingPayload: nil)
+        XCTAssertTrue(otherInserted)
+        let otherUpdated = try await second.saveDurableRecord(other, matchingPayload: Data())
+        XCTAssertTrue(otherUpdated, "Conditional replacement also supports records without an expiry")
+        await first.close()
+        await second.close()
+    }
+
     func testConditionalDeletionRetainsOtherPartitionsAndAcceptsEmptyPayload() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

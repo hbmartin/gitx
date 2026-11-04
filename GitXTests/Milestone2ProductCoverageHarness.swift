@@ -2926,9 +2926,20 @@
         }
 
         func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
+            _ = try await saveSnapshot(identity: identity, content: content, at: date)
+        }
+
+        func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws -> ForgeDraft? {
             values[identity] = try ForgeDraft(identity: identity, content: content, createdAt: values[identity]?.createdAt ?? date, lastActivityAt: max(date, values[identity]?.lastActivityAt ?? date))
+            let saved = values[identity]
             savedContents[identity] = content
             saveCount += 1
+            return saved
+        }
+
+        func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date, matching snapshot: ForgeDraft?) async throws -> ForgeDraft? {
+            guard snapshot?.identity == identity || snapshot == nil, values[identity] == snapshot else { return nil }
+            return try await saveSnapshot(identity: identity, content: content, at: date)
         }
 
         func delete(identity: ForgeDraftIdentity) async throws {

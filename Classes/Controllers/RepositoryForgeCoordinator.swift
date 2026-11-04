@@ -1,6 +1,27 @@
 import ForgeKit
 import Foundation
 
+/// A passive metadata refresh can reuse even an unavailable result, provided
+/// its persisted binding, executable and verifiable config inputs still match.
+nonisolated struct RepositoryForgeQueryRevision: Equatable {
+    let binding: ForgeRepositoryBinding?
+    let configuration: String
+    let dependencies: [String: String]
+    let selection: GitBinarySelection?
+}
+
+nonisolated struct RepositoryForgeQueryRefreshPolicy {
+    private(set) var prepared: RepositoryForgeQueryRevision?
+
+    func needsPreparation(_ revision: RepositoryForgeQueryRevision?) -> Bool {
+        revision == nil || revision != prepared
+    }
+
+    mutating func didPrepare(_ revision: RepositoryForgeQueryRevision?) {
+        prepared = revision
+    }
+}
+
 // SwiftLint analyze misclassifies this import; Logger requires it at compile time.
 // swiftlint:disable:next unused_import
 import OSLog
@@ -202,6 +223,39 @@ final class RepositoryForgeCoordinator: NSObject {
 
     @objc func resolveBinding() -> RepositoryForgeBindingResolution {
         resolveBinding(persistAutomaticBinding: true)
+    }
+
+    private var queryRefreshPolicy = RepositoryForgeQueryRefreshPolicy()
+    private var queryResolution: RepositoryForgeBindingResolution?
+
+    func prepareQueryBinding(selection: GitBinarySelection?) -> RepositoryForgeBindingResolution {
+        let before = queryRevision(selection: selection)
+        if !queryRefreshPolicy.needsPreparation(before), let queryResolution {
+            return queryResolution
+        }
+        let resolution = resolveBinding()
+        let after = queryRevision(selection: selection)
+        let verifiable = before != nil && before == after && resolution.binding == after?.binding
+        queryResolution = verifiable ? resolution : nil
+        queryRefreshPolicy.didPrepare(verifiable ? after : nil)
+        logger.debug("Prepared passive Forge metadata; verifiable=\(verifiable, privacy: .public)")
+        return resolution
+    }
+
+    private func queryRevision(selection: GitBinarySelection?) -> RepositoryForgeQueryRevision? {
+        let binding = settings.forgeRepositoryBinding
+        let configuration = remoteConfigurationRevision()
+        let cached = remoteDescriptorCache.dependencyRevisions(for: remoteCacheKey, revision: configuration, dependencyRevision: remoteDependencyRevision)
+        guard binding != nil || cached != nil else { return nil }
+        // A stored binding needs no remote discovery, but global config changes
+        // must still invalidate the passive result without launching Git here.
+        let defaults = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gitconfig").path,
+                        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/git/config").path, "/etc/gitconfig"]
+        var dependencies = cached ?? [:]
+        for path in defaults {
+            dependencies[path] = remoteDependencyRevision(path)
+        }
+        return RepositoryForgeQueryRevision(binding: binding, configuration: configuration, dependencies: dependencies, selection: selection)
     }
 
     /// Provider-neutral remote identities used by the repository source list.

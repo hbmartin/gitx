@@ -521,6 +521,41 @@ public actor ForgeSQLiteStore {
         Self.logger.debug("Stored durable Forge record of kind \(record.kind.rawValue)")
     }
 
+    /// A nil expectation requires absence. A payload expectation requires an
+    /// exact match, including when another SQLite connection writes concurrently.
+    public func saveDurableRecord(_ record: ForgeSQLiteDurableRecord, matchingPayload expected: Data?) throws -> Bool {
+        let connection = try activeConnection()
+        let account = try Self.encodedKey(record.accountID)
+        let repository = try Self.encodedKey(record.repository)
+        let changed = try connection.changeCount {
+            if let expected {
+                try connection.execute(
+                    """
+                    UPDATE forge_durable_records SET payload = ?, last_activity_at = ?, expires_at = ?
+                    WHERE kind = ? AND account_key = ? AND repository_key = ? AND record_key = ? AND payload = ?
+                    """,
+                    bindings: [.blob(record.payload), .double(record.lastActivityAt.timeIntervalSince1970),
+                               record.expiresAt.map { .double($0.timeIntervalSince1970) } ?? .null,
+                               .integer(Int64(record.kind.rawValue)), .blob(account), .blob(repository), .blob(record.key), .blob(expected)]
+                )
+            } else {
+                try connection.execute(
+                    """
+                    INSERT INTO forge_durable_records
+                        (kind, account_key, repository_key, record_key, payload, last_activity_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(kind, account_key, repository_key, record_key) DO NOTHING
+                    """,
+                    bindings: [.integer(Int64(record.kind.rawValue)), .blob(account), .blob(repository), .blob(record.key),
+                               .blob(record.payload), .double(record.lastActivityAt.timeIntervalSince1970),
+                               record.expiresAt.map { .double($0.timeIntervalSince1970) } ?? .null]
+                )
+            }
+        }
+        Self.logger.debug("Completed conditional durable Forge write")
+        return changed > 0
+    }
+
     func updateAttention<Result: Sendable>(
         _ key: ForgeWatchedRepositoryKey,
         operation: @Sendable (ForgeSQLiteAttentionTransactionState) throws -> ForgeSQLiteAttentionTransactionUpdate<Result>

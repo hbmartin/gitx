@@ -3928,6 +3928,14 @@ final class WorktreeRepairSafetyTests: XCTestCase {
 
     #if DEBUG
         func testPostAddInventoryFailureKeepsTheMutationDiagnosticIdentity() async throws {
+            try await exercisePostAddInventoryFailure(closeDuringReconciliation: false)
+        }
+
+        func testClosingDuringPostAddInventoryKeepsTheDrainingMutationIdentity() async throws {
+            try await exercisePostAddInventoryFailure(closeDuringReconciliation: true)
+        }
+
+        private func exercisePostAddInventoryFailure(closeDuringReconciliation: Bool) async throws {
             let fixture = try RepairFixture(label: "reconcile-diagnostic")
             var drained = false
             defer {
@@ -3968,6 +3976,10 @@ final class WorktreeRepairSafetyTests: XCTestCase {
             }
             await fulfillment(of: [inventoryStarted], timeout: 10)
             XCTAssertTrue(FileManager.default.fileExists(atPath: path.appendingPathComponent(".git").path))
+            if closeDuringReconciliation {
+                service.cancel()
+                XCTAssertEqual(recorded.events.filter { $0.contains(".draining phase=reconciling") }, ["worktree.add.draining phase=reconciling count=1 category=none"])
+            }
             failedInventory.finish(nil, error: NSError(domain: "fixture.inventory", code: 5))
             await fulfillment(of: [completed], timeout: 10)
             XCTAssertEqual(recorded.events.filter { $0.contains(".failed phase=reconciling") }, ["worktree.add.failed phase=reconciling count=1 category=task"])

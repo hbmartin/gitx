@@ -517,6 +517,7 @@ final class RepositoryPullRequestUIController {
                     snapshot: snapshot,
                     destination: destination,
                     identity: identity,
+                    observedDraft: draft,
                     content: content
                 )
             } catch is CancellationError {
@@ -532,6 +533,7 @@ final class RepositoryPullRequestUIController {
         snapshot: ForgePullRequestEditableSnapshot,
         destination: ForgeDestination,
         identity: ForgeDraftIdentity,
+        observedDraft: ForgeDraft?,
         content: ForgeDraftContent
     ) {
         guard let window = windowController?.window else { return }
@@ -539,26 +541,27 @@ final class RepositoryPullRequestUIController {
             mode: .edit(accountID: accountID, snapshot: snapshot, destination: destination),
             restoredContent: content
         )
+        let editor = RepositoryEditDraftSession(identity: identity, observed: observedDraft)
         sheet.onSubmit = { [weak self] submission in
             guard case let .edit(accountID, edit, destination) = submission else { return }
             self?.submitEdit(
                 accountID: accountID,
                 edit: edit,
                 destination: destination,
-                draftIdentity: identity
+                editor: editor
             )
         }
         sheet.onDraftChanged = { [weak self] content in
-            self?.saveDraft(identity: identity, content: content)
+            self?.saveEditDraft(editor: editor, content: content)
         }
         sheet.onCancel = { [weak self] content in
-            self?.saveDraft(identity: identity, content: content)
+            self?.saveEditDraft(editor: editor, content: content)
         }
         sheet.onDiscard = { [weak self] in
             self?.discardDraft(identity: identity)
         }
         sheetController = sheet
-        saveDraft(identity: identity, content: content)
+        saveEditDraft(editor: editor, content: content)
         sheet.beginSheet(for: window)
         logger.notice("Presented conflict-aware Pull Request edit sheet")
     }
@@ -1038,6 +1041,17 @@ final class RepositoryPullRequestUIController {
         }
     }
 
+    private func saveEditDraft(editor: RepositoryEditDraftSession, content: ForgeDraftContent) {
+        let drafts = drafts
+        let date = now()
+        let previous = draftSaveTask
+        draftSaveTask = Task {
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await editor.autosave(content, drafts: drafts, at: date)
+        }
+    }
+
     private func submitCreate(
         accountID: ForgeAccountID,
         form: ForgePullRequestCreationForm,
@@ -1112,19 +1126,21 @@ final class RepositoryPullRequestUIController {
         accountID: ForgeAccountID,
         edit: ForgePullRequestEdit,
         destination: ForgeDestination,
-        draftIdentity: ForgeDraftIdentity
+        editor: RepositoryEditDraftSession
     ) {
         guard ownerIsCurrent() else { return }
         mutationTask?.cancel()
         let identity = authority.beginMutation()
-        saveDraft(identity: draftIdentity, content: ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown))
         let pendingDraftSave = draftSaveTask
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
+        let date = now()
+        let content = ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown)
         mutationTask = Task { [weak self] in
             do {
                 await pendingDraftSave?.value
                 guard !Task.isCancelled else { return }
-                let outcome = try await completion.edit(accountID: accountID, edit: edit, destination: destination, identity: draftIdentity)
+                let submittedDraft = await editor.saveSubmission(content, drafts: completion.drafts, at: date)
+                let outcome = try await completion.edit(accountID: accountID, edit: edit, destination: destination, identity: editor.identity, submittedDraft: submittedDraft)
                 guard let self, self.mayPresentMutation(identity) else { return }
                 _ = self.destinationOpening(outcome.destination)
                 self.logger.notice("Saved conflict-aware Pull Request title/body edit")
@@ -1145,7 +1161,7 @@ final class RepositoryPullRequestUIController {
                             accountID: accountID,
                             edit: edit,
                             destination: destination,
-                            draftIdentity: draftIdentity
+                            editor: editor
                         )
                     }
                 )

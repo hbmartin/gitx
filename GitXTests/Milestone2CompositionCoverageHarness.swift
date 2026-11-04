@@ -440,9 +440,11 @@
             let draftContent = ForgeDraftContent(title: "Explicit discard", body: "Remove this local draft")
             try await drafts.save(identity: draftIdentity, content: draftContent, at: fixture.now)
             let savedDraft = try await drafts.load(identity: draftIdentity)
+            let exact = try await drafts.saveSnapshot(identity: draftIdentity, content: draftContent, at: fixture.now)
+            let conditional = try await drafts.saveSnapshot(identity: draftIdentity, content: draftContent, at: fixture.now, matching: exact)
             try await drafts.delete(identity: draftIdentity)
             let removedDraft = try await drafts.load(identity: draftIdentity)
-            let explicitDiscard = savedDraft?.content == draftContent && removedDraft == nil
+            let explicitDiscard = savedDraft?.content == draftContent && exact == savedDraft && conditional == savedDraft && removedDraft == nil
             let services = environment.services
             let provider = ForgeGitHubPullRequestDependencyProvider(
                 loader: environment.loader,
