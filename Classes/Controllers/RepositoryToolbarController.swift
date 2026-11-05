@@ -268,6 +268,17 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private var isForgeAccountRebindingEnabled = true
     private var forgeAccountRebindingCooldownDeadline: Date?
     private var forgeAccountSelectionTask: Task<Void, Never>?
+    private var isForgeAccountSwitching = false
+    private var pendingForgeAccountNotification: Notification?
+    private struct AccountRenderRevision: Equatable {
+        let presentation: RepositoryForgeAccountControlPresentation
+        let choices: [RepositoryForgeAccountChoice]
+        let account: ForgeAccountID?
+        let enabled: Bool
+        let cooldown: Date?
+    }
+
+    private var renderedAccountRevision: AccountRenderRevision?
     private var insertedForgeAccountForPersistentFailure = false
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryToolbar")
 
@@ -308,6 +319,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
 
     func uninstall() {
         presentationOwnerIsCurrent = { false }
+        pendingForgeAccountNotification = nil
         detachToolbar()
     }
 
@@ -678,18 +690,29 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     func applyForgeMetadata(providerName: String?, binding: ForgeRepositoryBinding?, ownerIsCurrent: @escaping () -> Bool) {
         guard ownerIsCurrent() else { return }
         presentationOwnerIsCurrent = ownerIsCurrent
-        if forgeBinding != binding {
+        let transition = RepositoryForgeAccountMetadataPolicy.transition(from: forgeBinding, to: binding)
+        if transition != .preserve {
             forgeAccountSelectionTask?.cancel()
             forgeAccountLogin = nil
             forgeAccountID = nil
-            forgeAccountChoices = []
+            if transition == .replace {
+                forgeAccountChoices = []
+            }
             isPublicForgeAccess = false
             isForgeAccountRebindingEnabled = true
             forgeAccountRebindingCooldownDeadline = nil
+            isForgeAccountSwitching = transition == .switching
         }
         forgeBinding = binding
         preparedForgeProviderName = providerName
         forgeProviderName = providerName ?? "Forge"
+        if let pending = pendingForgeAccountNotification {
+            pendingForgeAccountNotification = nil
+            if accountNotificationMatches(pending) {
+                applyAccountNotification(pending)
+                return
+            }
+        }
         applyForgeAccountPresentation()
     }
 
@@ -698,12 +721,25 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
               windowController?.repository === repository,
               let sourceRepository = notification.object as? PBGitRepository,
               sourceRepository === repository else { return }
-        if let expected = forgeBinding,
-           let account = notification.userInfo?[RepositoryForgeAccountNotificationKey.accountID] as? ForgeAccountID,
-           account.forge != expected.primaryRepository.forge || (expected.preferredAccount != nil && account != expected.preferredAccount)
-        {
+        guard accountNotificationMatches(notification) else {
+            pendingForgeAccountNotification = notification
+            windowController?.requestForgeMetadataReconciliation()
             return
         }
+        applyAccountNotification(notification)
+    }
+
+    private func accountNotificationMatches(_ notification: Notification) -> Bool {
+        RepositoryForgeAccountMetadataPolicy.accepts(
+            binding: forgeBinding,
+            sourceBinding: notification.userInfo?[RepositoryForgeAccountNotificationKey.binding] as? ForgeRepositoryBinding,
+            account: notification.userInfo?[RepositoryForgeAccountNotificationKey.accountID] as? ForgeAccountID,
+            providerName: notification.userInfo?[RepositoryForgeAccountNotificationKey.providerName] as? String
+        )
+    }
+
+    private func applyAccountNotification(_ notification: Notification) {
+        isForgeAccountSwitching = false
         forgeProviderName = notification.userInfo?[RepositoryForgeAccountNotificationKey.providerName] as? String ?? preparedForgeProviderName ?? "Forge"
         forgeAccountLogin = notification.userInfo?[RepositoryForgeAccountNotificationKey.login] as? String
         forgeAccountID = notification.userInfo?[RepositoryForgeAccountNotificationKey.accountID] as? ForgeAccountID
@@ -730,7 +766,8 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             login: forgeAccountLogin,
             isPublic: isPublicForgeAccess,
             persistentFailureText: forgePersistentFailureText,
-            isStatusBarVisible: isRepositoryStatusBarVisible
+            isStatusBarVisible: isRepositoryStatusBarVisible,
+            isSwitching: isForgeAccountSwitching
         )
     }
 
@@ -789,6 +826,11 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
 
     private func applyForgeAccountPresentation() {
         guard let forgeAccountViews else { return }
+        let revision = AccountRenderRevision(presentation: forgeAccountPresentation, choices: forgeAccountChoices,
+                                             account: forgeAccountID, enabled: isForgeAccountRebindingEnabled,
+                                             cooldown: forgeAccountRebindingCooldownDeadline)
+        guard revision != renderedAccountRevision else { return }
+        renderedAccountRevision = revision
         applyForgeAccountPresentation(to: forgeAccountViews)
     }
 

@@ -24,6 +24,7 @@ enum RepositoryAttentionNotificationKey {
 }
 
 enum RepositoryForgeAccountNotificationKey {
+    static let binding = "binding"
     static let providerName = "providerName"
     static let login = "login"
     static let isPublic = "isPublic"

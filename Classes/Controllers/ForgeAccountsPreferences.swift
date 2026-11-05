@@ -153,6 +153,16 @@ enum GitHubAuthorizationRecoveryPresenter {
         for windowController: PBGitWindowController?,
         retry: @escaping @MainActor () -> Void
     ) -> Bool {
+        present(error: error, for: windowController, retry: retry, onDismissed: {})
+    }
+
+    @discardableResult
+    static func present(
+        error: Error,
+        for windowController: PBGitWindowController?,
+        retry: @escaping @MainActor () -> Void,
+        onDismissed: @escaping @MainActor () -> Void
+    ) -> Bool {
         guard let presentation = GitHubAuthorizationRecoveryPresentation.make(error: error),
               let window = windowController?.window
         else { return false }
@@ -164,7 +174,7 @@ enum GitHubAuthorizationRecoveryPresenter {
         alert.buttons.first?.setAccessibilityIdentifier("GitX.GitHubAuthorization.OpenBrowser")
         alert.buttons.last?.setAccessibilityIdentifier("GitX.GitHubAuthorization.NotNow")
         alert.beginSheetModal(for: window) { response in
-            guard response == .alertFirstButtonReturn else { return }
+            guard response == .alertFirstButtonReturn else { onDismissed(); return }
             _ = NSWorkspace.shared.open(presentation.url)
             DispatchQueue.main.async {
                 let retryAlert = NSAlert()
@@ -175,7 +185,7 @@ enum GitHubAuthorizationRecoveryPresenter {
                 retryAlert.buttons.first?.setAccessibilityIdentifier("GitX.GitHubAuthorization.Retry")
                 retryAlert.buttons.last?.setAccessibilityIdentifier("GitX.GitHubAuthorization.RetryNotNow")
                 retryAlert.beginSheetModal(for: window) { retryResponse in
-                    guard retryResponse == .alertFirstButtonReturn else { return }
+                    guard retryResponse == .alertFirstButtonReturn else { onDismissed(); return }
                     retry()
                 }
             }

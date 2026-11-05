@@ -14,6 +14,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
             snapshot: ForgePullRequestEditableSnapshot,
             destination: ForgeDestination
         )
+        case recovery(destination: ForgeDestination)
     }
 
     enum Submission {
@@ -25,6 +26,8 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     var onCancel: ((ForgeDraftContent) -> Void)?
     var onDiscard: (() -> Void)?
     var onDraftChanged: ((ForgeDraftContent) -> Void)?
+    var onSaveRecovery: ((ForgeDraftContent) -> Void)?
+    var onCopyRecovery: ((ForgeDraftContent) -> Void)?
 
     private let mode: Mode
     private let titleField = NSTextField()
@@ -40,9 +43,20 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     private var selectedForm: ForgePullRequestCreationForm?
     private var previewView: ForgeMarkdownNativeView?
     private var hasFinished = false
+    private var recoverySavedContent: ForgeDraftContent?
+    private let recoveryNotice = NSTextField(wrappingLabelWithString: "The remote edit did not complete. This recovered text has not been saved as a draft.")
+    private var isRecovery: Bool {
+        if case .recovery = mode {
+            return true
+        }
+        return false
+    }
 
-    init(mode: Mode, restoredContent: ForgeDraftContent? = nil) {
+    init(mode: Mode, restoredContent: ForgeDraftContent? = nil, recoveryMessage: String? = nil) {
         self.mode = mode
+        if let recoveryMessage {
+            recoveryNotice.stringValue = recoveryMessage
+        }
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 540),
             styleMask: [.titled, .closable],
@@ -52,6 +66,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         panel.title = switch mode {
         case .create: "Create Pull Request"
         case .edit: "Edit Pull Request"
+        case .recovery: "Recover Pull Request Edit"
         }
         super.init(window: panel)
         panel.delegate = self
@@ -78,6 +93,11 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         identityStack.alignment = .leading
         identityStack.spacing = 3
         identityStack.addArrangedSubview(identityLabel())
+        if isRecovery {
+            recoveryNotice.setAccessibilityIdentifier("GitX.PullRequest.Recovery.Notice")
+            recoveryNotice.textColor = .secondaryLabelColor
+            identityStack.addArrangedSubview(recoveryNotice)
+        }
 
         templatePopup.target = self
         templatePopup.action = #selector(templateChanged(_:))
@@ -135,6 +155,17 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         submitButton.action = #selector(submit(_:))
         submitButton.setAccessibilityIdentifier("GitX.PullRequest.Submit")
         submitButton.setAccessibilityLabel(isCreate ? "Create Pull Request" : "Save Pull Request")
+        if isRecovery {
+            discardButton.title = "Copy"
+            discardButton.action = #selector(copyRecovery(_:))
+            discardButton.setAccessibilityIdentifier("GitX.PullRequest.Recovery.Copy")
+            discardButton.setAccessibilityLabel("Copy recovered title and body")
+            submitButton.title = "Save Draft…"
+            submitButton.setAccessibilityIdentifier("GitX.PullRequest.Recovery.SaveDraft")
+            submitButton.setAccessibilityLabel("Save recovered text as a draft")
+            cancelButton.title = "Close"
+            cancelButton.setAccessibilityIdentifier("GitX.PullRequest.Recovery.Close")
+        }
 
         let topControls = NSStackView(views: [writePreviewControl, NSView(), draftButton])
         topControls.orientation = .horizontal
@@ -185,6 +216,8 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
             "\(preparation.head.repository.owner):\(preparation.head.name.value) → \(preparation.repository.owner):\(preparation.base.name.value)"
         case let .edit(_, snapshot, _):
             "Pull Request #\(snapshot.number.rawValue) • server version from \(Self.timestamp(snapshot.updatedAt))"
+        case .recovery:
+            "Recovered submitted text • stored drafts remain unchanged"
         }
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
@@ -215,6 +248,10 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
             titleField.stringValue = restoredContent?.title ?? snapshot.title
             bodyTextView.string = restoredContent?.body ?? snapshot.bodyMarkdown
             submitButton.title = "Save"
+        case .recovery:
+            templatePopup.isHidden = true
+            titleField.stringValue = restoredContent?.title ?? ""
+            bodyTextView.string = restoredContent?.body ?? ""
         }
     }
 
@@ -234,7 +271,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     }
 
     private func updateSubmitEligibility() {
-        submitButton.isEnabled = titleField.stringValue.unicodeScalars.contains {
+        submitButton.isEnabled = isRecovery || titleField.stringValue.unicodeScalars.contains {
             !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.controlCharacters.contains($0)
         }
     }
@@ -260,7 +297,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         switch mode {
         case let .create(preparation, _):
             revision = .branch(preparation.base.name)
-        case .edit:
+        case .edit, .recovery:
             guard let head = try? ForgeRefName("HEAD") else { return }
             revision = .opaque(head)
         }
@@ -302,6 +339,10 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     }
 
     @objc private func submit(_: Any?) {
+        if isRecovery {
+            onSaveRecovery?(currentDraftContent())
+            return
+        }
         do {
             let submission: Submission = switch mode {
             case let .create(preparation, _):
@@ -316,6 +357,8 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
                     ),
                     destination: destination
                 )
+            case .recovery:
+                throw RepositoryPullRequestServiceError.draftUnavailable
             }
             guard !hasFinished else { return }
             hasFinished = true
@@ -341,11 +384,53 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
 
     private func finishCancellation() {
         guard !hasFinished else { return }
+        if isRecovery, recoverySavedContent != currentDraftContent(), let window {
+            let alert = NSAlert()
+            alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.CloseConfirmation")
+            alert.messageText = "Close Without Saving?"
+            alert.informativeText = "This recovered text has not been saved as a draft. Copy or save it before closing if you want to keep it."
+            alert.addButton(withTitle: "Keep Editing")
+            alert.addButton(withTitle: "Close Without Saving")
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard response == .alertSecondButtonReturn else { return }
+                self?.finishClosingRecovery()
+            }
+            return
+        }
+        finishClosingRecovery()
+    }
+
+    private func finishClosingRecovery() {
+        guard !hasFinished else { return }
         hasFinished = true
         let content = currentDraftContent()
         closeSheet()
         onCancel?(content)
         logger.info("Cancelled Pull Request editor with draft preserved")
+    }
+
+    @objc private func copyRecovery(_: Any?) {
+        let content = currentDraftContent()
+        if let onCopyRecovery {
+            onCopyRecovery(content)
+        } else {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString((content.title ?? "") + "\n\n" + content.body, forType: .string)
+        }
+    }
+
+    func markRecoverySaved(_ content: ForgeDraftContent) {
+        recoverySavedContent = content
+        recoveryNotice.stringValue = "Saved as a draft. Further edits remain unsaved until you choose Save Draft again."
+    }
+
+    func invalidatePresentation() {
+        hasFinished = true
+        if let window, let confirmation = window.attachedSheet {
+            window.endSheet(confirmation, returnCode: .abort)
+            confirmation.orderOut(nil)
+        }
+        closeSheet()
     }
 
     private func closeSheet() {
@@ -363,6 +448,8 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         case let .create(preparation, _):
             .repository(preparation.repository)
         case let .edit(_, _, destination):
+            destination
+        case let .recovery(destination):
             destination
         }
     }

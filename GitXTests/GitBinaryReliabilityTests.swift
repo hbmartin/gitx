@@ -5,6 +5,38 @@ import Synchronization
 import XCTest
 
 final class GitBinaryReliabilityTests: XCTestCase {
+    func testAvailabilityErrorSnapshotDoesNotStartDiscoveryAndPreservesASettledFailure() {
+        let fixture = Fixture()
+        let discovery = fixture.discovery()
+        XCTAssertEqual(discovery.currentAvailabilityError?.domain, "PBGitBinaryErrorDomain")
+        XCTAssertEqual(discovery.currentAvailabilityError?.code, 3)
+        XCTAssertTrue(fixture.state.withLock { $0.calls.isEmpty })
+        let finished = expectation(description: "Exhaustion publishes its original failure")
+        discovery.whenAvailable { path, error in
+            XCTAssertNil(path)
+            XCTAssertEqual(error?.code, 1)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 3)
+        XCTAssertEqual(discovery.currentAvailabilityError?.code, 1)
+        let calls = fixture.state.withLock { $0.calls.count }
+        _ = discovery.currentAvailabilityError
+        XCTAssertEqual(fixture.state.withLock { $0.calls.count }, calls)
+    }
+
+    func testAvailabilityErrorSnapshotIsEmptyWhileAValidatedSelectionExists() {
+        let fixture = Fixture(preference: "/valid/git", outputs: ["/valid/git": "git version 2.50.1"])
+        let discovery = fixture.discovery()
+        let ready = expectation(description: "The validated executable remains usable")
+        discovery.whenAvailable { path, error in
+            XCTAssertEqual(path, "/valid/git")
+            XCTAssertNil(error)
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 3)
+        XCTAssertNil(discovery.currentAvailabilityError)
+    }
+
     private final nonisolated class Clock: Sendable {
         struct Job: Sendable { let deadline: TimeInterval; let action: @Sendable () -> Void }
         struct State { var now: TimeInterval = 0; var jobs: [Job] = [] }
@@ -1353,6 +1385,39 @@ final class RepositoryGitLoaderLifecycleTests: XCTestCase {
 }
 
 final class RepositoryWindowOwnershipTests: XCTestCase {
+    @MainActor
+    func testDefaultPullIntentKeepsExplicitTargetsAndRejectsNonBranchesWithoutReadingHead() {
+        let branch = PBGitRef(string: "refs/heads/explicit")
+        let head = PBGitRef(string: "refs/heads/checked-out")
+        var headReads = 0
+        let capture = { headReads += 1; return head }
+        XCTAssertEqual(RepositoryDefaultPullIntent(representedObject: branch).resolve(checkedOutBranch: capture)?.ref, "refs/heads/explicit")
+        XCTAssertEqual(headReads, 0)
+        XCTAssertEqual(RepositoryDefaultPullIntent(representedObject: nil).resolve(checkedOutBranch: capture)?.ref, "refs/heads/checked-out")
+        XCTAssertEqual(headReads, 1)
+        let invalidValues: [Any] = ["origin", PBGitRef(string: "refs/remotes/origin/main"), PBGitRef(string: "refs/tags/release")]
+        for invalid in invalidValues {
+            let intent = RepositoryDefaultPullIntent(representedObject: invalid)
+            XCTAssertFalse(intent.isValid)
+            XCTAssertNil(intent.resolve(checkedOutBranch: capture))
+        }
+        XCTAssertEqual(headReads, 1)
+        XCTAssertNil(RepositoryDefaultPullIntent(representedObject: nil).resolve(checkedOutBranch: { nil }))
+        XCTAssertNil(RepositoryDefaultPullIntent(representedObject: nil).resolve(checkedOutBranch: { PBGitRef(string: "HEAD") }))
+    }
+
+    func testMetadataDeliveryDoesNotRequireActivationOrPreferenceIntent() {
+        let empty = GitX.RepositoryWindowRefreshIntents()
+        XCTAssertTrue(GitX.RepositoryWindowRefreshDelivery(metadataIsCurrent: false, intent: empty).preparesMetadata)
+        XCTAssertFalse(GitX.RepositoryWindowRefreshDelivery(metadataIsCurrent: true, intent: empty).preparesMetadata)
+        var activation = empty
+        activation.record(activated: true)
+        XCTAssertTrue(GitX.RepositoryWindowRefreshDelivery(metadataIsCurrent: true, intent: activation).preparesMetadata)
+        var preferences = empty
+        preferences.record(preferences: true)
+        XCTAssertTrue(GitX.RepositoryWindowRefreshDelivery(metadataIsCurrent: true, intent: preferences).preparesMetadata)
+    }
+
     func testEveryOwnerChangeRevokesPreviousResultsAndCloseIsTerminal() {
         let repository = NSObject()
         let otherRepository = NSObject()

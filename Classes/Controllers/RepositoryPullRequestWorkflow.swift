@@ -636,6 +636,12 @@ nonisolated protocol RepositoryPullRequestDraftPersisting: Sendable {
     func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool
 }
 
+extension RepositoryPullRequestDraftPersisting {
+    func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
+        _ = try await saveSnapshot(identity: identity, content: content, at: date)
+    }
+}
+
 nonisolated struct NullRepositoryPullRequestDraftStore: RepositoryPullRequestDraftPersisting {
     func load(identity _: ForgeDraftIdentity) async throws -> ForgeDraft? {
         nil
@@ -676,10 +682,6 @@ nonisolated struct ForgeSQLitePullRequestDraftStore: RepositoryPullRequestDraftP
             throw RepositoryPullRequestServiceError.draftUnavailable
         }
         return draft
-    }
-
-    func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
-        _ = try await saveSnapshot(identity: identity, content: content, at: date)
     }
 
     func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws -> ForgeDraft? {
@@ -745,47 +747,64 @@ nonisolated struct ForgeSQLitePullRequestDraftStore: RepositoryPullRequestDraftP
 
 /// Each editor remembers only evidence it loaded or wrote itself. Ordinary
 /// autosaves retain their existing last-writer-wins policy; final saves do not.
+nonisolated enum RepositoryDraftSubmissionSave: Sendable {
+    case saved(ForgeDraft)
+    case conflict
+    case unavailable
+
+    var snapshot: ForgeDraft? {
+        guard case let .saved(snapshot) = self else { return nil }
+        return snapshot
+    }
+}
+
 @MainActor
 final class RepositoryEditDraftSession {
-    private enum Observation { case known(ForgeDraft?), unavailable }
-    private var observation: Observation
+    // Nil is verified absence from the editor's load, not unavailable evidence.
+    private var lastVerifiedSnapshot: ForgeDraft?
+    private(set) var lastSaveUnavailable = false
     let identity: ForgeDraftIdentity
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "EditDraftSession")
 
     init(identity: ForgeDraftIdentity, observed: ForgeDraft?) {
         self.identity = identity
-        observation = .known(observed)
+        lastVerifiedSnapshot = observed
     }
 
     func autosave(_ content: ForgeDraftContent, drafts: any RepositoryPullRequestDraftPersisting, at date: Date) async {
         do {
             if let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date) {
-                observation = .known(saved)
+                lastVerifiedSnapshot = saved
+                lastSaveUnavailable = false
             } else {
-                observation = .unavailable
+                lastSaveUnavailable = true
             }
         } catch {
-            observation = .unavailable
-            Self.logger.error("Edit autosave unavailable; final submission will preserve local evidence")
+            lastSaveUnavailable = true
+            Self.logger.error("Edit autosave unavailable; retaining the last verified conditional-save expectation")
         }
     }
 
     func saveSubmission(_ content: ForgeDraftContent, drafts: any RepositoryPullRequestDraftPersisting, at date: Date) async -> ForgeDraft? {
-        guard case let .known(expected) = observation else {
-            Self.logger.notice("Publishing without draft cleanup: editor snapshot unavailable")
-            return nil
-        }
+        await saveSubmissionResult(content, drafts: drafts, at: date).snapshot
+    }
+
+    func saveSubmissionResult(_ content: ForgeDraftContent, drafts: any RepositoryPullRequestDraftPersisting, at date: Date) async -> RepositoryDraftSubmissionSave {
         do {
-            let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected)
+            let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: lastVerifiedSnapshot)
             if let saved {
-                observation = .known(saved)
+                lastVerifiedSnapshot = saved
+                lastSaveUnavailable = false
+                Self.logger.notice("Saved the verified final edit snapshot; remote submission continues")
+                return .saved(saved)
             }
-            Self.logger.notice("Final edit draft matched=\(saved != nil, privacy: .public); remote submission continues")
-            return saved
+            lastSaveUnavailable = false
+            Self.logger.notice("Final edit snapshot conflicted; preserve the stored draft and continue remote submission")
+            return .conflict
         } catch {
-            observation = .unavailable
+            lastSaveUnavailable = true
             Self.logger.error("Final edit save failed; publishing without draft cleanup, code=\((error as NSError).code)")
-            return nil
+            return .unavailable
         }
     }
 }

@@ -22,12 +22,16 @@ final nonisolated class RepositoryForgeRemoteDescriptorCache: @unchecked Sendabl
     private var entries: [String: Entry] = [:]
 
     func dependencyRevisions(for key: String, revision: String, dependencyRevision: (String) -> String) -> [String: String]? {
+        validatedEntry(for: key, revision: revision, dependencyRevision: dependencyRevision)?.dependencyRevisions
+    }
+
+    private func validatedEntry(for key: String, revision: String, dependencyRevision: (String) -> String) -> Entry? {
         lock.lock()
         let entry = entries[key]
         lock.unlock()
         guard let entry, entry.revision == revision,
               entry.dependencyRevisions.allSatisfy({ dependencyRevision($0.key) == $0.value }) else { return nil }
-        return entry.dependencyRevisions
+        return entry
     }
 
     func descriptors(
@@ -35,14 +39,7 @@ final nonisolated class RepositoryForgeRemoteDescriptorCache: @unchecked Sendabl
         revision: String,
         dependencyRevision: (String) -> String
     ) -> [RepositoryForgeRemoteDescriptor]? {
-        lock.lock()
-        let entry = entries[key]
-        lock.unlock()
-        guard let entry, entry.revision == revision else { return nil }
-        guard entry.dependencyRevisions.allSatisfy({ dependencyRevision($0.key) == $0.value }) else {
-            return nil
-        }
-        return entry.descriptors
+        validatedEntry(for: key, revision: revision, dependencyRevision: dependencyRevision)?.descriptors
     }
 
     func store(

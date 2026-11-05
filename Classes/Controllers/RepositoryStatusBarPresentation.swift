@@ -308,8 +308,12 @@ struct RepositoryForgeAccountControlPresentation: Equatable {
     let isPublic: Bool
     let persistentFailureText: String?
     let isStatusBarVisible: Bool
+    var isSwitching = false
 
     var title: String {
+        if isSwitching {
+            return "Switching account…"
+        }
         if let login {
             return "@\(login)"
         }
@@ -326,6 +330,9 @@ struct RepositoryForgeAccountControlPresentation: Equatable {
     }
 
     var toolTip: String {
+        if isSwitching {
+            return "Validating the selected Forge account"
+        }
         if let login {
             return "\(providerName) account @\(login) — Manage Accounts"
         }
@@ -336,6 +343,9 @@ struct RepositoryForgeAccountControlPresentation: Equatable {
     }
 
     var accessibilityLabel: String {
+        if isSwitching {
+            return "Switching Forge account"
+        }
         if let login {
             return "\(providerName) account, \(login)"
         }
@@ -347,6 +357,40 @@ struct RepositoryForgeAccountControlPresentation: Equatable {
 
     var showsPersistentFailure: Bool {
         !isStatusBarVisible && persistentFailureText != nil
+    }
+}
+
+nonisolated enum RepositoryForgeAccountMetadataPolicy {
+    enum Transition: Equatable { case preserve, switching, replace }
+
+    static func transition(from previous: ForgeRepositoryBinding?, to next: ForgeRepositoryBinding?) -> Transition {
+        guard previous?.primaryRepository == next?.primaryRepository else { return .replace }
+        return previous?.preferredAccount == next?.preferredAccount ? .preserve : .switching
+    }
+
+    static func accepts(binding: ForgeRepositoryBinding?, sourceBinding: ForgeRepositoryBinding?,
+                        account: ForgeAccountID?, providerName: String?) -> Bool
+    {
+        if let sourceBinding, sourceBinding != binding {
+            return false
+        }
+        guard let binding else { return sourceBinding == nil }
+        if let account, account.forge != binding.primaryRepository.forge ||
+            (binding.preferredAccount != nil && account != binding.preferredAccount)
+        {
+            return false
+        }
+        if let providerName {
+            let expected = switch binding.primaryRepository.forge.kind {
+            case .github: "GitHub"
+            case .gitLab: "GitLab"
+            case .bitbucket: "Bitbucket"
+            }
+            if providerName != expected {
+                return false
+            }
+        }
+        return true
     }
 }
 
