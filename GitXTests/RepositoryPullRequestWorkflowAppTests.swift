@@ -1429,6 +1429,30 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         await second.close()
     }
 
+    func testStoredDraftSnapshotsPreserveFullPrecisionDatesForConditionalOperations() async throws {
+        let fixture = try PullRequestAppFixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("precise-draft-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(databaseURL: root.appendingPathComponent("drafts.sqlite"), recoveryDirectoryURL: root.appendingPathComponent("Recovery")))
+        let store = ForgeSQLitePullRequestDraftStore(database: database)
+        let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: fixture.preparation())
+        let content = ForgeDraftContent(title: "Precise", body: "Retain every timestamp bit")
+        let date = Date(timeIntervalSinceReferenceDate: 815_000_000.1234567)
+        let saved = try await store.saveSnapshot(identity: identity, content: content, at: date)
+        let loaded = try await store.load(identity: identity)
+        XCTAssertEqual(saved, loaded)
+        XCTAssertEqual(loaded?.createdAt, date)
+        XCTAssertEqual(loaded?.lastActivityAt, date)
+        let updated = try await store.saveSnapshot(identity: identity, content: content, at: date.addingTimeInterval(0.000001), matching: saved)
+        let submitted = try XCTUnwrap(updated)
+        let deleted = try await store.delete(identity: identity, matching: submitted)
+        XCTAssertTrue(deleted)
+        let remaining = try await store.load(identity: identity)
+        XCTAssertNil(remaining)
+        await database.close()
+    }
+
     func testUnavailableEditorEvidenceCannotAdoptMatchingStoredContentForCleanup() async throws {
         let fixture = try PullRequestAppFixture()
         let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "Same", bodyMarkdown: "Same", updatedAt: Date(timeIntervalSince1970: 100))
