@@ -21,7 +21,8 @@
     "80fb14b4",
     "6b941fd8",
     "a90755b2",
-    "2670bdd5"
+    "2670bdd5",
+    "72adba52"
   ],
   "runIds": [
     "draft-recovery-characterization",
@@ -64,8 +65,8 @@
     "finalBoundary": "Both compatibility cases passed, and each exact missing app-product function counter executed once; no production behavior change or lowered floor."
   },
   "verificationAtCommit": {
-    "status": "Final complete coverage enforcement and post-final-commit canonical full profile pending",
-    "deliveryEligible": false,
+    "completeCorrectness": "passed with eligible coverage ratchet",
+    "postCommitFullProfile": "The workflow receipt records current final status and tested source identity; this document preserves review and measurement provenance.",
     "finalEvidenceRun": "draft-recovery-final",
     "cleanupMode": "preview",
     "expectedStagedApp": "build/GitX.app"
@@ -85,8 +86,38 @@
     "status": "Base passed; current comparison pending final performance execution"
   },
   "desktop": {
-    "approvedCutoffUTC": "2026-11-05T21:26:44Z",
-    "extension": "User declined extension; foreground work must stop by 1:26 PM Pacific; preserve security settings"
+    "policy": "Foreground native/UI verification uses a confirmed unlocked, idle window; desktop security settings remain unchanged."
   },
-  "delivery": "One ready hbmartin/gitx PR against master after required passing verification; never merge. No push yet."
+  "delivery": "One ready hbmartin/gitx PR against master after required passing verification; never merge. No push yet.",
+  "coverage": {
+    "runId": "draft-recovery-complete-correctness-v4",
+    "receipt": "artifacts/verification/draft-recovery-complete-correctness-v4-correctness-90864859/receipt.json",
+    "tests": 2271,
+    "failures": 0,
+    "allHistoricalFloors": "passed",
+    "plainCheckerAfterRatchet": "passed",
+    "targetFloorBefore": 0.9375,
+    "targetFloorAfter": 0.938,
+    "raisedFileFloors": 9,
+    "windowControllerFloor": 1.0,
+    "supplementalCounts": {
+      "fixtures": {
+        "coveredLines": 9510,
+        "executableLines": 10106,
+        "lineCoverage": 0.9410251335840095
+      },
+      "other": {
+        "coveredLines": 181,
+        "executableLines": 240,
+        "lineCoverage": 0.7541666666666667
+      },
+      "production": {
+        "coveredLines": 68542,
+        "executableLines": 73051,
+        "lineCoverage": 0.938275998959631
+      }
+    },
+    "supplementalReport": "artifacts/verification/pr123-reliability/final-source-breakdown.json",
+    "calculation": "Official target/file/group floors remain unchanged in definition. Supplemental production/fixture/other counts do not affect enforcement."
+  }
 }
