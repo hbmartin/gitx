@@ -1191,10 +1191,6 @@ nonisolated struct ForgeLazySQLitePullRequestDraftStore: RepositoryPullRequestDr
         try await store().load(identity: identity)
     }
 
-    func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
-        try await store().save(identity: identity, content: content, at: date)
-    }
-
     func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws -> ForgeDraft? {
         try await store().saveSnapshot(identity: identity, content: content, at: date)
     }

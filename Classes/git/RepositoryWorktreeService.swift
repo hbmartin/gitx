@@ -295,6 +295,10 @@ private final class WorktreeOperation {
     var evidenceCancellations: [UUID: () -> Void] = [:]
     var eventArguments: [String] = []
     var mutationArguments: [String] = []
+    var diagnosticArguments: [String] {
+        mutationArguments.isEmpty ? eventArguments : mutationArguments
+    }
+
     var afterRelease: [@MainActor @Sendable () -> Void] = []
     var ownedDiscoveryGeneration: UInt64?
     private var pendingResources: Set<UUID> = []
@@ -1007,7 +1011,7 @@ final class PBRepositoryWorktreeService: NSObject {
         pending.forEach { $0.markPreparationCancelled() }
         for operation in pending {
             if operation.drainsAfterOwnerChange {
-                logEvent(operation.mutationArguments.isEmpty ? operation.eventArguments : operation.mutationArguments,
+                logEvent(operation.diagnosticArguments,
                          stage: "draining", phase: operation.phaseName, count: 1)
             }
             operation.cancelMarkedPreparation()
@@ -1728,7 +1732,7 @@ final class PBRepositoryWorktreeService: NSObject {
         let published: Bool
         if case let .failure(error) = result, operation.phase == .reconciling {
             let event = (error as NSError).userInfo["PBWorktreeLifecycleFailureEvent"] as? [String: String]
-            let arguments = operation.mutationArguments.isEmpty ? operation.eventArguments : operation.mutationArguments
+            let arguments = operation.diagnosticArguments
             logEvent(arguments, stage: "failed", phase: "reconciling", count: 1, category: failureCategory ?? event?["category"] ?? "context")
         }
         if case let .success(evidence) = result, canPublish(context) {

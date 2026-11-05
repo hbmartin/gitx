@@ -148,10 +148,7 @@ final class RepositoryPullRequestUIController {
         preparationTask?.cancel()
         cancelOrdinaryPushPreparation(clearCache: true)
         cancelDeferredPullRequestOperation()
-        if let sheet = sheetController, sheet.isWindowLoaded, let window = sheet.window {
-            window.sheetParent?.endSheet(window, returnCode: .abort)
-            window.orderOut(nil)
-        }
+        sheetController?.invalidatePresentation()
         sheetController = nil
         windowController = nil
         logger.notice("Revoked Pull Request presentation and admission; admitted mutations continue")
@@ -1135,12 +1132,18 @@ final class RepositoryPullRequestUIController {
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
         let date = now()
         let content = ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown)
+        let finalSave = Task {
+            await pendingDraftSave?.value
+            return await editor.saveSubmissionResult(content, drafts: completion.drafts, at: date)
+        }
+        // Persistence owns its place in the save chain independently of the
+        // mutation task. Later editor saves/discards must wait for this attempt.
+        draftSaveTask = Task { _ = await finalSave.value }
         mutationTask = Task { [weak self] in
+            let saveResult = await finalSave.value
             do {
-                await pendingDraftSave?.value
                 guard !Task.isCancelled else { return }
-                let submittedDraft = await editor.saveSubmission(content, drafts: completion.drafts, at: date)
-                let outcome = try await completion.edit(accountID: accountID, edit: edit, destination: destination, identity: editor.identity, submittedDraft: submittedDraft)
+                let outcome = try await completion.edit(accountID: accountID, edit: edit, destination: destination, identity: editor.identity, submittedDraft: saveResult.snapshot)
                 guard let self, self.mayPresentMutation(identity) else { return }
                 _ = self.destinationOpening(outcome.destination)
                 self.logger.notice("Saved conflict-aware Pull Request title/body edit")
@@ -1148,12 +1151,21 @@ final class RepositoryPullRequestUIController {
                 return
             } catch ForgePullRequestWorkflowError.editConflict {
                 guard let self, self.mayPresentMutation(identity) else { return }
+                if saveResult.snapshot == nil {
+                    self.presentEditRecovery(content: content, destination: destination, draftIdentity: editor.identity, operation: identity,
+                                             message: "The Pull Request changed on the server. Copy or save this text, then refresh the Pull Request and open a new edit.")
+                    return
+                }
                 self.windowController?.showMessageSheet(
                     "Pull Request Changed",
                     infoText: "Refresh the Pull Request before applying your title or body edit. Your text remains in the editor draft."
                 )
             } catch {
                 guard let self, self.mayPresentMutation(identity) else { return }
+                let recoverText: @MainActor @Sendable () -> Void = { [weak self] in
+                    guard let self, self.authority.permitsMutation(identity), saveResult.snapshot == nil else { return }
+                    self.presentEditRecovery(content: content, destination: destination, draftIdentity: editor.identity, operation: identity)
+                }
                 let offeredRecovery = self.presentAuthorizationRecovery(
                     error,
                     retry: self.authority.retry(for: identity) { [weak self] in
@@ -1163,10 +1175,15 @@ final class RepositoryPullRequestUIController {
                             destination: destination,
                             editor: editor
                         )
-                    }
+                    },
+                    onDismissed: recoverText
                 )
                 if !offeredRecovery {
-                    self.windowController?.showErrorSheet(error)
+                    if saveResult.snapshot == nil {
+                        recoverText()
+                    } else {
+                        self.windowController?.showErrorSheet(error)
+                    }
                 }
             }
         }
@@ -1176,15 +1193,83 @@ final class RepositoryPullRequestUIController {
         authority.permitsMutation(identity) && !Task.isCancelled
     }
 
+    private func presentEditRecovery(content: ForgeDraftContent, destination: ForgeDestination, draftIdentity: ForgeDraftIdentity, operation: UUID, message: String? = nil) {
+        guard authority.permitsMutation(operation), let window = windowController?.window else { return }
+        let sheet = ForgePullRequestSheetController(mode: .recovery(destination: destination), restoredContent: content, recoveryMessage: message)
+        sheet.onSaveRecovery = { [weak self, weak sheet] content in
+            guard let self, let sheet, self.authority.permitsMutation(operation) else { return }
+            self.saveRecoveredDraft(content, identity: draftIdentity, operation: operation, sheet: sheet)
+        }
+        // Recovery deliberately has no onDraftChanged, onCancel or onDiscard:
+        // merely reopening or closing cannot replace somebody else's draft.
+        sheetController = sheet
+        sheet.beginSheet(for: window)
+        logger.notice("Presented unsaved edit recovery without changing the stored draft")
+    }
+
+    private func saveRecoveredDraft(_ content: ForgeDraftContent, identity: ForgeDraftIdentity, operation: UUID, sheet: ForgePullRequestSheetController) {
+        let previous = draftSaveTask
+        let drafts = drafts
+        let authority = authority
+        let date = now()
+        draftSaveTask = Task { [weak self, weak sheet] in
+            await previous?.value
+            guard authority.permitsMutation(operation), let sheet else { return }
+            do {
+                let expected = try await drafts.load(identity: identity)
+                guard authority.permitsMutation(operation) else { return }
+                if expected != nil {
+                    guard let window = sheet.window else { return }
+                    let accepted = await withCheckedContinuation { continuation in
+                        let alert = NSAlert()
+                        alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.ReplaceConfirmation")
+                        alert.messageText = "Replace the Stored Draft?"
+                        alert.informativeText = "A draft already exists. Replace it with this recovered text? If it changes while you confirm, it will remain protected."
+                        alert.addButton(withTitle: "Replace Draft")
+                        alert.addButton(withTitle: "Cancel")
+                        alert.beginSheetModal(for: window) { response in
+                            continuation.resume(returning: response == .alertFirstButtonReturn)
+                        }
+                    }
+                    guard accepted, authority.permitsMutation(operation) else { return }
+                }
+                let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected)
+                guard authority.permitsMutation(operation) else { return }
+                if saved != nil {
+                    sheet.markRecoverySaved(content)
+                    self?.logger.notice("Saved recovered edit after conditional draft confirmation")
+                } else {
+                    self?.showRecoverySaveError("The stored draft changed. Your recovered text remains here; choose Save Draft again to review the latest draft.", sheet: sheet)
+                }
+            } catch {
+                guard authority.permitsMutation(operation) else { return }
+                self?.showRecoverySaveError("The draft could not be saved. Your recovered text remains here. Copy it or try Save Draft again.", sheet: sheet)
+                self?.logger.error("Recovered draft save failed; preserving editor text")
+            }
+        }
+    }
+
+    private func showRecoverySaveError(_ message: String, sheet: ForgePullRequestSheetController) {
+        guard ownerIsCurrent(), let window = sheet.window else { return }
+        let alert = NSAlert()
+        alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.SaveError")
+        alert.messageText = "Draft Not Saved"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window)
+    }
+
     private func presentAuthorizationRecovery(
         _ error: Error,
-        retry: @escaping @MainActor () -> Void
+        retry: @escaping @MainActor () -> Void,
+        onDismissed: @escaping @MainActor () -> Void = {}
     ) -> Bool {
         guard ownerIsCurrent() else { return false }
         return GitHubAuthorizationRecoveryPresenter.present(
             error: error,
             for: windowController,
-            retry: retry
+            retry: retry,
+            onDismissed: onDismissed
         )
     }
 }

@@ -221,20 +221,41 @@ final class RepositoryForgeCoordinator: NSObject {
         super.init()
     }
 
+    /// Reading a known preference must not repeat Git-directory discovery.
+    var storedBinding: ForgeRepositoryBinding? {
+        settings.passiveForgeBinding
+    }
+
     @objc func resolveBinding() -> RepositoryForgeBindingResolution {
         resolveBinding(persistAutomaticBinding: true)
     }
 
     private var queryRefreshPolicy = RepositoryForgeQueryRefreshPolicy()
     private var queryResolution: RepositoryForgeBindingResolution?
+    private(set) var preparedBindingIsCurrent = false
 
     func prepareQueryBinding(selection: GitBinarySelection?) -> RepositoryForgeBindingResolution {
         let before = queryRevision(selection: selection)
         if !queryRefreshPolicy.needsPreparation(before), let queryResolution {
+            preparedBindingIsCurrent = true
             return queryResolution
         }
+        if let binding = before?.binding {
+            // A stored binding needs no discovery or callback boundary. Resolve
+            // from this delivery's captured bytes instead of rereading defaults.
+            let resolution = RepositoryForgeBindingResolution(kind: .existing, binding: binding)
+            preparedBindingIsCurrent = true
+            queryResolution = resolution
+            queryRefreshPolicy.didPrepare(before)
+            logger.debug("Prepared stored Forge binding from the shared delivery snapshot")
+            return resolution
+        }
         let resolution = resolveBinding()
-        let after = queryRevision(selection: selection)
+        let after = queryRevision(selection: selection, freshBinding: true)
+        preparedBindingIsCurrent = resolution.binding == after?.binding
+        if before?.binding != after?.binding {
+            settings.invalidatePassiveForgeBinding()
+        }
         let verifiable = before != nil && before == after && resolution.binding == after?.binding
         queryResolution = verifiable ? resolution : nil
         queryRefreshPolicy.didPrepare(verifiable ? after : nil)
@@ -242,15 +263,18 @@ final class RepositoryForgeCoordinator: NSObject {
         return resolution
     }
 
-    private func queryRevision(selection: GitBinarySelection?) -> RepositoryForgeQueryRevision? {
-        let binding = settings.forgeRepositoryBinding
+    private func queryRevision(selection: GitBinarySelection?, freshBinding: Bool = false) -> RepositoryForgeQueryRevision? {
+        let binding = freshBinding ? settings.forgeRepositoryBinding : settings.passiveForgeBinding
+        if let binding {
+            // An explicit binding resolves directly and is independent of Git
+            // configuration. Revalidate the preference around publication.
+            return RepositoryForgeQueryRevision(binding: binding, configuration: "", dependencies: [:], selection: selection)
+        }
         let configuration = remoteConfigurationRevision()
         let cached = remoteDescriptorCache.dependencyRevisions(for: remoteCacheKey, revision: configuration, dependencyRevision: remoteDependencyRevision)
-        guard binding != nil || cached != nil else { return nil }
-        // A stored binding needs no remote discovery, but global config changes
-        // must still invalidate the passive result without launching Git here.
-        let defaults = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gitconfig").path,
-                        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/git/config").path, "/etc/gitconfig"]
+        guard cached != nil else { return nil }
+        // Inferred bindings also depend on global Git configuration.
+        let defaults = Self.globalConfigurationPaths()
         var dependencies = cached ?? [:]
         for path in defaults {
             dependencies[path] = remoteDependencyRevision(path)
@@ -554,13 +578,7 @@ final class RepositoryForgeCoordinator: NSObject {
     }
 
     private static func remoteConfigurationDependencies(for repository: PBGitRepository) -> [String] {
-        var paths = [
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".gitconfig", isDirectory: false).path,
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".config/git/config", isDirectory: false).path,
-            "/etc/gitconfig",
-        ]
+        var paths = globalConfigurationPaths()
         guard let output = try? repository.outputOfTask(
             withArguments: ["config", "--show-origin", "--null", "--list"]
         ) else { return paths }
@@ -593,6 +611,23 @@ final class RepositoryForgeCoordinator: NSObject {
             }
         }
         return Array(Set(paths)).sorted()
+    }
+
+    static func globalConfigurationPaths(environment: [String: String] = ProcessInfo.processInfo.environment,
+                                         home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [String]
+    {
+        var paths: [String] = []
+        if environment["GIT_CONFIG_NOSYSTEM"] != "1" {
+            paths.append(environment["GIT_CONFIG_SYSTEM"] ?? "/etc/gitconfig")
+        }
+        if let global = environment["GIT_CONFIG_GLOBAL"] {
+            paths.append(global)
+        } else {
+            paths.append(home.appendingPathComponent(".gitconfig").path)
+            let xdg = environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".config")
+            paths.append(xdg.appendingPathComponent("git/config").path)
+        }
+        return Array(Set(paths.filter { !$0.isEmpty })).sorted()
     }
 
     private static func configurationFileRevision(_ path: String) -> String {

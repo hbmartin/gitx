@@ -468,19 +468,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @property (nullable, nonatomic, strong) PBGitHistoryController *testHistoryViewController;
 @end
 
-@implementation PBAutoFetchWindowControllerSpy
-- (void)showHistoryView:(id)sender
-{
-	self.showHistoryCount++;
-}
-- (NSWindow *)window
-{
-	return nil;
-}
-- (PBGitHistoryController *)historyViewController
-{
-	return self.testHistoryViewController;
-}
+// Implemented in Swift so subclass metadata describes the Swift superclass's layout.
+
+@interface PBAutoFetchWindowFixtureFactory : NSObject
++ (PBGitWindowController *)makeWindow;
 @end
 
 @interface PBAutoFetchHistoryControllerSpy : PBGitHistoryController
@@ -1922,7 +1913,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	NSURL *repositoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-notification" isDirectory:YES];
 	repository.testWorkingDirectoryURL = repositoryURL;
 	// The Swift superclass requires its stored-property initialization and teardown invariants.
-	PBAutoFetchWindowControllerSpy *windowController = [[PBAutoFetchWindowControllerSpy alloc] initWithWindow:nil];
+	PBAutoFetchWindowControllerSpy *windowController = (PBAutoFetchWindowControllerSpy *)[PBAutoFetchWindowFixtureFactory makeWindow];
 	PBAutoFetchHistoryControllerSpy *historyController = class_createInstance(PBAutoFetchHistoryControllerSpy.class, 0);
 	windowController.testHistoryViewController = historyController;
 	PBAutoFetchRepositoryDocumentSpy *document = class_createInstance(PBAutoFetchRepositoryDocumentSpy.class, 0);

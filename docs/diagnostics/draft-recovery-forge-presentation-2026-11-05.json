@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "approvedPlan": "Reliable draft recovery and Forge presentation",
+  "reviewTargets": {
+    "PR122": "996dff996e2c8c35cf4af3d0834e2ac440a469ac",
+    "PR123": "c4b094e975e667c3d0eb75e10a3c9c37b50235e2",
+    "planningBaseline": "f63c76ee0d8d21f7bab2ec23278b71adf8a9d291",
+    "frozenPerformanceBase": "7d3a25a553dfa125743ab147d2ea4eb9c0813ef4"
+  },
+  "selectedPolicies": [
+    "Publish despite local draft-save conflict; never overwrite or adopt another editor snapshot for cleanup",
+    "Final persistence drains independently of mutation cancellation",
+    "Recover failed unsaved submission in a current-owner memory-only editor",
+    "Stale queries defer; explicit actions reconcile and never replay",
+    "Stored Forge bindings use one immutable settings snapshot per delivery; inferred data keeps external-boundary validation",
+    "Keep every official coverage floor and report production and fixtures separately"
+  ],
+  "implementationCommits": [
+    "d2ad6a30",
+    "583d8803",
+    "80fb14b4",
+    "6b941fd8",
+    "a90755b2",
+    "2670bdd5",
+    "72adba52"
+  ],
+  "runIds": [
+    "draft-recovery-characterization",
+    "draft-recovery-red",
+    "draft-recovery-combined-green",
+    "draft-recovery-conflict-green",
+    "draft-recovery-complete-correctness",
+    "draft-toolbar-first-render-red",
+    "draft-toolbar-compatibility-green",
+    "draft-recovery-complete-correctness-v2",
+    "draft-boundary-characterization-green",
+    "draft-settings-budget-red",
+    "draft-settings-budget-green",
+    "draft-submission-store-green",
+    "draft-recovery-complete-correctness-v3",
+    "draft-recovery-final",
+    "draft-final-boundary-green",
+    "draft-recovery-complete-correctness-v4"
+  ],
+  "historicalEvidence": {
+    "firstComplete": {
+      "tests": 2262,
+      "failures": 1,
+      "reason": "Standalone toolbar fixture omitted prepared binding evidence; all compatibility assertions retained"
+    },
+    "secondComplete": {
+      "tests": 2263,
+      "failures": 0,
+      "coverage": "Six file floors still needed boundary coverage; no floors lowered"
+    },
+    "toolbarRegression": "Two menu/avatar identity failures before fix; five focused cases passed after fix",
+    "settingsBudgetRegression": "Three aggregate reads instead of one for both initial and replacement binding; passes with captured stored-binding resolution",
+    "focusedFinal": "48 metadata/draft cases passed; corrected draft-store class selection also passed",
+    "semanticPreview": "Found tests-only wrapper and Objective-C-called declaration false positives; cleanup uses no broad exclusion or baseline relaxation",
+    "thirdComplete": {
+      "tests": 2269,
+      "failures": 0,
+      "coverage": "Four former gaps restored; legacy remote fallback and default authorization dismissal each still needed one app-product executable line"
+    },
+    "finalBoundary": "Both compatibility cases passed, and each exact missing app-product function counter executed once; no production behavior change or lowered floor."
+  },
+  "verificationAtCommit": {
+    "completeCorrectness": "passed with eligible coverage ratchet",
+    "postCommitFullProfile": "The workflow receipt records current final status and tested source identity; this document preserves review and measurement provenance.",
+    "finalEvidenceRun": "draft-recovery-final",
+    "cleanupMode": "preview",
+    "expectedStagedApp": "build/GitX.app"
+  },
+  "performance": {
+    "identicalHarness": "GitXTests/GitXPerformanceTests.swift",
+    "baseSamples": 60,
+    "samplesPerCondition": 5,
+    "sizes": [
+      1000,
+      10000,
+      300000
+    ],
+    "viewport": 40,
+    "ordering": "Frozen base executes first; current samples execute later. Matched sample indices, not interleaved.",
+    "measurement": "Reset and complete rebinding reported separately; fixture creation and drawing excluded.",
+    "status": "Base passed; current comparison pending final performance execution"
+  },
+  "desktop": {
+    "policy": "Foreground native/UI verification uses a confirmed unlocked, idle window; desktop security settings remain unchanged."
+  },
+  "delivery": "One ready hbmartin/gitx PR against master after required passing verification; never merge. No push yet.",
+  "coverage": {
+    "runId": "draft-recovery-complete-correctness-v4",
+    "receipt": "artifacts/verification/draft-recovery-complete-correctness-v4-correctness-90864859/receipt.json",
+    "tests": 2271,
+    "failures": 0,
+    "allHistoricalFloors": "passed",
+    "plainCheckerAfterRatchet": "passed",
+    "targetFloorBefore": 0.9375,
+    "targetFloorAfter": 0.938,
+    "raisedFileFloors": 9,
+    "windowControllerFloor": 1.0,
+    "supplementalCounts": {
+      "fixtures": {
+        "coveredLines": 9510,
+        "executableLines": 10106,
+        "lineCoverage": 0.9410251335840095
+      },
+      "other": {
+        "coveredLines": 181,
+        "executableLines": 240,
+        "lineCoverage": 0.7541666666666667
+      },
+      "production": {
+        "coveredLines": 68542,
+        "executableLines": 73051,
+        "lineCoverage": 0.938275998959631
+      }
+    },
+    "supplementalReport": "artifacts/verification/pr123-reliability/final-source-breakdown.json",
+    "calculation": "Official target/file/group floors remain unchanged in definition. Supplemental production/fixture/other counts do not affect enforcement."
+  }
+}

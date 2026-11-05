@@ -6,6 +6,27 @@ import XCTest
 final class RepositoryStatusBarTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
+    func testAccountMetadataTransitionsPreserveDetailsOnlyForTheSameRequestedIdentity() throws {
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "fixture", name: "gitx")
+        let old = try ForgeAccountID(forge: forge, value: "old")
+        let next = try ForgeAccountID(forge: forge, value: "next")
+        let first = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: repository, preferredAccount: old)
+        let switched = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: repository, preferredAccount: next)
+        let otherRemote = try ForgeRepositoryBinding(localRemoteName: "upstream", primaryRepository: repository, preferredAccount: old)
+        XCTAssertEqual(RepositoryForgeAccountMetadataPolicy.transition(from: first, to: first), .preserve)
+        XCTAssertEqual(RepositoryForgeAccountMetadataPolicy.transition(from: first, to: otherRemote), .preserve)
+        XCTAssertEqual(RepositoryForgeAccountMetadataPolicy.transition(from: first, to: switched), .switching)
+        XCTAssertEqual(RepositoryForgeAccountMetadataPolicy.transition(from: first, to: nil), .replace)
+        XCTAssertFalse(RepositoryForgeAccountMetadataPolicy.accepts(binding: switched, sourceBinding: first, account: next, providerName: "GitHub"))
+        XCTAssertFalse(RepositoryForgeAccountMetadataPolicy.accepts(binding: switched, sourceBinding: switched, account: old, providerName: "GitHub"))
+        XCTAssertFalse(RepositoryForgeAccountMetadataPolicy.accepts(binding: switched, sourceBinding: switched, account: next, providerName: "GitLab"))
+        XCTAssertTrue(RepositoryForgeAccountMetadataPolicy.accepts(binding: switched, sourceBinding: switched, account: next, providerName: "GitHub"))
+        let switching = RepositoryForgeAccountControlPresentation(providerName: "GitHub", login: nil, isPublic: false, persistentFailureText: nil, isStatusBarVisible: true, isSwitching: true)
+        XCTAssertEqual(switching.title, "Switching account…")
+        XCTAssertTrue(switching.accessibilityLabel.contains("Switching"))
+    }
+
     private final class RedrawObservingGradientBar: PBGitGradientBarView {
         var didRequestDisplay = false
 

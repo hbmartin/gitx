@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import pathlib
 import tempfile
 import unittest
@@ -21,7 +22,7 @@ class CoveragePolicyTests(unittest.TestCase):
                                                         ("GitXTests/Harness.swift", 10, 10),
                                                         ("Classes/Controllers/Milestone2UITestHarness.swift", 9, 10),
                                                         ("External/Library.m", 5, 10)]]}
-        original = dict(target)
+        original = copy.deepcopy(target)
         result = self.module.source_breakdown(target, root)
         self.assertEqual(result["groups"]["production"]["coveredLines"], 5)
         self.assertEqual(result["groups"]["production"]["lineCoverage"], .5)
@@ -39,7 +40,7 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertEqual(result["groups"]["other"]["files"][0]["path"], "/unrelated/Unknown.swift")
         self.assertIsNone(result["matchesTargetCounts"])
 
-    def test_source_breakdown_flag_is_additive_to_the_ordinary_check(self):
+    def test_source_breakdown_flag_parses_without_enabling_record_improvements(self):
         parsed = self.module.parse_arguments(["result.xcresult", "--source-breakdown", "breakdown.json"])
         self.assertEqual(parsed.source_breakdown, pathlib.Path("breakdown.json"))
         self.assertFalse(parsed.record_improvements)

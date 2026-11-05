@@ -1823,6 +1823,10 @@
                 && !fallbackMenu.items.filter { !$0.isSeparatorItem }.isEmpty
                 && fallbackMenu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled }
             let toolbarController = RepositoryToolbarController(windowController: windowController)
+            // Match window installation: the renderer receives prepared binding
+            // evidence explicitly instead of discovering it in its constructor.
+            toolbarController.applyForgeMetadata(providerName: "GitHub", binding: binding,
+                                                 ownerIsCurrent: windowController.repositoryPresentationValidation(for: repository))
             let toolbar = NSToolbar(identifier: "GitX.Repository.CredentialCooldownProof")
             guard let accountItem = toolbarController.toolbar(
                 toolbar,
@@ -1908,6 +1912,9 @@
                 currentAccount: ForgeAccountID?,
                 choices: [RepositoryForgeAccountChoice]
             ) {
+                let evidence = settings.forgeRepositoryBinding
+                toolbarController.applyForgeMetadata(providerName: "GitHub", binding: evidence,
+                                                     ownerIsCurrent: windowController.repositoryPresentationValidation(for: repository))
                 var userInfo: [String: Any] = [
                     RepositoryForgeAccountNotificationKey.providerName: "GitHub",
                     RepositoryForgeAccountNotificationKey.login: currentAccount == account.id
@@ -1915,6 +1922,9 @@
                         : alternateAccount.login,
                     RepositoryForgeAccountNotificationKey.accounts: choices.map(\.notificationValue),
                 ]
+                if let evidence {
+                    userInfo[RepositoryForgeAccountNotificationKey.binding] = evidence
+                }
                 if let currentAccount {
                     userInfo[RepositoryForgeAccountNotificationKey.accountID] = currentAccount
                 } else {
@@ -2037,6 +2047,11 @@
             ) else {
                 return (false, false)
             }
+            let missingCredentialBinding = try? ForgeRepositoryBinding(
+                localRemoteName: binding.localRemoteName, primaryRepository: binding.primaryRepository,
+                preferredAccount: missingAccountID
+            )
+            settings.forgeRepositoryBinding = missingCredentialBinding
             postToolbarAccountContext(
                 currentAccount: missingAccountID,
                 choices: [
@@ -2047,8 +2062,10 @@
             let missingCredentialNotificationCount = notificationCounter.value
             let missingCredentialSelectionStarted = await selectToolbarAccount(alternateAccount.id)
             let missingCredentialRefused = missingCredentialSelectionStarted &&
-                settings.forgeRepositoryBinding == binding &&
+                settings.forgeRepositoryBinding == missingCredentialBinding &&
                 notificationCounter.value == missingCredentialNotificationCount
+            settings.forgeRepositoryBinding = binding
+            postToolbarAccountContext(currentAccount: account.id, choices: choices)
 
             guard let otherForge = try? ForgeIdentity(
                 kind: .gitLab,
@@ -2109,6 +2126,22 @@
                 standardDefaults.set(originalPane, forKey: paneKey)
             } else {
                 standardDefaults.removeObject(forKey: paneKey)
+            }
+            for (stage, passed) in [
+                ("shared cooldown state", sharedStateBehavior),
+                ("collaboration waiting refusal", collaborationWaitingRefused),
+                ("collaboration retry refusal", collaborationRetryPendingRefused),
+                ("toolbar waiting refusal", toolbarWaitingRefused),
+                ("toolbar retry refusal", toolbarRetryPendingRefused),
+                ("stale binding refusal", staleSelectionRefused),
+                ("missing credential refusal", missingCredentialRefused),
+                ("foreign account refusal", mismatchedSelectionRefused),
+                ("successful explicit selection", successfulSelection),
+                ("missing binding refusal", missingBindingRefused),
+                ("account preferences routing", manageAccountsRouted),
+                ("detached link context", fallbackForgeLinkContextProof),
+            ] where !passed {
+                NSLog("[GitX ProductProof] Account compatibility failed: %@", stage)
             }
             return (
                 sharedStateBehavior && collaborationWaitingRefused && collaborationRetryPendingRefused,

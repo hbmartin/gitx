@@ -4,10 +4,12 @@ import Foundation
 // swift6-safety-justification: UserDefaults is thread-safe, and this wrapper adds no mutable state of its own.
 final nonisolated class ApplicationPreferences: NSObject, @unchecked Sendable {
     let userDefaults: UserDefaults
+    let repositoryBindingSnapshots: RepositoryBindingPreferenceSnapshots
 
     @objc(initWithUserDefaults:)
     init(userDefaults: UserDefaults) {
         self.userDefaults = userDefaults
+        repositoryBindingSnapshots = RepositoryBindingPreferenceSnapshots(defaults: userDefaults)
         super.init()
     }
 

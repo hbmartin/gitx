@@ -249,6 +249,15 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
         whenSelectionAvailable { selection, error in completion(selection?.path, error) }
     }
 
+    /// A synchronous diagnostic snapshot; never starts or waits for discovery.
+    var currentAvailabilityError: NSError? {
+        state.withLock { state in
+            guard state.selection == nil else { return nil }
+            return unavailableError(outcome: state.started && state.search == nil ? state.outcome : .temporarilyUnavailable,
+                                    paths: state.search?.paths ?? state.attemptedPaths)
+        }
+    }
+
     func whenSelectionAvailable(_ completion: @escaping SelectionCompletion) {
         start()
         let id = UUID()

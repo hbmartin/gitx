@@ -1206,6 +1206,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 = credentialCooldownDeadline
         }
         if let binding {
+            userInfo[RepositoryForgeAccountNotificationKey.binding] = binding
             userInfo[RepositoryForgeAccountNotificationKey.providerName] = Self.providerName(
                 binding.primaryRepository.forge.kind
             )

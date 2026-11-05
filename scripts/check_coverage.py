@@ -11,6 +11,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import workflow_session as session
 from typing import NamedTuple
 
@@ -448,16 +449,59 @@ def comparison_receipt(path):
     return None
 
 
+def report_path_identity(path: pathlib.Path) -> tuple[int, int, tuple[str, ...]]:
+    """Identify existing aliases and not-yet-created destinations on their volume."""
+    ancestor = path.resolve()
+    missing = []
+    while not ancestor.exists():
+        missing.append(ancestor.name)
+        ancestor = ancestor.parent
+    stat = ancestor.stat()
+    if missing and sys.platform == "darwin":
+        # Darwin's sys/unistd.h defines _PC_CASE_SENSITIVE as 11. Python does
+        # not expose its name, but pathconf accepts the platform constant.
+        case_sensitive = os.pathconf(ancestor, 11)
+        if case_sensitive not in (0, 1):
+            raise ValueError(f"Cannot establish report destination case sensitivity: {ancestor}")
+        missing = [unicodedata.normalize("NFD", part) for part in missing]
+        if not case_sensitive:
+            missing = [part.casefold() for part in missing]
+    return stat.st_dev, stat.st_ino, tuple(reversed(missing))
+
+
+def validate_report_destinations(args, root: pathlib.Path) -> None:
+    outputs = [("Source breakdown", args.source_breakdown), ("Proposal", args.propose_improvements)]
+    outputs = [(label, path.resolve()) for label, path in outputs if path is not None]
+    if not outputs:
+        return
+    receipt = args.receipt or args.result_bundle.parent.parent / "receipt.json"
+    protected = {report_path_identity(path) for path in (args.policy, args.result_bundle, receipt, args.compare) if path is not None}
+    history = root / "artifacts/verification"
+    # Resolve filenames only for optional outputs. Historical payload reads and
+    # compatible-comparison selection remain lazy in the ordinary failure path.
+    protected.update(report_path_identity(path) for path in history.glob("*/receipt.json"))
+    bundle_identity = report_path_identity(args.result_bundle)
+    history_identity = report_path_identity(history)
+    seen = set()
+    for label, output in outputs:
+        identity = report_path_identity(output)
+        if identity in seen:
+            raise ValueError("Source breakdown and proposal outputs must differ.")
+        seen.add(identity)
+        reserved_receipt = output.name.casefold() == "receipt.json" and report_path_identity(output.parent.parent) == history_identity
+        inside_bundle = output.is_relative_to(args.result_bundle.resolve()) or any(report_path_identity(parent) == bundle_identity for parent in output.parents)
+        if identity in protected or inside_bundle or reserved_receipt:
+            raise ValueError(f"{label} must not replace a coverage input or verification receipt.")
+
+
 def check(args) -> int:
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    if args.source_breakdown:
-        receipt = args.receipt or args.result_bundle.parent.parent / "receipt.json"
-        protected_inputs = [args.policy, args.result_bundle, receipt, args.compare]
-        output = args.source_breakdown.resolve()
-        if output.is_relative_to(args.result_bundle.resolve()) or any(path is not None and output == path.resolve() for path in protected_inputs):
-            print("Source breakdown must not replace a coverage input.", file=sys.stderr)
-            return 1
+    try:
+        validate_report_destinations(args, root)
+    except (OSError, RuntimeError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 1
     policy = load_policy(args.policy)
     try:
         report = xccov_report(args.result_bundle)
@@ -466,12 +510,13 @@ def check(args) -> int:
             policy,
             root,
         )
+        target = next(item for item in report.get("targets", []) if item.get("name") == policy.target)
+        breakdown = source_breakdown(target, root) if args.source_breakdown else None
     except ValueError as error:
         print(error, file=sys.stderr)
         return 1
-    target = next(item for item in report.get("targets", []) if item.get("name") == policy.target)
     if args.source_breakdown:
-        write_json_atomic(args.source_breakdown, source_breakdown(target, root))
+        write_json_atomic(args.source_breakdown, breakdown)
         print(f"Wrote supplemental source breakdown to {args.source_breakdown}")
     print(f"Exact target lines: {target.get('coveredLines', sum(v[0] for v in file_line_counts.values()))}/{target.get('executableLines', sum(v[1] for v in file_line_counts.values()))}")
 
@@ -553,9 +598,6 @@ def check(args) -> int:
                 print(f"Raised coverage floors in {args.policy}")
         else:
             assert args.propose_improvements is not None
-            if args.propose_improvements.resolve() == args.policy.resolve():
-                print("Proposal output must differ from the checked-in policy path.", file=sys.stderr)
-                return 2
             write_json_atomic(
                 args.propose_improvements,
                 {

@@ -31,6 +31,46 @@
     {
       "runId": "window-forge-focused-green",
       "result": "Debug and Release consumers passed; all 164 selected tests passed after the toolbar correction."
+    },
+    {
+      "runId": "window-forge-postcommit-correctness",
+      "result": "Complete run: 2226 passed, 2 related legacy fixture failures. Preference revision construction invoked Git-directory discovery for a locationless repository; no ratchet is eligible."
+    },
+    {
+      "runId": "window-forge-preference-red",
+      "result": "The independent task-factory regression recorded 22 starts instead of zero; the two legacy exceptions reproduced with unchanged affected production behavior."
+    },
+    {
+      "runId": "window-forge-preference-green",
+      "result": "The result bundle records 254 passed and two failures: an auto-fetch fixture initialization crash plus the new orphan-toolbar assertion. The fixture assertion is corrected; preserve the failed receipt."
+    },
+    {
+      "runId": "window-forge-preference-green2",
+      "result": "255 passed, one initialization crash in the Objective-C auto-fetch fixture. Subsequent test output was green, but the xcresult records the crash; this is not passing evidence."
+    },
+    {
+      "runId": "window-forge-autofetch-init-isolation",
+      "result": "The single notification-activation case reproduces the AppKit class-property inspection crash during cold initialization. Move only its fixture implementation to Swift; preserve Objective-C assertions and selectors."
+    },
+    {
+      "runId": "window-forge-preference-green3",
+      "result": "256 tests passed, zero failures or skips. Result-bundle summary and workflow receipt confirm no initialization crash, both legacy feature repairs, zero preference task starts and preserved action/toolbar boundaries."
+    },
+    {
+      "runId": "window-forge-postcommit-correctness2",
+      "result": "All 2232 correctness tests passed, with no restarts. Coverage alone blocked: controller2307/2309 =99.91% against unchanged100% floor. The uncovered regions were remote-name string admission and a History fallback no caller can request."
+    },
+    {
+      "runId": "window-forge-remote-sender-characterization",
+      "result": "Both consumers and two focused cases passed against unchanged production. Commit482990cc preserves configured remote routing, missing/empty rejection and unavailable input behavior."
+    },
+    {
+      "runId": "window-forge-sender-cleanup-green",
+      "result": "Both Debug/Release consumers and both characterized sender cases passed after narrowing the private helper. Generic History selection remains untouched."
+    },
+    {
+      "runId": "window-forge-postcommit-correctness3",
+      "result": "All 2,233 correctness tests passed. Every target/group/file floor passed, including 100% for PBGitWindowController. Recording improvements and the subsequent plain checker both passed."
     }
   ],
   "iterationEvidence": {
@@ -38,7 +78,11 @@
       "window-forge-static",
       "window-forge-packages",
       "window-forge-expanded-build",
-      "window-forge-facade-build"
+      "window-forge-facade-build",
+      "window-forge-preference-build",
+      "window-forge-preference-fixture-build",
+      "window-forge-autofetch-factory-build",
+      "window-forge-preference-green3"
     ],
     "staticScriptTests": 869,
     "coreTests": 164,
@@ -50,7 +94,26 @@
     "floors": "Preserve every historical target, group and file floor.",
     "supplementalReport": "artifacts/verification/window-actions-forge-implementation/source-breakdown.json",
     "reportMeaning": "Production, fixture and other target-source counts are supplemental; official gates and ratchet calculations remain unchanged.",
-    "outputProtectionTests": "artifacts/verification/window-actions-forge-implementation/coverage-evidence-green.log"
+    "outputProtectionTests": "artifacts/verification/window-actions-forge-implementation/coverage-evidence-green.log",
+    "eligibleEvidence": {
+      "runId": "window-forge-postcommit-correctness3",
+      "receipt": "artifacts/verification/window-forge-postcommit-correctness3-correctness-f4842d47/receipt.json",
+      "tests": 2233,
+      "appFloorBefore": 0.9372,
+      "appFloorAfter": 0.9375,
+      "controllerFloor": 1.0,
+      "raisedFileFloors": 7,
+      "productionCoveredLines": 68025,
+      "productionExecutableLines": 72544,
+      "fixtureCoveredLines": 9460,
+      "fixtureExecutableLines": 10054,
+      "otherCoveredLines": 181,
+      "otherExecutableLines": 240,
+      "plainChecker": "passed",
+      "supplementalOnly": true
+    },
+    "packageRunId": "window-forge-current-packages",
+    "packageResults": "Core 164 and ForgeKit 314 tests passed, with all existing floors intact. Eligible record-improvements and subsequent plain checkers passed. Core target floor rose from99.94% to99.95%, matching both retained complete package runs; ForgeKit policy did not change."
   },
   "performance": {
     "frozenBase": "29b4e557eae11a3bc9e5cf1e7164ce0bf88ccfd1",
@@ -65,11 +128,11 @@
     "GitXUITests/WorktreeWorkflowUITests/testExplicitHistoryShortcutAdoptsNewestCapturedDetachedHead"
   ],
   "deliveryRequiredEvidence": {
-    "postCommitCorrectnessRunId": "window-forge-postcommit-correctness",
+    "postCommitCorrectnessRunId": "window-forge-postcommit-correctness3",
     "finalFullRunId": "window-forge-final-full",
     "cleanupMode": "preview",
     "authority": "The final workflow receipt must pass at the final commit, including coverage, packages, sanitizers, UI, performance, analysis and Debug app staging. Iteration receipts do not establish delivery readiness.",
-    "stagedApp": "/Volumes/Pro2T/gitx/build/GitX.app"
+    "stagedApp": "build/GitX.app"
   },
-  "delivery": "One ready PR against hbmartin/gitx master after passing verification; do not merge."
+  "delivery": "PR123 merged at c4b094e9 before continuing verification. The preference correction and Swift-backed test fixture are local follow-up work; delivery destination is awaiting user direction. Full post-commit evidence remains required."
 }

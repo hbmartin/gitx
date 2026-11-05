@@ -45,16 +45,16 @@ import XCTest
             let other = GitX.ForgeSQLitePullRequestDraftStore(database: second)
             let editor = GitX.RepositoryEditDraftSession(identity: identity, observed: nil)
             let original = ForgeDraftContent(title: "Original", body: "Original")
-            let saved = await editor.saveSubmission(original, drafts: store, at: Date(timeIntervalSince1970: 10))
+            let saved = await editor.saveSubmissionResult(original, drafts: store, at: Date(timeIntervalSince1970: 10)).snapshot
             XCTAssertEqual(saved?.content, original)
             let newer = ForgeDraftContent(title: "Newer window", body: "Preserve me")
             try await other.save(identity: identity, content: newer, at: Date(timeIntervalSince1970: 30))
-            let refused = await editor.saveSubmission(original, drafts: store, at: Date(timeIntervalSince1970: 40))
+            let refused = await editor.saveSubmissionResult(original, drafts: store, at: Date(timeIntervalSince1970: 40)).snapshot
             XCTAssertNil(refused)
             let retained = try await store.load(identity: identity)
             XCTAssertEqual(retained?.content, newer)
             await editor.autosave(original, drafts: store, at: Date(timeIntervalSince1970: 20))
-            let admitted = await editor.saveSubmission(original, drafts: store, at: Date(timeIntervalSince1970: 25))
+            let admitted = await editor.saveSubmissionResult(original, drafts: store, at: Date(timeIntervalSince1970: 25)).snapshot
             XCTAssertEqual(admitted?.createdAt, Date(timeIntervalSince1970: 10))
             XCTAssertEqual(admitted?.lastActivityAt, Date(timeIntervalSince1970: 30))
             let collision = try await store.saveSnapshot(identity: identity, content: newer, at: .distantFuture, matching: nil)
@@ -74,13 +74,13 @@ import XCTest
             let store = GitX.ForgeSQLitePullRequestDraftStore(database: database)
             await database.close()
             let editor = GitX.RepositoryEditDraftSession(identity: identity, observed: nil)
-            let refused = await editor.saveSubmission(content, drafts: store, at: Date())
+            let refused = await editor.saveSubmissionResult(content, drafts: store, at: Date()).snapshot
             XCTAssertNil(refused)
             await editor.autosave(content, drafts: store, at: Date())
             let null = GitX.NullRepositoryPullRequestDraftStore()
             let other = GitX.RepositoryEditDraftSession(identity: identity, observed: nil)
             await other.autosave(content, drafts: null, at: Date())
-            let unavailable = await other.saveSubmission(content, drafts: null, at: Date())
+            let unavailable = await other.saveSubmissionResult(content, drafts: null, at: Date()).snapshot
             XCTAssertNil(unavailable)
             let absent = try await null.saveSnapshot(identity: identity, content: content, at: Date(), matching: nil)
             XCTAssertNil(absent)

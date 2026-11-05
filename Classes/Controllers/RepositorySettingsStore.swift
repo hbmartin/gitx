@@ -6,6 +6,63 @@ import GitXCore
 // swiftlint:disable:next unused_import
 import OSLog
 
+/// One defaults publication is delivered to many windows. Share its raw
+/// repository dictionary and decode only binding payloads whose bytes changed.
+// swift6-safety-justification: the private lock protects the snapshot, decoded cache and turn generation.
+final nonisolated class RepositoryBindingPreferenceSnapshots: @unchecked Sendable {
+    private struct Decoded {
+        let payload: Data?
+        let binding: ForgeRepositoryBinding?
+    }
+
+    private let defaults: UserDefaults
+    private let decodeBinding: @Sendable (Data) -> ForgeRepositoryBinding?
+    private let lock = NSLock()
+    private var snapshot: [String: Any]?
+    private var decoded: [String: Decoded] = [:]
+    private var generation: UInt64 = 0
+
+    init(defaults: UserDefaults, decodeBinding: @escaping @Sendable (Data) -> ForgeRepositoryBinding? = { try? JSONDecoder().decode(ForgeRepositoryBinding.self, from: $0) }) {
+        self.defaults = defaults
+        self.decodeBinding = decodeBinding
+    }
+
+    func binding(for repository: String) -> ForgeRepositoryBinding? {
+        lock.lock()
+        defer { lock.unlock() }
+        if snapshot == nil {
+            RepositoryViewStatePreferencesSynchronization.lock.lock()
+            snapshot = defaults.dictionary(forKey: "PBRepositoryUISettings") ?? [:]
+            RepositoryViewStatePreferencesSynchronization.lock.unlock()
+            generation &+= 1
+            let captured = generation
+            DispatchQueue.main.async { [weak self] in self?.finishDelivery(captured) }
+        }
+        let payload = (snapshot?[repository] as? [String: Any])?["forgeRepositoryBinding"] as? Data
+        if let previous = decoded[repository], previous.payload == payload {
+            return previous.binding
+        }
+        let binding = payload.flatMap(decodeBinding)
+        decoded[repository] = Decoded(payload: payload, binding: binding)
+        return binding
+    }
+
+    func invalidate() {
+        lock.lock()
+        generation &+= 1
+        snapshot = nil
+        lock.unlock()
+    }
+
+    private func finishDelivery(_ captured: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        if generation == captured {
+            snapshot = nil
+        }
+    }
+}
+
 @objc(PBRepositoryUISettings)
 // swift6-safety-justification: the shared lock serializes every preferences access; remaining state is immutable.
 final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable, RepositoryForgeViewStateStoring {
@@ -101,6 +158,14 @@ final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable, Rep
         }
     }
 
+    var passiveForgeBinding: ForgeRepositoryBinding? {
+        preferences.repositoryBindingSnapshots.binding(for: repositoryKey)
+    }
+
+    func invalidatePassiveForgeBinding() {
+        preferences.repositoryBindingSnapshots.invalidate()
+    }
+
     func forgeReadSurfaceViewState(for kind: ForgeReadSurfaceKind) -> RepositoryForgeReadSurfaceViewState {
         let key = switch kind {
         case .pullRequests: Self.forgePullRequestsViewStateKey
@@ -171,22 +236,24 @@ final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable, Rep
 
     private func setValue(_ value: Any, for key: String) {
         RepositoryViewStatePreferencesSynchronization.lock.lock()
-        defer { RepositoryViewStatePreferencesSynchronization.lock.unlock() }
         var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         var repository = all[repositoryKey] as? [String: Any] ?? [:]
         repository[key] = value
         all[repositoryKey] = repository
         preferences.set(all, forKey: Self.defaultsKey)
+        RepositoryViewStatePreferencesSynchronization.lock.unlock()
+        preferences.repositoryBindingSnapshots.invalidate()
     }
 
     private func removeValue(for key: String) {
         RepositoryViewStatePreferencesSynchronization.lock.lock()
-        defer { RepositoryViewStatePreferencesSynchronization.lock.unlock() }
         var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         var repository = all[repositoryKey] as? [String: Any] ?? [:]
         repository.removeValue(forKey: key)
         all[repositoryKey] = repository
         preferences.set(all, forKey: Self.defaultsKey)
+        RepositoryViewStatePreferencesSynchronization.lock.unlock()
+        preferences.repositoryBindingSnapshots.invalidate()
     }
 
     private static func commonGitDirectory(for repository: PBGitRepository) -> URL {
