@@ -1708,6 +1708,23 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             sheet.onCopyRecovery = { copied = $0 }
             try XCTUnwrap(find("GitX.PullRequest.Recovery.Copy", in: view) as? NSButton).performClick(nil)
             XCTAssertEqual(copied, expected)
+            let pasteboard = NSPasteboard.general
+            let originalItems: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
+                let copy = NSPasteboardItem()
+                for type in item.types {
+                    if let data = item.data(forType: type) {
+                        copy.setData(data, forType: type)
+                    }
+                }
+                return copy
+            } ?? []
+            defer {
+                pasteboard.clearContents()
+                pasteboard.writeObjects(originalItems.map { $0 as NSPasteboardWriting })
+            }
+            sheet.onCopyRecovery = nil
+            try XCTUnwrap(find("GitX.PullRequest.Recovery.Copy", in: view) as? NSButton).performClick(nil)
+            XCTAssertEqual(pasteboard.string(forType: .string), (expected.title ?? "") + "\n\n" + expected.body)
         case .close:
             let close = try XCTUnwrap(find("GitX.PullRequest.Recovery.Close", in: view) as? NSButton)
             close.performClick(nil)

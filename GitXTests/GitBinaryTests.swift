@@ -1373,6 +1373,110 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(localBranch(in: actual.window?.contentView), "Repository")
     }
 
+    // swift6-safety-justification: mutexes protect one-shot actor-isolated hooks; only main-thread repository reads invoke them.
+    private final nonisolated class ReentrantPreparationRepository: PBGitRepository {
+        let locationHook = Mutex<(@MainActor @Sendable () -> Void)?>(nil)
+        let remotesHook = Mutex<(@MainActor @Sendable () -> Void)?>(nil)
+
+        override func task(withArguments arguments: [Any]?) -> PBTask {
+            let task = super.task(withArguments: arguments)
+            RepositoryTestGitEnvironment.prepare(task)
+            return task
+        }
+
+        override func gitURL() -> URL? {
+            if Thread.isMainThread {
+                let hook = locationHook.withLock { value in let hook = value; value = nil; return hook }
+                // swift6-safety-justification: AppKit's main-thread repository decision owns this callback.
+                MainActor.assumeIsolated { hook?() }
+            }
+            return super.gitURL()
+        }
+
+        override func remotes() -> [String]? {
+            if Thread.isMainThread {
+                let hook = remotesHook.withLock { value in let hook = value; value = nil; return hook }
+                // swift6-safety-justification: AppKit's main-thread metadata decision owns this callback.
+                MainActor.assumeIsolated { hook?() }
+            }
+            return super.remotes()
+        }
+    }
+
+    func testRepositorySetterReentrancyDrainsBeforeRestoredAdmission() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let repository = try XCTUnwrap(ReentrantPreparationRepository(url: directory))
+        let actual = GitX.PBGitWindowController(ownerNotifications: NotificationCenter())
+        actual.repository = repository
+        _ = actual.window
+        defer { actual.close(); repository.revisionList?.cleanup(); repository.revisionList = nil }
+        let transitions = Mutex(0)
+        repository.locationHook.withLock { hook in
+            hook = { transitions.withLock { $0 += 1 }; actual.repository = nil }
+        }
+        actual.refreshIfRepositoryChangedSinceLastActivation()
+        let cleared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.historyViewController == nil && actual.gitLoaderSelection == nil }, object: nil)
+        wait(for: [cleared], timeout: 5)
+        XCTAssertEqual(transitions.withLock { $0 }, 1)
+        XCTAssertNil(actual.repository)
+        XCTAssertNil(actual.sidebarViewController)
+        actual.repository = repository
+        XCTAssertTrue(actual.historyViewController?.repository === repository)
+        waitForBranch("main", in: actual)
+    }
+
+    func testOwnerReplacementDuringForgePreparationPreservesRefreshIntent() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let repository = try XCTUnwrap(ReentrantPreparationRepository(url: directory))
+        let actual = RepositoryOverrideWindowProbe(ownerNotifications: NotificationCenter())
+        let settings = ApplicationComposition.shared.repositoryViewState(for: repository)
+        let previous = settings.forgeRepositoryBinding
+        settings.forgeRepositoryBinding = nil
+        actual.repository = repository
+        _ = actual.window
+        defer { actual.close(); settings.forgeRepositoryBinding = previous; repository.revisionList?.cleanup(); repository.revisionList = nil }
+        try GitXTestGitFixture.run(["config", "gitx.preparation-boundary", UUID().uuidString], in: directory)
+        let transitions = Mutex(0)
+        repository.remotesHook.withLock { hook in
+            hook = { transitions.withLock { $0 += 1 }; actual.repository = nil }
+        }
+        actual.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        XCTAssertEqual(transitions.withLock { $0 }, 1)
+        XCTAssertNil(actual.repository)
+        XCTAssertFalse(actual.forgeLinkContext.isForgeAvailable)
+        actual.repository = repository
+        actual.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in actual.historyViewController?.repository === repository && actual.gitLoaderSelection != nil }, object: nil)
+        wait(for: [restored], timeout: 5)
+        XCTAssertEqual(transitions.withLock { $0 }, 1)
+        waitForBranch("main", in: actual)
+    }
+
+    func testLoadedDeterministicOwnerSettlesWithoutAForgeSession() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let previous = ProcessInfo.processInfo.environment["GITX_M2_UITEST"]
+        setenv("GITX_M2_UITEST", "1", 1)
+        defer {
+            if let previous {
+                setenv("GITX_M2_UITEST", previous, 1)
+            } else {
+                unsetenv("GITX_M2_UITEST")
+            }
+        }
+        let actual = GitX.PBGitWindowController(ownerNotifications: NotificationCenter())
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        XCTAssertTrue(actual.isWindowLoaded)
+        XCTAssertNil(actual.repositoryForgeOverlaySession)
+        let menu = NSMenuItem(title: "Forge", action: NSSelectorFromString("viewForgeRepository:"), keyEquivalent: "")
+        XCTAssertFalse(actual.validateMenuItem(menu))
+        XCTAssertNotNil(actual.historyViewController)
+    }
+
     func testReentrantOwnershipReconciliationRefusesAdmissionAndPreservesItsCompleteOwner() throws {
         try prepareFixture()
         defer { try? removeFixture() }
@@ -1709,39 +1813,6 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
     }
 
-    /// Returns a different preference snapshot at a deterministic read boundary,
-    /// without posting notifications while RepositoryUISettings holds its lock.
-    // swift6-safety-justification: snapshotLock protects the mutable test snapshot and read gate.
-    private final nonisolated class SwitchingForgeDefaults: UserDefaults, @unchecked Sendable {
-        private let snapshotLock = NSLock()
-        private var remainingReads = Int.max
-        private var replacement: [String: Any]?
-        private var currentSnapshot: [String: Any]?
-
-        func replaceSnapshot(afterReads count: Int, with dictionary: [String: Any]) {
-            snapshotLock.lock()
-            defer { snapshotLock.unlock() }
-            remainingReads = count
-            replacement = dictionary
-            currentSnapshot = nil
-        }
-
-        override func dictionary(forKey key: String) -> [String: Any]? {
-            let fallback = super.dictionary(forKey: key)
-            guard key == "PBRepositoryUISettings" else { return fallback }
-            snapshotLock.lock()
-            defer { snapshotLock.unlock() }
-            let result = currentSnapshot ?? fallback
-            remainingReads -= 1
-            if remainingReads == 0 {
-                currentSnapshot = replacement
-                replacement = nil
-                remainingReads = Int.max
-            }
-            return result
-        }
-    }
-
     // swift6-safety-justification: the mutex protects the aggregate read count; UserDefaults serializes its own storage.
     private final nonisolated class CountingForgeDefaults: UserDefaults, @unchecked Sendable {
         let aggregateReads = Mutex(0)
@@ -1903,6 +1974,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let avatarContainer = try XCTUnwrap(stack.arrangedSubviews.first { $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccountAvatarContainer" })
         let avatar = try XCTUnwrap(avatarContainer.subviews.first)
         XCTAssertEqual(popup.title, "GitHub")
+        let paletteItem = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .init("GitX.Toolbar.ForgeAccount"), willBeInsertedIntoToolbar: false))
+        XCTAssertFalse(paletteItem.view === stack, "Palette rendering must not replace the installed control")
         controller.applyForgeMetadata(providerName: "GitHub", binding: binding,
                                       ownerIsCurrent: owner.repositoryPresentationValidation(for: repository))
         XCTAssertTrue(popup.item(at: 0) === menuItem, "The first unchanged publication must not rebuild an existing account menu")
@@ -2576,20 +2649,19 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         defer { try? removeFixture() }
         let repository = try XCTUnwrap(document.repository)
         let suite = "GitX-Forge-Revision-\(UUID())"
-        let defaults = try XCTUnwrap(SwitchingForgeDefaults(suiteName: suite))
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = GitX.RepositoryUISettings(repository: repository, preferences: GitX.ApplicationPreferences(userDefaults: defaults))
-        let github = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "old")
         let gitlab = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.com")), owner: "fixture", name: "new")
-        settings.forgeRepositoryBinding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: gitlab)
-        let replacement = try XCTUnwrap(defaults.dictionary(forKey: "PBRepositoryUISettings"))
-        settings.forgeRepositoryBinding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: github)
+        let replacement = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: gitlab)
         let coordinator = GitX.RepositoryForgeCoordinator(repository: repository, settings: settings,
                                                           remoteDescriptorCache: GitX.RepositoryForgeRemoteDescriptorCache(), remoteCacheKey: UUID().uuidString,
-                                                          remoteConfigurationRevision: { "unchanged" }, remoteNames: { [] }, remoteURL: { _ in nil })
-        defaults.replaceSnapshot(afterReads: 2, with: replacement)
+                                                          remoteConfigurationRevision: { "unchanged" }, remoteNames: {
+                                                              settings.forgeRepositoryBinding = replacement
+                                                              return []
+                                                          }, remoteURL: { _ in nil })
         let first = coordinator.prepareQueryBinding(selection: nil)
-        XCTAssertEqual(first.providerName, "GitHub", "The resolution read observes the old snapshot")
+        XCTAssertNil(first.binding, "Discovery began unbound and returned no candidates")
         XCTAssertFalse(coordinator.preparedBindingIsCurrent, "A preference changed across discovery cannot authorize publication")
         let next = coordinator.prepareQueryBinding(selection: nil)
         XCTAssertEqual(next.providerName, "GitLab", "The newer revision cannot authorize reuse of the old result")

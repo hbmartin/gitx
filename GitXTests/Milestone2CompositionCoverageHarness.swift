@@ -446,6 +446,14 @@
             let removedDraft = try await drafts.load(identity: draftIdentity)
             let explicitDiscard = savedDraft?.content == draftContent && exact == savedDraft && conditional == savedDraft && removedDraft == nil
             let services = environment.services
+            let accounts = ForgeAccountsService(services: services, configuration: nil)
+            let unstartedPoll: Bool
+            do {
+                _ = try await accounts.pollDeviceFlow(receivedAt: fixture.now)
+                unstartedPoll = false
+            } catch {
+                unstartedPoll = error as? ForgeAccountsError == .deviceFlowNotStarted
+            }
             let provider = ForgeGitHubPullRequestDependencyProvider(
                 loader: environment.loader,
                 now: { fixture.now },
@@ -480,6 +488,8 @@
                 headers: ["x-github-request-id": "capability-proof"],
                 body: repositoryFactsBody()
             )
+            let preparation = try await provider.preparationContext(accountID: fixture.accountID, repository: fixture.repository)
+            let validPreparation = preparation.account.id == fixture.accountID && preparation.facts.repository == fixture.repository
             let requestedOperations: Set<ForgeOperation> = [.createPullRequest, .syncFork]
             let rawCapabilities = try await provider.operationCapabilities(
                 accountID: fixture.accountID,
@@ -644,7 +654,7 @@
                 )
             }
 
-            return explicitDiscard && missing && mismatch && capabilityIdentity && eligibilityDidNotPromote
+            return explicitDiscard && unstartedPoll && validPreparation && missing && mismatch && capabilityIdentity && eligibilityDidNotPromote
                 && submittedAuthorization && rotationRejected && removalRejected
                 && offline && limited && promoted
                 && nonAuthorizationFailureRetained && denied && evidenceCleared && loaderFailure
