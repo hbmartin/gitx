@@ -3100,6 +3100,7 @@
       "invariant": "Warnings never block readiness or main-queue work. Replacement pending warning state is committed before dismissal or selection notifications can reenter presentation; only acknowledged unchanged warnings are deduplicated. One window ownership transition revokes generation before cancelling reads or removing subscriptions. Repository replacement rebuilds panes, actions, Forge sessions, worktree/index/remote observers and paired Git loaders; window-only replacement preserves browsing without attaching old outlets to an empty window. Uninstalled status clears immediately. Close and deallocation cancel owned reads, while admitted writes drain against their captured original repository and obsolete owners cannot admit further work. Action authority acquisition completes ownership reconciliation before admission, including dynamic repository overrides and unavailable replacements. Repair offers belong to the captured repository. Retained History rebinds facts and badges when its Forge session changes without losing browsing state. Unchanged History ref reloads do not launch status commands; actual HEAD and ref changes do. Nonterminal owner notifications return to their publisher before settings or presentation reconciliation. Read queries defer stale owners without installing panes, loading views or starting Git work. Controller-wide preference and activation intent survives replacement and temporary unavailability, applies preferences first, and is discarded only on terminal closure. Forge menu queries consume prepared owner-bound metadata without discovering remotes or persisting bindings; unavailable commands retain existing generic rendering. Authorized lifecycle and action boundaries refresh that metadata. Passive Forge metadata requests coalesce and reuse only matching binding, executable and configuration/dependency revisions, including verified unavailable results. Actual actions resolve afresh. Global status-bar validation does not depend on repository availability. Reconciliation-only deliveries repair stale metadata after executable changes; metadata-only preference refresh remains available without consuming activation intent. Store-scoped preference snapshots share aggregate reads and decode only changed binding payloads. Account changes retain validated unchanged presentation, show switching while pending and stage binding-witnessed early notifications. Default Pull reconciles before resolving checked-out HEAD while explicit branch callers keep their target.",
       "rootCause": "Modal warnings delay queued work and immutable loaders retain obsolete executable paths after Settings changes.",
       "sourcePaths": [
+        "Classes/Controllers/RepositoryActionContextResolver.swift",
         "Classes/git/GitBinaryDiscoveryPresenter.swift",
         "Classes/Controllers/PBGitWindowController.swift",
         "Classes/Controllers/RepositoryFocusRefreshCoordinator.swift",
@@ -3562,6 +3563,48 @@
         },
         {
           "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testBoundPreparationSharesOneSettingsSnapshotPerDelivery",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Ten bound preparations share one aggregate settings read; a real binding replacement invalidates it, without configuration or Git discovery."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testBoundForgeRejectsNumberWhenNoDestinationKindIsSupported",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "A bound repository with no supported numbered destination kinds reports the exact scripting failure."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testRepositorySetterReentrancyDrainsBeforeRestoredAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "A repository setter reentered from location validation drains stale panes and loaders before later restored admission."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testOwnerReplacementDuringForgePreparationPreservesRefreshIntent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Replacement at the actual remote-discovery boundary refuses obsolete presentation and restores matching panes and loaders on later delivery."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testLoadedDeterministicOwnerSettlesWithoutAForgeSession",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "A loaded deterministic owner retains History while Forge metadata settles unavailable without a session."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/ForgeWindowPolicyTests/testActionAvailabilityPreservesDiscoveryErrorsAndDistinguishesOwnerAbsence",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Availability diagnostics preserve actual not-found and timeout errors; generic Git and repository absence retain distinct literal messages."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
           "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testPreparedToolbarPreservesTheFirstUnchangedMenuAndAvatar",
           "role": "boundary",
           "check": "correctness",
@@ -3666,6 +3709,7 @@
       "invariant": "Verified admitted create and edit outcomes retire only the exact submitted draft snapshot, independently of presentation ownership and post-success cancellation. Missing, unreadable or changed drafts survive. Cleanup failures never resubmit or change a successful remote result; revoked capabilities cannot present. Final edit submission serializes its exact title and body before capturing cleanup evidence; a failed local save does not block publication or retire an unverified snapshot. Harness activity timestamps never move backward and creation time is preserved. Each editor retains its observed or own saved snapshot; submission conditionally saves against that evidence atomically. A conflict or unavailable save never overwrites or adopts another editor's draft, never blocks remote submission, and never authorizes cleanup. Ordinary autosaves remain last-writer-wins. Save failure preserves the editor's last verified expectation; final persistence drains in the serialized chain independently of mutation cancellation. An unsaved failed submission reopens exact text in a current-owner memory-only recovery editor. Explicit replacement confirms and atomically compares the captured stored snapshot; concurrent changes preserve both texts. Owner teardown aborts recovery prompts without writing.",
       "rootCause": "Controller-bound cleanup loses drafts after owner teardown; unconditional deletion removes newer edits and raw ownership closures outlive revocation.",
       "sourcePaths": [
+        "GitXTests/Milestone2CompositionCoverageHarness.swift",
         "Classes/Controllers/RepositoryPullRequestWorkflow.swift",
         "Classes/Controllers/RepositoryPullRequestUIController.swift",
         "Classes/Controllers/GitHubPullRequestComposition.swift",

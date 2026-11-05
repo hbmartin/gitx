@@ -240,6 +240,16 @@ final class RepositoryForgeCoordinator: NSObject {
             preparedBindingIsCurrent = true
             return queryResolution
         }
+        if let binding = before?.binding {
+            // A stored binding needs no discovery or callback boundary. Resolve
+            // from this delivery's captured bytes instead of rereading defaults.
+            let resolution = RepositoryForgeBindingResolution(kind: .existing, binding: binding)
+            preparedBindingIsCurrent = true
+            queryResolution = resolution
+            queryRefreshPolicy.didPrepare(before)
+            logger.debug("Prepared stored Forge binding from the shared delivery snapshot")
+            return resolution
+        }
         let resolution = resolveBinding()
         let after = queryRevision(selection: selection, freshBinding: true)
         preparedBindingIsCurrent = resolution.binding == after?.binding

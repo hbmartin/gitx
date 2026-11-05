@@ -785,10 +785,6 @@ final class RepositoryEditDraftSession {
         }
     }
 
-    func saveSubmission(_ content: ForgeDraftContent, drafts: any RepositoryPullRequestDraftPersisting, at date: Date) async -> ForgeDraft? {
-        await saveSubmissionResult(content, drafts: drafts, at: date).snapshot
-    }
-
     func saveSubmissionResult(_ content: ForgeDraftContent, drafts: any RepositoryPullRequestDraftPersisting, at date: Date) async -> RepositoryDraftSubmissionSave {
         do {
             let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: lastVerifiedSnapshot)

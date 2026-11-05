@@ -63,6 +63,18 @@ nonisolated struct RepositoryWindowRefreshDelivery {
     }
 }
 
+nonisolated enum RepositoryWindowActionAvailability {
+    static func error(gitUnavailable: Bool, discoveryError: Error?) -> Error {
+        if gitUnavailable, let discoveryError {
+            return discoveryError
+        }
+        let message = gitUnavailable ? "Git is not ready for this action. Try again when Git becomes available." :
+            "The repository is not available for this action. Try again after the window finishes updating."
+        return NSError(domain: "GitX.WindowAction", code: 1,
+                       userInfo: [NSLocalizedDescriptionKey: NSLocalizedString(message, comment: "Unavailable repository action")])
+    }
+}
+
 /// Read queries can inspect a coherent owner but cannot install or revoke one.
 nonisolated struct RepositoryWindowQueryPolicy {
     enum Decision: Equatable { case current, reconcileLater, unavailable }
@@ -436,15 +448,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private final func presentActionAvailabilityError(gitUnavailable: Bool) {
         guard !ownership.closed, !isReconcilingOwnership, isWindowLoaded,
               ownership.identity == currentOwnerIdentity(), ownership.identity != nil else { return }
-        let message = gitUnavailable ? "Git is not ready for this action. Try again when Git becomes available." :
-            "The repository is not available for this action. Try again after the window finishes updating."
         NSLog("[GitX] Refused unavailable explicit action; Git unavailable %@", gitUnavailable ? "yes" : "no")
-        if gitUnavailable, let error = gitDiscovery.currentAvailabilityError {
-            showErrorSheet(error)
-        } else {
-            showErrorSheet(NSError(domain: "GitX.WindowAction", code: 1,
-                                   userInfo: [NSLocalizedDescriptionKey: NSLocalizedString(message, comment: "Unavailable repository action")]))
-        }
+        showErrorSheet(RepositoryWindowActionAvailability.error(gitUnavailable: gitUnavailable, discoveryError: gitDiscovery.currentAvailabilityError))
     }
 
     final func performCheckedOutBranchAction(_ action: (PBGitRef) -> Void) {
@@ -1294,6 +1299,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc(applicationDidBecomeActive:)
+    // Kept as an Objective-C notification and subclass compatibility selector.
+    // swiftlint:disable:next unused_declaration
     dynamic func applicationDidBecomeActive(_ notification: Notification) {
         pendingRefreshIntents.record(activated: true)
         deliverRefreshIntents()
@@ -1314,6 +1321,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc(refreshPreferenceDidChange:)
+    // Objective-C notification callers retain this synchronous compatibility selector.
+    // swiftlint:disable:next unused_declaration
     dynamic nonisolated func refreshPreferenceDidChange(_ notification: Notification?) {
         if Thread.isMainThread {
             // swift6-safety-justification: The explicit main-thread check makes this synchronous selector hop safe.

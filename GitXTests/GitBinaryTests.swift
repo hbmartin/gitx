@@ -161,6 +161,22 @@ final class ForgeWindowFixtureTools: NSObject {
             }
         }
 
+        func testActionAvailabilityPreservesDiscoveryErrorsAndDistinguishesOwnerAbsence() {
+            let notFound = NSError(domain: "PBGitBinaryErrorDomain", code: 1, userInfo: [NSLocalizedDescriptionKey: "Searched executable candidates"])
+            let timeout = NSError(domain: "PBGitBinaryErrorDomain", code: 2)
+            for error in [notFound, timeout] {
+                XCTAssertTrue(GitX.RepositoryWindowActionAvailability.error(gitUnavailable: true, discoveryError: error) as NSError === error)
+            }
+            let git = GitX.RepositoryWindowActionAvailability.error(gitUnavailable: true, discoveryError: nil) as NSError
+            XCTAssertEqual(git.domain, "GitX.WindowAction")
+            XCTAssertEqual(git.code, 1)
+            XCTAssertEqual(git.localizedDescription, "Git is not ready for this action. Try again when Git becomes available.")
+            let owner = GitX.RepositoryWindowActionAvailability.error(gitUnavailable: false, discoveryError: notFound) as NSError
+            XCTAssertEqual(owner.domain, "GitX.WindowAction")
+            XCTAssertEqual(owner.code, 1)
+            XCTAssertEqual(owner.localizedDescription, "The repository is not available for this action. Try again after the window finishes updating.")
+        }
+
         func testForgeQueryPresentationBelongsToItsExactOwnerGenerationAndExecutable() {
             let repository = NSObject()
             let replacement = NSObject()
@@ -2080,6 +2096,49 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(popup.title, "@new", "The new account notification cannot be lost against the previous cached preference")
         actual.refreshPreferenceDidChange(nil)
         XCTAssertEqual(popup.title, "@new", "Unchanged preparation must preserve the selected account")
+    }
+
+    func testBoundPreparationSharesOneSettingsSnapshotPerDelivery() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let repository = try XCTUnwrap(document.repository)
+        let suite = "GitX-Bound-Delivery-\(UUID())"
+        let defaults = try XCTUnwrap(CountingForgeDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = GitX.RepositoryUISettings(repository: repository, preferences: GitX.ApplicationPreferences(userDefaults: defaults))
+        let github = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "first")
+        let gitlab = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.com")), owner: "fixture", name: "replacement")
+        let coordinator = GitX.RepositoryForgeCoordinator(repository: repository, settings: settings,
+                                                          remoteDescriptorCache: GitX.RepositoryForgeRemoteDescriptorCache(), remoteCacheKey: UUID().uuidString,
+                                                          remoteConfigurationRevision: { XCTFail("Stored bindings require no configuration walk"); return "unused" },
+                                                          remoteNames: { XCTFail("Stored bindings require no Git discovery"); return [] }, remoteURL: { _ in nil })
+        for identity in [github, gitlab] {
+            let binding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: identity)
+            settings.forgeRepositoryBinding = binding
+            defaults.aggregateReads.withLock { $0 = 0 }
+            for _ in 0 ..< 10 {
+                XCTAssertEqual(coordinator.prepareQueryBinding(selection: nil).binding, binding)
+                XCTAssertTrue(coordinator.preparedBindingIsCurrent)
+            }
+            XCTAssertEqual(defaults.aggregateReads.withLock { $0 }, 1, "Production preparation must share one aggregate capture, including after replacement")
+        }
+    }
+
+    func testBoundForgeRejectsNumberWhenNoDestinationKindIsSupported() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let repository = try XCTUnwrap(document.repository)
+        let settings = ApplicationComposition.shared.repositoryViewState(for: repository)
+        let previous = settings.forgeRepositoryBinding
+        defer { settings.forgeRepositoryBinding = previous }
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "routing")
+        settings.forgeRepositoryBinding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: identity)
+        let coordinator = GitX.RepositoryForgeCoordinator(repository: repository)
+        guard case let .failure(error) = coordinator.resolveNumberReference("#42", availableKinds: []) else {
+            return XCTFail("An empty supported-kind set must not route a destination")
+        }
+        XCTAssertEqual(error.domain, GitX.RepositoryForgeCoordinator.scriptingErrorDomain)
+        XCTAssertEqual(error.code, GitX.RepositoryForgeScriptingErrorCode.noAvailableDestination.rawValue)
     }
 
     func testBoundForgePreparationDoesNotInspectRemoteConfiguration() throws {

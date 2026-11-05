@@ -66,6 +66,8 @@ nonisolated struct RepositoryScriptOpenOptions: Equatable {
 }
 
 @objc(PBRepositoryScriptOpenOptions)
+// PBGitRepositoryDocument.m constructs this through its generated Objective-C name.
+// swiftlint:disable:next unused_declaration
 final nonisolated class RepositoryScriptOpenOptionsBridge: NSObject {
     private let options: RepositoryScriptOpenOptions
     @objc(initWithArguments:)

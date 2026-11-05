@@ -1464,7 +1464,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         await editor.autosave(content, drafts: drafts, at: snapshot.updatedAt)
         await drafts.failSaves(false)
         try await drafts.save(identity: identity, content: content, at: snapshot.updatedAt)
-        let eligible = await editor.saveSubmission(content, drafts: drafts, at: .distantFuture)
+        let eligible = await editor.saveSubmissionResult(content, drafts: drafts, at: .distantFuture).snapshot
         XCTAssertNil(eligible, "Matching text is insufficient after evidence became unavailable")
         let retained = try await drafts.load(identity: identity)
         XCTAssertEqual(retained?.lastActivityAt, snapshot.updatedAt)
@@ -1482,7 +1482,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         await editor.autosave(submitted, drafts: drafts, at: Date(timeIntervalSince1970: 101))
         XCTAssertTrue(editor.lastSaveUnavailable)
         await drafts.failSaves(false)
-        let saved = await editor.saveSubmission(submitted, drafts: drafts, at: Date(timeIntervalSince1970: 102))
+        let saved = await editor.saveSubmissionResult(submitted, drafts: drafts, at: Date(timeIntervalSince1970: 102)).snapshot
         XCTAssertEqual(saved?.content, submitted)
         XCTAssertFalse(editor.lastSaveUnavailable)
         let stored = try await drafts.load(identity: identity)
@@ -1499,7 +1499,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         await drafts.failSaves(true)
         await editor.autosave(content, drafts: drafts, at: Date(timeIntervalSince1970: 100))
         await drafts.failSaves(false)
-        let saved = await editor.saveSubmission(content, drafts: drafts, at: Date(timeIntervalSince1970: 101))
+        let saved = await editor.saveSubmissionResult(content, drafts: drafts, at: Date(timeIntervalSince1970: 101)).snapshot
         XCTAssertEqual(saved?.content, content)
     }
 

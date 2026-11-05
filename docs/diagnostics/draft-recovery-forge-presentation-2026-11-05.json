@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "approvedPlan": "Reliable draft recovery and Forge presentation",
+  "reviewTargets": {
+    "PR122": "996dff996e2c8c35cf4af3d0834e2ac440a469ac",
+    "PR123": "c4b094e975e667c3d0eb75e10a3c9c37b50235e2",
+    "planningBaseline": "f63c76ee0d8d21f7bab2ec23278b71adf8a9d291",
+    "frozenPerformanceBase": "7d3a25a553dfa125743ab147d2ea4eb9c0813ef4"
+  },
+  "selectedPolicies": [
+    "Publish despite local draft-save conflict; never overwrite or adopt another editor snapshot for cleanup",
+    "Final persistence drains independently of mutation cancellation",
+    "Recover failed unsaved submission in a current-owner memory-only editor",
+    "Stale queries defer; explicit actions reconcile and never replay",
+    "Stored Forge bindings use one immutable settings snapshot per delivery; inferred data keeps external-boundary validation",
+    "Keep every official coverage floor and report production and fixtures separately"
+  ],
+  "implementationCommits": [
+    "d2ad6a30",
+    "583d8803",
+    "80fb14b4",
+    "6b941fd8",
+    "a90755b2"
+  ],
+  "runIds": [
+    "draft-recovery-characterization",
+    "draft-recovery-red",
+    "draft-recovery-combined-green",
+    "draft-recovery-conflict-green",
+    "draft-recovery-complete-correctness",
+    "draft-toolbar-first-render-red",
+    "draft-toolbar-compatibility-green",
+    "draft-recovery-complete-correctness-v2",
+    "draft-boundary-characterization-green",
+    "draft-settings-budget-red",
+    "draft-settings-budget-green",
+    "draft-submission-store-green",
+    "draft-recovery-complete-correctness-v3",
+    "draft-recovery-final"
+  ],
+  "historicalEvidence": {
+    "firstComplete": {
+      "tests": 2262,
+      "failures": 1,
+      "reason": "Standalone toolbar fixture omitted prepared binding evidence; all compatibility assertions retained"
+    },
+    "secondComplete": {
+      "tests": 2263,
+      "failures": 0,
+      "coverage": "Six file floors still needed boundary coverage; no floors lowered"
+    },
+    "toolbarRegression": "Two menu/avatar identity failures before fix; five focused cases passed after fix",
+    "settingsBudgetRegression": "Three aggregate reads instead of one for both initial and replacement binding; passes with captured stored-binding resolution",
+    "focusedFinal": "48 metadata/draft cases passed; corrected draft-store class selection also passed",
+    "semanticPreview": "Found tests-only wrapper and Objective-C-called declaration false positives; cleanup uses no broad exclusion or baseline relaxation"
+  },
+  "verificationAtCommit": {
+    "status": "Final complete coverage enforcement and post-final-commit canonical full profile pending",
+    "deliveryEligible": false,
+    "finalEvidenceRun": "draft-recovery-final",
+    "cleanupMode": "preview",
+    "expectedStagedApp": "build/GitX.app"
+  },
+  "performance": {
+    "identicalHarness": "GitXTests/GitXPerformanceTests.swift",
+    "baseSamples": 60,
+    "samplesPerCondition": 5,
+    "sizes": [
+      1000,
+      10000,
+      300000
+    ],
+    "viewport": 40,
+    "ordering": "Frozen base executes first; current samples execute later. Matched sample indices, not interleaved.",
+    "measurement": "Reset and complete rebinding reported separately; fixture creation and drawing excluded.",
+    "status": "Base passed; current comparison pending final performance execution"
+  },
+  "desktop": {
+    "approvedCutoffUTC": "2026-11-05T21:26:44Z",
+    "extension": "User declined extension; foreground work must stop by 1:26 PM Pacific; preserve security settings"
+  },
+  "delivery": "One ready hbmartin/gitx PR against master after required passing verification; never merge. No push yet."
+}
