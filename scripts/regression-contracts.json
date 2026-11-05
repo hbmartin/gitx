@@ -3859,6 +3859,13 @@
           "role": "valid",
           "check": "correctness",
           "oracle": "Keep Editing retains the recovered text; explicit close discards only memory and never overwrites the stored draft."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testUnsavedServerConflictRecoversExactTextAndRequiresAFreshNormalEdit",
+          "role": "failure",
+          "check": "correctness",
+          "oracle": "Gate a server conflict after failed final persistence; retain exact submitted text, preserve the stored draft, require a fresh normal edit and submit exactly once."
         }
       ]
     },

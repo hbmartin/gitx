@@ -44,7 +44,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     private var previewView: ForgeMarkdownNativeView?
     private var hasFinished = false
     private var recoverySavedContent: ForgeDraftContent?
-    private let recoveryNotice = NSTextField(wrappingLabelWithString: "The remote edit did not complete. This recovered text has not been saved as a draft.")
+    private let recoveryNotice = NSTextField(wrappingLabelWithString: "The remote edit could not be confirmed. This recovered text has not been saved as a draft.")
     private var isRecovery: Bool {
         if case .recovery = mode {
             return true

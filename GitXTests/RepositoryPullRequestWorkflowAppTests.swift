@@ -1503,6 +1503,10 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         XCTAssertEqual(saved?.content, content)
     }
 
+    func testUnsavedServerConflictRecoversExactTextAndRequiresAFreshNormalEdit() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Conflicting title", body: "Preserve the intended edit"), finalSaveFails: true, remoteFails: true, remoteConflict: true)
+    }
+
     func testFailedUnsavedEditReopensRecoveryWithoutOverwritingStoredDraft() async throws {
         try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Unsaved title", body: "Unsaved body"), finalSaveFails: true, remoteFails: true)
     }
@@ -1553,7 +1557,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Unsaved title", body: "Unsaved body"), finalSaveFails: true, remoteFails: true, recoveryAction: action)
     }
 
-    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false, newerBeforeSubmission: Bool = false, remoteFails: Bool = false, recoveryAction: RecoveryAction = .inspect, pauseFinalSave: Bool = false) async throws {
+    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false, newerBeforeSubmission: Bool = false, remoteFails: Bool = false, recoveryAction: RecoveryAction = .inspect, pauseFinalSave: Bool = false, remoteConflict: Bool = false) async throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
@@ -1561,7 +1565,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         weak let weakOwner = owner
         let started = XCTestExpectation(description: "The edit reaches its captured service")
         let service = try CompletionMutationService(preparation: fixture.preparation(), started: started)
-        await service.failEditAfterAdmission(remoteFails)
+        await service.failEditAfterAdmission(remoteFails, conflict: remoteConflict)
         let drafts = CompletionDraftStore()
         let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "Submitted edit", bodyMarkdown: "Submitted body", updatedAt: Date(timeIntervalSince1970: 100))
         let destination = ForgeDestination.pullRequest(fixture.repository, snapshot.number)
@@ -1679,6 +1683,8 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             XCTAssertNotNil(find("GitX.PullRequest.Recovery.SaveDraft", in: recovery))
             XCTAssertEqual((find("GitX.PullRequest.Title", in: recovery) as? NSTextField)?.stringValue, finalContent?.title)
             XCTAssertEqual((find("GitX.PullRequest.Body", in: recovery) as? NSTextView)?.string, finalContent?.body)
+            let notice = (find("GitX.PullRequest.Recovery.Notice", in: recovery) as? NSTextField)?.stringValue
+            XCTAssertTrue(notice?.contains(remoteConflict ? "refresh the Pull Request and open a new edit" : "could not be confirmed") == true)
             try await exerciseRecoveryAction(recoveryAction, window: window, drafts: drafts, identity: identity, expected: XCTUnwrap(finalContent), original: initialContent, invalidateOwner: { controller?.invalidateOwner() })
         } else if remoteFails {
             XCTAssertNil(window.attachedSheet, "Revoked owners cannot present recovery")
@@ -2041,9 +2047,11 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
     let editGate = IgnoringCancellationGate<RepositoryPullRequestEditOutcome>()
     private var rejectsMutation = false
     private var editFailsAfterAdmission = false
+    private var editConflictsAfterAdmission = false
 
-    func failEditAfterAdmission(_ value: Bool) {
+    func failEditAfterAdmission(_ value: Bool, conflict: Bool = false) {
         editFailsAfterAdmission = value
+        editConflictsAfterAdmission = conflict
     }
 
     func rejectMutations() {
@@ -2084,6 +2092,9 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
             throw CompletionFixtureError.unavailable
         }
         let outcome = await editGate.wait()
+        if editConflictsAfterAdmission {
+            throw ForgePullRequestWorkflowError.editConflict
+        }
         if editFailsAfterAdmission {
             throw CompletionFixtureError.unavailable
         }
