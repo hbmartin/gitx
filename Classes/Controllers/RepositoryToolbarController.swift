@@ -819,8 +819,11 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         )
         if isActualInsertion {
             forgeAccountViews = views
+            renderedAccountRevision = nil
+            applyForgeAccountPresentation()
+        } else {
+            applyForgeAccountPresentation(to: views)
         }
-        applyForgeAccountPresentation(to: views)
         return item
     }
 

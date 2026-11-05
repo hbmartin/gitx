@@ -3562,6 +3562,13 @@
         },
         {
           "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testPreparedToolbarPreservesTheFirstUnchangedMenuAndAvatar",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "The first unchanged metadata publication preserves the installed popup and avatar, leaves the nib unloaded and starts no discovery."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
           "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testToolbarProviderUpdatesFromPreparedBindingWithoutAnAccountNotification",
           "role": "boundary",
           "check": "correctness",

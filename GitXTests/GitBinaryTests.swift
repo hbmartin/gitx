@@ -1875,6 +1875,42 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertNil(actual.repositoryForgeOverlaySession)
     }
 
+    func testPreparedToolbarPreservesTheFirstUnchangedMenuAndAvatar() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let repository = try XCTUnwrap(document.repository)
+        let owner = GitX.PBGitWindowController()
+        owner.repository = repository
+        let probeCalls = Mutex(0)
+        let discovery = GitBinaryDiscovery(preference: { nil }, environment: [:], output: { _, _ in
+            probeCalls.withLock { $0 += 1 }
+            return "git version 2.50.1"
+        }, locations: [])
+        XCTAssertTrue(discovery.accept("/usr/bin/git"))
+        let admittedProbeCount = probeCalls.withLock { $0 }
+        owner.gitDiscovery = discovery
+        defer { owner.close() }
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "first-render")
+        let binding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: identity)
+        let controller = GitX.RepositoryToolbarController(windowController: owner, repository: repository)
+        controller.applyForgeMetadata(providerName: "GitHub", binding: binding,
+                                      ownerIsCurrent: owner.repositoryPresentationValidation(for: repository))
+        let toolbar = NSToolbar(identifier: "GitX.FirstUnchangedPresentation")
+        let item = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .init("GitX.Toolbar.ForgeAccount"), willBeInsertedIntoToolbar: true))
+        let stack = try XCTUnwrap(item.view as? NSStackView)
+        let popup = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSPopUpButton }.first)
+        let menuItem = try XCTUnwrap(popup.item(at: 0))
+        let avatarContainer = try XCTUnwrap(stack.arrangedSubviews.first { $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccountAvatarContainer" })
+        let avatar = try XCTUnwrap(avatarContainer.subviews.first)
+        XCTAssertEqual(popup.title, "GitHub")
+        controller.applyForgeMetadata(providerName: "GitHub", binding: binding,
+                                      ownerIsCurrent: owner.repositoryPresentationValidation(for: repository))
+        XCTAssertTrue(popup.item(at: 0) === menuItem, "The first unchanged publication must not rebuild an existing account menu")
+        XCTAssertTrue(avatarContainer.subviews.first === avatar, "Unchanged publication must preserve the rendered avatar")
+        XCTAssertFalse(owner.isWindowLoaded, "Prepared rendering must remain independent of nib loading")
+        XCTAssertEqual(probeCalls.withLock { $0 }, admittedProbeCount, "Rendering and authority renewal must not start Git discovery")
+    }
+
     func testToolbarProviderUpdatesFromPreparedBindingWithoutAnAccountNotification() throws {
         try prepareFixture()
         defer { try? removeFixture() }
