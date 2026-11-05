@@ -11,6 +11,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import workflow_session as session
 from typing import NamedTuple
 
@@ -448,24 +449,48 @@ def comparison_receipt(path):
     return None
 
 
+def report_path_identity(path: pathlib.Path) -> tuple[int, int, tuple[str, ...]]:
+    """Identify existing aliases and not-yet-created destinations on their volume."""
+    ancestor = path.resolve()
+    missing = []
+    while not ancestor.exists():
+        missing.append(ancestor.name)
+        ancestor = ancestor.parent
+    stat = ancestor.stat()
+    if missing and sys.platform == "darwin":
+        # Darwin's sys/unistd.h defines _PC_CASE_SENSITIVE as 11. Python does
+        # not expose its name, but pathconf accepts the platform constant.
+        case_sensitive = os.pathconf(ancestor, 11)
+        if case_sensitive not in (0, 1):
+            raise ValueError(f"Cannot establish report destination case sensitivity: {ancestor}")
+        missing = [unicodedata.normalize("NFD", part) for part in missing]
+        if not case_sensitive:
+            missing = [part.casefold() for part in missing]
+    return stat.st_dev, stat.st_ino, tuple(reversed(missing))
+
+
 def validate_report_destinations(args, root: pathlib.Path) -> None:
     outputs = [("Source breakdown", args.source_breakdown), ("Proposal", args.propose_improvements)]
     outputs = [(label, path.resolve()) for label, path in outputs if path is not None]
     if not outputs:
         return
     receipt = args.receipt or args.result_bundle.parent.parent / "receipt.json"
-    protected = {path.resolve() for path in (args.policy, args.result_bundle, receipt, args.compare) if path is not None}
+    protected = {report_path_identity(path) for path in (args.policy, args.result_bundle, receipt, args.compare) if path is not None}
     history = root / "artifacts/verification"
     # Resolve filenames only for optional outputs. Historical payload reads and
     # compatible-comparison selection remain lazy in the ordinary failure path.
-    protected.update(path.resolve() for path in history.glob("*/receipt.json"))
+    protected.update(report_path_identity(path) for path in history.glob("*/receipt.json"))
+    bundle_identity = report_path_identity(args.result_bundle)
+    history_identity = report_path_identity(history)
     seen = set()
     for label, output in outputs:
-        if output in seen:
+        identity = report_path_identity(output)
+        if identity in seen:
             raise ValueError("Source breakdown and proposal outputs must differ.")
-        seen.add(output)
-        reserved_receipt = output.name == "receipt.json" and output.parent.parent == history.resolve()
-        if output in protected or output.is_relative_to(args.result_bundle.resolve()) or reserved_receipt:
+        seen.add(identity)
+        reserved_receipt = output.name.casefold() == "receipt.json" and report_path_identity(output.parent.parent) == history_identity
+        inside_bundle = output.is_relative_to(args.result_bundle.resolve()) or any(report_path_identity(parent) == bundle_identity for parent in output.parents)
+        if identity in protected or inside_bundle or reserved_receipt:
             raise ValueError(f"{label} must not replace a coverage input or verification receipt.")
 
 

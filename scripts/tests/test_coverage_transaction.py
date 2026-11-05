@@ -6,6 +6,8 @@ import argparse
 import json
 import contextlib
 import io
+import os
+import sys
 import unittest
 from unittest import mock
 
@@ -13,6 +15,28 @@ from support import load_script
 
 
 class CoverageTransactionTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin case-insensitive volume identity")
+    def test_case_aliases_cannot_replace_reports_or_input_evidence(self):
+        coverage = load_script("check_coverage.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            if os.pathconf(root, 11):  # Darwin _PC_CASE_SENSITIVE
+                self.skipTest("This fixture volume distinguishes case")
+            policy = root / "policy.json"
+            original = b'{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.5,"files":{}}\n'
+            policy.write_bytes(original)
+            first, second = root / "report.json", root / "REPORT.JSON"
+            for outputs in (["--source-breakdown", str(first), "--propose-improvements", str(second)],
+                            ["--source-breakdown", str(root / "POLICY.JSON")],
+                            ["--propose-improvements", str(root / "POLICY.JSON")]):
+                with self.subTest(outputs=outputs), mock.patch.object(coverage, "xccov_report") as report, contextlib.redirect_stderr(io.StringIO()):
+                    status = coverage.main([str(root / "result.xcresult"), "--policy", str(policy), *outputs])
+                    self.assertEqual(status, 1)
+                    report.assert_not_called()
+                    self.assertEqual(policy.read_bytes(), original)
+                    self.assertFalse(first.exists())
+                    self.assertFalse(second.exists())
+
     def test_report_outputs_cannot_replace_each_other(self):
         coverage = load_script("check_coverage.py")
         with tempfile.TemporaryDirectory() as directory:
