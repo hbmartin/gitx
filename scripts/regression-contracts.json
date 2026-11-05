@@ -3563,6 +3563,13 @@
         },
         {
           "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testBackendlessRemoteIntentUsesCompatibilityLookupWithoutAdmittingInvalidInput",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "A legacy metadata repository with no ObjectiveGit backend uses its remote fallback exactly once and rejects an unknown remote without admission or an availability error."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
           "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testBoundPreparationSharesOneSettingsSnapshotPerDelivery",
           "role": "boundary",
           "check": "correctness",
@@ -3722,6 +3729,13 @@
         "thread-sanitizer"
       ],
       "tests": [
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAuthorizationCompatibilityDismissalKeepsRetryUncalled",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Dismiss the real app-product authorization sheet through the legacy callback overload; no retry or browser action is admitted."
+        },
         {
           "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
           "identifier": "GitXTests/RepositoryMutationCompletionTests/testSuccessfulCreateCleansItsDraftAfterAllPresentationOwnersDeallocate",

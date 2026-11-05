@@ -20,7 +20,8 @@
     "583d8803",
     "80fb14b4",
     "6b941fd8",
-    "a90755b2"
+    "a90755b2",
+    "2670bdd5"
   ],
   "runIds": [
     "draft-recovery-characterization",
@@ -36,7 +37,9 @@
     "draft-settings-budget-green",
     "draft-submission-store-green",
     "draft-recovery-complete-correctness-v3",
-    "draft-recovery-final"
+    "draft-recovery-final",
+    "draft-final-boundary-green",
+    "draft-recovery-complete-correctness-v4"
   ],
   "historicalEvidence": {
     "firstComplete": {
@@ -52,7 +55,13 @@
     "toolbarRegression": "Two menu/avatar identity failures before fix; five focused cases passed after fix",
     "settingsBudgetRegression": "Three aggregate reads instead of one for both initial and replacement binding; passes with captured stored-binding resolution",
     "focusedFinal": "48 metadata/draft cases passed; corrected draft-store class selection also passed",
-    "semanticPreview": "Found tests-only wrapper and Objective-C-called declaration false positives; cleanup uses no broad exclusion or baseline relaxation"
+    "semanticPreview": "Found tests-only wrapper and Objective-C-called declaration false positives; cleanup uses no broad exclusion or baseline relaxation",
+    "thirdComplete": {
+      "tests": 2269,
+      "failures": 0,
+      "coverage": "Four former gaps restored; legacy remote fallback and default authorization dismissal each still needed one app-product executable line"
+    },
+    "finalBoundary": "Both compatibility cases passed, and each exact missing app-product function counter executed once; no production behavior change or lowered floor."
   },
   "verificationAtCommit": {
     "status": "Final complete coverage enforcement and post-final-commit canonical full profile pending",

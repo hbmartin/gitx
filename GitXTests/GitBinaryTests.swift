@@ -1,5 +1,6 @@
 import AppKit
 import ForgeKit
+import GitHubForgeAdapter
 @testable import GitX
 import ObjectiveGit
 import Synchronization
@@ -2096,6 +2097,45 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(popup.title, "@new", "The new account notification cannot be lost against the previous cached preference")
         actual.refreshPreferenceDidChange(nil)
         XCTAssertEqual(popup.title, "@new", "Unchanged preparation must preserve the selected account")
+    }
+
+    func testBackendlessRemoteIntentUsesCompatibilityLookupWithoutAdmittingInvalidInput() {
+        let repository = ColdForgeQueryRepository()
+        let nativeWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let actual = SenderActionWindowProbe(window: nativeWindow)
+        defer { actual.close(); nativeWindow.close() }
+        let discovery = GitBinaryDiscovery(preference: { nil }, environment: [:], output: { _, _ in "git version 2.50.1" }, locations: [])
+        XCTAssertTrue(discovery.accept("/usr/bin/git"))
+        actual.gitDiscovery = discovery
+        actual.repository = repository
+        let sender = NSMenuItem()
+        sender.representedObject = "missing"
+        actual.fetchRemote(sender)
+        XCTAssertEqual(repository.remoteReads.withLock { $0 }, 1, "Legacy metadata repositories retain their remote lookup fallback")
+        XCTAssertEqual(actual.fetches, 0)
+        XCTAssertTrue(actual.errors.isEmpty, "An invalid remote remains invalid input, rather than an infrastructure failure")
+        XCTAssertNil(actual.historyViewController)
+    }
+
+    func testAuthorizationCompatibilityDismissalKeepsRetryUncalled() throws {
+        let nativeWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.titled], backing: .buffered, defer: false)
+        let actual = GitX.PBGitWindowController(window: nativeWindow)
+        defer { actual.close(); nativeWindow.close() }
+        nativeWindow.makeKeyAndOrderFront(nil)
+        let url = try XCTUnwrap(URL(string: "https://github.com/orgs/fixture/sso"))
+        let metadata = GitHubResponseMetadata(statusCode: 403,
+                                              rateLimit: GitHubRateLimitParser.parse(statusCode: 403, headers: [:], receivedAt: Date(timeIntervalSince1970: 1)),
+                                              saml: GitHubSAMLMetadata(authorizationURL: url))
+        var retries = 0
+        XCTAssertTrue(GitX.GitHubAuthorizationRecoveryPresenter.present(error: GitHubReadError.samlAuthorizationRequired(metadata), for: actual, retry: { retries += 1 }))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in nativeWindow.attachedSheet != nil }, object: nil)
+        wait(for: [ready], timeout: 5)
+        let sheet = try XCTUnwrap(nativeWindow.attachedSheet)
+        attachScreenshot(of: sheet.contentView, named: "Authorization recovery before explicit dismissal")
+        nativeWindow.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in nativeWindow.attachedSheet == nil }, object: nil)
+        wait(for: [closed], timeout: 5)
+        XCTAssertEqual(retries, 0, "The legacy callback overload must preserve explicit dismissal without retry or browser opening")
     }
 
     func testBoundPreparationSharesOneSettingsSnapshotPerDelivery() throws {
