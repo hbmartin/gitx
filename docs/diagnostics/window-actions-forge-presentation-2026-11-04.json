@@ -132,7 +132,7 @@
     "finalFullRunId": "window-forge-final-full",
     "cleanupMode": "preview",
     "authority": "The final workflow receipt must pass at the final commit, including coverage, packages, sanitizers, UI, performance, analysis and Debug app staging. Iteration receipts do not establish delivery readiness.",
-    "stagedApp": "/Volumes/Pro2T/gitx/build/GitX.app"
+    "stagedApp": "build/GitX.app"
   },
   "delivery": "PR123 merged at c4b094e9 before continuing verification. The preference correction and Swift-backed test fixture are local follow-up work; delivery destination is awaiting user direction. Full post-commit evidence remains required."
 }

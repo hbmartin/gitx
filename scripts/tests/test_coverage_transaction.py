@@ -13,6 +13,118 @@ from support import load_script
 
 
 class CoverageTransactionTests(unittest.TestCase):
+    def test_report_outputs_cannot_replace_each_other(self):
+        coverage = load_script("check_coverage.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            output = root / "shared.json"
+            original = b"existing report bytes"
+            output.write_bytes(original)
+            alias = root / "alias.json"
+            alias.symlink_to(output)
+            policy = root / "policy.json"
+            policy.write_text('{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.5,"files":{}}')
+            measurement = {"targets": [{"name": "Half Dark.app", "lineCoverage": 1.0, "files": []}]}
+            with mock.patch.object(coverage, "xccov_report", return_value=measurement) as report, mock.patch.object(coverage, "ratchet_evidence", return_value={}), contextlib.redirect_stderr(io.StringIO()):
+                status = coverage.main([str(root / "result.xcresult"), "--policy", str(policy), "--source-breakdown", str(output), "--propose-improvements", str(alias)])
+            self.assertEqual(status, 1)
+            self.assertEqual(output.read_bytes(), original)
+            self.assertTrue(alias.is_symlink())
+            report.assert_not_called()
+
+    def test_optional_outputs_preserve_historical_receipts_and_their_resolved_targets(self):
+        coverage = load_script("check_coverage.py")
+        for flag in ("--source-breakdown", "--propose-improvements"):
+            for indirect in (False, True):
+                with self.subTest(flag=flag, indirect=indirect), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory)
+                    receipt = root / "artifacts/verification/older/receipt.json"
+                    receipt.parent.mkdir(parents=True)
+                    original = b'{"historical":"immutable evidence"}\n'
+                    destination = root / "external-evidence.json" if indirect else receipt
+                    destination.write_bytes(original)
+                    if indirect:
+                        receipt.symlink_to(destination)
+                    policy = root / "policy.json"
+                    policy.write_text('{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.5,"files":{}}')
+                    measurement = {"targets": [{"name": "Half Dark.app", "lineCoverage": 1.0, "files": []}]}
+                    with mock.patch.object(coverage, "__file__", str(root / "scripts/check_coverage.py")), mock.patch.object(coverage, "xccov_report", return_value=measurement) as report, mock.patch.object(coverage, "ratchet_evidence", return_value={}), mock.patch.object(coverage, "comparison_receipt") as read, contextlib.redirect_stderr(io.StringIO()):
+                        status = coverage.main([str(root / "current/Results/result.xcresult"), "--policy", str(policy), flag, str(destination)])
+                    self.assertEqual(status, 1)
+                    self.assertEqual(receipt.read_bytes(), original)
+                    self.assertEqual(destination.read_bytes(), original)
+                    report.assert_not_called()
+                    read.assert_not_called()
+
+    def test_proposal_preserves_all_explicit_inputs_before_measurement(self):
+        coverage = load_script("check_coverage.py")
+        for name in ("policy", "bundle", "receipt", "comparison"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                bundle = root / "Results/result.xcresult"
+                bundle.mkdir(parents=True)
+                paths = {"policy": root / "policy.json", "bundle": bundle / "Info.plist",
+                         "receipt": root / "current.json", "comparison": root / "comparison.json"}
+                original = b"preserve input bytes"
+                for path in paths.values():
+                    path.write_bytes(original)
+                paths["policy"].write_text('{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.5,"files":{}}')
+                before = {key: path.read_bytes() for key, path in paths.items()}
+                with mock.patch.object(coverage, "xccov_report") as report, contextlib.redirect_stderr(io.StringIO()):
+                    status = coverage.main([str(bundle), "--policy", str(paths["policy"]), "--receipt", str(paths["receipt"]),
+                                            "--compare", str(paths["comparison"]), "--propose-improvements", str(paths[name])])
+                self.assertEqual(status, 1)
+                self.assertEqual({key: path.read_bytes() for key, path in paths.items()}, before)
+                report.assert_not_called()
+
+    def test_distinct_reports_do_not_read_historical_payloads_on_a_passing_measurement(self):
+        coverage = load_script("check_coverage.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            history = root / "artifacts/verification/older/receipt.json"
+            history.parent.mkdir(parents=True)
+            history.write_bytes(b"malformed historical payload must stay unread")
+            policy = root / "policy.json"
+            original = b'{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.5,"files":{}}\n'
+            policy.write_bytes(original)
+            breakdown, proposal = root / "breakdown.json", root / "proposal.json"
+            measurement = {"targets": [{"name": "Half Dark.app", "lineCoverage": .8, "coveredLines": 8, "executableLines": 10,
+                                        "files": [{"path": "/unknown.swift", "lineCoverage": .8, "coveredLines": 8, "executableLines": 10}]}]}
+            with mock.patch.object(coverage, "__file__", str(root / "scripts/check_coverage.py")), mock.patch.object(coverage, "xccov_report", return_value=measurement), mock.patch.object(coverage, "ratchet_evidence", return_value={}), mock.patch.object(coverage, "comparison_receipt") as read:
+                status = coverage.main([str(root / "current/Results/result.xcresult"), "--policy", str(policy),
+                                        "--source-breakdown", str(breakdown), "--propose-improvements", str(proposal)])
+            self.assertEqual(status, 0)
+            self.assertTrue(json.loads(breakdown.read_text())["supplementalOnly"])
+            self.assertEqual(json.loads(proposal.read_text())["candidatePolicy"]["minimumLineCoverage"], .8)
+            self.assertEqual(policy.read_bytes(), original)
+            self.assertEqual(history.read_bytes(), b"malformed historical payload must stay unread")
+            read.assert_not_called()
+
+    def test_malformed_supplemental_counts_fail_normally_without_publishing(self):
+        coverage = load_script("check_coverage.py")
+        for relative in ("Classes/A.swift", "Unknown.swift"):
+            for covered, executable in ((8, 7), (-1, 7), (0, -1)):
+                with self.subTest(relative=relative, counts=(covered, executable)), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory)
+                    policy = root / "policy.json"
+                    original = b'{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.5,"files":{}}\n'
+                    policy.write_bytes(original)
+                    output = root / "breakdown.json"
+                    output.write_bytes(b"previous breakdown")
+                    proposal = root / "proposal.json"
+                    proposal.write_bytes(b"previous proposal")
+                    report = {"targets": [{"name": "Half Dark.app", "lineCoverage": 1.0, "files": [
+                        {"path": str(root / relative), "lineCoverage": 1.0, "coveredLines": covered, "executableLines": executable}]}]}
+                    stderr = io.StringIO()
+                    with mock.patch.object(coverage, "xccov_report", return_value=report), contextlib.redirect_stderr(stderr):
+                        status = coverage.main([str(root / "result.xcresult"), "--policy", str(policy), "--source-breakdown", str(output), "--propose-improvements", str(proposal)])
+                    self.assertEqual(status, 1)
+                    self.assertIn("Invalid coverage line counts", stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+                    self.assertEqual(policy.read_bytes(), original)
+                    self.assertEqual(output.read_bytes(), b"previous breakdown")
+                    self.assertEqual(proposal.read_bytes(), b"previous proposal")
+
     def test_source_breakdown_refuses_to_overwrite_its_policy_input(self):
         coverage = load_script("check_coverage.py")
         with tempfile.TemporaryDirectory() as directory:
