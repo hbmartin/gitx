@@ -763,14 +763,23 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     private var document: PBGitRepositoryDocument!
     private var window: WindowProbe!
 
-    private func prepareFixture() throws {
+    private func gitReadinessExpectation() -> XCTestExpectation {
         let ready = expectation(description: "Validated Git before document characterization")
         PBGitBinary.whenAvailable { path, error in
             XCTAssertNotNil(path)
             XCTAssertNil(error)
             ready.fulfill()
         }
+        return ready
+    }
+
+    private func prepareFixture() throws {
+        let ready = gitReadinessExpectation()
         wait(for: [ready], timeout: 10)
+        try createRepositoryFixture()
+    }
+
+    private func createRepositoryFixture() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try GitXTestGitFixture.run(["init", "--initial-branch=main"], in: directory)
@@ -1892,6 +1901,12 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         var revocations = 0
         owner.registerPullRequestCloseGuard(owner: token, protection: { confirmation = $0; return true }, revoke: { revocations += 1 })
         window.makeKeyAndOrderFront(nil)
+        let unrelated = NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false)
+        XCTAssertTrue(owner.windowShouldClose(unrelated), "A foreign window cannot consult this owner's draft protection")
+        XCTAssertNil(confirmation)
+        XCTAssertFalse(owner.windowShouldClose(window), "The delegate path must preserve the protected owner too")
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(revocations, 0)
         owner.unregisterPullRequestCloseGuard(owner: NSObject())
         owner.close()
         XCTAssertTrue(window.isVisible, "Unrelated tokens cannot bypass an unresolved close protection")
@@ -1943,6 +1958,54 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
                        ["/custom/global config"])
         XCTAssertEqual(GitX.RepositoryForgeCoordinator.globalConfigurationPaths(environment: ["GIT_CONFIG_SYSTEM": "/custom/system", "XDG_CONFIG_HOME": "/custom/xdg"], home: URL(fileURLWithPath: "/fixture")),
                        ["/custom/system", "/custom/xdg/git/config", "/fixture/.gitconfig"])
+    }
+
+    func testGlobalConfigurationPathsReadTheCurrentEnvironment() {
+        let previous = getenv("GIT_CONFIG_GLOBAL").map { String(cString: $0) }
+        defer {
+            if let previous {
+                setenv("GIT_CONFIG_GLOBAL", previous, 1)
+            } else {
+                unsetenv("GIT_CONFIG_GLOBAL")
+            }
+        }
+        setenv("GIT_CONFIG_GLOBAL", "/fixture/current global config", 1)
+        XCTAssertTrue(GitX.RepositoryForgeCoordinator.globalConfigurationPaths().contains("/fixture/current global config"))
+        setenv("GIT_CONFIG_GLOBAL", "/fixture/replaced global config", 1)
+        let replaced = GitX.RepositoryForgeCoordinator.globalConfigurationPaths()
+        XCTAssertTrue(replaced.contains("/fixture/replaced global config"))
+        XCTAssertFalse(replaced.contains("/fixture/current global config"))
+    }
+
+    func testLiveAccountClockSupportsAnAlreadyExpiredDeadline() async throws {
+        let clock = GitX.RepositoryForgeAccountClock.live
+        let before = Date()
+        let observed = clock.now()
+        XCTAssertGreaterThanOrEqual(observed, before)
+        try await clock.sleep(-1)
+        XCTAssertLessThanOrEqual(observed, Date())
+    }
+
+    func testPreparedSessionRechecksSuppressionAtItsCreationBoundary() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let previous = getenv("GITX_M2_UITEST").map { String(cString: $0) }
+        unsetenv("GITX_M2_UITEST")
+        defer {
+            if let previous {
+                setenv("GITX_M2_UITEST", previous, 1)
+            } else {
+                unsetenv("GITX_M2_UITEST")
+            }
+        }
+        let actual = RepositoryOverrideWindowProbe(ownerNotifications: NotificationCenter())
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        actual.replaceRepositoryForgeOverlaySession(nil)
+        actual.beforeRepositoryRead = { setenv("GITX_M2_UITEST", "1", 1) }
+        actual.installRepositoryForgeOverlaySession()
+        XCTAssertNil(actual.repositoryForgeOverlaySession, "A resolution prepared before suppression cannot install a live session afterward")
     }
 
     func testColdForgeMenuQueryDoesNotInstallAResolverOrDiscoverRemotes() throws {
@@ -2019,7 +2082,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     func testCooldownDeadlineUpdatesHelpWithoutRebuildingTheMenuOrEnablingChanges() async throws {
-        try prepareFixture()
+        let ready = gitReadinessExpectation()
+        await fulfillment(of: [ready], timeout: 10)
+        try createRepositoryFixture()
         defer { try? removeFixture() }
         let repository = try XCTUnwrap(document.repository)
         let owner = RepositoryOverrideWindowProbe(ownerNotifications: NotificationCenter())
@@ -2055,6 +2120,13 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let currentAvatar = stack.arrangedSubviews.first?.subviews.first
         XCTAssertFalse(popup.isEnabled)
         XCTAssertTrue(popup.toolTip?.contains("rate-limit window") == true)
+        stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
+        try attachScreenshot(of: stack, named: "Forge cooldown help before deadline")
+        XCTAssertEqual(popup.accessibilityHelp(), popup.toolTip)
+        let beforeHelp = try XCTAttachment(string: XCTUnwrap(popup.toolTip))
+        beforeHelp.name = "Forge cooldown help before deadline text"
+        beforeHelp.lifetime = .keepAlways
+        add(beforeHelp)
         time.withLock { $0 = Date(timeIntervalSince1970: 161) }
         await gate.release()
         let updated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in popup.toolTip?.contains("successful GitHub retry") == true }, object: nil)
@@ -2063,6 +2135,12 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertTrue(popup.item(at: 0) === currentItem)
         XCTAssertTrue(stack.arrangedSubviews.first?.subviews.first === currentAvatar)
         XCTAssertFalse(avatar === currentAvatar, "The account notification installs the account avatar once before the deadline")
+        try attachScreenshot(of: stack, named: "Forge cooldown help after deadline awaiting successful validation")
+        XCTAssertEqual(popup.accessibilityHelp(), popup.toolTip)
+        let afterHelp = try XCTAttachment(string: XCTUnwrap(popup.toolTip))
+        afterHelp.name = "Forge cooldown help after deadline text"
+        afterHelp.lifetime = .keepAlways
+        add(afterHelp)
     }
 
     func testPreparedToolbarPreservesTheFirstUnchangedMenuAndAvatar() throws {

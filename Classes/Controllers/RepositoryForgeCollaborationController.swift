@@ -1271,6 +1271,10 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     #if DEBUG
+        func openNativeDestinationForProductProof(_ destination: ForgeDestination) -> ForgeNativeDestinationOpenResult {
+            nativeOpener?.open(destination) ?? .unavailable
+        }
+
         func waitForAccountSelectionForProductProof() async {
             await accountSelectionTask?.value
         }

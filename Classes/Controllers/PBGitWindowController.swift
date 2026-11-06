@@ -1112,13 +1112,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func deferCloseForRecoveredText() -> Bool {
-        guard !closingAfterDraftConfirmation, !ownership.closed, pullRequestCloseGuardOwner != nil else { return false }
-        return pullRequestCloseProtection? { [weak self] in
+        guard !closingAfterDraftConfirmation, !ownership.closed, pullRequestCloseGuardOwner != nil,
+              let protection = pullRequestCloseProtection else { return false }
+        return protection { [weak self] in
             guard let self, !self.ownership.closed else { return }
             self.closingAfterDraftConfirmation = true
             defer { self.closingAfterDraftConfirmation = false }
             self.close()
-        } ?? false
+        }
     }
 
     @objc public dynamic func windowShouldClose(_ sender: NSWindow) -> Bool {
