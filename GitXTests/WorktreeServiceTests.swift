@@ -2087,7 +2087,10 @@ final class WorktreeServiceTests: XCTestCase {
         defer { observation.invalidate() }
         defaults.set("/usr/bin/true", forKey: "gitExecutable")
         NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-        await fulfillment(of: [closed, readCancelled, queuedCancelled], timeout: 5)
+        // Task termination runs on a utility queue; a main-queue drain cannot
+        // establish that cancellation has reached the admitted process.
+        let terminated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in oldRead.wasCancelled }, object: nil)
+        await fulfillment(of: [closed, readCancelled, queuedCancelled, terminated], timeout: 5)
         await drainMainQueue()
         observation.invalidate()
         XCTAssertEqual(installed.tasks.requests.filter { $0.arguments == ["--version"] }.count, 1,
