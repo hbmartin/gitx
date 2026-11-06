@@ -9,6 +9,7 @@
     "HistoryFlowDiagnosticsSummary.swift": 1.0,
     "HistoryFlowSelectionPolicy.swift": 1.0,
     "HistorySearchPolicy.swift": 1.0,
+    "ReflogPolicy.swift": 1.0,
     "RepositoryConfigurationPolicy.swift": 1.0,
     "SidebarPolicy.swift": 1.0,
     "Worktree.swift": 1.0,

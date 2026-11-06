@@ -49,7 +49,7 @@ The table uses a deliberately conservative notation: **Yes** is a marketed or do
 | Stash management | **Yes** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Terminal |
 | Interactive rebase / commit reorder | Terminal | **Yes** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Terminal |
 | Built-in conflict-resolution workflow | Terminal | **Yes** | Partial | **Yes** | **Yes** | Yes | Yes | **Yes** | Yes | Terminal |
-| Reflog / recovery surface | Terminal | **Yes** | Partial | Partial | Yes | Yes | Partial | Yes | Yes | Terminal |
+| Reflog / recovery surface | **Yes** | **Yes** | Partial | Partial | Yes | Yes | Partial | Yes | Yes | Terminal |
 | Worktree management | Open linked worktrees; management is limited | Yes | Partial | Yes | Yes | Yes | Partial | Yes | Yes | Terminal |
 | LFS operations | Terminal | Yes | Partial | Yes | Yes | Yes | Yes | Yes | Yes | Terminal |
 | Forge pull-request workflow | Limited / evolving | Yes | **Yes** (GitHub) | Partial | Yes | Yes | Bitbucket-oriented | Yes | Partial | Terminal |
@@ -123,13 +123,19 @@ The following order is based on competitive frequency, user risk, and fit with G
 |---:|---|---|---|
 | 1 | Guided conflict resolution and operation recovery | Conflict handling is a headline feature in Fork, Sublime Merge, Tower, SmartGit, and SourceGit. It converts a moment of maximum user anxiety into a reason to trust the client. | Show the Git operation state, affected files, a focused resolver, explicit continue/abort paths, and terminal fallback. Do not conceal Git’s state machine. |
 | 2 | Interactive rebase and safer history editing | Reorder, squash, reword, drop, and recover are standard power-user expectations. GitX already supports amend and pull-with-rebase, so the conceptual bridge is short. | Start with a previewable todo list, clear warnings for published commits, and an abort/recovery path. |
-| 3 | Reflog and recovery view | GitX’s history focus makes it well suited to explain “where did my commit go?” | Offer a readable local reflog with restore/copy/open-in-terminal actions before attempting broad automation. |
+| 3 | Reflog and recovery view — implemented | GitX’s history focus makes it well suited to explain “where did my commit go?” | Native HEAD and local-branch reflogs, unreachable-commit inspection, comparison, recovery branches, and previewed soft/mixed/hard reset with a mandatory backup branch and explicit hard-reset discard confirmation. |
 | 4 | First-class worktree management | Worktrees support parallel branches and review tasks without repeated stashing. Several modern competitors now surface them. | List, create, open, prune, and remove worktrees with strong working-state safeguards. |
 | 5 | LFS awareness and operations | LFS is common in asset-heavy repositories and advertised by nearly every full-featured competitor. | Detect LFS state and failures first; add lock/unlock and transfer visibility only when the UX can be reliable. |
 | 6 | Deliberate forge collaboration | GitHub Desktop and commercial clients set expectations for pull requests and hosted code review. | Keep authentication optional, make network scope legible, and never displace local Git as the source of truth. |
 | 7 | Refresh the public story and manual | The manual still describes GitX as incomplete and says complex merge/remote tasks require the terminal, even though current menus and code cover more. | Publish a maintained feature inventory, supported-platform policy, screenshots, and a short “when to use Terminal” guide. |
 
 ## What not to chase indiscriminately
+
+The Reflog destination is local and needs no Forge account. Recovery actions use
+captured full object IDs. Reset revalidates the checkout and affected state after
+confirmation; incomplete previews and active Git operations block it. The backup
+preserves committed history only, and unavailable or expired objects remain
+unrecoverable through this interface. See the [recovery manual](../Site/UserManual/text/04%20-%20Advance%20GitX%20usage.markdown).
 
 GitX does not need to become a cross-platform product, a subscription bundle, or a hosted-service dashboard to compete. Mercurial support, AI commit generation, team billing, and a workflow engine are reasonable products elsewhere, but are not natural prerequisites for a superb Mac Git client.
 

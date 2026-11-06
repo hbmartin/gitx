@@ -1,0 +1,50 @@
+{
+  "purpose": "Diagnostic screenshots and pre-commit verification evidence. Final delivery requires the canonical full post-commit verification profile.",
+  "preparationCommit": "bb7736d58c0912634195ce340a2676764106e6a8",
+  "runIds": [
+    "reflog-pane-balance-green",
+    "reflog-pane-balance-green-ui-71a3f18a",
+    "reflog-workflows-v4",
+    "reflog-ui-v1-core-a6c89b04",
+    "reflog-complete-correctness-v2",
+    "reflog-complete-correctness-v2-correctness-5ab6f445",
+    "reflog-static-v5",
+    "reflog-worktree-cancellation-wait"
+  ],
+  "preCommitVerification": {
+    "correctnessTests": 2320,
+    "correctnessFailures": 0,
+    "staticScriptTests": 876,
+    "receipt": "artifacts/verification/reflog-complete-correctness-v2-correctness-5ab6f445/receipt.json",
+    "coverageFloorsRaisedFromPassedReceipt": true,
+    "plainCoverageCheckerPassedAfterRatchet": true,
+    "testSynchronizationCommit": "8ab94c52"
+  },
+  "sourceSnapshot": "artifacts/verification/reflog-pane-balance-green/workflow.json",
+  "sourceFingerprint": "44460da6b0a2c7e6767799356ab05c09e6a04ccc23be959709d45d82abe1c7ae",
+  "sourceHashes": {
+    "Classes/Controllers/ReflogBrowserController.swift": "864273085456198fd9610fe43211cd9a69f4d0d5a239a5a42681819144d7a623",
+    "Classes/git/RepositoryReflogService.swift": "98148af0c27aede7df9805079ce9a93598f30165f3d7c760651fe6edd2b130bc",
+    "GitXCore/Sources/GitXCore/ReflogPolicy.swift": "5b20bb465663155b4399a6a09ca1171e3fd4e4a5d37500e0970b0b0f6329dc2a",
+    "GitXTests/ReflogBrowserTests.swift": "ff7e4a776ca144da1285ef72f1883407d07b45f9c3f812c57e191a97e678c456",
+    "GitXTests/ReflogServiceTests.swift": "08a925d8a6481dba952d236c2c33c1a03c55586abc40c430080a3ba292360095",
+    "GitXUITests/ReflogWorkflowUITests.swift": "c768540592d489c1c73e9a76255664fbb35baf20723a513daf2ff69c0a97c8dc"
+  },
+  "screenshots": [
+    "00-Reflog-Hard-Reset-Preview.png",
+    "01-Reflog-Explicit-Discard-Confirmation.png",
+    "02-Reflog-Reset-Completed-With-Backup.png",
+    "04-Reflog-Unreachable-Commit.png",
+    "05-Reflog-Recovery-Branch-Created.png"
+  ],
+  "scenarios": [
+    "Unreachable commit details and recovery branch creation",
+    "Hard reset preview includes local modifications",
+    "Separate explicit discard confirmation and cancellation",
+    "Successful reset identifies the recovery branch"
+  ],
+  "notes": [
+    "Screenshots are unmodified XCTest attachments. The macOS background activity notification is unrelated to GitX.",
+    "App-hosted tests additionally cover each reset mode, obstruction paths, linked worktrees, stale evidence, cancellation, missing objects, operation restrictions, and retained backup on failure."
+  ]
+}

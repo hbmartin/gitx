@@ -479,6 +479,11 @@
 		F4A48D69BD914A32A0D36395 /* InspectorActionViewport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB410853D8E493688875043 /* InspectorActionViewport.swift */; };
 		A737A36FF55A40128B79FB09 /* ForgeRegistrationDeliveryGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */; };
 		F7F05374F3D84792A303E64E /* ReflogRecoveryCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */; };
+		D0F31FE952CA4482B2A2A86D /* RepositoryReflogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */; };
+		2121ECC761624F0383A1B36D /* ReflogServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F810AB2DBCE74FB9AEEFCB78 /* ReflogServiceTests.swift */; };
+		4C584BD1CCD5441E9FC66115 /* ReflogBrowserController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F70CA399F3A642658072C91E /* ReflogBrowserController.swift */; };
+		5D8C48E3584A4A8980BC33AA /* ReflogBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */; };
+		C38599D0B4BF490F8D4C1F0E /* ReflogWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1225,6 +1230,11 @@
 		FCB410853D8E493688875043 /* InspectorActionViewport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorActionViewport.swift; sourceTree = "<group>"; };
 		49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRegistrationDeliveryGate.swift; sourceTree = "<group>"; };
 		D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogRecoveryCharacterizationTests.swift; sourceTree = "<group>"; };
+		50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryReflogService.swift; sourceTree = "<group>"; };
+		F810AB2DBCE74FB9AEEFCB78 /* ReflogServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogServiceTests.swift; sourceTree = "<group>"; };
+		F70CA399F3A642658072C91E /* ReflogBrowserController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserController.swift; sourceTree = "<group>"; };
+		83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserTests.swift; sourceTree = "<group>"; };
+		70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogWorkflowUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1510,6 +1520,7 @@
 		4A5D762514A9A9CC00DF6C68 /* Controllers */ = {
 			isa = PBXGroup;
 			children = (
+				F70CA399F3A642658072C91E /* ReflogBrowserController.swift */,
 				C0DE1000000000000000000C /* PBAutoFetchManager.swift */,
 				4A5D762614A9A9CC00DF6C68 /* ApplicationController.h */,
 				4A5D762714A9A9CC00DF6C68 /* ApplicationController.m */,
@@ -1628,6 +1639,7 @@
 		4A5D764D14A9A9CC00DF6C68 /* git */ = {
 			isa = PBXGroup;
 			children = (
+				50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */,
 				C0DEAC0F0000000000000012 /* GitOutputFormatting.swift */,
 				C0DE10000000000000000005 /* PBHistoryArrayController.h */,
 				C0DE10000000000000000006 /* PBHistoryArrayController.swift */,
@@ -1876,6 +1888,8 @@
 		C0DE20000000000000000006 /* GitXTests */ = {
 			isa = PBXGroup;
 			children = (
+				83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */,
+				F810AB2DBCE74FB9AEEFCB78 /* ReflogServiceTests.swift */,
 				D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */,
 				C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */,
 				C0DE91000000000000000003 /* PBQLOutlineViewCompatibility.h */,
@@ -1979,6 +1993,7 @@
 		CC0000040000004 /* GitXUITests */ = {
 			isa = PBXGroup;
 			children = (
+				70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */,
 				F0BA93000000000000000002 /* WorktreeGitProxy.sh */,
 				C0DE90260000000000000004 /* GitDiscoveryProxy.sh */,
 				D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */,
@@ -2423,6 +2438,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C584BD1CCD5441E9FC66115 /* ReflogBrowserController.swift in Sources */,
+				D0F31FE952CA4482B2A2A86D /* RepositoryReflogService.swift in Sources */,
 				26A1958F255949DCBBB012A3 /* PBGitRefLabelColors.swift in Sources */,
 				CA188AFDFFFC45379B27A394 /* PBSourceViewGitWorktreeItem.swift in Sources */,
 				FD274204D1E94E89A0BDFD51 /* PBGitWindowController+Worktrees.swift in Sources */,
@@ -2671,6 +2688,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5D8C48E3584A4A8980BC33AA /* ReflogBrowserTests.swift in Sources */,
+				2121ECC761624F0383A1B36D /* ReflogServiceTests.swift in Sources */,
 				F7F05374F3D84792A303E64E /* ReflogRecoveryCharacterizationTests.swift in Sources */,
 				C0DE88000000000000000032 /* WorktreePresentationTests.swift in Sources */,
 				FBFB6B67DFBB4AF8B4916F5F /* WorktreeAppKitTests.swift in Sources */,
@@ -2812,6 +2831,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C38599D0B4BF490F8D4C1F0E /* ReflogWorkflowUITests.swift in Sources */,
 				B6547E1495BE465AA156AFAF /* WorktreeWorkflowUITests.swift in Sources */,
 				D0C700000000000000000001 /* GitXUIActivationPreflightTests.swift in Sources */,
 				D0C700000000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */,
