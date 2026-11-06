@@ -711,6 +711,33 @@ final class GitBinaryReliabilityTests: XCTestCase {
         XCTAssertEqual(discovery.version, "2.50.1")
     }
 
+    func testSearchDeadlineRevalidatesAnExternallyChangedPreferenceWithoutAnotherCaller() {
+        let clock = Clock()
+        let preference = Mutex("/pending")
+        let entered = expectation(description: "Original probe is in flight")
+        let replaced = expectation(description: "Deadline discovers the new preference")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let discovery = GitBinaryDiscovery(preference: { preference.withLock { $0 } }, environment: [:], output: { path, _ in
+            if path == "/pending" {
+                entered.fulfill()
+                _ = release.wait(timeout: .now() + 10)
+            }
+            return "git version 2.50.1"
+        }, locations: [], timing: clock.timing, notify: { selection, _ in
+            if selection?.path == "/replacement" {
+                replaced.fulfill()
+            }
+        })
+        discovery.start()
+        wait(for: [entered], timeout: 3)
+        preference.withLock { $0 = "/replacement" }
+        clock.advance(30)
+        release.signal()
+        wait(for: [replaced], timeout: 3)
+        XCTAssertEqual(discovery.currentSelection, GitBinarySelection(path: "/replacement", version: "2.50.1"))
+    }
+
     func testActiveSelectionRemainsAvailableWhileAValidReplacementWaits() {
         let fixture = Fixture(preference: "/old", outputs: ["/old": "git version 2.50.1", "/new": "git version 2.51.0"])
         let started = expectation(description: "Replacement probe started")

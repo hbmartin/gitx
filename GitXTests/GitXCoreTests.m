@@ -232,6 +232,7 @@ static NSUInteger PBBinaryVersionProbeCount;
 @property (nonatomic) NSTimeInterval firstOIDDelay;
 @property (nonatomic) BOOL rejectsReferences;
 @property (nonatomic) NSUInteger rejectedReferenceCount;
+@property (nonatomic, copy) dispatch_block_t didExhaust;
 @end
 
 @implementation GTRevisionEnumerationErrorStub
@@ -260,9 +261,30 @@ static NSUInteger PBBinaryVersionProbeCount;
 	if (success) *success = NO;
 	if (error) *error = self.terminalError;
 	self.reportedErrorCount++;
+	if (self.didExhaust) self.didExhaust();
 	return nil;
 }
 
+@end
+
+// Hold the first object read while the enumerator queues later commits, so
+// cancellation exercises queued work without depending on thread timing.
+@interface PBRevisionBlockingCache : NSCache
+@property (nonatomic, strong) XCTestExpectation *entered;
+@property (nonatomic, strong) dispatch_semaphore_t releaseRead;
+@property (atomic) NSUInteger lookupCount;
+@end
+
+@implementation PBRevisionBlockingCache
+- (id)objectForKey:(id)key
+{
+	self.lookupCount++;
+	if (self.lookupCount == 1) {
+		[self.entered fulfill];
+		dispatch_semaphore_wait(self.releaseRead, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+	}
+	return [super objectForKey:key];
+}
 @end
 
 @interface PBGitRevListScriptedEnumeratorStub : PBGitRevList
@@ -1062,6 +1084,38 @@ static NSUInteger PBBinaryVersionProbeCount;
 	operationQueue.suspended = NO;
 	[operationQueue waitUntilAllOperationsAreFinished];
 	[self waitForExpectations:@[ completion ] timeout:0.2];
+}
+
+- (void)testCancellationDuringACommitReadSkipsQueuedObjectsAndPublication
+{
+	NSError *error = nil;
+	GTCommit *head = (GTCommit *)[[self.repository.gtRepo headReferenceWithError:&error] resolvedTarget];
+	XCTAssertNotNil(head, @"%@", error);
+	PBGitCommit *cached = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:head];
+	GTRevisionEnumerationErrorStub *enumerator = [[GTRevisionEnumerationErrorStub alloc] initWithRepository:self.repository.gtRepo error:&error];
+	enumerator.oidsBeforeError = @[ head.OID, head.OID, head.OID ];
+	XCTestExpectation *enumerated = [self expectationWithDescription:@"All object reads are queued"];
+	enumerator.didExhaust = ^{ [enumerated fulfill]; };
+	PBRevisionBlockingCache *cache = [[PBRevisionBlockingCache alloc] init];
+	cache.entered = [self expectationWithDescription:@"First object read is held"];
+	cache.releaseRead = dispatch_semaphore_create(0);
+	[cache setObject:cached forKey:head.OID];
+	PBGitRevListScriptedEnumeratorStub *list = [[PBGitRevListScriptedEnumeratorStub alloc]
+		initWithRepository:self.repository rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]] shouldGraph:NO];
+	list.scriptedEnumerator = enumerator;
+	[list setValue:cache forKey:@"commitCache"];
+	XCTestExpectation *completion = [self expectationWithDescription:@"Cancelled history cannot publish completion"];
+	completion.inverted = YES;
+	[list loadRevisionsWithCompletionBlock:^{ [completion fulfill]; }];
+	[self waitForExpectations:@[ cache.entered, enumerated ] timeout:3];
+	[list cancel];
+	dispatch_semaphore_signal(cache.releaseRead);
+	NSOperationQueue *queue = [list valueForKey:@"operationQueue"];
+	[queue waitUntilAllOperationsAreFinished];
+	[self waitForExpectations:@[ completion ] timeout:0.2];
+	XCTAssertEqual(cache.lookupCount, (NSUInteger)1, @"Queued commits must not be read after cancellation");
+	XCTAssertNil(list.commits);
+	XCTAssertFalse(list.isParsing);
 }
 
 - (void)testRevisionLoadCompletesEmptyWhenRepositoryIsUnavailable

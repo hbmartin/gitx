@@ -106,6 +106,46 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         session.invalidate()
     }
 
+    func testManualRefreshStartsAnUnstartedSessionAndHistoryPublishesCachedBeforeRemote() async throws {
+        let cached = try historyOverlay(checkRollup: .failed)
+        let fresh = try historyOverlay(checkRollup: .running)
+        let cachedSnapshot = snapshot(cached, fetchedAt: now.addingTimeInterval(-120))
+        let cache = OverlayCacheDouble(facts: nil, history: [commit: cachedSnapshot])
+        let reader = try OverlayReaderDouble(
+            factsMode: .success(remote(facts(description: "Manual bootstrap"))),
+            history: [commit: .success(remote(fresh))]
+        )
+        let session = makeSession(reader: reader, cache: cache)
+        defer { session.invalidate() }
+        let factsLoaded = expectation(description: "Manual refresh bootstraps facts")
+        _ = session.observeFacts { state in
+            if case .value = state {
+                factsLoaded.fulfill()
+            }
+        }
+        session.requestManualRefresh()
+        await fulfillment(of: [factsLoaded], timeout: 2)
+
+        var observations: [RepositoryForgeOverlaySession.HistoryState] = []
+        let historyLoaded = expectation(description: "Remote history replaces cached history")
+        _ = session.observeHistory { requestedCommit, state in
+            guard requestedCommit == self.commit else { return }
+            observations.append(state)
+            if state.snapshot?.value == fresh {
+                historyLoaded.fulfill()
+            }
+        }
+        session.requestHistoryOverlay(commit)
+        await fulfillment(of: [historyLoaded], timeout: 2)
+        let cachedIndex = try XCTUnwrap(observations.firstIndex(of: .loading(previous: cachedSnapshot)))
+        let freshIndex = try XCTUnwrap(observations.firstIndex { $0.snapshot?.value == fresh })
+        XCTAssertLessThan(cachedIndex, freshIndex)
+        let factsRequests = await reader.factsRequestCount()
+        let historyRequests = await reader.historyRequestCount(for: commit)
+        XCTAssertEqual(factsRequests, 1)
+        XCTAssertEqual(historyRequests, 1)
+    }
+
     func testHistoryDemandBeforeBootstrapIsReplayedAfterSessionBecomesReady() async throws {
         let overlay = try historyOverlay(checkRollup: .running)
         let cache = OverlayCacheDouble(facts: nil)
@@ -1695,9 +1735,12 @@ private actor OverlayCacheDouble: RepositoryForgeOverlayCaching {
     private var putHistoryValues: [ForgeCommitID: RepositoryForgeRemoteSnapshot<ForgeHistoryOverlay>] = [:]
     private let failsFactsRead: Bool
 
-    init(facts: RepositoryForgeOverlaySnapshot<ForgeRepositoryFacts>?, failsFactsRead: Bool = false) {
+    init(facts: RepositoryForgeOverlaySnapshot<ForgeRepositoryFacts>?, failsFactsRead: Bool = false,
+         history: [ForgeCommitID: RepositoryForgeOverlaySnapshot<ForgeHistoryOverlay>] = [:])
+    {
         self.facts = facts
         self.failsFactsRead = failsFactsRead
+        self.history = history
     }
 
     func cachedRepositoryFacts(accessedAt: Date) async throws -> RepositoryForgeOverlaySnapshot<ForgeRepositoryFacts>? {
