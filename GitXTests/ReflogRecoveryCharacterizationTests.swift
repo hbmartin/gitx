@@ -63,6 +63,42 @@ final class ReflogRecoveryCharacterizationTests: XCTestCase {
         XCTAssertTrue(try fixture.git(["-C", linked.path, "reflog", "--format=%H", "HEAD"]).contains(linkedHead))
         XCTAssertTrue(try fixture.git(["reflog", "--format=%H", "refs/heads/topic"]).contains(linkedHead))
     }
+
+    func testHardResetReplacesStagedGitlinkEvenWithoutRecursiveSubmoduleReset() throws {
+        let fixture = try ReflogGitFixture()
+        let nested = try ReflogGitFixture()
+        defer { fixture.remove(); nested.remove() }
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        try fixture.stageNestedRepositoryOverTrackedFile(nested)
+        XCTAssertTrue(try fixture.git(["ls-files", "--stage", "tracked.txt"]).hasPrefix("160000 "))
+        XCTAssertTrue(try fixture.git(["diff", "--name-only", head, head]).isEmpty)
+        try fixture.git(["reset", "--hard", "--no-recurse-submodules", head])
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertEqual(try String(contentsOf: fixture.url.appendingPathComponent("tracked.txt"), encoding: .utf8), "initial\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.url.appendingPathComponent("tracked.txt/untracked.txt").path))
+    }
+
+    func testNonrecursiveHardResetCreatesSubmoduleDirectoriesAndReplacesObstructions() throws {
+        for obstruction in ["missing", "file", "symlink"] {
+            let fixture = try ReflogGitFixture()
+            let child = try ReflogGitFixture()
+            defer { fixture.remove(); child.remove() }
+            try fixture.git(["-c", "protocol.file.allow=always", "submodule", "add", child.url.path, "module"])
+            try fixture.git(["commit", "-am", "add submodule"])
+            let module = fixture.url.appendingPathComponent("module")
+            try FileManager.default.removeItem(at: module)
+            if obstruction == "file" {
+                try fixture.write("module", "untracked obstruction\n")
+            } else if obstruction == "symlink" {
+                try FileManager.default.createSymbolicLink(at: module, withDestinationURL: child.url)
+            }
+            try fixture.git(["reset", "--hard", "--no-recurse-submodules", "HEAD"])
+            let attributes = try FileManager.default.attributesOfItem(atPath: module.path)
+            XCTAssertEqual(attributes[.type] as? FileAttributeType, .typeDirectory, obstruction)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: module.path).isEmpty, obstruction)
+            XCTAssertEqual(try String(contentsOf: child.url.appendingPathComponent("tracked.txt"), encoding: .utf8), "initial\n")
+        }
+    }
 }
 
 final class ReflogGitFixture {
@@ -87,6 +123,14 @@ final class ReflogGitFixture {
         let destination = url.appendingPathComponent(path)
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try text.write(to: destination, atomically: true, encoding: .utf8)
+    }
+
+    func stageNestedRepositoryOverTrackedFile(_ nested: ReflogGitFixture) throws {
+        let destination = url.appendingPathComponent("tracked.txt")
+        try FileManager.default.removeItem(at: destination)
+        try FileManager.default.copyItem(at: nested.url, to: destination)
+        try write("tracked.txt/untracked.txt", "preserve nested local content\n")
+        try git(["add", "tracked.txt"])
     }
 
     @discardableResult
