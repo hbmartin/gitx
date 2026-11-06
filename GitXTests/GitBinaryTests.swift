@@ -763,14 +763,23 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     private var document: PBGitRepositoryDocument!
     private var window: WindowProbe!
 
-    private func prepareFixture() throws {
+    private func gitReadinessExpectation() -> XCTestExpectation {
         let ready = expectation(description: "Validated Git before document characterization")
         PBGitBinary.whenAvailable { path, error in
             XCTAssertNotNil(path)
             XCTAssertNil(error)
             ready.fulfill()
         }
+        return ready
+    }
+
+    private func prepareFixture() throws {
+        let ready = gitReadinessExpectation()
         wait(for: [ready], timeout: 10)
+        try createRepositoryFixture()
+    }
+
+    private func createRepositoryFixture() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try GitXTestGitFixture.run(["init", "--initial-branch=main"], in: directory)
@@ -2019,7 +2028,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     func testCooldownDeadlineUpdatesHelpWithoutRebuildingTheMenuOrEnablingChanges() async throws {
-        try prepareFixture()
+        let ready = gitReadinessExpectation()
+        await fulfillment(of: [ready], timeout: 10)
+        try createRepositoryFixture()
         defer { try? removeFixture() }
         let repository = try XCTUnwrap(document.repository)
         let owner = RepositoryOverrideWindowProbe(ownerNotifications: NotificationCenter())
