@@ -9,26 +9,43 @@
     "reflog-complete-correctness-v2",
     "reflog-complete-correctness-v2-correctness-5ab6f445",
     "reflog-static-v5",
-    "reflog-worktree-cancellation-wait"
+    "reflog-worktree-cancellation-wait",
+    "reflog-submodule-reset-characterization",
+    "reflog-submodule-reset-characterization-correctness-d6019d49",
+    "reflog-submodule-reset-red-v2",
+    "reflog-submodule-reset-red-v2-correctness-a8c5c52d",
+    "reflog-submodule-reset-green-v2",
+    "reflog-submodule-reset-green-v2-correctness-9c778c6f",
+    "reflog-submodule-reset-green-v2-ui-393b9953",
+    "reflog-submodule-reset-green-v2-release-test-build-eed39295",
+    "reflog-submodule-discard-red",
+    "reflog-submodule-discard-red-correctness-5e76bca6",
+    "reflog-submodule-final-green",
+    "reflog-submodule-final-green-correctness-8ae5ad50",
+    "reflog-submodule-final-green-release-test-build-67dd382e",
+    "reflog-submodule-final-green-ui-3fcd05df",
+    "reflog-safety-complete-correctness-v2",
+    "reflog-safety-complete-correctness-v2-correctness-c9ef1907",
+    "reflog-coverage-boundaries-green",
+    "reflog-coverage-boundaries-green-correctness-b29f6854",
+    "reflog-coverage-boundaries-green-release-test-build-fbcdbc1a",
+    "reflog-safety-complete-correctness-v3",
+    "reflog-safety-complete-correctness-v3-correctness-58729778",
+    "reflog-worktree-sheet-reproduction",
+    "reflog-worktree-sheet-reproduction-correctness-6bca3278",
+    "reflog-safety-complete-correctness-v4",
+    "reflog-safety-complete-correctness-v4-correctness-d658a542"
   ],
-  "preCommitVerification": {
-    "correctnessTests": 2320,
-    "correctnessFailures": 0,
-    "staticScriptTests": 876,
-    "receipt": "artifacts/verification/reflog-complete-correctness-v2-correctness-5ab6f445/receipt.json",
-    "coverageFloorsRaisedFromPassedReceipt": true,
-    "plainCoverageCheckerPassedAfterRatchet": true,
-    "testSynchronizationCommit": "8ab94c52"
-  },
-  "sourceSnapshot": "artifacts/verification/reflog-pane-balance-green/workflow.json",
-  "sourceFingerprint": "44460da6b0a2c7e6767799356ab05c09e6a04ccc23be959709d45d82abe1c7ae",
+  "sourceSnapshot": "artifacts/verification/reflog-submodule-final-green/workflow.json",
+  "sourceFingerprint": "337748c06d9af005105f443940aabe178ac1de9ea972eee369072edbe85ebc47",
   "sourceHashes": {
     "Classes/Controllers/ReflogBrowserController.swift": "864273085456198fd9610fe43211cd9a69f4d0d5a239a5a42681819144d7a623",
-    "Classes/git/RepositoryReflogService.swift": "98148af0c27aede7df9805079ce9a93598f30165f3d7c760651fe6edd2b130bc",
+    "Classes/git/RepositoryReflogService.swift": "bd7d924795365257f5b2ab68b23d6ae78d15661caad15494a81127148b9e50db",
     "GitXCore/Sources/GitXCore/ReflogPolicy.swift": "5b20bb465663155b4399a6a09ca1171e3fd4e4a5d37500e0970b0b0f6329dc2a",
     "GitXTests/ReflogBrowserTests.swift": "ff7e4a776ca144da1285ef72f1883407d07b45f9c3f812c57e191a97e678c456",
-    "GitXTests/ReflogServiceTests.swift": "08a925d8a6481dba952d236c2c33c1a03c55586abc40c430080a3ba292360095",
-    "GitXUITests/ReflogWorkflowUITests.swift": "c768540592d489c1c73e9a76255664fbb35baf20723a513daf2ff69c0a97c8dc"
+    "GitXTests/ReflogServiceTests.swift": "3a0d82c18eb1ab4dfce7a7dea8c4f35b57bdcb06c7d91fd27894f71eb1f42c00",
+    "GitXUITests/ReflogWorkflowUITests.swift": "c768540592d489c1c73e9a76255664fbb35baf20723a513daf2ff69c0a97c8dc",
+    "GitXTests/ReflogRecoveryCharacterizationTests.swift": "f766eb3a6576f2362a477dd6dce5d23c8f50d66d17604a633d295a4018967913"
   },
   "screenshots": [
     "00-Reflog-Hard-Reset-Preview.png",
@@ -46,5 +63,68 @@
   "notes": [
     "Screenshots are unmodified XCTest attachments. The macOS background activity notification is unrelated to GitX.",
     "App-hosted tests additionally cover each reset mode, obstruction paths, linked worktrees, stale evidence, cancellation, missing objects, operation restrictions, and retained backup on failure."
-  ]
+  ],
+  "submoduleCharacterizationCommit": "5098dcb2",
+  "initialFeaturePreCommitVerification": {
+    "correctnessTests": 2320,
+    "correctnessFailures": 0,
+    "staticScriptTests": 876,
+    "receipt": "artifacts/verification/reflog-complete-correctness-v2-correctness-5ab6f445/receipt.json",
+    "coverageFloorsRaisedFromPassedReceipt": true,
+    "plainCoverageCheckerPassedAfterRatchet": true,
+    "testSynchronizationCommit": "8ab94c52"
+  },
+  "safetyCorrectionFocusedVerification": {
+    "appHostedTests": 36,
+    "uiTests": 2,
+    "failures": 0,
+    "debugAndReleaseTestConsumers": "passed",
+    "swiftFormat": "0.62.1, passed",
+    "swiftLint": "0.63.2, zero violations",
+    "regressions": [
+      "Refuse staged gitlink replacements before backup or reset",
+      "Preview empty submodule directory creation",
+      "Capture file and symlink obstructions, including ancestors",
+      "Invalidate stale confirmation before preserving and resetting HEAD",
+      "Keep existing submodule contents and symlink destinations unchanged",
+      "Exclude preserved internal submodule edits from the discard list",
+      "Keep staged gitlink changes visible despite diff.ignoreSubmodules configuration"
+    ]
+  },
+  "coverageBoundaryTestCommit": "2404e6dc",
+  "safetyCorrectionCompleteAttempt": {
+    "tests": 2324,
+    "testFailures": 0,
+    "coverageGate": "failed in unchanged GitBinaryDiscovery.swift, PBGitRevList.m, and RepositoryForgeOverlaySession.swift; no floors lowered",
+    "recoveryServiceCoverage": 0.9763
+  },
+  "coverageBoundaryVerification": {
+    "focusedTests": 64,
+    "failures": 0,
+    "debugAndReleaseTestConsumers": "passed",
+    "previouslyMissedBranches": "Confirmed executed in xccov; complete correctness remains required before a ratchet"
+  },
+  "worktreeSheetRetry": {
+    "completeRunTestCases": 2327,
+    "failedCases": 2,
+    "reason": "Two queued worktree sheets did not appear before their test deadlines; isolated unchanged reproduction passed both cases. Cause remains unconfirmed.",
+    "isolatedTests": 2,
+    "isolatedFailures": 0,
+    "priorCoverageShortfalls": "All three resolved; worktree coverage remains incomplete in the failed run"
+  },
+  "safetyCorrectionCompleteVerification": {
+    "correctnessTests": 2327,
+    "failures": 0,
+    "receipt": "artifacts/verification/reflog-safety-complete-correctness-v4-correctness-d658a542/receipt.json",
+    "evidenceStatus": "valid",
+    "coverageFloorsRaisedFromPassedReceipt": true,
+    "plainCoverageCheckerPassedAfterRatchet": true,
+    "coverageFloors": {
+      "application": 0.9389,
+      "recoveryService": 0.9763,
+      "reflogBrowser": 0.9775,
+      "forgeOverlaySession": 0.9129
+    },
+    "priorSheetTimeouts": "Both cases passed unchanged in the complete run; prior failed evidence is retained."
+  }
 }

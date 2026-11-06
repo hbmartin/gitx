@@ -61,6 +61,10 @@ coordination, and AppKit sheets. Every reset first preserves the previous HEAD
 in a unique recovery branch. Hard reset requires separate discard confirmation;
 uncommitted changes receive no automatic stash or backup.
 
+Hard-reset evidence includes submodule path creation and file or symlink
+obstructions without traversing existing submodule directories. Staged gitlink
+type changes are refused before any backup or reset is attempted.
+
 Recovery of expired objects, recursive submodule reset, and hard-reset handling
 of incomplete or hidden-index previews remain outside this surface. The next
 approved slices are visible history-search modes and shared named searches,

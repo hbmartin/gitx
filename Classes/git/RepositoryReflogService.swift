@@ -197,8 +197,8 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
             }
         }
         let destination = try treePaths(["ls-tree", "-r", "-z", "--full-tree", target])
-        let changed = try paths(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", "HEAD", target, "--"])
-        let staged = try paths(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", "--"])
+        let changed = try paths(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--ignore-submodules=none", "--name-only", "-z", "HEAD", target, "--"])
+        let staged = try paths(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--ignore-submodules=none", "--name-only", "-z", "--"])
         let unstaged = try paths(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", "--"])
         var affected = Set(changed + staged + unstaged)
         var discarded = Set(staged + unstaged)
@@ -218,8 +218,15 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
         for path in Set(current.keys).union(destination.keys).sorted() {
             try checkCancellation()
             if current[path] == "160000" || destination[path] == "160000" {
-                if mode == .hard, changed.contains(path) {
+                if mode == .hard, current[path] != destination[path] || changed.contains(path) {
                     throw RepositoryReflogError.unavailable("This reset changes a submodule. Use Git in Terminal to inspect its working state first.")
+                }
+                if mode == .hard {
+                    let existingDirectory = try captureSubmodulePath(root: root, path: path, affected: &affected, discarded: &discarded, record: record)
+                    if existingDirectory, !staged.contains(path) {
+                        affected.remove(path)
+                        discarded.remove(path)
+                    }
                 }
                 continue
             }
@@ -278,13 +285,37 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
         return result
     }
 
-    private func capture(url: URL, relative: String, descend: Bool, capturedPaths: inout Set<String>, record: (Data) -> Void) throws {
+    private func captureSubmodulePath(root: String, path: String, affected: inout Set<String>, discarded: inout Set<String>, record: (Data) -> Void) throws -> Bool {
+        // --no-recurse-submodules preserves existing directories, but reset
+        // still creates missing directories and removes files in their way.
+        let components = path.split(separator: "/").map(String.init)
+        for index in components.indices {
+            let candidate = components[...index].joined(separator: "/")
+            let url = URL(fileURLWithPath: root).appendingPathComponent(candidate)
+            var capturedPaths = Set<String>()
+            let kind = try capture(url: url, relative: candidate, descend: false, capturedPaths: &capturedPaths, record: record)
+            if kind == .typeDirectory {
+                continue
+            }
+            affected.insert(path)
+            if kind != nil {
+                affected.insert(candidate)
+                discarded.insert(candidate)
+            }
+            // Never follow a symlink ancestor into another working copy.
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    private func capture(url: URL, relative: String, descend: Bool, capturedPaths: inout Set<String>, record: (Data) -> Void) throws -> FileAttributeType? {
         try checkCancellation()
         record(Data(relative.utf8))
         let attributes: [FileAttributeKey: Any]
         do { attributes = try FileManager.default.attributesOfItem(atPath: url.path) }
         catch let error as NSError where error.domain == NSCocoaErrorDomain && [NSFileReadNoSuchFileError, NSFileNoSuchFileError].contains(error.code) {
-            record(Data("missing".utf8)); return
+            record(Data("missing".utf8)); return nil
         }
         capturedPaths.insert(relative)
         guard let kind = attributes[.type] as? FileAttributeType else { throw ReflogReadError.invalidRecord }
@@ -315,6 +346,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
         default:
             throw RepositoryReflogError.unavailable("A special filesystem object prevents a complete reset preview.")
         }
+        return kind
     }
 
     func reset(confirmed preview: RepositoryRecoveryPreview, discardConfirmed: Bool) throws -> String {

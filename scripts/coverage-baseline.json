@@ -61,7 +61,7 @@
     "Classes/Controllers/RepositoryForgeCollaborationController.swift": 0.9188,
     "Classes/Controllers/RepositoryForgeCoordinator.swift": 0.9659,
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
-    "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.9113,
+    "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.9129,
     "Classes/Controllers/RepositoryForgeRemoteDescriptorLoader.swift": 1.0,
     "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7813,
     "Classes/Controllers/RepositoryPullRequestGitOperations.swift": 0.9783,
@@ -211,7 +211,7 @@
     "Classes/git/RepositoryIgnoreFileService.swift": 1.0,
     "Classes/git/RepositoryMutationService.swift": 0.9797,
     "Classes/git/RepositoryReferenceStore.swift": 0.9629,
-    "Classes/git/RepositoryReflogService.swift": 0.9683,
+    "Classes/git/RepositoryReflogService.swift": 0.9763,
     "Classes/git/RepositoryRefreshCoordinator.swift": 0.995,
     "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
@@ -237,7 +237,7 @@
       "minimumLineCoverage": 0.8714
     }
   },
-  "minimumLineCoverage": 0.9388,
+  "minimumLineCoverage": 0.9389,
   "target": "Half Dark.app",
   "version": 1
 }

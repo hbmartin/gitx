@@ -256,8 +256,18 @@ final class ReflogServiceTests: XCTestCase {
         let repository = try GitXTestGitRepository(url: fixture.url)
         let service = try RepositoryReflogService(repository: repository)
         let preview = try service.preview(target: original, mode: .hard)
+        XCTAssertFalse(preview.affectedPaths.contains("module"), "Internal submodule edits are preserved")
+        XCTAssertFalse(preview.discardedPaths.contains("module"), "Do not claim preserved submodule edits will be discarded")
         _ = try service.reset(confirmed: preview, discardConfirmed: true)
         XCTAssertEqual(try fixture.git(["-C", "module", "rev-parse", "HEAD"]), childHead)
+        XCTAssertEqual(try String(contentsOf: fixture.url.appendingPathComponent("module/tracked.txt"), encoding: .utf8), "preserve submodule edit\n")
+        try fixture.git(["config", "diff.ignoreSubmodules", "all"])
+        try fixture.git(["update-index", "--cacheinfo", "160000," + original + ",module"])
+        let stagedGitlink = try service.preview(target: original, mode: .hard)
+        XCTAssertTrue(stagedGitlink.affectedPaths.contains("module"), "Git configuration must not hide staged gitlink changes")
+        XCTAssertTrue(stagedGitlink.discardedPaths.contains("module"))
+        _ = try service.reset(confirmed: stagedGitlink, discardConfirmed: true)
+        XCTAssertTrue(try fixture.git(["ls-files", "--stage", "module"]).contains(childHead))
         XCTAssertEqual(try String(contentsOf: fixture.url.appendingPathComponent("module/tracked.txt"), encoding: .utf8), "preserve submodule edit\n")
         try fixture.git(["update-index", "--cacheinfo", "160000," + original + ",module"])
         try fixture.git(["commit", "-m", "change gitlink"])
@@ -286,6 +296,69 @@ final class ReflogServiceTests: XCTestCase {
         _ = try service.reset(confirmed: preview, discardConfirmed: true)
         XCTAssertEqual(try String(contentsOf: external.url.appendingPathComponent("tracked.txt"), encoding: .utf8), "initial\n")
         XCTAssertEqual(try String(contentsOf: fixture.url.appendingPathComponent("directory/target.txt"), encoding: .utf8), "target\n")
+    }
+
+    func testStagedGitlinkReplacingTrackedFileBlocksHardResetButMixedPreservesNestedContent() throws {
+        let fixture = try ReflogGitFixture()
+        let nested = try ReflogGitFixture()
+        defer { fixture.remove(); nested.remove() }
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        try fixture.stageNestedRepositoryOverTrackedFile(nested)
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let service = try RepositoryReflogService(repository: repository)
+        XCTAssertThrowsError(try service.preview(target: head, mode: .hard)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("submodule"))
+        }
+        XCTAssertTrue(try fixture.git(["for-each-ref", "--format=%(refname)", "refs/heads/recovery/"]).isEmpty)
+        _ = try service.preview(target: head, mode: .soft)
+        let mixed = try service.preview(target: head, mode: .mixed)
+        _ = try service.reset(confirmed: mixed, discardConfirmed: false)
+        XCTAssertEqual(try fixture.git(["show", ":tracked.txt"]), "initial")
+        XCTAssertEqual(try String(contentsOf: fixture.url.appendingPathComponent("tracked.txt/untracked.txt"), encoding: .utf8), "preserve nested local content\n")
+    }
+
+    func testSubmoduleDirectoryCreationIsPreviewedAndObstructionsInvalidateConfirmation() throws {
+        for modulePath in ["module", "folder/module"] {
+            let fixture = try ReflogGitFixture()
+            let child = try ReflogGitFixture()
+            defer { fixture.remove(); child.remove() }
+            try fixture.git(["-c", "protocol.file.allow=always", "submodule", "add", child.url.path, modulePath])
+            try fixture.git(["commit", "-am", "add submodule"])
+            let head = try fixture.git(["rev-parse", "HEAD"])
+            let obstructionPath = String(modulePath.split(separator: "/")[0])
+            let obstruction = fixture.url.appendingPathComponent(obstructionPath)
+            try FileManager.default.removeItem(at: obstruction)
+            let repository = try GitXTestGitRepository(url: fixture.url)
+            let service = try RepositoryReflogService(repository: repository)
+            let missing = try service.preview(target: head, mode: .hard)
+            XCTAssertTrue(missing.affectedPaths.contains(modulePath))
+            XCTAssertEqual(missing.discardedPaths, [modulePath], "Reset reverses this local directory deletion")
+            try fixture.write(obstructionPath, "preserve local obstruction\n")
+            XCTAssertThrowsError(try service.reset(confirmed: missing, discardConfirmed: true))
+            XCTAssertEqual(try? String(contentsOf: obstruction, encoding: .utf8), "preserve local obstruction\n")
+            XCTAssertTrue(try fixture.git(["for-each-ref", "--format=%(refname)", "refs/heads/recovery/"]).isEmpty)
+            try FileManager.default.removeItem(at: obstruction)
+            try fixture.write(obstructionPath, "explicitly discard this obstruction\n")
+            let filePreview = try service.preview(target: head, mode: .hard)
+            XCTAssertTrue(filePreview.affectedPaths.contains(modulePath))
+            XCTAssertTrue(filePreview.discardedPaths.contains(obstructionPath))
+            XCTAssertThrowsError(try service.reset(confirmed: filePreview, discardConfirmed: false))
+            _ = try service.reset(confirmed: filePreview, discardConfirmed: true)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.url.appendingPathComponent(modulePath).path).isEmpty)
+            try FileManager.default.removeItem(at: obstruction)
+            try FileManager.default.createSymbolicLink(at: obstruction, withDestinationURL: child.url)
+            let symlinkPreview = try service.preview(target: head, mode: .hard)
+            XCTAssertTrue(symlinkPreview.affectedPaths.contains(modulePath))
+            XCTAssertTrue(symlinkPreview.discardedPaths.contains(obstructionPath))
+            _ = try service.reset(confirmed: symlinkPreview, discardConfirmed: true)
+            XCTAssertEqual(try String(contentsOf: child.url.appendingPathComponent("tracked.txt"), encoding: .utf8), "initial\n")
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.url.appendingPathComponent(modulePath).path).isEmpty)
+            try FileManager.default.removeItem(at: obstruction)
+            let refreshed = try service.preview(target: head, mode: .hard)
+            XCTAssertTrue(refreshed.affectedPaths.contains(modulePath))
+            _ = try service.reset(confirmed: refreshed, discardConfirmed: true)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.url.appendingPathComponent(modulePath).path).isEmpty)
+        }
     }
 
     func testTrackedFileReplacedByDirectoryListsEveryObstructingChild() throws {

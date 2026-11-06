@@ -96,6 +96,11 @@ Changes to the repository, HEAD, index, or inspected files invalidate the previe
 open a fresh preview and confirm again. Reset is unavailable in bare repositories,
 during unfinished Git operations, or when affected state cannot be inspected
 completely. Hard reset also refuses hidden index entries (assume-unchanged or
-skip-worktree), changed submodules, and nested repositories obstructing target
-files. Submodule working copies are never recursively reset. Inspect these cases
-in Terminal before proceeding.
+skip-worktree), changed submodules, staged changes between a file and a submodule,
+and nested repositories obstructing target files. Inspect these cases in Terminal
+before proceeding.
+
+Submodule working copies are never recursively reset. Git can still create an
+empty submodule directory or remove a file or symlink in its way. The hard-reset
+preview includes those paths, and changes to them require a fresh preview and
+confirmation. Files inside an existing, unchanged submodule directory are preserved.
