@@ -1095,18 +1095,24 @@ static NSUInteger PBBinaryVersionProbeCount;
 	GTRevisionEnumerationErrorStub *enumerator = [[GTRevisionEnumerationErrorStub alloc] initWithRepository:self.repository.gtRepo error:&error];
 	enumerator.oidsBeforeError = @[ head.OID, head.OID, head.OID ];
 	XCTestExpectation *enumerated = [self expectationWithDescription:@"All object reads are queued"];
-	enumerator.didExhaust = ^{ [enumerated fulfill]; };
+	enumerator.didExhaust = ^{
+		[enumerated fulfill];
+	};
 	PBRevisionBlockingCache *cache = [[PBRevisionBlockingCache alloc] init];
 	cache.entered = [self expectationWithDescription:@"First object read is held"];
 	cache.releaseRead = dispatch_semaphore_create(0);
 	[cache setObject:cached forKey:head.OID];
 	PBGitRevListScriptedEnumeratorStub *list = [[PBGitRevListScriptedEnumeratorStub alloc]
-		initWithRepository:self.repository rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]] shouldGraph:NO];
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]
+			   shouldGraph:NO];
 	list.scriptedEnumerator = enumerator;
 	[list setValue:cache forKey:@"commitCache"];
 	XCTestExpectation *completion = [self expectationWithDescription:@"Cancelled history cannot publish completion"];
 	completion.inverted = YES;
-	[list loadRevisionsWithCompletionBlock:^{ [completion fulfill]; }];
+	[list loadRevisionsWithCompletionBlock:^{
+		[completion fulfill];
+	}];
 	[self waitForExpectations:@[ cache.entered, enumerated ] timeout:3];
 	[list cancel];
 	dispatch_semaphore_signal(cache.releaseRead);
