@@ -1901,6 +1901,12 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         var revocations = 0
         owner.registerPullRequestCloseGuard(owner: token, protection: { confirmation = $0; return true }, revoke: { revocations += 1 })
         window.makeKeyAndOrderFront(nil)
+        let unrelated = NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false)
+        XCTAssertTrue(owner.windowShouldClose(unrelated), "A foreign window cannot consult this owner's draft protection")
+        XCTAssertNil(confirmation)
+        XCTAssertFalse(owner.windowShouldClose(window), "The delegate path must preserve the protected owner too")
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(revocations, 0)
         owner.unregisterPullRequestCloseGuard(owner: NSObject())
         owner.close()
         XCTAssertTrue(window.isVisible, "Unrelated tokens cannot bypass an unresolved close protection")
@@ -1952,6 +1958,54 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
                        ["/custom/global config"])
         XCTAssertEqual(GitX.RepositoryForgeCoordinator.globalConfigurationPaths(environment: ["GIT_CONFIG_SYSTEM": "/custom/system", "XDG_CONFIG_HOME": "/custom/xdg"], home: URL(fileURLWithPath: "/fixture")),
                        ["/custom/system", "/custom/xdg/git/config", "/fixture/.gitconfig"])
+    }
+
+    func testGlobalConfigurationPathsReadTheCurrentEnvironment() {
+        let previous = getenv("GIT_CONFIG_GLOBAL").map { String(cString: $0) }
+        defer {
+            if let previous {
+                setenv("GIT_CONFIG_GLOBAL", previous, 1)
+            } else {
+                unsetenv("GIT_CONFIG_GLOBAL")
+            }
+        }
+        setenv("GIT_CONFIG_GLOBAL", "/fixture/current global config", 1)
+        XCTAssertTrue(GitX.RepositoryForgeCoordinator.globalConfigurationPaths().contains("/fixture/current global config"))
+        setenv("GIT_CONFIG_GLOBAL", "/fixture/replaced global config", 1)
+        let replaced = GitX.RepositoryForgeCoordinator.globalConfigurationPaths()
+        XCTAssertTrue(replaced.contains("/fixture/replaced global config"))
+        XCTAssertFalse(replaced.contains("/fixture/current global config"))
+    }
+
+    func testLiveAccountClockSupportsAnAlreadyExpiredDeadline() async throws {
+        let clock = GitX.RepositoryForgeAccountClock.live
+        let before = Date()
+        let observed = clock.now()
+        XCTAssertGreaterThanOrEqual(observed, before)
+        try await clock.sleep(-1)
+        XCTAssertLessThanOrEqual(observed, Date())
+    }
+
+    func testPreparedSessionRechecksSuppressionAtItsCreationBoundary() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let previous = getenv("GITX_M2_UITEST").map { String(cString: $0) }
+        unsetenv("GITX_M2_UITEST")
+        defer {
+            if let previous {
+                setenv("GITX_M2_UITEST", previous, 1)
+            } else {
+                unsetenv("GITX_M2_UITEST")
+            }
+        }
+        let actual = RepositoryOverrideWindowProbe(ownerNotifications: NotificationCenter())
+        actual.repository = document.repository
+        _ = actual.window
+        defer { actual.close() }
+        actual.replaceRepositoryForgeOverlaySession(nil)
+        actual.beforeRepositoryRead = { setenv("GITX_M2_UITEST", "1", 1) }
+        actual.installRepositoryForgeOverlaySession()
+        XCTAssertNil(actual.repositoryForgeOverlaySession, "A resolution prepared before suppression cannot install a live session afterward")
     }
 
     func testColdForgeMenuQueryDoesNotInstallAResolverOrDiscoverRemotes() throws {

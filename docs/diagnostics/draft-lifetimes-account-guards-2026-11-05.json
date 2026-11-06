@@ -12,14 +12,16 @@
     "baseSHA": "f9d4192c5d77c42cc3704664c424c8fd9536e300"
   },
   "delivery": {
-    "request": "Commit review fixes locally only; do not push or update PR125.",
+    "request": "Open a ready follow-up PR with committed work now, then continue verification.",
     "verificationComplete": false,
     "desktopAuthorization": "Fresh Nov6 focused and final idle windows granted; current focused native checks executed.",
     "initialPublication": {
       "request": "Open a ready PR now",
       "verificationComplete": false,
       "desktopAuthorization": "No fresh idle window granted at initial PR125 publication."
-    }
+    },
+    "previousLocalOnlyRequest": "Commit review fixes locally only; do not push or update PR125.",
+    "followUpPullRequest": 126
   },
   "implementation": [
     "Independent operation completion and retained recovery identities",
@@ -32,11 +34,11 @@
   "evidence": {
     "baselineRegressionConsumers": "draft-lifetimes-regression-builds",
     "nativeRedGreen": "Current follow-up: exact not-sent expectation failed against unchanged production; 56 focused tests passed with the fix. Sheet-guard removal failed independent callback assertions; source restored byte-for-byte.",
-    "nativeCorrectness": "56 final focused cases passed; complete correctness, all coverage floors and final post-commit full profile remain pending.",
-    "coverage": "pending; no floor reduced",
+    "nativeCorrectness": "56 original focused tests passed. Nine added characterization/worktree cases passed; final adapter proof also executed green, but a concurrent catalogue edit invalidated that aggregate receipt. Frozen rerun pending. The first complete run had three worktree presentation failures, all later passing in the controlled group.",
+    "coverage": "Diagnostic failed-run check found five file floor shortfalls. Added boundary characterization; complete eligible enforcement and ratchet remain pending. No floor reduced.",
     "sanitizers": "pending",
     "uiScreenshots": "19 current PNGs and 2 cooldown-help text attachments exported from pr125-review-final-focused; recovery, not-sent text, close warnings, replacement consent, disabled-save and cooldown states executed.",
-    "fullProfile": "pending",
+    "fullProfile": "First follow-up full profile interrupted to address known coverage gaps. Final frozen post-commit run remains pending.",
     "consumerAndPackageChecks": "artifacts/verification/draft-lifetimes-final-consumers-v2/workflow.json",
     "consumerAndPackageResult": "passed: Debug, Release, interoperability, 164 Core tests, 314 ForgeKit tests and package gates; partial evidence",
     "pinnedSourceGuard": "19 tests passed; frozen 19ddab1a and a removed private-entry guard rejected by in-memory source checks",
@@ -47,7 +49,8 @@
     "followUpWordingRegression": "Exact not-sent notice failed against unchanged production and passed after the policy fix, with preserved text and zero remote mutations.",
     "duplicateActionMutation": "Removing only the sheet guard produced2 callbacks during held loading and3 during consent instead of1, despite the downstream database guard; original source restored.",
     "followUpFinalFocused": "56 tests passed with restored production guard, exact not-sent notice, independent duplicate-action callbacks/prompts/writes, and successful subsequent save.",
-    "followUpConsumers": "pr125-review-final-consumers: Debug and Release test consumers plus interoperability passed."
+    "followUpConsumers": "pr125-review-final-consumers: Debug and Release test consumers plus interoperability passed.",
+    "followUpCoverageCases": "Close delegate identity, live clock expiry, actual environment overrides, prepared-session suppression, stale enabled account action, native destination ownership adapter; all nine selected tests executed green. Catalogue edit invalidated the last aggregate receipt; frozen rerun retained separately."
   },
   "expectedStagingLocation": "build/GitX.app",
   "runIds": [
@@ -74,8 +77,17 @@
     "pr125-review-final-consumers",
     "pr125-review-final-focused",
     "pr125-review-complete-correctness",
-    "pr125-review-final"
+    "pr125-review-final",
+    "pr125-review-worktree-activation-diagnosis",
+    "pr125-review-worktree-class-diagnosis",
+    "pr125-review-coverage-consumers",
+    "pr125-review-coverage-focused",
+    "pr125-review-final-coverage-consumers",
+    "pr125-review-final-coverage-focused",
+    "pr125-review-frozen-coverage-focused",
+    "pr125-review-correctness-v2",
+    "pr125-review-final-v2"
   ],
   "diagnosticAttachments": "artifacts/verification/pr125-review-fixes/attachments/final-focused/manifest.json",
-  "evidenceSnapshot": "Recorded before the follow-up implementation commit; subsequent exact-HEAD workflow receipts remain authoritative."
+  "evidenceSnapshot": "Recorded before frozen coverage-characterization verification and its commit; subsequent exact-HEAD receipts remain authoritative."
 }

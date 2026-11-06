@@ -3565,6 +3565,20 @@
         },
         {
           "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testPreparedSessionRechecksSuppressionAtItsCreationBoundary",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Change deterministic suppression during preparation; the final session-creation boundary must refuse a live session."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testGlobalConfigurationPathsReadTheCurrentEnvironment",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Change the actual environment override between calls and require the literal current global configuration path without retaining the previous path."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
           "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testUnrelatedDefaultsNotificationDoesNotReconcileAnUnloadedWindow",
           "role": "boundary",
           "check": "correctness",
@@ -3732,6 +3746,13 @@
           "oracle": "Use an injected clock and deadline gate; retain control identities while help becomes retry-pending and selection remains disabled."
         },
         {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testLiveAccountClockSupportsAnAlreadyExpiredDeadline",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "The production clock accepts an already-expired deadline without treating expiry as validation authority."
+        },
+        {
           "source": "GitXTests/RepositoryStatusBarTests.swift",
           "identifier": "GitXTests/RepositoryStatusBarTests/testAccountAdmissionRefusesSwitchingAndRetainedCooldownIndependentlyOfRendering",
           "role": "boundary",
@@ -3743,7 +3764,7 @@
           "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testActualWindowCloseProtectionKeepsOwnershipUntilConfirmationAndRevokesOnce",
           "role": "boundary",
           "check": "correctness",
-          "oracle": "Invoke the application window close facade with a retained protection token; only its confirmation closes the window and a repeated close remains terminal."
+          "oracle": "Invoke the application window close facade and owned-window delegate with a retained protection token; a foreign window cannot consult it, only confirmation closes the owned window and a repeated close remains terminal."
         }
       ]
     },

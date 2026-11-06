@@ -1695,10 +1695,10 @@
             let sidebarRepositories = controller.sidebarRepositories
             controller.show(.pullRequests)
             controller.refresh(nil)
-            let openedPullRequest = (try? controller.openNative(.pullRequest(identity, ForgeItemNumber(71)))) == true
+            let openedPullRequest = (try? controller.openNativeDestinationForProductProof(.pullRequest(identity, ForgeItemNumber(71)))) == .opened
             controller.show(.issues)
             controller.refresh(nil)
-            let openedIssue = (try? controller.openNative(.issue(identity, ForgeItemNumber(72)))) == true
+            let openedIssue = (try? controller.openNativeDestinationForProductProof(.issue(identity, ForgeItemNumber(72)))) == .opened
             let rejectedCommit = controller.openNative(.commit(
                 identity,
                 try! ForgeCommitID("0123456789012345678901234567890123456789")
@@ -1917,6 +1917,7 @@
                                                      ownerIsCurrent: windowController.repositoryPresentationValidation(for: repository))
                 var userInfo: [String: Any] = [
                     RepositoryForgeAccountNotificationKey.providerName: "GitHub",
+                    RepositoryForgeAccountNotificationKey.accountRebindingEnabled: true,
                     RepositoryForgeAccountNotificationKey.login: currentAccount == account.id
                         ? account.login
                         : alternateAccount.login,
@@ -1984,6 +1985,20 @@
             let collaborationRetryPendingRefused = await forceCollaborationSelection()
             let toolbarRetryPendingRefused = await forceToolbarSelection()
 
+            // A previously enabled menu can outlive cooldown notification delivery.
+            // Admission must consult the actual credential state before changing the binding.
+            let choices = [
+                RepositoryForgeAccountChoice(id: account.id, login: account.login),
+                RepositoryForgeAccountChoice(id: alternateAccount.id, login: alternateAccount.login),
+            ]
+            postToolbarAccountContext(currentAccount: account.id, choices: choices)
+            let staleCooldownSelectionStarted = await selectToolbarAccount(alternateAccount.id)
+            let staleCooldownSelectionRefused = staleCooldownSelectionStarted &&
+                settings.forgeRepositoryBinding == binding &&
+                notificationCounter.value == 0 &&
+                !toolbarPopup.isEnabled &&
+                toolbarPopup.accessibilityHelp() == retryPendingHelp
+
             var successfulRetryClearedState = false
             if case let .allowed(permit) = await sessionGate.admitRequest(for: credential, at: Date()) {
                 await sessionGate.recordSuccessfulRequest(permit)
@@ -2014,10 +2029,6 @@
                 settings.forgeRepositoryBinding == binding &&
                 notificationCounter.value == 0
 
-            let choices = [
-                RepositoryForgeAccountChoice(id: account.id, login: account.login),
-                RepositoryForgeAccountChoice(id: alternateAccount.id, login: alternateAccount.login),
-            ]
             let staleBinding = try? ForgeRepositoryBinding(
                 localRemoteName: "stale-context",
                 primaryRepository: binding.primaryRepository,
@@ -2133,6 +2144,7 @@
                 ("collaboration retry refusal", collaborationRetryPendingRefused),
                 ("toolbar waiting refusal", toolbarWaitingRefused),
                 ("toolbar retry refusal", toolbarRetryPendingRefused),
+                ("stale enabled toolbar cooldown refusal", staleCooldownSelectionRefused),
                 ("stale binding refusal", staleSelectionRefused),
                 ("missing credential refusal", missingCredentialRefused),
                 ("foreign account refusal", mismatchedSelectionRefused),
@@ -2148,6 +2160,7 @@
                 sharedStateBehavior &&
                     toolbarWaitingRefused &&
                     toolbarRetryPendingRefused &&
+                    staleCooldownSelectionRefused &&
                     staleSelectionRefused &&
                     missingCredentialRefused &&
                     mismatchedSelectionRefused &&
