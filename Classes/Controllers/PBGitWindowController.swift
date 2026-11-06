@@ -63,6 +63,13 @@ nonisolated struct RepositoryWindowRefreshDelivery {
     }
 }
 
+enum RepositoryForgePreparation {
+    case reusable
+    case prepared(RepositoryForgeBindingResolution)
+    case refused
+    case suppressed
+}
+
 nonisolated enum RepositoryWindowActionAvailability {
     static func error(gitUnavailable: Bool, discoveryError: Error?) -> Error {
         if gitUnavailable, let discoveryError {
@@ -660,7 +667,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         invalidateGitLoaders()
         lifetime?.invalidate()
         lifetime = nil
-        pullRequestUIController?.invalidateOwner()
+        pullRequestOwnerRevocation?(); pullRequestUIController?.invalidateOwner()
         resetActionCoordinators()
         repositoryForgeOverlaySession?.invalidate()
         repositoryForgeOverlaySession = nil
@@ -916,19 +923,33 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NSLog("[GitX] Applied owner delivery activation=%@ preferences=%@ metadata=%@ generation=%llu", intent.activated ? "yes" : "no", intent.preferences ? "yes" : "no", delivery.preparesMetadata ? "yes" : "no", generation)
     }
 
-    private func reconcileForgePresentation(forceMetadata: Bool = false) {
+    private final var suppressesRepositoryForgeSession: Bool {
         #if DEBUG
-            let suppressed = ProcessInfo.processInfo.environment["GITX_M2_UITEST"] == "1"
+            ProcessInfo.processInfo.environment["GITX_M2_UITEST"] == "1"
         #else
-            let suppressed = false
+            false
         #endif
+    }
+
+    private func reconcileForgePresentation(forceMetadata: Bool = false) {
+        let suppressed = suppressesRepositoryForgeSession
         if nibPresentationReady, !suppressed {
             _ = forgeCoordinator
         }
         let needsPreparation = forceMetadata || !forgeQueryPresentationIsCurrent(for: repository) ||
             (nibPresentationReady && repositoryForgeOverlaySession == nil && !suppressed)
-        let resolution = needsPreparation ? prepareForgeQueryPresentation() : nil
-        installRepositoryPanesIfReady(preparedForgeResolution: resolution)
+        let preparation: RepositoryForgePreparation
+        if suppressed {
+            if needsPreparation {
+                _ = prepareForgeQueryPresentation()
+            }
+            preparation = .suppressed
+        } else if needsPreparation {
+            preparation = prepareForgeQueryPresentation().map(RepositoryForgePreparation.prepared) ?? .refused
+        } else {
+            preparation = .reusable
+        }
+        installRepositoryPanesIfReady(forgePreparation: preparation)
     }
 
     private final func referenceStatusIdentity(for repository: PBGitRepository) -> RepositoryStatusReferenceIdentity? {
@@ -999,7 +1020,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
-    private final func installRepositoryPanesIfReady(preparedForgeResolution: RepositoryForgeBindingResolution? = nil) {
+    private final func installRepositoryPanesIfReady(forgePreparation: RepositoryForgePreparation) {
         guard nibPresentationReady, let repository, let window = super.window,
               sourceSplitView?.window === window, contentSplitView?.window === window else { return }
         if window.delegate == nil {
@@ -1007,10 +1028,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         // History binds its facts and badges while its view is mounted.
         // Make the repository session available before constructing either pane.
-        if let preparedForgeResolution {
-            installRepositoryForgeOverlaySession(resolution: preparedForgeResolution)
-        } else if repositoryForgeOverlaySession == nil {
-            installRepositoryForgeOverlaySession()
+        switch forgePreparation {
+        case let .prepared(resolution): installRepositoryForgeOverlaySession(resolution: resolution)
+        case .reusable, .refused, .suppressed: break
         }
         if paneRepository == nil {
             paneRepository = ObjectIdentifier(repository)
@@ -1046,7 +1066,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         globalOwnerNotifications.forEach(ownerNotifications.removeObserver)
         ownership.revoke(closing: true)
         lifetime?.invalidate()
-        pullRequestUIController?.invalidateOwner()
+        pullRequestOwnerRevocation?(); pullRequestUIController?.invalidateOwner()
         repositoryForgeOverlaySession?.invalidate()
         repositoryStatusBarController?.uninstall()
         repositoryToolbarController?.uninstall()
@@ -1069,7 +1089,46 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         offerWorktreeRepairIfNeeded(reconciling: false)
     }
 
+    private weak var pullRequestCloseGuardOwner: NSObject?
+    private var pullRequestCloseProtection: ((@escaping () -> Void) -> Bool)?
+    private var pullRequestOwnerRevocation: (() -> Void)?
+    private var closingAfterDraftConfirmation = false
+
+    final func registerPullRequestCloseGuard(owner: NSObject, protection: @escaping (@escaping () -> Void) -> Bool, revoke: @escaping () -> Void) {
+        if pullRequestCloseGuardOwner != nil, pullRequestCloseGuardOwner !== owner {
+            pullRequestOwnerRevocation?()
+        }
+        pullRequestCloseGuardOwner = owner
+        pullRequestCloseProtection = protection
+        pullRequestOwnerRevocation = revoke
+    }
+
+    final func unregisterPullRequestCloseGuard(owner: NSObject) {
+        if pullRequestCloseGuardOwner === owner {
+            pullRequestCloseGuardOwner = nil
+            pullRequestCloseProtection = nil
+            pullRequestOwnerRevocation = nil
+        }
+    }
+
+    private func deferCloseForRecoveredText() -> Bool {
+        guard !closingAfterDraftConfirmation, !ownership.closed, pullRequestCloseGuardOwner != nil else { return false }
+        return pullRequestCloseProtection? { [weak self] in
+            guard let self, !self.ownership.closed else { return }
+            self.closingAfterDraftConfirmation = true
+            defer { self.closingAfterDraftConfirmation = false }
+            self.close()
+        } ?? false
+    }
+
+    @objc public dynamic func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === (isWindowLoaded ? super.window : nil) else { return true }
+        return !deferCloseForRecoveredText()
+    }
+
     override open func close() {
+        guard !deferCloseForRecoveredText() else { return }
+
         windowWillClose(Notification(name: NSWindow.willCloseNotification))
         super.close()
     }
@@ -1931,12 +1990,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     final func installRepositoryForgeOverlaySession() {
-        #if DEBUG
-            guard ProcessInfo.processInfo.environment["GITX_M2_UITEST"] != "1" else {
-                NSLog("[UITest] Suppressed repository Forge overlay session for deterministic Milestone 2 UI verification")
-                return
-            }
-        #endif
+        guard !suppressesRepositoryForgeSession else {
+            NSLog("[UITest] Suppressed repository Forge overlay session for deterministic Milestone 2 UI verification")
+            return
+        }
         guard repositoryForgeOverlaySession == nil else { return }
         _ = forgeCoordinator
         guard let resolution = prepareForgeQueryPresentation() else { return }
@@ -1944,6 +2001,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func installRepositoryForgeOverlaySession(resolution: RepositoryForgeBindingResolution) {
+        guard !suppressesRepositoryForgeSession else {
+            NSLog("[UITest] Suppressed prepared repository Forge overlay session")
+            return
+        }
         guard repositoryForgeOverlaySession == nil, !ownership.closed else { return }
         let binding = resolution.binding
         let session = RepositoryForgeOverlaySession(

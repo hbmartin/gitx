@@ -360,6 +360,22 @@ struct RepositoryForgeAccountControlPresentation: Equatable {
     }
 }
 
+nonisolated enum RepositoryForgeProviderName {
+    static func name(for kind: ForgeKind) -> String {
+        switch kind {
+        case .github: "GitHub"
+        case .gitLab: "GitLab"
+        case .bitbucket: "Bitbucket"
+        }
+    }
+}
+
+nonisolated enum RepositoryForgeAccountAdmissionPolicy {
+    static func permitsSelection(isSwitching: Bool, rebindingEnabled: Bool, candidateAvailable: Bool = true) -> Bool {
+        !isSwitching && rebindingEnabled && candidateAvailable
+    }
+}
+
 nonisolated enum RepositoryForgeAccountMetadataPolicy {
     enum Transition: Equatable { case preserve, switching, replace }
 
@@ -381,11 +397,7 @@ nonisolated enum RepositoryForgeAccountMetadataPolicy {
             return false
         }
         if let providerName {
-            let expected = switch binding.primaryRepository.forge.kind {
-            case .github: "GitHub"
-            case .gitLab: "GitLab"
-            case .bitbucket: "Bitbucket"
-            }
+            let expected = RepositoryForgeProviderName.name(for: binding.primaryRepository.forge.kind)
             if providerName != expected {
                 return false
             }
@@ -503,4 +515,13 @@ enum RepositoryForgeDiagnosticDetailsPresenter {
         }
         return RepositoryForgeDiagnosticDetails(title: title, message: message)
     }
+}
+
+nonisolated struct RepositoryForgeAccountClock: Sendable {
+    let now: @Sendable () -> Date
+    let sleep: @Sendable (TimeInterval) async throws -> Void
+
+    static let live = Self(now: Date.init, sleep: { seconds in
+        try await Task.sleep(for: .seconds(max(0, seconds)))
+    })
 }

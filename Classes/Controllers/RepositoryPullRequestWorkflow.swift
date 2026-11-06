@@ -745,8 +745,6 @@ nonisolated struct ForgeSQLitePullRequestDraftStore: RepositoryPullRequestDraftP
     }
 }
 
-/// Each editor remembers only evidence it loaded or wrote itself. Ordinary
-/// autosaves retain their existing last-writer-wins policy; final saves do not.
 nonisolated enum RepositoryDraftSubmissionSave: Sendable {
     case saved(ForgeDraft)
     case conflict
@@ -758,11 +756,12 @@ nonisolated enum RepositoryDraftSubmissionSave: Sendable {
     }
 }
 
+/// Each editor remembers only evidence it loaded or wrote itself. Ordinary
+/// autosaves retain their existing last-writer-wins policy; final saves do not.
 @MainActor
 final class RepositoryEditDraftSession {
     // Nil is verified absence from the editor's load, not unavailable evidence.
     private var lastVerifiedSnapshot: ForgeDraft?
-    private(set) var lastSaveUnavailable = false
     let identity: ForgeDraftIdentity
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "EditDraftSession")
 
@@ -775,12 +774,8 @@ final class RepositoryEditDraftSession {
         do {
             if let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date) {
                 lastVerifiedSnapshot = saved
-                lastSaveUnavailable = false
-            } else {
-                lastSaveUnavailable = true
             }
         } catch {
-            lastSaveUnavailable = true
             Self.logger.error("Edit autosave unavailable; retaining the last verified conditional-save expectation")
         }
     }
@@ -790,15 +785,12 @@ final class RepositoryEditDraftSession {
             let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: lastVerifiedSnapshot)
             if let saved {
                 lastVerifiedSnapshot = saved
-                lastSaveUnavailable = false
                 Self.logger.notice("Saved the verified final edit snapshot; remote submission continues")
                 return .saved(saved)
             }
-            lastSaveUnavailable = false
             Self.logger.notice("Final edit snapshot conflicted; preserve the stored draft and continue remote submission")
             return .conflict
         } catch {
-            lastSaveUnavailable = true
             Self.logger.error("Final edit save failed; publishing without draft cleanup, code=\((error as NSError).code)")
             return .unavailable
         }
@@ -988,5 +980,159 @@ nonisolated struct RepositoryPullRequestMutationCompletion: Sendable {
                 Self.logger.error("Server mutation succeeded but draft cleanup failed; no mutation retry, code=\((error as NSError).code)")
             }
         }.value
+    }
+}
+
+/// Submission data outlives presentation supersession. Terminal recovery is
+/// authorized by its owning window and this record, never the next mutation identity.
+@MainActor
+final class RepositoryEditSubmissionLifetime {
+    enum Phase: Equatable { case persisting, cancelledBeforeAdmission, admitted, finished }
+    let id = UUID()
+    let draftIdentity: ForgeDraftIdentity
+    let destination: ForgeDestination
+    let expectedUpdatedAt: Date?
+    var requiresFreshServerSnapshot = false
+    private(set) var phase = Phase.persisting
+    private(set) var saveResult: RepositoryDraftSubmissionSave?
+    private(set) var superseded = false
+    private(set) var outcome: RepositoryPullRequestEditOutcome?
+    var recoveryContent: ForgeDraftContent
+    private var savedRecoveryContent: ForgeDraftContent?
+    var recoveryMessage: String?
+    var recoveryQueued = false
+    private(set) var resolved = false
+    var task: Task<Void, Never>?
+
+    init(identity: ForgeDraftIdentity, destination: ForgeDestination, content: ForgeDraftContent, expectedUpdatedAt: Date? = nil) {
+        self.expectedUpdatedAt = expectedUpdatedAt
+        draftIdentity = identity
+        self.destination = destination
+        recoveryContent = content
+    }
+
+    var needsCloseProtection: Bool {
+        !resolved && outcome == nil && saveResult?.snapshot == nil
+    }
+
+    var needsRecovery: Bool {
+        phase == .finished && needsCloseProtection
+    }
+
+    func supersede() {
+        superseded = true
+        if phase == .persisting {
+            phase = .cancelledBeforeAdmission
+        }
+    }
+
+    func persisted(_ result: RepositoryDraftSubmissionSave) {
+        saveResult = result
+    }
+
+    func admit() -> Bool {
+        guard phase == .persisting else { return false }
+        phase = .admitted
+        return true
+    }
+
+    @discardableResult
+    func finish(_ outcome: RepositoryPullRequestEditOutcome? = nil) -> Bool {
+        guard phase != .finished else { return false }
+        self.outcome = outcome
+        phase = .finished
+        if outcome != nil {
+            resolved = true
+        }
+        return true
+    }
+
+    func updateRecoveryContent(_ content: ForgeDraftContent) {
+        recoveryContent = content
+        resolved = savedRecoveryContent == content
+    }
+
+    func markRecoverySaved(_ content: ForgeDraftContent) {
+        savedRecoveryContent = content
+        resolved = recoveryContent == content
+    }
+
+    func resolveRecovery() {
+        resolved = true
+    }
+}
+
+/// Contains only ordering decisions; controllers retain sheets and AppKit wiring.
+nonisolated struct RepositoryPullRequestEditorQueue {
+    private(set) var active: UUID?
+    private(set) var waiting: [UUID] = []
+
+    mutating func enqueue(_ id: UUID) {
+        guard active != id, !waiting.contains(id) else { return }
+        waiting.append(id)
+    }
+
+    mutating func takeNext(parentAvailable: Bool) -> UUID? {
+        guard parentAvailable, active == nil, !waiting.isEmpty else { return nil }
+        let id = waiting.removeFirst()
+        active = id
+        return id
+    }
+
+    mutating func finish(_ id: UUID) {
+        if active == id {
+            active = nil
+        }
+        waiting.removeAll { $0 == id }
+    }
+
+    mutating func invalidate() {
+        active = nil; waiting.removeAll()
+    }
+}
+
+@MainActor
+final class RepositoryPullRequestMutationAdmission {
+    private(set) var admitted = false
+    var superseded = false
+    func finish() {
+        admitted = false
+    }
+
+    func admit() -> Bool {
+        guard !superseded else { return false }
+        admitted = true
+        return true
+    }
+}
+
+nonisolated enum RepositoryPullRequestRecoveryReason {
+    static func message(for error: Error) -> String {
+        if case ForgePullRequestWorkflowError.editConflict = error {
+            return "The Pull Request changed on the server. Copy or save this text, then refresh the Pull Request and open a new edit."
+        }
+        if error is CancellationError {
+            return "The edit was interrupted before its remote outcome could be confirmed. This recovered text has not been saved as a draft."
+        }
+        if case let ForgeGitHubPullRequestCompositionError.authoritative(message) = error {
+            return "GitHub rejected the edit: \(message) This recovered text has not been saved as a draft."
+        }
+        return "The remote edit could not be confirmed: \(error.localizedDescription) This recovered text has not been saved as a draft."
+    }
+}
+
+@MainActor
+enum RepositoryEditRecoveryOrder {
+    static func ready(in submissions: [RepositoryEditSubmissionLifetime]) -> [RepositoryEditSubmissionLifetime] {
+        var result: [RepositoryEditSubmissionLifetime] = []
+        for submission in submissions {
+            if submission.needsCloseProtection, submission.phase != .finished {
+                break
+            }
+            if submission.needsRecovery, !submission.recoveryQueued {
+                result.append(submission)
+            }
+        }
+        return result
     }
 }

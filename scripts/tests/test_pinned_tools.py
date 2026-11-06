@@ -259,10 +259,26 @@ class PinnedToolsTests(unittest.TestCase):
         ).read_text()
 
         self.assertIn("#if DEBUG\n        private var milestone2UITestHarness", window_controller)
+        suppression = window_controller.split(
+            "private final var suppressesRepositoryForgeSession: Bool {", 1
+        )[1].split("private func reconcileForgePresentation", 1)[0]
         self.assertIn(
-            '#if DEBUG\n            guard ProcessInfo.processInfo.environment["GITX_M2_UITEST"]',
-            window_controller,
+            '#if DEBUG\n            ProcessInfo.processInfo.environment["GITX_M2_UITEST"] == "1"',
+            suppression,
         )
+        self.assertIn("#else\n            false", suppression)
+        for signature, admission in (
+            ("final func installRepositoryForgeOverlaySession() {", "_ = forgeCoordinator"),
+            (
+                "private func installRepositoryForgeOverlaySession(resolution:",
+                "let session = RepositoryForgeOverlaySession(",
+            ),
+        ):
+            implementation = window_controller.split(signature, 1)[1]
+            self.assertLess(
+                implementation.index("guard !suppressesRepositoryForgeSession"),
+                implementation.index(admission),
+            )
         self.assertIn("#if DEBUG\n        /// Environment-gated UI-test entrypoint", pull_request_controller)
         self.assertIn("#if DEBUG\n    /// Deterministic launch-only journeys", harness)
         self.assertTrue(harness.rstrip().endswith("#endif"))

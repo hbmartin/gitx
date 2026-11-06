@@ -10,6 +10,7 @@ final class GitBinaryReliabilityTests: XCTestCase {
         let discovery = fixture.discovery()
         XCTAssertEqual(discovery.currentAvailabilityError?.domain, "PBGitBinaryErrorDomain")
         XCTAssertEqual(discovery.currentAvailabilityError?.code, 3)
+        XCTAssertEqual(discovery.currentAvailabilityError?.localizedDescription, "Git is not ready")
         XCTAssertTrue(fixture.state.withLock { $0.calls.isEmpty })
         let finished = expectation(description: "Exhaustion publishes its original failure")
         discovery.whenAvailable { path, error in
