@@ -478,6 +478,7 @@
 		B6547E1495BE465AA156AFAF /* WorktreeWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */; };
 		F4A48D69BD914A32A0D36395 /* InspectorActionViewport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB410853D8E493688875043 /* InspectorActionViewport.swift */; };
 		A737A36FF55A40128B79FB09 /* ForgeRegistrationDeliveryGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */; };
+		F7F05374F3D84792A303E64E /* ReflogRecoveryCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1223,6 +1224,7 @@
 		73BA77DC43864242AFA6567F /* WorktreeWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeWorkflowUITests.swift; sourceTree = "<group>"; };
 		FCB410853D8E493688875043 /* InspectorActionViewport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorActionViewport.swift; sourceTree = "<group>"; };
 		49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRegistrationDeliveryGate.swift; sourceTree = "<group>"; };
+		D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogRecoveryCharacterizationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1874,6 +1876,7 @@
 		C0DE20000000000000000006 /* GitXTests */ = {
 			isa = PBXGroup;
 			children = (
+				D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */,
 				C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */,
 				C0DE91000000000000000003 /* PBQLOutlineViewCompatibility.h */,
 				C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */,
@@ -2668,6 +2671,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F7F05374F3D84792A303E64E /* ReflogRecoveryCharacterizationTests.swift in Sources */,
 				C0DE88000000000000000032 /* WorktreePresentationTests.swift in Sources */,
 				FBFB6B67DFBB4AF8B4916F5F /* WorktreeAppKitTests.swift in Sources */,
 				932DA454E09B44F5AB66C8A6 /* WorktreeServiceTests.swift in Sources */,
