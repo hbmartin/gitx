@@ -21,6 +21,7 @@ final nonisolated class RepositoryBindingPreferenceSnapshots: @unchecked Sendabl
     private var snapshot: [String: Any]?
     private var decoded: [String: Decoded] = [:]
     private var generation: UInt64 = 0
+    private var bindingRevision: UInt64?
 
     init(defaults: UserDefaults, decodeBinding: @escaping @Sendable (Data) -> ForgeRepositoryBinding? = { try? JSONDecoder().decode(ForgeRepositoryBinding.self, from: $0) }) {
         self.defaults = defaults
@@ -30,14 +31,16 @@ final nonisolated class RepositoryBindingPreferenceSnapshots: @unchecked Sendabl
     func binding(for repository: String) -> ForgeRepositoryBinding? {
         lock.lock()
         defer { lock.unlock() }
-        if snapshot == nil {
-            RepositoryViewStatePreferencesSynchronization.lock.lock()
+        RepositoryViewStatePreferencesSynchronization.lock.lock()
+        let revision = RepositoryViewStatePreferencesSynchronization.bindingRevision(for: defaults)
+        if snapshot == nil || bindingRevision != revision {
             snapshot = defaults.dictionary(forKey: "PBRepositoryUISettings") ?? [:]
-            RepositoryViewStatePreferencesSynchronization.lock.unlock()
+            bindingRevision = revision
             generation &+= 1
             let captured = generation
             DispatchQueue.main.async { [weak self] in self?.finishDelivery(captured) }
         }
+        RepositoryViewStatePreferencesSynchronization.lock.unlock()
         let payload = (snapshot?[repository] as? [String: Any])?["forgeRepositoryBinding"] as? Data
         if let previous = decoded[repository], previous.payload == payload {
             return previous.binding
@@ -241,6 +244,7 @@ final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable, Rep
         repository[key] = value
         all[repositoryKey] = repository
         preferences.set(all, forKey: Self.defaultsKey)
+        RepositoryViewStatePreferencesSynchronization.bindingDidMutate(in: preferences.userDefaults)
         RepositoryViewStatePreferencesSynchronization.lock.unlock()
         preferences.repositoryBindingSnapshots.invalidate()
     }
@@ -252,6 +256,7 @@ final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable, Rep
         repository.removeValue(forKey: key)
         all[repositoryKey] = repository
         preferences.set(all, forKey: Self.defaultsKey)
+        RepositoryViewStatePreferencesSynchronization.bindingDidMutate(in: preferences.userDefaults)
         RepositoryViewStatePreferencesSynchronization.lock.unlock()
         preferences.repositoryBindingSnapshots.invalidate()
     }

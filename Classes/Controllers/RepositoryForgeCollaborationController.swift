@@ -1179,11 +1179,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     private static func providerName(_ kind: ForgeKind) -> String {
-        switch kind {
-        case .github: "GitHub"
-        case .gitLab: "GitLab"
-        case .bitbucket: "Bitbucket"
-        }
+        RepositoryForgeProviderName.name(for: kind)
     }
 
     private func publishAccessChange() {

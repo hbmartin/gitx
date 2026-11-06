@@ -667,6 +667,7 @@ final nonisolated class ForgeRepositoryBindingAccountCleaner:
             }
             if changed {
                 userDefaults.set(repositorySettings, forKey: Self.repositorySettingsKey)
+                RepositoryViewStatePreferencesSynchronization.bindingDidMutate(in: userDefaults)
             }
         }
     }

@@ -253,8 +253,13 @@ final nonisolated class GitBinaryDiscovery: NSObject, Sendable {
     var currentAvailabilityError: NSError? {
         state.withLock { state in
             guard state.selection == nil else { return nil }
-            return unavailableError(outcome: state.started && state.search == nil ? state.outcome : .temporarilyUnavailable,
-                                    paths: state.search?.paths ?? state.attemptedPaths)
+            guard state.started, state.search == nil else {
+                return NSError(domain: "PBGitBinaryErrorDomain", code: 3, userInfo: [
+                    NSLocalizedDescriptionKey: NSLocalizedString("Git is not ready", comment: "Pending Git discovery"),
+                    NSLocalizedFailureReasonErrorKey: NSLocalizedString("Git executable discovery has not completed.", comment: "Pending Git discovery"),
+                ])
+            }
+            return unavailableError(outcome: state.outcome, paths: state.attemptedPaths)
         }
     }
 

@@ -27,6 +27,8 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     var onDiscard: (() -> Void)?
     var onDraftChanged: ((ForgeDraftContent) -> Void)?
     var onSaveRecovery: ((ForgeDraftContent) -> Void)?
+    var onPresentationEnded: (() -> Void)?
+    var onRecoverySaved: ((ForgeDraftContent) -> Void)?
     var onCopyRecovery: ((ForgeDraftContent) -> Void)?
 
     private let mode: Mode
@@ -43,6 +45,10 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     private var selectedForm: ForgePullRequestCreationForm?
     private var previewView: ForgeMarkdownNativeView?
     private var hasFinished = false
+    private var recoverySaveIdentity: UUID?
+    private var replacementCompletion: ((Bool) -> Void)?
+    private var replacementAlert: NSAlert?
+    private var presentationEnded = false
     private var recoverySavedContent: ForgeDraftContent?
     private let recoveryNotice = NSTextField(wrappingLabelWithString: "The remote edit could not be confirmed. This recovered text has not been saved as a draft.")
     private var isRecovery: Bool {
@@ -271,7 +277,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     }
 
     private func updateSubmitEligibility() {
-        submitButton.isEnabled = isRecovery || titleField.stringValue.unicodeScalars.contains {
+        submitButton.isEnabled = isRecovery ? recoverySaveIdentity == nil : titleField.stringValue.unicodeScalars.contains {
             !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.controlCharacters.contains($0)
         }
     }
@@ -340,6 +346,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
 
     @objc private func submit(_: Any?) {
         if isRecovery {
+            guard !hasFinished, recoverySaveIdentity == nil else { return }
             onSaveRecovery?(currentDraftContent())
             return
         }
@@ -384,6 +391,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
 
     private func finishCancellation() {
         guard !hasFinished else { return }
+        abortRecoverySave()
         if isRecovery, recoverySavedContent != currentDraftContent(), let window {
             let alert = NSAlert()
             alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.CloseConfirmation")
@@ -421,11 +429,13 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
 
     func markRecoverySaved(_ content: ForgeDraftContent) {
         recoverySavedContent = content
+        onRecoverySaved?(content)
         recoveryNotice.stringValue = "Saved as a draft. Further edits remain unsaved until you choose Save Draft again."
     }
 
     func invalidatePresentation() {
         hasFinished = true
+        abortRecoverySave()
         if let window, let confirmation = window.attachedSheet {
             window.endSheet(confirmation, returnCode: .abort)
             confirmation.orderOut(nil)
@@ -437,6 +447,61 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         guard let window else { return }
         window.sheetParent?.endSheet(window)
         window.orderOut(nil)
+        guard !presentationEnded else { return }
+        presentationEnded = true
+        onPresentationEnded?()
+    }
+
+    func beginRecoverySave() -> UUID? {
+        guard isRecovery, !hasFinished, recoverySaveIdentity == nil else { return nil }
+        let id = UUID()
+        recoverySaveIdentity = id
+        updateSubmitEligibility()
+        return id
+    }
+
+    func acceptsRecoverySave(_ id: UUID) -> Bool {
+        !hasFinished && recoverySaveIdentity == id && window?.sheetParent != nil
+    }
+
+    func finishRecoverySave(_ id: UUID) {
+        guard recoverySaveIdentity == id else { return }
+        recoverySaveIdentity = nil
+        updateSubmitEligibility()
+    }
+
+    func abortRecoverySave() {
+        recoverySaveIdentity = nil
+        let completion = replacementCompletion
+        replacementCompletion = nil
+        if let alert = replacementAlert, let parent = alert.window.sheetParent {
+            parent.endSheet(alert.window, returnCode: .abort)
+            alert.window.orderOut(nil)
+        }
+        replacementAlert = nil
+        completion?(false)
+        updateSubmitEligibility()
+    }
+
+    func confirmRecoveryReplacement(_ id: UUID) async -> Bool {
+        guard acceptsRecoverySave(id), let window else { return false }
+        return await withCheckedContinuation { continuation in
+            replacementCompletion = { continuation.resume(returning: $0) }
+            let alert = NSAlert()
+            replacementAlert = alert
+            alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.ReplaceConfirmation")
+            alert.messageText = "Replace the Stored Draft?"
+            alert.informativeText = "A draft already exists. Replace it with this recovered text? If it changes while you confirm, it will remain protected."
+            alert.addButton(withTitle: "Replace Draft")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard let self else { return }
+                let completion = self.replacementCompletion
+                self.replacementCompletion = nil
+                self.replacementAlert = nil
+                completion?(response == .alertFirstButtonReturn && self.acceptsRecoverySave(id))
+            }
+        }
     }
 
     private static func timestamp(_ date: Date) -> String {

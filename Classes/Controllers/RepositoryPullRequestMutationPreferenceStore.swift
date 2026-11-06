@@ -1,5 +1,6 @@
 import ForgeKit
 import Foundation
+import Synchronization
 
 // SwiftLint analyze misclassifies this import; Logger requires it at compile time.
 // swiftlint:disable:next unused_import
@@ -7,6 +8,16 @@ import OSLog
 
 nonisolated enum RepositoryViewStatePreferencesSynchronization {
     static let lock = NSLock()
+    private static let bindingRevisions = Mutex<[ObjectIdentifier: UInt64]>([:])
+
+    static func bindingRevision(for defaults: UserDefaults) -> UInt64 {
+        bindingRevisions.withLock { $0[ObjectIdentifier(defaults), default: 0] }
+    }
+
+    /// Call under the preferences lock, without acquiring any snapshot/UI lock.
+    static func bindingDidMutate(in defaults: UserDefaults) {
+        bindingRevisions.withLock { $0[ObjectIdentifier(defaults), default: 0] &+= 1 }
+    }
 }
 
 // swift6-safety-justification: UserDefaults is thread-safe; this immutable wrapper is safe to capture in Sendable factories.

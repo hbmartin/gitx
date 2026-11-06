@@ -27,6 +27,17 @@ final class RepositoryStatusBarTests: XCTestCase {
         XCTAssertTrue(switching.accessibilityLabel.contains("Switching"))
     }
 
+    func testAccountAdmissionRefusesSwitchingAndRetainedCooldownIndependentlyOfRendering() {
+        XCTAssertTrue(RepositoryForgeAccountAdmissionPolicy.permitsSelection(isSwitching: false, rebindingEnabled: true))
+        XCTAssertFalse(RepositoryForgeAccountAdmissionPolicy.permitsSelection(isSwitching: true, rebindingEnabled: true))
+        XCTAssertFalse(RepositoryForgeAccountAdmissionPolicy.permitsSelection(isSwitching: false, rebindingEnabled: false))
+        XCTAssertFalse(RepositoryForgeAccountAdmissionPolicy.permitsSelection(isSwitching: true, rebindingEnabled: false))
+        XCTAssertFalse(RepositoryForgeAccountAdmissionPolicy.permitsSelection(isSwitching: false, rebindingEnabled: true, candidateAvailable: false))
+        XCTAssertEqual(RepositoryForgeProviderName.name(for: .github), "GitHub")
+        XCTAssertEqual(RepositoryForgeProviderName.name(for: .gitLab), "GitLab")
+        XCTAssertEqual(RepositoryForgeProviderName.name(for: .bitbucket), "Bitbucket")
+    }
+
     private final class RedrawObservingGradientBar: PBGitGradientBarView {
         var didRequestDisplay = false
 

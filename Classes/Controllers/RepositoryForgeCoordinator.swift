@@ -67,11 +67,7 @@ final class RepositoryForgeBindingCandidate: NSObject, @unchecked Sendable {
     }
 
     @objc var providerName: String {
-        switch candidate.repository.forge.kind {
-        case .github: "GitHub"
-        case .gitLab: "GitLab"
-        case .bitbucket: "Bitbucket"
-        }
+        RepositoryForgeProviderName.name(for: candidate.repository.forge.kind)
     }
 
     @objc var repositoryLabel: String {
@@ -118,11 +114,7 @@ final class RepositoryForgeBindingResolution: NSObject {
     }
 
     private static func providerName(for kind: ForgeKind) -> String {
-        switch kind {
-        case .github: "GitHub"
-        case .gitLab: "GitLab"
-        case .bitbucket: "Bitbucket"
-        }
+        RepositoryForgeProviderName.name(for: kind)
     }
 }
 
@@ -230,6 +222,7 @@ final class RepositoryForgeCoordinator: NSObject {
         resolveBinding(persistAutomaticBinding: true)
     }
 
+    private var configurationPathCache: (inputs: [String: String], paths: [String])?
     private var queryRefreshPolicy = RepositoryForgeQueryRefreshPolicy()
     private var queryResolution: RepositoryForgeBindingResolution?
     private(set) var preparedBindingIsCurrent = false
@@ -274,7 +267,7 @@ final class RepositoryForgeCoordinator: NSObject {
         let cached = remoteDescriptorCache.dependencyRevisions(for: remoteCacheKey, revision: configuration, dependencyRevision: remoteDependencyRevision)
         guard cached != nil else { return nil }
         // Inferred bindings also depend on global Git configuration.
-        let defaults = Self.globalConfigurationPaths()
+        let defaults = currentGlobalConfigurationPaths()
         var dependencies = cached ?? [:]
         for path in defaults {
             dependencies[path] = remoteDependencyRevision(path)
@@ -613,7 +606,27 @@ final class RepositoryForgeCoordinator: NSObject {
         return Array(Set(paths)).sorted()
     }
 
-    static func globalConfigurationPaths(environment: [String: String] = ProcessInfo.processInfo.environment,
+    private func currentGlobalConfigurationPaths() -> [String] {
+        // Cache path construction only, never filesystem evidence. Relevant
+        // environment changes are observed again across discovery boundaries.
+        let inputs = Self.configurationEnvironment()
+        if let configurationPathCache, configurationPathCache.inputs == inputs {
+            return configurationPathCache.paths
+        }
+        let paths = Self.globalConfigurationPaths(environment: inputs)
+        configurationPathCache = (inputs, paths)
+        return paths
+    }
+
+    private static func configurationEnvironment() -> [String: String] {
+        let keys = ["GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "XDG_CONFIG_HOME"]
+        return Dictionary(uniqueKeysWithValues: keys.compactMap { key in
+            guard let value = getenv(key) else { return nil }
+            return (key, String(cString: value))
+        })
+    }
+
+    static func globalConfigurationPaths(environment: [String: String] = configurationEnvironment(),
                                          home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [String]
     {
         var paths: [String] = []

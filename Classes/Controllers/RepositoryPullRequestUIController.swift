@@ -95,6 +95,19 @@ final class RepositoryPullRequestUIController {
     private(set) var mutationTask: Task<Void, Never>?
     private var draftSaveTask: Task<Void, Never>?
     private var sheetController: ForgePullRequestSheetController?
+    private var editorQueue = RepositoryPullRequestEditorQueue()
+    private var editorRequests: [UUID: (NSWindow) -> Void] = [:]
+    private var ownedSheets: [UUID: ForgePullRequestSheetController] = [:]
+    private var preparingEditorID: UUID?
+    private var sheetObservation: NSObjectProtocol?
+    private weak var observedSheetWindow: NSWindow?
+    private var editSubmissions: [RepositoryEditSubmissionLifetime] = []
+    private var activeEditSubmission: RepositoryEditSubmissionLifetime?
+    private var remoteMutationAdmission: RepositoryPullRequestMutationAdmission?
+    private let closeGuardOwner = NSObject()
+    private var ownerInvalidated = false
+    private var closeConfirmation: NSAlert?
+    private var closeConfirmationIdentity: UUID?
     private var activePreparation: RepositoryPullRequestCreationPreparation?
     private var ordinaryPushPreparationCache = RepositoryPullRequestPreparationCacheStore()
     private var pullRequestOperation: RepositoryPullRequestOperation?
@@ -133,6 +146,11 @@ final class RepositoryPullRequestUIController {
         }
         self.createPullRequestControlResolving = createPullRequestControlResolving
         self.now = now
+        #if GITX_APP_TARGET
+            windowController.registerPullRequestCloseGuard(owner: closeGuardOwner, protection: { [weak self] close in
+                self?.confirmClosingIfNeeded(close) ?? false
+            }, revoke: { [weak self] in self?.invalidateOwner() })
+        #endif
         preloadOrdinaryPushPreparation()
     }
 
@@ -140,22 +158,50 @@ final class RepositoryPullRequestUIController {
         authority.revoke()
         preparationTask?.cancel()
         ordinaryPushPreparationTask?.cancel()
+        editorQueue.invalidate()
+        editorRequests.removeAll()
+        Array(ownedSheets.values).forEach { $0.invalidatePresentation() }
+        if let closeConfirmation, let parent = closeConfirmation.window.sheetParent {
+            parent.endSheet(closeConfirmation.window, returnCode: .abort)
+        }
+        if let sheetObservation {
+            NotificationCenter.default.removeObserver(sheetObservation)
+        }
         // Already-admitted mutations and draft saves keep their captured targets.
     }
 
     func invalidateOwner() {
+        guard !ownerInvalidated else { return }
+        ownerInvalidated = true
         authority.revoke()
-        preparationTask?.cancel()
+        cancelPreparation()
         cancelOrdinaryPushPreparation(clearCache: true)
         cancelDeferredPullRequestOperation()
-        sheetController?.invalidatePresentation()
+        editorQueue.invalidate()
+        editorRequests.removeAll()
+        let sheets = Array(ownedSheets.values)
+        ownedSheets.removeAll()
         sheetController = nil
+        sheets.forEach { $0.invalidatePresentation() }
+        if let closeConfirmation, let parent = closeConfirmation.window.sheetParent {
+            parent.endSheet(closeConfirmation.window, returnCode: .abort)
+        }
+        closeConfirmationIdentity = nil
+        closeConfirmation = nil
+        if let sheetObservation {
+            NotificationCenter.default.removeObserver(sheetObservation)
+        }
+        sheetObservation = nil
+        #if GITX_APP_TARGET
+            windowController?.unregisterPullRequestCloseGuard(owner: closeGuardOwner)
+        #endif
         windowController = nil
         logger.notice("Revoked Pull Request presentation and admission; admitted mutations continue")
     }
 
     func newPullRequest() {
         guard ownerIsCurrent() else { return }
+        supersedeMutation()
         cancelOrdinaryPushPreparation(clearCache: true)
         cancelDeferredPullRequestOperation()
         guard let branch = repository.headRef()?.ref(), branch.isBranch else {
@@ -489,8 +535,8 @@ final class RepositoryPullRequestUIController {
         destination: ForgeDestination
     ) {
         guard ownerIsCurrent() else { return }
-        preparationTask?.cancel()
-        mutationTask?.cancel()
+        cancelPreparation()
+        supersedeMutation()
         let identity: ForgeDraftIdentity
         do {
             identity = try RepositoryPullRequestDraftPolicy.editIdentity(
@@ -501,26 +547,38 @@ final class RepositoryPullRequestUIController {
             windowController?.showErrorSheet(error)
             return
         }
-        preparationTask = Task { [weak self, drafts] in
-            do {
-                let draft = try await drafts.load(identity: identity)
-                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
-                let content = RepositoryPullRequestDraftPolicy.restoredEditContent(
-                    snapshot: snapshot,
-                    draft: draft
-                )
-                self.presentEditSheet(
-                    accountID: accountID,
-                    snapshot: snapshot,
-                    destination: destination,
-                    identity: identity,
-                    observedDraft: draft,
-                    content: content
-                )
-            } catch is CancellationError {
-                return
-            } catch {
-                self?.windowController?.showErrorSheet(error)
+        let predecessors = editSubmissions.filter { $0.draftIdentity == identity }
+        let request = UUID()
+        preparingEditorID = request
+        enqueueEditorRequest(request) { [weak self] window in
+            guard let self else { return }
+            self.preparationTask = Task { [weak self] in
+                for submission in predecessors {
+                    await submission.task?.value
+                }
+                guard let self, self.ownerIsCurrent(), !Task.isCancelled, self.editorQueue.active == request else { return }
+                if predecessors.contains(where: \.needsRecovery) {
+                    self.finishEditorPresentation(request)
+                    self.queueAvailableRecoveries()
+                    return
+                }
+                if predecessors.contains(where: { $0.requiresFreshServerSnapshot && snapshot.updatedAt <= ($0.expectedUpdatedAt ?? snapshot.updatedAt) }) {
+                    self.finishEditorPresentation(request)
+                    self.windowController?.showMessageSheet("Refresh the Pull Request", infoText: "The server changed during the previous edit. Refresh its current data before opening a new edit; your saved draft remains protected.")
+                    return
+                }
+                let currentSnapshot = predecessors.compactMap(\.outcome?.snapshot).last ?? snapshot
+                do {
+                    let draft = try await self.serializedDraftLoad(identity: identity).value
+                    guard self.ownerIsCurrent(), !Task.isCancelled, self.editorQueue.active == request else { return }
+                    let content = RepositoryPullRequestDraftPolicy.restoredEditContent(snapshot: currentSnapshot, draft: draft)
+                    self.presentEditSheet(accountID: accountID, snapshot: currentSnapshot, destination: destination,
+                                          identity: identity, observedDraft: draft, content: content, presentationID: request, window: window)
+                } catch {
+                    guard self.ownerIsCurrent(), !Task.isCancelled else { return }
+                    self.finishEditorPresentation(request)
+                    self.windowController?.showErrorSheet(error)
+                }
             }
         }
     }
@@ -531,9 +589,11 @@ final class RepositoryPullRequestUIController {
         destination: ForgeDestination,
         identity: ForgeDraftIdentity,
         observedDraft: ForgeDraft?,
-        content: ForgeDraftContent
+        content: ForgeDraftContent,
+        presentationID: UUID,
+        window: NSWindow
     ) {
-        guard let window = windowController?.window else { return }
+        guard ownerIsCurrent(), editorQueue.active == presentationID else { return }
         let sheet = ForgePullRequestSheetController(
             mode: .edit(accountID: accountID, snapshot: snapshot, destination: destination),
             restoredContent: content
@@ -557,7 +617,7 @@ final class RepositoryPullRequestUIController {
         sheet.onDiscard = { [weak self] in
             self?.discardDraft(identity: identity)
         }
-        sheetController = sheet
+        installEditorSheet(sheet, id: presentationID)
         saveEditDraft(editor: editor, content: content)
         sheet.beginSheet(for: window)
         logger.notice("Presented conflict-aware Pull Request edit sheet")
@@ -565,7 +625,7 @@ final class RepositoryPullRequestUIController {
 
     func checkout(_ plan: ForgePullRequestCheckoutPlan) {
         guard ownerIsCurrent() else { return }
-        mutationTask?.cancel()
+        supersedeMutation()
         let executor = RepositoryPullRequestCheckoutExecutor(repository: repository)
         mutationTask = Task { [weak self] in
             do {
@@ -588,7 +648,7 @@ final class RepositoryPullRequestUIController {
 
     func checkout(_ pullRequest: ForgePullRequestSummary) {
         guard ownerIsCurrent() else { return }
-        mutationTask?.cancel()
+        supersedeMutation()
         let planner = RepositoryPullRequestCheckoutPlanner(repository: repository)
         mutationTask = Task { [weak self] in
             do {
@@ -616,13 +676,17 @@ final class RepositoryPullRequestUIController {
 
     func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) {
         guard ownerIsCurrent() else { return }
-        mutationTask?.cancel()
+        supersedeMutation()
         let runner = RepositoryPullRequestObjectiveGitRunner(repository: repository)
         let coordinator = RepositorySyncForkCoordinator(service: service, runner: runner)
+        let admission = RepositoryPullRequestMutationAdmission()
+        remoteMutationAdmission = admission
         mutationTask = Task { [weak self] in
+            defer { admission.finish() }
             do {
+                guard admission.admit() else { return }
                 let receipt = try await coordinator.sync(accountID: accountID, plan: plan)
-                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
+                guard let self, self.ownerIsCurrent(), !admission.superseded, !Task.isCancelled else { return }
                 self.windowController?.showMessageSheet(
                     "Fork Synchronized",
                     infoText: "\(receipt.serverSummary) Fetched \(receipt.fetchedRemote)/\(receipt.fetchedBranch.value)."
@@ -630,7 +694,7 @@ final class RepositoryPullRequestUIController {
             } catch is CancellationError {
                 return
             } catch {
-                guard let self else { return }
+                guard let self, self.ownerIsCurrent(), !admission.superseded else { return }
                 let offeredRecovery = self.presentAuthorizationRecovery(
                     error,
                     retry: { [weak self] in
@@ -649,7 +713,7 @@ final class RepositoryPullRequestUIController {
         completion: @escaping (RepositoryPullRequestCreationPreparation, ForgePullRequestCreationForm) -> Void,
         fallback: (() -> Void)? = nil
     ) {
-        preparationTask?.cancel()
+        cancelPreparation()
         guard let binding = bindingResolving(),
               binding.primaryRepository.forge.kind == .github,
               binding.primaryRepository.forge.origin.host.lowercased() == "github.com"
@@ -913,7 +977,7 @@ final class RepositoryPullRequestUIController {
         operation: RepositoryPullRequestOperation
     ) {
         guard ownerIsCurrent(), pullRequestOperation === operation else { return }
-        guard let window = windowController?.window else {
+        guard windowController?.window != nil else {
             do {
                 try operation.flow.createSheetCancelled()
             } catch {
@@ -982,12 +1046,14 @@ final class RepositoryPullRequestUIController {
                 operation: operation
             )
         }
-        sheetController = sheet
-        // Persist the initial content before presentation so every cancellation
-        // path, including closing the sheet from its title bar, preserves a
-        // durable draft even when the user made no edit first.
-        saveDraft(preparation: preparation, content: restored)
-        sheet.beginSheet(for: window)
+        let request = UUID()
+        enqueueEditorRequest(request) { [weak self] window in
+            guard let self else { return }
+            guard self.ownerIsCurrent(), self.pullRequestOperation === operation else { self.finishEditorPresentation(request); return }
+            self.installEditorSheet(sheet, id: request)
+            self.saveDraft(preparation: preparation, content: restored)
+            sheet.beginSheet(for: window)
+        }
     }
 
     private func saveDraft(
@@ -1056,8 +1122,10 @@ final class RepositoryPullRequestUIController {
         operation: RepositoryPullRequestOperation
     ) {
         guard ownerIsCurrent() else { return }
-        mutationTask?.cancel()
+        supersedeMutation()
         let identity = authority.beginMutation()
+        let admission = RepositoryPullRequestMutationAdmission()
+        remoteMutationAdmission = admission
         saveDraft(
             preparation: preparation,
             content: ForgeDraftContent(title: form.title, body: form.bodyMarkdown)
@@ -1065,9 +1133,10 @@ final class RepositoryPullRequestUIController {
         let pendingDraftSave = draftSaveTask
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
         mutationTask = Task { [weak self] in
+            defer { admission.finish() }
             do {
                 await pendingDraftSave?.value
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, admission.admit() else { return }
                 let outcome = try await completion.create(accountID: accountID, form: form, preparation: preparation)
                 guard let self, self.mayPresentMutation(identity),
                       self.pullRequestOperation === operation
@@ -1119,134 +1188,263 @@ final class RepositoryPullRequestUIController {
         }
     }
 
-    private func submitEdit(
-        accountID: ForgeAccountID,
-        edit: ForgePullRequestEdit,
-        destination: ForgeDestination,
-        editor: RepositoryEditDraftSession
-    ) {
+    private func submitEdit(accountID: ForgeAccountID, edit: ForgePullRequestEdit, destination: ForgeDestination, editor: RepositoryEditDraftSession) {
         guard ownerIsCurrent() else { return }
-        mutationTask?.cancel()
-        let identity = authority.beginMutation()
-        let pendingDraftSave = draftSaveTask
+        supersedeMutation()
+        let presentation = authority.beginMutation()
+        let content = ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown)
+        let submission = RepositoryEditSubmissionLifetime(identity: editor.identity, destination: destination, content: content, expectedUpdatedAt: edit.expectedUpdatedAt)
+        editSubmissions.append(submission)
+        activeEditSubmission = submission
+        let pending = draftSaveTask
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
         let date = now()
-        let content = ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown)
         let finalSave = Task {
-            await pendingDraftSave?.value
+            await pending?.value
             return await editor.saveSubmissionResult(content, drafts: completion.drafts, at: date)
         }
-        // Persistence owns its place in the save chain independently of the
-        // mutation task. Later editor saves/discards must wait for this attempt.
         draftSaveTask = Task { _ = await finalSave.value }
-        mutationTask = Task { [weak self] in
-            let saveResult = await finalSave.value
-            do {
-                guard !Task.isCancelled else { return }
-                let outcome = try await completion.edit(accountID: accountID, edit: edit, destination: destination, identity: editor.identity, submittedDraft: saveResult.snapshot)
-                guard let self, self.mayPresentMutation(identity) else { return }
-                _ = self.destinationOpening(outcome.destination)
-                self.logger.notice("Saved conflict-aware Pull Request title/body edit")
-            } catch is CancellationError {
+        let task = Task { [weak self] in
+            let result = await finalSave.value
+            submission.persisted(result)
+            guard submission.admit() else {
+                submission.finish()
+                self?.queueAvailableRecoveries()
                 return
-            } catch ForgePullRequestWorkflowError.editConflict {
-                guard let self, self.mayPresentMutation(identity) else { return }
-                if saveResult.snapshot == nil {
-                    self.presentEditRecovery(content: content, destination: destination, draftIdentity: editor.identity, operation: identity,
-                                             message: "The Pull Request changed on the server. Copy or save this text, then refresh the Pull Request and open a new edit.")
+            }
+            do {
+                let outcome = try await completion.edit(accountID: accountID, edit: edit, destination: destination,
+                                                        identity: editor.identity, submittedDraft: result.snapshot)
+                submission.finish(outcome)
+                guard let self else { return }
+                self.editSubmissions.removeAll { $0 === submission }
+                self.queueAvailableRecoveries()
+                guard !submission.superseded, self.mayPresentMutation(presentation) else { return }
+                _ = self.destinationOpening(outcome.destination)
+                self.logger.notice("Saved conflict-aware Pull Request edit with independent completion")
+            } catch {
+                submission.finish()
+                submission.recoveryMessage = RepositoryPullRequestRecoveryReason.message(for: error)
+                if case ForgePullRequestWorkflowError.editConflict = error {
+                    submission.requiresFreshServerSnapshot = true
+                }
+                guard let self else { return }
+                let diagnostic = error as NSError
+                self.logger.error("Pull Request edit failed; domain=\(diagnostic.domain, privacy: .public) code=\(diagnostic.code), unsaved=\(result.snapshot == nil, privacy: .public)")
+                guard self.ownerIsCurrent() else { return }
+                if submission.superseded || !self.mayPresentMutation(presentation) {
+                    self.queueAvailableRecoveries()
                     return
                 }
-                self.windowController?.showMessageSheet(
-                    "Pull Request Changed",
-                    infoText: "Refresh the Pull Request before applying your title or body edit. Your text remains in the editor draft."
-                )
-            } catch {
-                guard let self, self.mayPresentMutation(identity) else { return }
-                let recoverText: @MainActor @Sendable () -> Void = { [weak self] in
-                    guard let self, self.authority.permitsMutation(identity), saveResult.snapshot == nil else { return }
-                    self.presentEditRecovery(content: content, destination: destination, draftIdentity: editor.identity, operation: identity)
+                if error is CancellationError {
+                    self.queueAvailableRecoveries()
+                    return
                 }
-                let offeredRecovery = self.presentAuthorizationRecovery(
-                    error,
-                    retry: self.authority.retry(for: identity) { [weak self] in
-                        self?.submitEdit(
-                            accountID: accountID,
-                            edit: edit,
-                            destination: destination,
-                            editor: editor
-                        )
-                    },
-                    onDismissed: recoverText
-                )
-                if !offeredRecovery {
-                    if saveResult.snapshot == nil {
-                        recoverText()
+                let offered = self.presentAuthorizationRecovery(error, retry: self.authority.retry(for: presentation) { [weak self] in
+                    guard let self else { return }
+                    submission.resolveRecovery()
+                    self.submitEdit(accountID: accountID, edit: edit, destination: destination, editor: editor)
+                }, onDismissed: { [weak self] in self?.queueAvailableRecoveries() })
+                if !offered {
+                    if submission.needsRecovery {
+                        self.queueAvailableRecoveries()
                     } else {
                         self.windowController?.showErrorSheet(error)
                     }
                 }
             }
         }
+        submission.task = task
+        mutationTask = task
     }
 
     private func mayPresentMutation(_ identity: UUID) -> Bool {
         authority.permitsMutation(identity) && !Task.isCancelled
     }
 
-    private func presentEditRecovery(content: ForgeDraftContent, destination: ForgeDestination, draftIdentity: ForgeDraftIdentity, operation: UUID, message: String? = nil) {
-        guard authority.permitsMutation(operation), let window = windowController?.window else { return }
-        let sheet = ForgePullRequestSheetController(mode: .recovery(destination: destination), restoredContent: content, recoveryMessage: message)
-        sheet.onSaveRecovery = { [weak self, weak sheet] content in
-            guard let self, let sheet, self.authority.permitsMutation(operation) else { return }
-            self.saveRecoveredDraft(content, identity: draftIdentity, operation: operation, sheet: sheet)
+    private func supersedeMutation() {
+        _ = authority.beginMutation()
+        if let activeEditSubmission, activeEditSubmission.phase != .finished {
+            activeEditSubmission.supersede()
+            self.activeEditSubmission = nil
+        } else if let remoteMutationAdmission, remoteMutationAdmission.admitted {
+            remoteMutationAdmission.superseded = true
+            self.remoteMutationAdmission = nil
+        } else {
+            remoteMutationAdmission?.superseded = true
+            remoteMutationAdmission = nil
+            activeEditSubmission = nil
+            mutationTask?.cancel()
         }
-        // Recovery deliberately has no onDraftChanged, onCancel or onDiscard:
-        // merely reopening or closing cannot replace somebody else's draft.
-        sheetController = sheet
-        sheet.beginSheet(for: window)
-        logger.notice("Presented unsaved edit recovery without changing the stored draft")
     }
 
-    private func saveRecoveredDraft(_ content: ForgeDraftContent, identity: ForgeDraftIdentity, operation: UUID, sheet: ForgePullRequestSheetController) {
+    private func cancelPreparation() {
+        preparationTask?.cancel()
+        if let preparingEditorID, ownedSheets[preparingEditorID] == nil {
+            finishEditorPresentation(preparingEditorID)
+        }
+        preparingEditorID = nil
+    }
+
+    private func serializedDraftLoad(identity: ForgeDraftIdentity) -> Task<ForgeDraft?, Error> {
         let previous = draftSaveTask
         let drafts = drafts
-        let authority = authority
-        let date = now()
-        draftSaveTask = Task { [weak self, weak sheet] in
+        let load = Task<ForgeDraft?, Error> {
             await previous?.value
-            guard authority.permitsMutation(operation), let sheet else { return }
-            do {
-                let expected = try await drafts.load(identity: identity)
-                guard authority.permitsMutation(operation) else { return }
-                if expected != nil {
-                    guard let window = sheet.window else { return }
-                    let accepted = await withCheckedContinuation { continuation in
-                        let alert = NSAlert()
-                        alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.ReplaceConfirmation")
-                        alert.messageText = "Replace the Stored Draft?"
-                        alert.informativeText = "A draft already exists. Replace it with this recovered text? If it changes while you confirm, it will remain protected."
-                        alert.addButton(withTitle: "Replace Draft")
-                        alert.addButton(withTitle: "Cancel")
-                        alert.beginSheetModal(for: window) { response in
-                            continuation.resume(returning: response == .alertFirstButtonReturn)
-                        }
-                    }
-                    guard accepted, authority.permitsMutation(operation) else { return }
-                }
-                let saved = try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected)
-                guard authority.permitsMutation(operation) else { return }
-                if saved != nil {
-                    sheet.markRecoverySaved(content)
-                    self?.logger.notice("Saved recovered edit after conditional draft confirmation")
-                } else {
-                    self?.showRecoverySaveError("The stored draft changed. Your recovered text remains here; choose Save Draft again to review the latest draft.", sheet: sheet)
-                }
-            } catch {
-                guard authority.permitsMutation(operation) else { return }
-                self?.showRecoverySaveError("The draft could not be saved. Your recovered text remains here. Copy it or try Save Draft again.", sheet: sheet)
-                self?.logger.error("Recovered draft save failed; preserving editor text")
+            return try await drafts.load(identity: identity)
+        }
+        draftSaveTask = Task { _ = try? await load.value }
+        return load
+    }
+
+    private func enqueueEditorRequest(_ id: UUID, begin: @escaping (NSWindow) -> Void) {
+        guard ownerIsCurrent(), let window = windowController?.window else { return }
+        if observedSheetWindow !== window {
+            if let sheetObservation {
+                NotificationCenter.default.removeObserver(sheetObservation)
+            }
+            observedSheetWindow = window
+            sheetObservation = NotificationCenter.default.addObserver(forName: NSWindow.didEndSheetNotification, object: window, queue: .main) { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in self?.drainEditorRequests() }
             }
         }
+        editorRequests[id] = begin
+        editorQueue.enqueue(id)
+        drainEditorRequests()
+    }
+
+    private func drainEditorRequests() {
+        guard ownerIsCurrent(), let window = observedSheetWindow else { return }
+        guard let id = editorQueue.takeNext(parentAvailable: window.attachedSheet == nil) else { return }
+        guard let begin = editorRequests.removeValue(forKey: id) else { finishEditorPresentation(id); return }
+        begin(window)
+    }
+
+    private func installEditorSheet(_ sheet: ForgePullRequestSheetController, id: UUID) {
+        guard editorQueue.active == id else { return }
+        preparingEditorID = nil
+        ownedSheets[id] = sheet
+        sheetController = sheet
+        sheet.onPresentationEnded = { [weak self] in self?.finishEditorPresentation(id) }
+    }
+
+    private func finishEditorPresentation(_ id: UUID) {
+        let previous = ownedSheets.removeValue(forKey: id)
+        if let previous, sheetController === previous {
+            sheetController = nil
+        }
+        editorRequests[id] = nil
+        editorQueue.finish(id)
+        DispatchQueue.main.async { [weak self] in self?.drainEditorRequests() }
+    }
+
+    private func queueAvailableRecoveries() {
+        guard ownerIsCurrent() else { return }
+        for submission in RepositoryEditRecoveryOrder.ready(in: editSubmissions) {
+            enqueueRecovery(submission)
+        }
+    }
+
+    private func enqueueRecovery(_ submission: RepositoryEditSubmissionLifetime) {
+        guard ownerIsCurrent(), submission.needsRecovery, !submission.recoveryQueued else { return }
+        submission.recoveryQueued = true
+        let request = UUID()
+        enqueueEditorRequest(request) { [weak self] window in
+            guard let self else { return }
+            guard submission.needsRecovery else { self.finishEditorPresentation(request); return }
+            let sheet = ForgePullRequestSheetController(mode: .recovery(destination: submission.destination), restoredContent: submission.recoveryContent,
+                                                        recoveryMessage: submission.recoveryMessage)
+            sheet.onDraftChanged = { [weak self] content in
+                submission.updateRecoveryContent(content)
+                if submission.needsCloseProtection, self?.editSubmissions.contains(where: { $0 === submission }) == false {
+                    self?.editSubmissions.append(submission)
+                }
+            }
+            sheet.onCancel = { [weak self] _ in
+                submission.resolveRecovery()
+                self?.editSubmissions.removeAll { $0 === submission }
+            }
+            sheet.onRecoverySaved = { [weak self] content in
+                submission.markRecoverySaved(content)
+                if submission.resolved {
+                    self?.editSubmissions.removeAll { $0 === submission }
+                }
+            }
+            sheet.onSaveRecovery = { [weak self, weak sheet] content in
+                guard let self, let sheet else { return }
+                self.saveRecoveredDraft(content, identity: submission.draftIdentity, sheet: sheet)
+            }
+            self.installEditorSheet(sheet, id: request)
+            sheet.beginSheet(for: window)
+            self.logger.notice("Presented retained edit recovery independently of the active mutation")
+        }
+    }
+
+    private func enqueueRecoveryWrite(_ content: ForgeDraftContent, identity: ForgeDraftIdentity, expected: ForgeDraft?, at date: Date) -> Task<ForgeDraft?, Error> {
+        let previous = draftSaveTask
+        let drafts = drafts
+        let write = Task<ForgeDraft?, Error> {
+            await previous?.value
+            return try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected)
+        }
+        draftSaveTask = Task { _ = try? await write.value }
+        return write
+    }
+
+    private func saveRecoveredDraft(_ content: ForgeDraftContent, identity: ForgeDraftIdentity, sheet: ForgePullRequestSheetController) {
+        guard ownerIsCurrent(), let attempt = sheet.beginRecoverySave() else { return }
+        let load = serializedDraftLoad(identity: identity)
+        let authority = authority
+        let date = now()
+        Task { [weak self, weak sheet] in
+            guard let sheet else { return }
+            defer { sheet.finishRecoverySave(attempt) }
+            do {
+                let expected = try await load.value
+                guard authority.isCurrent, sheet.acceptsRecoverySave(attempt) else { return }
+                if expected != nil {
+                    guard await sheet.confirmRecoveryReplacement(attempt) else { return }
+                }
+                guard authority.isCurrent, sheet.acceptsRecoverySave(attempt),
+                      let write = self?.enqueueRecoveryWrite(content, identity: identity, expected: expected, at: date) else { return }
+                let saved = try await write.value
+                guard let self, self.ownerIsCurrent(), sheet.acceptsRecoverySave(attempt) else { return }
+                if saved != nil {
+                    sheet.markRecoverySaved(content)
+                } else {
+                    self.showRecoverySaveError("The stored draft changed. Your recovered text remains here; choose Save Draft again to review the latest draft.", sheet: sheet)
+                }
+            } catch {
+                guard let self, self.ownerIsCurrent(), sheet.acceptsRecoverySave(attempt) else { return }
+                self.showRecoverySaveError("The draft could not be saved. Your recovered text remains here. Copy it or try Save Draft again.", sheet: sheet)
+                self.logger.error("Recovered draft save failed; preserving editor text, code=\((error as NSError).code)")
+            }
+        }
+    }
+
+    func confirmClosingIfNeeded(_ close: @escaping () -> Void) -> Bool {
+        guard ownerIsCurrent(), editSubmissions.contains(where: \.needsCloseProtection), let window = windowController?.window else { return false }
+        guard closeConfirmationIdentity == nil else { return true }
+        sheetController?.abortRecoverySave()
+        let id = UUID()
+        closeConfirmationIdentity = id
+        let alert = NSAlert()
+        closeConfirmation = alert
+        alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.WindowCloseConfirmation")
+        alert.messageText = "Close Without Saving Recovered Text?"
+        alert.informativeText = "This window still owns Pull Request edit text that has not been saved. Keep the window open to copy or save it. Closing discards the memory-only text."
+        alert.addButton(withTitle: "Keep Editing")
+        alert.addButton(withTitle: "Close Without Saving")
+        alert.beginSheetModal(for: window.attachedSheet ?? window) { [weak self] response in
+            guard let self, self.closeConfirmationIdentity == id else { return }
+            self.closeConfirmationIdentity = nil
+            self.closeConfirmation = nil
+            guard self.ownerIsCurrent(), self.windowController?.window === window else { return }
+            guard response == .alertSecondButtonReturn else { return }
+            self.editSubmissions.forEach { $0.resolveRecovery() }
+            close()
+        }
+        return true
     }
 
     private func showRecoverySaveError(_ message: String, sheet: ForgePullRequestSheetController) {

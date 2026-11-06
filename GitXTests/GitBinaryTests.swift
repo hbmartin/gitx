@@ -1492,6 +1492,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let menu = NSMenuItem(title: "Forge", action: NSSelectorFromString("viewForgeRepository:"), keyEquivalent: "")
         XCTAssertFalse(actual.validateMenuItem(menu))
         XCTAssertNotNil(actual.historyViewController)
+        _ = actual.forgeCoordinator
+        actual.refreshPreferenceDidChange(nil)
+        XCTAssertNil(actual.repositoryForgeOverlaySession, "Prepared resolutions must respect deterministic session suppression too")
     }
 
     func testReentrantOwnershipReconciliationRefusesAdmissionAndPreservesItsCompleteOwner() throws {
@@ -1881,6 +1884,43 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(decodes.withLock { $0 }, 4, "Malformed unchanged payloads are settled unavailable too")
     }
 
+    func testActualWindowCloseProtectionKeepsOwnershipUntilConfirmationAndRevokesOnce() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let owner = GitX.PBGitWindowController(window: window)
+        let token = NSObject()
+        var confirmation: (() -> Void)?
+        var revocations = 0
+        owner.registerPullRequestCloseGuard(owner: token, protection: { confirmation = $0; return true }, revoke: { revocations += 1 })
+        window.makeKeyAndOrderFront(nil)
+        owner.unregisterPullRequestCloseGuard(owner: NSObject())
+        owner.close()
+        XCTAssertTrue(window.isVisible, "Unrelated tokens cannot bypass an unresolved close protection")
+        XCTAssertEqual(revocations, 0)
+        try XCTUnwrap(confirmation)()
+        XCTAssertFalse(window.isVisible)
+        XCTAssertEqual(revocations, 1)
+        owner.close()
+        XCTAssertEqual(revocations, 1, "Terminal closure cannot revoke an owner twice")
+        owner.unregisterPullRequestCloseGuard(owner: token)
+    }
+
+    func testAccountRemovalInvalidatesAWarmProductionBindingSnapshotImmediately() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let suite = "GitX-Removal-Snapshot-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = GitX.ApplicationPreferences(userDefaults: defaults)
+        let settings = try GitX.RepositoryUISettings(repository: XCTUnwrap(document.repository), preferences: preferences)
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "removed")
+        let account = try ForgeAccountID(forge: identity.forge, value: "remove")
+        settings.forgeRepositoryBinding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: identity, preferredAccount: account)
+        XCTAssertNotNil(settings.passiveForgeBinding)
+        try GitX.ForgeRepositoryBindingAccountCleaner(userDefaults: defaults).removeBindings(for: account)
+        XCTAssertNil(settings.forgeRepositoryBinding)
+        XCTAssertNil(settings.passiveForgeBinding, "Account removal must invalidate warmed delivery snapshots before returning")
+    }
+
     func testPreferenceSnapshotExpiresAfterDeliveryWithoutReusingAnOlderInvalidation() throws {
         let suite = "GitX-Forge-Snapshot-Expiry-\(UUID())"
         let defaults = try XCTUnwrap(CountingForgeDefaults(suiteName: suite))
@@ -1961,6 +2001,68 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(actual.repositoryReadCount, 10)
         XCTAssertFalse(actual.isWindowLoaded)
         XCTAssertNil(actual.repositoryForgeOverlaySession)
+    }
+
+    private actor ToolbarDeadlineGate {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var released = false
+        func wait() async {
+            guard !released else { return }
+            await withCheckedContinuation { continuation = $0 }
+        }
+
+        func release() {
+            released = true
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    func testCooldownDeadlineUpdatesHelpWithoutRebuildingTheMenuOrEnablingChanges() async throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let repository = try XCTUnwrap(document.repository)
+        let owner = RepositoryOverrideWindowProbe(ownerNotifications: NotificationCenter())
+        owner.repository = repository
+        defer { owner.close() }
+        let time = Mutex(Date(timeIntervalSince1970: 100))
+        let gate = ToolbarDeadlineGate()
+        defer { Task { await gate.release() } }
+        let scheduled = expectation(description: "One cooldown deadline is scheduled")
+        let clock = GitX.RepositoryForgeAccountClock(now: { time.withLock { $0 } }, sleep: { seconds in
+            XCTAssertEqual(seconds, 60)
+            scheduled.fulfill()
+            await gate.wait()
+        })
+        let identity = try ForgeRepositoryIdentity(forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")), owner: "fixture", name: "cooldown")
+        let account = try ForgeAccountID(forge: identity.forge, value: "cooldown-account")
+        let binding = try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: identity, preferredAccount: account)
+        let controller = GitX.RepositoryToolbarController(windowController: owner, repository: repository, accountClock: clock)
+        controller.applyForgeMetadata(providerName: "GitHub", binding: binding, ownerIsCurrent: { true })
+        let toolbar = NSToolbar(identifier: "GitX.CooldownHelp")
+        let item = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .init("GitX.Toolbar.ForgeAccount"), willBeInsertedIntoToolbar: true))
+        let stack = try XCTUnwrap(item.view as? NSStackView)
+        let popup = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSPopUpButton }.first)
+        let avatar = try XCTUnwrap(stack.arrangedSubviews.first?.subviews.first)
+        NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: repository,
+                                        userInfo: [GitX.RepositoryForgeAccountNotificationKey.binding: binding,
+                                                   GitX.RepositoryForgeAccountNotificationKey.accountID: account,
+                                                   GitX.RepositoryForgeAccountNotificationKey.login: "fixture",
+                                                   GitX.RepositoryForgeAccountNotificationKey.accountRebindingEnabled: false,
+                                                   GitX.RepositoryForgeAccountNotificationKey.accountRebindingCooldownDeadline: Date(timeIntervalSince1970: 160)])
+        await fulfillment(of: [scheduled], timeout: 5)
+        let currentItem = popup.item(at: 0)
+        let currentAvatar = stack.arrangedSubviews.first?.subviews.first
+        XCTAssertFalse(popup.isEnabled)
+        XCTAssertTrue(popup.toolTip?.contains("rate-limit window") == true)
+        time.withLock { $0 = Date(timeIntervalSince1970: 161) }
+        await gate.release()
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in popup.toolTip?.contains("successful GitHub retry") == true }, object: nil)
+        await fulfillment(of: [updated], timeout: 5)
+        XCTAssertFalse(popup.isEnabled, "Expiry changes the explanation, never cooldown authority")
+        XCTAssertTrue(popup.item(at: 0) === currentItem)
+        XCTAssertTrue(stack.arrangedSubviews.first?.subviews.first === currentAvatar)
+        XCTAssertFalse(avatar === currentAvatar, "The account notification installs the account avatar once before the deadline")
     }
 
     func testPreparedToolbarPreservesTheFirstUnchangedMenuAndAvatar() throws {
@@ -2082,6 +2184,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let newBinding = try XCTUnwrap(settings.forgeRepositoryBinding)
         actual.refreshPreferenceDidChange(nil)
         XCTAssertEqual(popup.title, "Switching account…", "Old account details must not masquerade as the newly requested account")
+        XCTAssertFalse(popup.isEnabled, "Switching cannot admit another account change without validated cooldown evidence")
         NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: repository, userInfo: [GitX.RepositoryForgeAccountNotificationKey.binding: newBinding,
                                                                                                                GitX.RepositoryForgeAccountNotificationKey.providerName: "GitHub",
                                                                                                                GitX.RepositoryForgeAccountNotificationKey.accountID: newAccount,

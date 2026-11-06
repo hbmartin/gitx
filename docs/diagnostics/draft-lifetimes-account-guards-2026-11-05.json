@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "review": {
+    "repository": "hbmartin/gitx",
+    "pullRequest": 124,
+    "reviewedSHA": "19ddab1a123b034b095309ad290fe68ac0b807ea",
+    "integrationBase": "f9d4192c5d77c42cc3704664c424c8fd9536e300"
+  },
+  "delivery": {
+    "request": "Open a ready PR now",
+    "verificationComplete": false,
+    "desktopAuthorization": "No fresh idle window granted; no foreground tests executed in this follow-up"
+  },
+  "implementation": [
+    "Independent operation completion and retained recovery identities",
+    "Serialized draft reads and writes; replacement consent outside queue",
+    "One editor presentation queue and explicit window-close protection",
+    "Cooldown-aware action admission and in-place deadline help",
+    "Shared binding revision invalidation, explicit preparation results and common suppression",
+    "Pending discovery diagnostics and provider/configuration helper cleanup"
+  ],
+  "evidence": {
+    "baselineRegressionConsumers": "draft-lifetimes-regression-builds",
+    "nativeRedGreen": "Not executed; prepared expectations compiled before production changes, followed by early-PR request",
+    "nativeCorrectness": "pending",
+    "coverage": "pending; no floor reduced",
+    "sanitizers": "pending",
+    "uiScreenshots": "pending; historical screenshots are not current evidence",
+    "fullProfile": "pending",
+    "consumerAndPackageChecks": "artifacts/verification/draft-lifetimes-final-consumers-v2/workflow.json",
+    "consumerAndPackageResult": "passed: Debug, Release, interoperability, 164 Core tests, 314 ForgeKit tests and package gates; partial evidence",
+    "pinnedSourceGuard": "19 tests passed; frozen 19ddab1a and a removed private-entry guard rejected by in-memory source checks",
+    "ordinaryLint": "0 violations in 340 files",
+    "fullScriptSuite": "final rerun in progress; earlier run 875 passed and 1 obsolete source-shape assertion failed",
+    "postcommitEvidence": "pending; early ready PR does not establish final verification"
+  },
+  "expectedStagingLocation": "build/GitX.app",
+  "runIds": [
+    "draft-lifetimes-regression-builds",
+    "draft-lifetimes-implementation-builds",
+    "draft-lifetimes-implementation-builds-v2",
+    "draft-lifetimes-implementation-builds-v3",
+    "draft-lifetimes-prepr",
+    "draft-lifetimes-prepr-v2",
+    "draft-lifetimes-final-consumers",
+    "draft-lifetimes-final-consumers-v2",
+    "draft-lifetimes-final-static",
+    "draft-lifetimes-postcommit-consumers"
+  ]
+}
