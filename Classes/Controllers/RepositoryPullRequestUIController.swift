@@ -1208,6 +1208,10 @@ final class RepositoryPullRequestUIController {
             let result = await finalSave.value
             submission.persisted(result)
             guard submission.admit() else {
+                if result.snapshot == nil {
+                    submission.recoveryMessage = RepositoryPullRequestRecoveryReason.supersededBeforeAdmission
+                    self?.logger.notice("Retained unsent edit after pre-admission supersession")
+                }
                 submission.finish()
                 self?.queueAvailableRecoveries()
                 return

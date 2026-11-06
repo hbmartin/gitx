@@ -2873,6 +2873,13 @@
       "tests": [
         {
           "source": "GitXTests/GitBinaryReliabilityTests.swift",
+          "identifier": "GitXTests/GitBinaryReliabilityTests/testAvailabilityErrorSnapshotDoesNotStartDiscoveryAndPreservesASettledFailure",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Pending availability reports Git is not ready without starting discovery; settled failure classification and probe counts remain unchanged by snapshot reads."
+        },
+        {
+          "source": "GitXTests/GitBinaryReliabilityTests.swift",
           "identifier": "GitXTests/GitBinaryReliabilityTests/testActiveSelectionRemainsAvailableWhileAValidReplacementWaits",
           "role": "valid",
           "check": "correctness",

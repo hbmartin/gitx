@@ -2066,6 +2066,13 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let currentAvatar = stack.arrangedSubviews.first?.subviews.first
         XCTAssertFalse(popup.isEnabled)
         XCTAssertTrue(popup.toolTip?.contains("rate-limit window") == true)
+        stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
+        try attachScreenshot(of: stack, named: "Forge cooldown help before deadline")
+        XCTAssertEqual(popup.accessibilityHelp(), popup.toolTip)
+        let beforeHelp = try XCTAttachment(string: XCTUnwrap(popup.toolTip))
+        beforeHelp.name = "Forge cooldown help before deadline text"
+        beforeHelp.lifetime = .keepAlways
+        add(beforeHelp)
         time.withLock { $0 = Date(timeIntervalSince1970: 161) }
         await gate.release()
         let updated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in popup.toolTip?.contains("successful GitHub retry") == true }, object: nil)
@@ -2074,6 +2081,12 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertTrue(popup.item(at: 0) === currentItem)
         XCTAssertTrue(stack.arrangedSubviews.first?.subviews.first === currentAvatar)
         XCTAssertFalse(avatar === currentAvatar, "The account notification installs the account avatar once before the deadline")
+        try attachScreenshot(of: stack, named: "Forge cooldown help after deadline awaiting successful validation")
+        XCTAssertEqual(popup.accessibilityHelp(), popup.toolTip)
+        let afterHelp = try XCTAttachment(string: XCTUnwrap(popup.toolTip))
+        afterHelp.name = "Forge cooldown help after deadline text"
+        afterHelp.lifetime = .keepAlways
+        add(afterHelp)
     }
 
     func testPreparedToolbarPreservesTheFirstUnchangedMenuAndAvatar() throws {

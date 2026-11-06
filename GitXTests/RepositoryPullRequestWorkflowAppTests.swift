@@ -1,6 +1,7 @@
 import AppKit
 import ForgeKit
 import GitHubForgeAdapter
+import Synchronization
 import XCTest
 
 final class RepositoryPullRequestWorkflowAppTests: XCTestCase {
@@ -1739,6 +1740,9 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             if finalSaveFails {
                 await savingMutation.value
                 XCTAssertNotNil(find("GitX.PullRequest.Recovery.Copy", in: reopened))
+                XCTAssertEqual((find("GitX.PullRequest.Recovery.Notice", in: reopened) as? NSTextField)?.stringValue,
+                               "This edit was not sent because another action replaced it before submission. This recovered text has not been saved as a draft.")
+                try attachScreenshot(of: XCTUnwrap(window.attachedSheet), named: "Unsent edit recovered before remote admission")
                 let stored = try await drafts.load(identity: identity)
                 XCTAssertEqual(stored?.content, initialContent)
                 let calls = await service.editCount
@@ -1867,6 +1871,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             let close = try XCTUnwrap(find("GitX.PullRequest.Recovery.Close", in: view) as? NSButton)
             close.performClick(nil)
             let warning = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.CloseConfirmation")
+            try attachScreenshot(of: warning, named: "Recovery close warning before keeping text")
             try XCTUnwrap(button(titled: "Keep Editing", in: XCTUnwrap(warning.contentView))).performClick(nil)
             await waitForNoSheet(on: panel)
             XCTAssertTrue(window.attachedSheet === panel)
@@ -1877,6 +1882,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         case .windowClose:
             closeOwner()
             let warning = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.WindowCloseConfirmation")
+            try attachScreenshot(of: warning, named: "Repository window close warning with recovered text")
             try XCTUnwrap(button(titled: "Keep Editing", in: XCTUnwrap(warning.contentView))).performClick(nil)
             await waitForNoSheet(on: panel)
             XCTAssertTrue(window.isVisible)
@@ -1915,14 +1921,48 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             if action == .insert {
                 try await drafts.delete(identity: identity)
             }
+            let conditionalWritesBefore = await drafts.conditionalSaves
+            let savedContentsBefore = await drafts.savedContents.count
+            let snapshotGate = IgnoringCancellationGate<Bool>()
+            defer { Task { await snapshotGate.release(true) } }
+            let loadStarted = action == .duplicate ? expectation(description: "Recovery snapshot loading is held") : nil
+            var saveCallbacks = 0
+            let promptStarts = Mutex(0)
+            var promptObservation: NSObjectProtocol?
+            if let loadStarted {
+                await drafts.holdNextLoad(snapshotGate, started: loadStarted)
+                let originalSave = try XCTUnwrap(sheet.onSaveRecovery)
+                sheet.onSaveRecovery = { content in
+                    saveCallbacks += 1
+                    originalSave(content)
+                }
+                promptObservation = NotificationCenter.default.addObserver(forName: NSWindow.willBeginSheetNotification, object: panel, queue: .main) { _ in
+                    promptStarts.withLock { $0 += 1 }
+                }
+            }
+            defer {
+                if let promptObservation {
+                    NotificationCenter.default.removeObserver(promptObservation)
+                }
+            }
             let saveButton = try XCTUnwrap(find("GitX.PullRequest.Recovery.SaveDraft", in: view) as? NSButton)
             saveButton.performClick(nil)
-            if action == .duplicate {
+            if let loadStarted {
+                await fulfillment(of: [loadStarted], timeout: 5)
                 XCTAssertFalse(saveButton.isEnabled, "A save attempt must reserve its UI admission before asynchronous loading")
-                saveButton.performClick(nil)
+                try attachScreenshot(of: panel, named: "Recovery save disabled during snapshot loading")
+                XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(saveButton.action), to: saveButton.target, from: saveButton))
+                XCTAssertEqual(saveCallbacks, 1, "A direct action must reach the sheet guard without reaching the second write guard")
+                await snapshotGate.release(true)
             }
             if action != .insert {
                 let confirmation = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.ReplaceConfirmation")
+                if action == .duplicate {
+                    try attachScreenshot(of: confirmation, named: "Replacement confirmation while recovery save is reserved")
+                    XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(saveButton.action), to: saveButton.target, from: saveButton))
+                    XCTAssertEqual(saveCallbacks, 1, "Replacement consent must keep the same save admission")
+                    XCTAssertEqual(promptStarts.withLock { $0 }, 1)
+                }
                 if action == .revoke {
                     invalidateOwner()
                     await waitForNoSheet(on: window)
@@ -1950,6 +1990,28 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             await fulfillment(of: [saved], timeout: 5)
             let stored = try await drafts.load(identity: identity)
             XCTAssertEqual(stored?.content, expected)
+            if action == .duplicate {
+                XCTAssertTrue(saveButton.isEnabled)
+                let writes = await drafts.conditionalSaves
+                let savedContents = await drafts.savedContents.count
+                XCTAssertEqual(writes - conditionalWritesBefore, 1)
+                XCTAssertEqual(savedContents - savedContentsBefore, 1)
+                XCTAssertEqual(saveCallbacks, 1)
+                saveButton.performClick(nil)
+                let confirmation = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.ReplaceConfirmation")
+                XCTAssertEqual(saveCallbacks, 2, "A completed attempt must permit a new explicit save")
+                XCTAssertEqual(promptStarts.withLock { $0 }, 2)
+                try XCTUnwrap(button(titled: "Replace Draft", in: XCTUnwrap(confirmation.contentView))).performClick(nil)
+                let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in saveButton.isEnabled }, object: nil)
+                await fulfillment(of: [finished], timeout: 5)
+                let repeatedWrites = await drafts.conditionalSaves
+                XCTAssertEqual(repeatedWrites - conditionalWritesBefore, 2)
+                let savedContentsAgain = await drafts.savedContents.count
+                XCTAssertEqual(savedContentsAgain - savedContentsBefore, 2)
+                XCTAssertNil(panel.attachedSheet)
+                let savedAgain = try await drafts.load(identity: identity)
+                XCTAssertEqual(savedAgain?.content, expected)
+            }
             try XCTUnwrap(find("GitX.PullRequest.Recovery.Close", in: view) as? NSButton).performClick(nil)
             await waitForNoSheet(on: window)
             return
@@ -2146,6 +2208,7 @@ private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
     private var deletionFails = false
     private var savesFail = false
     private(set) var conditionalDeletes = 0
+    private(set) var conditionalSaves = 0
     private var saveCount = 0
     private(set) var savedContents: [ForgeDraftContent] = []
     private var conditionalGate: IgnoringCancellationGate<Bool>?
@@ -2220,6 +2283,7 @@ private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
     }
 
     func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date, matching snapshot: ForgeDraft?) async throws -> ForgeDraft? {
+        conditionalSaves += 1
         if let gate = conditionalGate {
             conditionalGate = nil
             conditionalStarted?.fulfill()

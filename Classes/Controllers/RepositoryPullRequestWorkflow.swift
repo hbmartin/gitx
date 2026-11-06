@@ -1107,6 +1107,8 @@ final class RepositoryPullRequestMutationAdmission {
 }
 
 nonisolated enum RepositoryPullRequestRecoveryReason {
+    static let supersededBeforeAdmission = "This edit was not sent because another action replaced it before submission. This recovered text has not been saved as a draft."
+
     static func message(for error: Error) -> String {
         if case ForgePullRequestWorkflowError.editConflict = error {
             return "The Pull Request changed on the server. Copy or save this text, then refresh the Pull Request and open a new edit."
