@@ -11,6 +11,14 @@ import XCTest
 // Called by WindowControllerTests.m through the generated Objective-C interface.
 // swiftlint:disable:next unused_declaration
 final class ForgeWindowFixtureTools: NSObject {
+    /// Resolve the production Swift layout before Objective-C test subclasses
+    /// allocate a window controller through their compatibility declaration.
+    // Objective-C test caller; semantic Swift analysis cannot see this reference.
+    // swiftlint:disable:next unused_declaration
+    @objc static func windowControllerClass() -> AnyClass {
+        GitX.PBGitWindowController.self
+    }
+
     @objc(retainedSessionFor:)
     // Objective-C test caller; semantic Swift analysis cannot see this reference.
     // swiftlint:disable:next unused_declaration

@@ -1,4 +1,5 @@
 import AppKit
+@testable import class GitX.PBGitWindowController
 import GitXCore
 import XCTest
 
@@ -2363,7 +2364,7 @@ import XCTest
 
         private enum OwnerReplacement: CaseIterable { case repository, repositoryThroughNil, window, windowThroughNil, document }
 
-        private func replaceAndRestore(_ replacement: OwnerReplacement, controller: PBGitWindowController, origin: InstalledService, alternative: InstalledService, window: NSWindow) {
+        private func replaceAndRestore(_ replacement: OwnerReplacement, controller: GitX.PBGitWindowController, origin: InstalledService, alternative: InstalledService, window: NSWindow) {
             switch replacement {
             case .repository:
                 controller.repository = alternative.repository
@@ -2670,9 +2671,9 @@ import XCTest
             return [view] + view.subviews.flatMap { descendants($0) }
         }
 
-        /// AppKit creates KVO subclasses when ordering this window. The existing
-        /// Objective-C base separates the imported mirror from the Swift layout.
-        private final class RecordingWindowController: PBHistoryWindowControllerTestBase {
+        /// Use the production Swift layout, including when this is the first
+        /// repository window initialized in an instrumented test process.
+        private final class RecordingWindowController: GitX.PBGitWindowController {
             private(set) var errors: [NSError] = []
             private(set) var loadWindowCount = 0
             var presentsErrors = true

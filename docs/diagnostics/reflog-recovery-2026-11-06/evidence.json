@@ -34,7 +34,19 @@
     "reflog-worktree-sheet-reproduction",
     "reflog-worktree-sheet-reproduction-correctness-6bca3278",
     "reflog-safety-complete-correctness-v4",
-    "reflog-safety-complete-correctness-v4-correctness-d658a542"
+    "reflog-safety-complete-correctness-v4-correctness-d658a542",
+    "reflog-postcommit-full-v3",
+    "reflog-postcommit-full-v3-correctness-ce59b6bc",
+    "reflog-postcommit-full-v3-core-07c9c373",
+    "reflog-postcommit-full-v3-forgekit-ec520ed5",
+    "reflog-postcommit-full-v3-address-undefined-7bb8e585",
+    "reflog-sanitizer-worktree-reproduction",
+    "reflog-sanitizer-worktree-reproduction-v2",
+    "reflog-sanitizer-worktree-reproduction-v3",
+    "reflog-sanitizer-cold-window-subclass-v2",
+    "reflog-worktree-swift-fixture-verification",
+    "reflog-window-fixtures-sanitizer-green",
+    "reflog-window-fixtures-verification"
   ],
   "sourceSnapshot": "artifacts/verification/reflog-submodule-final-green/workflow.json",
   "sourceFingerprint": "337748c06d9af005105f443940aabe178ac1de9ea972eee369072edbe85ebc47",
@@ -126,5 +138,42 @@
       "forgeOverlaySession": 0.9129
     },
     "priorSheetTimeouts": "Both cases passed unchanged in the complete run; prior failed evidence is retained."
+  },
+  "postCommitFullAttempt": {
+    "runId": "reflog-postcommit-full-v3",
+    "correctnessTests": 2327,
+    "correctnessFailures": 0,
+    "allCoverageFloorsPassed": true,
+    "coreTests": 170,
+    "forgePackageTests": 498,
+    "passedChecks": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts",
+      "correctness",
+      "core",
+      "forgekit"
+    ],
+    "sanitizerTests": 2327,
+    "sanitizerFailures": 2,
+    "failureDetails": "Two existing WorktreePresentationTests failed waiting for a deferred sheet and controller release. All 36 reflog tests passed. No sanitizer report occurred in the complete run.",
+    "remainingChecks": "Thread Sanitizer, UI, performance, analyzer, and final app staging did not run after the failure."
+  },
+  "windowFixtureCorrection": {
+    "coldReproduction": "Isolating the worktree cases exposed an Address Sanitizer BUS failure during production Swift superclass metadata initialization through the test compatibility declaration. The same cases passed after another test instantiated the actual Swift type.",
+    "change": "Use the production Swift superclass directly in the Swift recording fixture and explicitly resolve its metadata before Objective-C window fixtures are allocated.",
+    "scope": "Test fixtures only; assertions and application behavior are unchanged. The cold metadata failure is established; its relationship to the two original complete-run assertion failures remains unconfirmed.",
+    "coldSanitizerTests": 2,
+    "coldSanitizerFailures": 0,
+    "combinedSanitizerTests": 133,
+    "combinedSanitizerFailures": 0,
+    "combinedCorrectnessTests": 133,
+    "combinedCorrectnessFailures": 0,
+    "debugAndReleaseTestConsumers": "passed",
+    "swiftFormat": "0.62.1, passed",
+    "swiftLint": "0.63.2, zero violations",
+    "nextStep": "A fresh canonical full post-commit profile is required."
   }
 }
