@@ -4157,6 +4157,13 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Invoke stale and current retries twice, then revoke; each permitted settlement happens once and revocation presents nothing."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testAcceptedCreateWaitingForSheetSupersedesPendingEditBeforeAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold the final edit save, accept a create behind an occupied native sheet, then release persistence; require zero edit calls, the exact durable draft and a saved-unsent notice before allowing the create sheet to appear."
         }
       ]
     },

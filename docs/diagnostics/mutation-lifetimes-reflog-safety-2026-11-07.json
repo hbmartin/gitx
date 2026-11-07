@@ -77,6 +77,19 @@
       "result": "passed",
       "testsPassed": 6,
       "scope": "The same six regression targets passed with restored production sources."
+    },
+    {
+      "runId": "lifecycle-queued-create-red-v2",
+      "result": "expected failure",
+      "cases": [
+        "accepted create behind another sheet sent the replaced pending edit once and deleted its submitted draft"
+      ]
+    },
+    {
+      "runId": "lifecycle-queued-create-green",
+      "result": "passed",
+      "testsPassed": 2,
+      "scope": "Accepted queued create supersedes a pending edit before remote admission; ready create remains available while another editor waits for admitted remote completion."
     }
   ],
   "testSupport": {
@@ -131,6 +144,18 @@
     "lifecycle-previous-behavior-faults-red-v2",
     "lifecycle-restored-regressions-green",
     "lifecycle-reflog-release-before-v2",
-    "lifecycle-reflog-release-after"
-  ]
+    "lifecycle-reflog-release-after",
+    "lifecycle-queued-create-red-v2",
+    "lifecycle-queued-create-green"
+  ],
+  "interruptedVerification": {
+    "runId": "lifecycle-implementation-full",
+    "commit": "5e8d31a8d303c2ec47d4c964e365a952f8a8b358",
+    "passedChecks": [
+      "static",
+      "interop"
+    ],
+    "scriptTestsPassed": 876,
+    "reason": "Stopped the owned build guard to fix accepted create supersession at enqueue acceptance. This is not full delivery evidence."
+  }
 }

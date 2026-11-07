@@ -1803,6 +1803,10 @@ final class RepositoryMutationCompletionTests: XCTestCase {
     }
 
     #if DEBUG
+        func testAcceptedCreateWaitingForSheetSupersedesPendingEditBeforeAdmission() async throws {
+            try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Saved before replacement", body: "Do not publish this replaced edit"), pauseFinalSave: true, queuedCreateReplacement: true)
+        }
+
         func testReadyCreateSheetCanAppearWhileAnotherEditorWaitsForRemoteCompletion() async throws {
             try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Waiting", body: "Unrelated sheets remain available"), reopenWhileAdmitted: true, unrelatedCreate: true)
         }
@@ -1842,7 +1846,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Unsaved title", body: "Unsaved body"), finalSaveFails: true, remoteFails: true, recoveryAction: action)
     }
 
-    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false, newerBeforeSubmission: Bool = false, remoteFails: Bool = false, recoveryAction: RecoveryAction = .inspect, pauseFinalSave: Bool = false, remoteConflict: Bool = false, reopenWhileAdmitted: Bool = false, repeatReplacement: Bool = false, rejectReplacement: Bool = false, unrelatedCreate: Bool = false, pushReplacement: Bool? = nil, revokeBeforeAdmission: Bool = false, rejectRecoveryEnqueue: Bool = false, keepEditingWhilePending: Bool = false) async throws {
+    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false, newerBeforeSubmission: Bool = false, remoteFails: Bool = false, recoveryAction: RecoveryAction = .inspect, pauseFinalSave: Bool = false, remoteConflict: Bool = false, reopenWhileAdmitted: Bool = false, repeatReplacement: Bool = false, rejectReplacement: Bool = false, unrelatedCreate: Bool = false, pushReplacement: Bool? = nil, revokeBeforeAdmission: Bool = false, rejectRecoveryEnqueue: Bool = false, keepEditingWhilePending: Bool = false, queuedCreateReplacement: Bool = false) async throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
@@ -1918,6 +1922,36 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         if let finalSaveStarted {
             await fulfillment(of: [finalSaveStarted], timeout: 5)
             let savingMutation = try XCTUnwrap(controller?.mutationTask)
+            #if DEBUG
+                if queuedCreateReplacement {
+                    await waitForNoSheet(on: window)
+                    let blockingSheet = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+                    blockingSheet.isReleasedWhenClosed = false
+                    window.beginSheet(blockingSheet, completionHandler: nil)
+                    defer {
+                        if blockingSheet.sheetParent != nil {
+                            window.endSheet(blockingSheet)
+                        }
+                        blockingSheet.close()
+                    }
+                    let preparation = try fixture.preparation()
+                    try controller?.beginUITestCreateJourney(preparation: preparation, initialForm: XCTUnwrap(preparation.initialForms().forms.first), branch: nil, requiresPush: false)
+                    XCTAssertTrue(window.attachedSheet === blockingSheet, "An accepted create must wait for the occupied sheet slot")
+                    await service.releaseEdit(outcome)
+                    await persistenceGate.release(true)
+                    await savingMutation.value
+                    let calls = await service.editCount
+                    XCTAssertEqual(calls, 0, "The accepted replacement must supersede before its sheet can appear")
+                    XCTAssertTrue(controller?.activity?.message.contains("saved as a draft") == true)
+                    let stored = try await drafts.load(identity: identity)
+                    XCTAssertEqual(stored?.content, finalContent)
+                    window.endSheet(blockingSheet)
+                    let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil && window.attachedSheet !== blockingSheet }, object: nil)
+                    await fulfillment(of: [ready], timeout: 5)
+                    XCTAssertEqual(try (find("GitX.PullRequest.Submit", in: XCTUnwrap(window.attachedSheet?.contentView)) as? NSButton)?.title, "Create Pull Request")
+                    return
+                }
+            #endif
             if revokeBeforeAdmission {
                 controller?.invalidateOwner()
                 await persistenceGate.release(true)

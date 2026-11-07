@@ -1092,11 +1092,12 @@ final class RepositoryPullRequestUIController {
             )
         }
         let request = UUID()
-        enqueueEditorRequest(request) { [weak self] window in
-            guard let self else { return }
-            guard self.ownerIsCurrent(), self.pullRequestOperation === operation else { self.finishEditorPresentation(request); return }
+        enqueueEditorRequest(request, onAccepted: {
             self.cancelPreparation()
             self.supersedeMutation()
+        }) { [weak self] window in
+            guard let self else { return }
+            guard self.ownerIsCurrent(), self.pullRequestOperation === operation else { self.finishEditorPresentation(request); return }
             self.installEditorSheet(sheet, id: request)
             self.saveDraft(preparation: preparation, content: restored)
             sheet.beginSheet(for: window)
