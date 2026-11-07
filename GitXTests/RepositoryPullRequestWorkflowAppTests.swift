@@ -90,6 +90,14 @@ final class RepositoryPullRequestWorkflowAppTests: XCTestCase {
         ))
     }
 
+    func testUnavailableCloneCatalogReportsUnavailableInsteadOfAnEmptyCatalog() async {
+        let service = UnavailableRepositoryForgeCloneCatalogService()
+        let error = await capturedError {
+            try await service.cloneCatalogs()
+        }
+        XCTAssertEqual(error as? RepositoryPullRequestServiceError, .nativeCreationUnavailable)
+    }
+
     func testUnavailableMutationServiceFailsClosedForEveryOperation() async throws {
         let fixture = try PullRequestAppFixture()
         let service = UnavailableRepositoryPullRequestMutationService()
