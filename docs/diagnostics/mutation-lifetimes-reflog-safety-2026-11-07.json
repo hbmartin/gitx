@@ -110,13 +110,20 @@
       "result": "passed",
       "testsPassed": 7,
       "scope": "Account management/choice guards, known and newly discovered conflict freshness, rejected replacement preservation, independent conflict-gate lifetime, native callback release and nested recovery consent; no test-runner restart."
+    },
+    {
+      "runId": "lifecycle-repair-foreground-green",
+      "result": "passed",
+      "testsPassed": 54,
+      "scope": "Repaired repository-switch diagnostic plus all 53 deferred worktree-presentation tests; no assertion failures or runner restarts."
     }
   ],
   "testSupport": {
     "windowOwnership": "Standalone browser fixture windows disable release-on-close and clear the first responder before explicit teardown.",
     "interop": "A small Objective-C test helper follows the existing window compatibility pattern; its native Swift superclass layout is initialized before allocation. Assertions remain in Swift XCTest.",
     "screenshots": "Current XCTest image and text attachments cover pending and recovered close warnings, replacement consent, waiting/saved-unsent status, account cooldown help, saved conflict guidance, refreshed references and unsafe reset outcomes. Diagnostic palette layout occurs after behavior assertions.",
-    "escapedCallback": "A small production-used callback factory avoids reflecting into a stored Swift closure. The app-hosted probe returns a Boolean, keeping internal value layout inside the app module."
+    "escapedCallback": "A small production-used callback factory avoids reflecting into a stored Swift closure. The app-hosted probe returns a Boolean, keeping internal value layout inside the app module.",
+    "foreground": "The repair fixture restores foreground readiness after repository rebinding, accepting either its key parent window or its already-attached key sheet before asserting repair presentation."
   },
   "performance": {
     "fixture": "32 MiB unchanged tracked payload plus one small changed path; five Release samples per reset mode; fixture setup is outside the measured interval.",
@@ -247,7 +254,9 @@
     "lifecycle-window-callback-green-v3",
     "lifecycle-boundary-and-coverage-green-v2",
     "lifecycle-implementation-full-v3",
-    "lifecycle-implementation-full-v3-correctness-caee888f"
+    "lifecycle-implementation-full-v3-correctness-caee888f",
+    "lifecycle-final-full",
+    "lifecycle-repair-foreground-green"
   ],
   "interruptedVerification": {
     "runId": "lifecycle-implementation-full",
@@ -289,8 +298,28 @@
     "lifecycle-boundary-and-coverage-consumers"
   ],
   "finalDeliveryGate": {
-    "runId": "lifecycle-final-full",
+    "runId": "lifecycle-final-full-v2",
     "status": "required before publication",
     "requirement": "Complete the full profile at the delivery commit, verify the staged Debug bundle, then publish a ready PR to hbmartin/gitx:master. The PR description records the final passing run and commit."
+  },
+  "failedFinalVerification": {
+    "runId": "lifecycle-final-full",
+    "commit": "62eb66f29c844ca673ec85311af2f1ee40fae6fb",
+    "passedChecks": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts"
+    ],
+    "correctness": {
+      "executed": 2371,
+      "passed": 2370,
+      "failed": 1,
+      "test": "RepositoryDocumentScriptingCharacterizationTests/testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository",
+      "observation": "The repair request remained queued under its correct owner, but the test timed out waiting for an attached sheet and could not capture its diagnostic view.",
+      "correction": "The existing fixture established active/key readiness only before rebinding. It now explicitly restores foreground readiness after rebinding and accepts an already-attached key sheet. All sheet, repository ownership, offer acknowledgement and no-repair assertions remain unchanged."
+    },
+    "coveragePolicy": "No baseline changes from this failed run or focused verification."
   }
 }

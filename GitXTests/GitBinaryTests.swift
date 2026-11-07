@@ -1970,6 +1970,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
             }
             actual.repository = replacement
             actual.windowDidBecomeMain(Notification(name: NSWindow.didBecomeMainNotification, object: nativeWindow))
+            // The queue drains after rebinding and requires its original foreground window.
+            // An already-presented sheet owns key status instead of its parent.
+            activateFixtureWindow(nativeWindow, acceptingAttachedSheet: true)
             let offered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in nativeWindow.attachedSheet != nil }, object: nil)
             wait(for: [offered], timeout: 5)
             XCTAssertTrue(actual.offeredWorktreeRepair)
@@ -4353,7 +4356,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertTrue(try Data(contentsOf: captured).contains(Data("branch.head main".utf8)))
     }
 
-    private func activateFixtureWindow(_ window: NSWindow) {
+    private func activateFixtureWindow(_ window: NSWindow, acceptingAttachedSheet: Bool = false) {
         let activated = expectation(description: "Launch Services activates the existing test host")
         Task { @MainActor in
             await activateWorktreeTestApplication()
@@ -4361,7 +4364,10 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
         wait(for: [activated], timeout: 5)
         window.makeKeyAndOrderFront(nil)
-        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in NSApp.isActive && window.isKeyWindow }, object: nil)
+        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let sheetIsKey = acceptingAttachedSheet && window.attachedSheet?.isKeyWindow == true
+            return NSApp.isActive && (window.isKeyWindow || sheetIsKey)
+        }, object: nil)
         wait(for: [foreground], timeout: 5)
     }
 
