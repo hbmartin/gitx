@@ -41,6 +41,23 @@ private enum RepositoryForgeSidebarDestination: Equatable {
     case chooseBinding
 }
 
+private final nonisolated class RepositoryReflogSourceViewItem: PBSourceViewItem {
+    private let itemIcon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Reflog")
+
+    init(reflogTitle: String) {
+        super.init(title: reflogTitle, revSpecifier: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("RepositoryReflogSourceViewItem does not support coding")
+    }
+
+    override var icon: NSImage? {
+        itemIcon
+    }
+}
+
 private final nonisolated class RepositoryForgeSourceViewItem: PBSourceViewItem {
     let destination: RepositoryForgeSidebarDestination?
     private let itemIcon: NSImage?
@@ -111,6 +128,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     private var forgeRepositoryItems: [RepositoryForgeSourceViewItem] = []
     private var forgeSurfaceItems: [ForgeCollaborationSurface: RepositoryForgeSourceViewItem] = [:]
     private var collaborationController: RepositoryForgeCollaborationController?
+    private let reflogItem = RepositoryReflogSourceViewItem(reflogTitle: "Reflog")
+    private var reflogController: ReflogBrowserController?
     #if DEBUG
         final var productProofForgeDestinationOpening: ((ForgeDestination) -> Bool)?
     #endif
@@ -219,6 +238,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         let outline = sourceView
         let selectedItems = outline?.selectedRowIndexes.compactMap { outline?.item(atRow: $0) as? PBSourceViewItem } ?? []
         hasClosed = true
+        reflogController?.closeView()
         sourceView?.delegate = nil
         sourceView?.target = nil
         sourceView?.doubleAction = nil
@@ -308,6 +328,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     isolated deinit {
         collaborationController?.closeView()
+        reflogController?.closeView()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -333,8 +354,12 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
                 defer { sidebar.finishSelectionControlsRefresh() }
                 sidebar.restoringSidebarSelection {
                     let selected = sidebar.selectedItem() as? PBSourceViewGitWorktreeItem
+                    let selectedReflog = sidebar.isReflogSelected
                     let revision = sidebar.repository?.currentBranch
                     sidebar.sourceView?.reloadData()
+                    if sidebar.restoreReflogSelection(selectedReflog) {
+                        return
+                    }
                     let policy = WorktreeSidebarSelectionPolicy(selected: selected, viewedRevision: revision, origin: sidebar.worktreeHistoryOrigin)
                     if !policy.preservesCheckout || !sidebar.restoreWorktreeSelection(selected?.identity) {
                         sidebar.selectCurrentBranch()
@@ -396,10 +421,14 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     private final func restoreSidebarPresentation() {
+        let selectedReflog = isReflogSelected
         let selectedForgeSurface = selectedForgeSurface()
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
         let viewedRevision = repository?.currentBranch
         populateList()
+        if restoreReflogSelection(selectedReflog) {
+            return
+        }
         if restoreWorktreeSelection(selectedWorktree) {
             return
         }
@@ -460,6 +489,35 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     @objc dynamic func selectedItem() -> PBSourceViewItem? {
         guard let sourceView else { return nil }
         return sourceView.item(atRow: sourceView.selectedRow) as? PBSourceViewItem
+    }
+
+    var isReflogSelected: Bool {
+        selectedItem() === reflogItem
+    }
+
+    func showReflog() {
+        guard !hasClosed, let repository else { return }
+        if reflogController == nil {
+            reflogController = ReflogBrowserController.make(repository: repository, windowController: windowController)
+        }
+        guard let reflogController else { return }
+        let alreadyLoaded = reflogController.isViewLoaded
+        windowController?.changeContentController(reflogController)
+        if alreadyLoaded {
+            reflogController.refresh(nil)
+        }
+        restoringSidebarSelection { _ = restoreReflogSelection(true) }
+    }
+
+    @discardableResult
+    private func restoreReflogSelection(_ selected: Bool) -> Bool {
+        guard selected, !hasClosed else { return false }
+        let previousRestoring = restoringSelection
+        restoringSelection = true
+        defer { restoringSelection = previousRestoring }
+        expandItemAndParents(reflogItem)
+        select(reflogItem)
+        return true
     }
 
     @objc open dynamic func selectCurrentBranch() {
@@ -593,6 +651,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     private final func restoreSidebarAfterReferencesChange() {
         guard let repository else { return }
+        let selectedReflog = isReflogSelected
+        reflogController?.repositoryDidChange()
         let selectedForgeSurface = selectedForgeSurface()
         let selectedWorktree = (selectedItem() as? PBSourceViewGitWorktreeItem)?.identity
         var viewedRevision = repository.currentBranch
@@ -610,7 +670,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
 
         populateList()
-        if !restoreWorktreeSelection(selectedWorktree), !restoreForgeSelection(selectedForgeSurface),
+        if !restoreReflogSelection(selectedReflog), !restoreWorktreeSelection(selectedWorktree), !restoreForgeSelection(selectedForgeSurface),
            let viewedRevision,
            let item = item(for: viewedRevision)
         {
@@ -855,8 +915,12 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @objc private func forgeAccessDidChange(_: Notification) {
         guard !hasClosed else { return }
+        let selectedReflog = isReflogSelected
         let selectedDestination = (selectedItem() as? RepositoryForgeSourceViewItem)?.destination
         populateList()
+        if restoreReflogSelection(selectedReflog) {
+            return
+        }
         if case let .surface(surface) = selectedDestination,
            let item = forgeSurfaceItems[surface]
         {
@@ -901,6 +965,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
         let project = PBSourceViewItem.groupItem(withTitle: repository.projectName() ?? "")
         project.isUncollapsible = true
+        project.addChild(reflogItem)
         let branches = PBSourceViewItem.groupItem(withTitle: "Branches")
         let worktreesGroup = PBSourceViewItem.groupItem(withTitle: "Worktrees")
         self.worktreesGroup = worktreesGroup
@@ -985,8 +1050,10 @@ public extension PBGitSidebarController {
         if !(selected is PBSourceViewGitWorktreeItem) || selected?.revSpecifier == nil {
             worktreeHistoryOrigin = nil
         }
-        if let forgeItem = selected as? RepositoryForgeSourceViewItem,
-           let destination = forgeItem.destination
+        if selected === reflogItem {
+            showReflog()
+        } else if let forgeItem = selected as? RepositoryForgeSourceViewItem,
+                  let destination = forgeItem.destination
         {
             switch destination {
             case let .surface(surface):
@@ -1089,6 +1156,11 @@ public extension PBGitSidebarController {
             cell.setAccessibilityValue(presentation.message ?? "Up to date")
             cell.textField?.setAccessibilityIdentifier("RepositoryWorktreesGroup")
             cell.textField?.setAccessibilityHelp(presentation.message)
+        }
+        if item === reflogItem {
+            cell.setAccessibilityIdentifier("GitX.Sidebar.Reflog")
+            cell.setAccessibilityLabel("Reflog")
+            cell.textField?.setAccessibilityIdentifier("GitX.Sidebar.Reflog")
         }
         return cell
     }

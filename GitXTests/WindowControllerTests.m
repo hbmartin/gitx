@@ -450,6 +450,7 @@ static NSControlStateValue PBWindowAlertSuppressionState;
 static NSUInteger PBWindowAlertSheetCount;
 static NSUInteger PBWindowAlertAppModalCount;
 @interface PBForgeWindowFixtureTools : NSObject
++ (Class)windowControllerClass;
 + (nullable id)retainedSessionFor:(NSObject *)controller;
 + (BOOL)requireAuthenticationFor:(NSObject *)controller;
 @end
@@ -1462,6 +1463,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 + (void)setUp
 {
 	[super setUp];
+	Class windowControllerClass = [PBForgeWindowFixtureTools windowControllerClass];
+	NSAssert(windowControllerClass == PBGitWindowController.class, @"Resolve the production Swift superclass before allocating Objective-C test fixtures");
 	PBWindowPreviousDocumentController = NSDocumentController.sharedDocumentController;
 	SEL setSharedDocumentController = NSSelectorFromString(@"_setSharedDocumentController:");
 	((void (*)(id, SEL, id))objc_msgSend)(NSDocumentController.class, setSharedDocumentController, nil);

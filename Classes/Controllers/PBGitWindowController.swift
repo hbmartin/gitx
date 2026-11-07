@@ -1194,8 +1194,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return !queryRepository.isBare()
         }
         if menuItem.action == #selector(showHistoryView(_:)) || menuItem.action == #selector(returnToHistory(_:)) {
-            menuItem.state = isUncommittedChangesSelected ? .off : .on
+            menuItem.state = isUncommittedChangesSelected || _sidebarController?.isReflogSelected == true ? .off : .on
             return !queryRepository.isBare()
+        }
+        if menuItem.action == #selector(showReflog(_:)) {
+            menuItem.state = _sidebarController?.isReflogSelected == true ? .on : .off
+            return true
         }
         if menuItem.action == #selector(toggleAmendCommit(_:)) {
             menuItem.state = queryRepository.index.isAmend ? .on : .off
@@ -1471,6 +1475,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NSLog("Switching repository window to History view")
         _sidebarController?.selectCurrentBranch()
         changeContentController(_historyViewController)
+    }
+
+    @IBAction dynamic func showReflog(_: Any?) {
+        guard !ownership.closed else { return }
+        _sidebarController?.showReflog()
     }
 
     @IBAction dynamic func returnToHistory(_ sender: Any?) {

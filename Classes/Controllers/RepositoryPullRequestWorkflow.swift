@@ -988,7 +988,6 @@ nonisolated struct RepositoryPullRequestMutationCompletion: Sendable {
 @MainActor
 final class RepositoryEditSubmissionLifetime {
     enum Phase: Equatable { case persisting, cancelledBeforeAdmission, admitted, finished }
-    let id = UUID()
     let draftIdentity: ForgeDraftIdentity
     let destination: ForgeDestination
     let expectedUpdatedAt: Date?

@@ -9,6 +9,7 @@ The package currently owns:
 - application-preference validation and repository view-state identity;
 - commit remote presentation and submission eligibility;
 - history-search normalization and Git argument construction;
+- captured reflog records, event parsing, reset-mode descriptions, and recovery eligibility;
 - repository-configuration validation and commit-message rules;
 - sidebar remote synchronization and revision placement.
 
@@ -49,6 +50,26 @@ For each slice:
 ## Deferred Build Work
 
 Dependency and script-phase tuning is intentionally separate from core extraction. See `docs/build-performance-followups.md`.
+
+## Reflog Recovery Boundary
+
+The native Reflog destination now owns local HEAD and branch event browsing,
+commit inspection outside the graph, recovery branches, and previewed soft,
+mixed, and hard reset. Foundation-only records and policies live in GitXCore;
+the application owns Git execution, captured filesystem evidence, mutation
+coordination, and AppKit sheets. Every reset first preserves the previous HEAD
+in a unique recovery branch. Hard reset requires separate discard confirmation;
+uncommitted changes receive no automatic stash or backup.
+
+Hard-reset evidence includes submodule path creation and file or symlink
+obstructions without traversing existing submodule directories. Staged gitlink
+type changes are refused before any backup or reset is attempted.
+
+Recovery of expired objects, recursive submodule reset, and hard-reset handling
+of incomplete or hidden-index previews remain outside this surface. The next
+approved slices are visible history-search modes and shared named searches,
+passive LFS diagnostics with explicit current-revision downloads, and GitHub.com
+Actions inspection and rerun-failed through Pull Requests and Attention.
 
 ## Deferred History Rendering Concurrency Work
 

@@ -1,0 +1,297 @@
+{
+  "purpose": "Diagnostic screenshots and pre-commit verification evidence. Final delivery requires the canonical full post-commit verification profile.",
+  "preparationCommit": "bb7736d58c0912634195ce340a2676764106e6a8",
+  "runIds": [
+    "reflog-pane-balance-green",
+    "reflog-pane-balance-green-ui-71a3f18a",
+    "reflog-workflows-v4",
+    "reflog-ui-v1-core-a6c89b04",
+    "reflog-complete-correctness-v2",
+    "reflog-complete-correctness-v2-correctness-5ab6f445",
+    "reflog-static-v5",
+    "reflog-worktree-cancellation-wait",
+    "reflog-submodule-reset-characterization",
+    "reflog-submodule-reset-characterization-correctness-d6019d49",
+    "reflog-submodule-reset-red-v2",
+    "reflog-submodule-reset-red-v2-correctness-a8c5c52d",
+    "reflog-submodule-reset-green-v2",
+    "reflog-submodule-reset-green-v2-correctness-9c778c6f",
+    "reflog-submodule-reset-green-v2-ui-393b9953",
+    "reflog-submodule-reset-green-v2-release-test-build-eed39295",
+    "reflog-submodule-discard-red",
+    "reflog-submodule-discard-red-correctness-5e76bca6",
+    "reflog-submodule-final-green",
+    "reflog-submodule-final-green-correctness-8ae5ad50",
+    "reflog-submodule-final-green-release-test-build-67dd382e",
+    "reflog-submodule-final-green-ui-3fcd05df",
+    "reflog-safety-complete-correctness-v2",
+    "reflog-safety-complete-correctness-v2-correctness-c9ef1907",
+    "reflog-coverage-boundaries-green",
+    "reflog-coverage-boundaries-green-correctness-b29f6854",
+    "reflog-coverage-boundaries-green-release-test-build-fbcdbc1a",
+    "reflog-safety-complete-correctness-v3",
+    "reflog-safety-complete-correctness-v3-correctness-58729778",
+    "reflog-worktree-sheet-reproduction",
+    "reflog-worktree-sheet-reproduction-correctness-6bca3278",
+    "reflog-safety-complete-correctness-v4",
+    "reflog-safety-complete-correctness-v4-correctness-d658a542",
+    "reflog-postcommit-full-v3",
+    "reflog-postcommit-full-v3-correctness-ce59b6bc",
+    "reflog-postcommit-full-v3-core-07c9c373",
+    "reflog-postcommit-full-v3-forgekit-ec520ed5",
+    "reflog-postcommit-full-v3-address-undefined-7bb8e585",
+    "reflog-sanitizer-worktree-reproduction",
+    "reflog-sanitizer-worktree-reproduction-v2",
+    "reflog-sanitizer-worktree-reproduction-v3",
+    "reflog-sanitizer-cold-window-subclass-v2",
+    "reflog-worktree-swift-fixture-verification",
+    "reflog-window-fixtures-sanitizer-green",
+    "reflog-window-fixtures-verification",
+    "reflog-postcommit-full-v4",
+    "reflog-postcommit-full-v4-correctness-ec4545fa",
+    "reflog-postcommit-full-v4-ui-4c1544c3",
+    "reflog-review-ui-reproduction",
+    "reflog-analyzer-characterization",
+    "reflog-postcommit-full-v4-address-undefined-403419ad",
+    "reflog-postcommit-full-v4-thread-sanitizer-8707c55a",
+    "reflog-postcommit-full-v4-debug-test-build-a943c03c",
+    "reflog-postcommit-full-v4-release-test-build-4e445b29",
+    "reflog-postcommit-full-v4-release-contracts-b634e860",
+    "reflog-postcommit-full-v4-correctness-677ba6a7",
+    "reflog-postcommit-full-v4-core-22927307",
+    "reflog-postcommit-full-v4-forgekit-ba74e043",
+    "reflog-postcommit-full-v4-ui-f91e34df",
+    "reflog-postcommit-full-v4-performance-6e63a0de",
+    "reflog-postcommit-full-v4-analyze-7e235514",
+    "reflog-review-ui-reproduction-ui-38906158",
+    "reflog-analyzer-characterization-debug-test-build-b3830afb",
+    "reflog-analyzer-characterization-release-test-build-d0c63bab",
+    "reflog-analyzer-characterization-correctness-4d738e86",
+    "reflog-analyzer-cleanup-complete",
+    "reflog-analyzer-cleanup-complete-analyze-2bf62e67",
+    "reflog-analyzer-cleanup-complete-correctness-5b831cb8",
+    "reflog-analyzer-cleanup-complete-debug-test-build-7ba963c6",
+    "reflog-analyzer-cleanup-complete-release-test-build-b6d9792b",
+    "reflog-analyzer-cleanup-green",
+    "reflog-analyzer-cleanup-green-debug-test-build-fdeb28ff"
+  ],
+  "sourceSnapshot": "artifacts/verification/reflog-submodule-final-green/workflow.json",
+  "sourceFingerprint": "337748c06d9af005105f443940aabe178ac1de9ea972eee369072edbe85ebc47",
+  "sourceHashes": {
+    "Classes/Controllers/ReflogBrowserController.swift": "864273085456198fd9610fe43211cd9a69f4d0d5a239a5a42681819144d7a623",
+    "Classes/git/RepositoryReflogService.swift": "bd7d924795365257f5b2ab68b23d6ae78d15661caad15494a81127148b9e50db",
+    "GitXCore/Sources/GitXCore/ReflogPolicy.swift": "5b20bb465663155b4399a6a09ca1171e3fd4e4a5d37500e0970b0b0f6329dc2a",
+    "GitXTests/ReflogBrowserTests.swift": "ff7e4a776ca144da1285ef72f1883407d07b45f9c3f812c57e191a97e678c456",
+    "GitXTests/ReflogServiceTests.swift": "3a0d82c18eb1ab4dfce7a7dea8c4f35b57bdcb06c7d91fd27894f71eb1f42c00",
+    "GitXUITests/ReflogWorkflowUITests.swift": "c768540592d489c1c73e9a76255664fbb35baf20723a513daf2ff69c0a97c8dc",
+    "GitXTests/ReflogRecoveryCharacterizationTests.swift": "f766eb3a6576f2362a477dd6dce5d23c8f50d66d17604a633d295a4018967913"
+  },
+  "screenshots": [
+    "00-Reflog-Hard-Reset-Preview.png",
+    "01-Reflog-Explicit-Discard-Confirmation.png",
+    "02-Reflog-Reset-Completed-With-Backup.png",
+    "04-Reflog-Unreachable-Commit.png",
+    "05-Reflog-Recovery-Branch-Created.png"
+  ],
+  "scenarios": [
+    "Unreachable commit details and recovery branch creation",
+    "Hard reset preview includes local modifications",
+    "Separate explicit discard confirmation and cancellation",
+    "Successful reset identifies the recovery branch"
+  ],
+  "notes": [
+    "Screenshots are unmodified XCTest attachments. The macOS background activity notification is unrelated to GitX.",
+    "App-hosted tests additionally cover each reset mode, obstruction paths, linked worktrees, stale evidence, cancellation, missing objects, operation restrictions, and retained backup on failure."
+  ],
+  "submoduleCharacterizationCommit": "5098dcb2",
+  "initialFeaturePreCommitVerification": {
+    "correctnessTests": 2320,
+    "correctnessFailures": 0,
+    "staticScriptTests": 876,
+    "receipt": "artifacts/verification/reflog-complete-correctness-v2-correctness-5ab6f445/receipt.json",
+    "coverageFloorsRaisedFromPassedReceipt": true,
+    "plainCoverageCheckerPassedAfterRatchet": true,
+    "testSynchronizationCommit": "8ab94c52"
+  },
+  "safetyCorrectionFocusedVerification": {
+    "appHostedTests": 36,
+    "uiTests": 2,
+    "failures": 0,
+    "debugAndReleaseTestConsumers": "passed",
+    "swiftFormat": "0.62.1, passed",
+    "swiftLint": "0.63.2, zero violations",
+    "regressions": [
+      "Refuse staged gitlink replacements before backup or reset",
+      "Preview empty submodule directory creation",
+      "Capture file and symlink obstructions, including ancestors",
+      "Invalidate stale confirmation before preserving and resetting HEAD",
+      "Keep existing submodule contents and symlink destinations unchanged",
+      "Exclude preserved internal submodule edits from the discard list",
+      "Keep staged gitlink changes visible despite diff.ignoreSubmodules configuration"
+    ]
+  },
+  "coverageBoundaryTestCommit": "2404e6dc",
+  "safetyCorrectionCompleteAttempt": {
+    "tests": 2324,
+    "testFailures": 0,
+    "coverageGate": "failed in unchanged GitBinaryDiscovery.swift, PBGitRevList.m, and RepositoryForgeOverlaySession.swift; no floors lowered",
+    "recoveryServiceCoverage": 0.9763
+  },
+  "coverageBoundaryVerification": {
+    "focusedTests": 64,
+    "failures": 0,
+    "debugAndReleaseTestConsumers": "passed",
+    "previouslyMissedBranches": "Confirmed executed in xccov; complete correctness remains required before a ratchet"
+  },
+  "worktreeSheetRetry": {
+    "completeRunTestCases": 2327,
+    "failedCases": 2,
+    "reason": "Two queued worktree sheets did not appear before their test deadlines; isolated unchanged reproduction passed both cases. Cause remains unconfirmed.",
+    "isolatedTests": 2,
+    "isolatedFailures": 0,
+    "priorCoverageShortfalls": "All three resolved; worktree coverage remains incomplete in the failed run"
+  },
+  "safetyCorrectionCompleteVerification": {
+    "correctnessTests": 2327,
+    "failures": 0,
+    "receipt": "artifacts/verification/reflog-safety-complete-correctness-v4-correctness-d658a542/receipt.json",
+    "evidenceStatus": "valid",
+    "coverageFloorsRaisedFromPassedReceipt": true,
+    "plainCoverageCheckerPassedAfterRatchet": true,
+    "coverageFloors": {
+      "application": 0.9389,
+      "recoveryService": 0.9763,
+      "reflogBrowser": 0.9775,
+      "forgeOverlaySession": 0.9129
+    },
+    "priorSheetTimeouts": "Both cases passed unchanged in the complete run; prior failed evidence is retained."
+  },
+  "postCommitFullAttempt": {
+    "runId": "reflog-postcommit-full-v3",
+    "correctnessTests": 2327,
+    "correctnessFailures": 0,
+    "allCoverageFloorsPassed": true,
+    "coreTests": 170,
+    "forgePackageTests": 498,
+    "passedChecks": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts",
+      "correctness",
+      "core",
+      "forgekit"
+    ],
+    "sanitizerTests": 2327,
+    "sanitizerFailures": 2,
+    "failureDetails": "Two existing WorktreePresentationTests failed waiting for a deferred sheet and controller release. All 36 reflog tests passed. No sanitizer report occurred in the complete run.",
+    "remainingChecks": "Thread Sanitizer, UI, performance, analyzer, and final app staging did not run after the failure."
+  },
+  "windowFixtureCorrection": {
+    "coldReproduction": "Isolating the worktree cases exposed an Address Sanitizer BUS failure during production Swift superclass metadata initialization through the test compatibility declaration. The same cases passed after another test instantiated the actual Swift type.",
+    "change": "Use the production Swift superclass directly in the Swift recording fixture and explicitly resolve its metadata before Objective-C window fixtures are allocated.",
+    "scope": "Test fixtures only; assertions and application behavior are unchanged. The cold metadata failure is established; its relationship to the two original complete-run assertion failures remains unconfirmed.",
+    "coldSanitizerTests": 2,
+    "coldSanitizerFailures": 0,
+    "combinedSanitizerTests": 133,
+    "combinedSanitizerFailures": 0,
+    "combinedCorrectnessTests": 133,
+    "combinedCorrectnessFailures": 0,
+    "debugAndReleaseTestConsumers": "passed",
+    "swiftFormat": "0.62.1, passed",
+    "swiftLint": "0.63.2, zero violations",
+    "nextStep": "A fresh canonical full post-commit profile is required.",
+    "commit": "c3c91c68"
+  },
+  "postCommitFullV4": {
+    "commit": "c3c91c68",
+    "correctnessTests": 2327,
+    "correctnessFailures": 0,
+    "allCoverageFloorsPassed": true,
+    "addressUndefinedTests": 2327,
+    "addressUndefinedFailures": 0,
+    "addressUndefinedReports": 0,
+    "threadSanitizerTests": 2327,
+    "threadSanitizerFailures": 0,
+    "threadSanitizerReports": 0,
+    "coreTests": 170,
+    "forgePackageTests": 498,
+    "uiTests": 53,
+    "uiFailuresAfterUnchangedRetry": 0,
+    "performanceTests": 39,
+    "performanceFailures": 0,
+    "nativeAnalysis": "Passed with zero exact-baseline compiler warnings",
+    "semanticAnalysis": "Stopped after identifying redundant OSLog imports in the reflog browser and service, plus a UUID field used only by the test-module copy of RepositoryEditSubmissionLifetime. The full semantic pass and final staging remain required.",
+    "reviewUIInterruption": {
+      "initialFailedCases": 4,
+      "observation": "Targets existed but were not hittable. The failure screenshot showed another app in the foreground, and the accessibility hierarchy showed GitX disabled.",
+      "unchangedIsolatedReviewTests": 6,
+      "unchangedIsolatedFailures": 0,
+      "unchangedCompleteUIRetryTests": 53,
+      "unchangedCompleteUIRetryFailures": 0,
+      "conclusion": "Evidence is consistent with a foreground-focus interruption. No application or UI test source was changed for this retry."
+    },
+    "resume": "The coordinator reran changed build-product checks and correctness/package checks, and validated both sanitizer receipts for reuse."
+  },
+  "analyzerCleanupCharacterization": {
+    "runId": "reflog-analyzer-characterization",
+    "tests": 1,
+    "failures": 0,
+    "debugAndReleaseTestConsumers": "passed",
+    "swiftFormat": "0.62.1, passed",
+    "swiftLint": "0.63.2, zero violations",
+    "behavior": "The unavailable clone-catalog fallback throws its existing unavailable error instead of returning an empty catalog.",
+    "coverageReason": "Removing the unused covered UUID line would otherwise put the workflow file marginally below its existing 97.12% floor. Cover the existing unavailable-catalog fallback first; never lower the floor.",
+    "fullVerification": "Required again after the cleanup commit."
+  },
+  "analyzerCleanup": {
+    "preparationCommit": "bf6817d3",
+    "removedUnusedProductionField": "RepositoryEditSubmissionLifetime.id",
+    "preservedOrderingAssertion": "Compare the same submission records using ObjectIdentifier.",
+    "compileProbe": {
+      "runId": "reflog-analyzer-cleanup-green",
+      "outcome": "Debug compilation failed because removing either OSLog import left Logger unresolved."
+    },
+    "requiredImports": {
+      "files": [
+        "Classes/Controllers/ReflogBrowserController.swift",
+        "Classes/git/RepositoryReflogService.swift"
+      ],
+      "resolution": "Restored OSLog with per-line unused_import annotations documenting the compiler-proven false positive; logging remains intact."
+    },
+    "finalPrecommitRunId": "reflog-analyzer-cleanup-complete",
+    "verification": {
+      "debugTestBuild": "passed",
+      "releaseTestBuild": "passed",
+      "correctness": {
+        "tests": 2328,
+        "failures": 0,
+        "evidence": "valid"
+      },
+      "analysis": {
+        "nativeCompilerWarnings": 0,
+        "swiftFiles": 290,
+        "violations": 0,
+        "evidence": "valid"
+      },
+      "format": {
+        "version": "0.62.1",
+        "files": 4,
+        "changesNeeded": 0
+      },
+      "lint": {
+        "version": "0.63.2",
+        "files": 4,
+        "violations": 0
+      },
+      "coverage": {
+        "file": "Classes/Controllers/RepositoryPullRequestWorkflow.swift",
+        "previousFloor": 0.9712,
+        "newFloor": 0.9753,
+        "plainChecker": "passed",
+        "otherFloors": "unchanged"
+      }
+    }
+  }
+}

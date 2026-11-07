@@ -619,6 +619,12 @@ DQ
                                     <action selector="showUncommittedChanges:" target="-1" id="931"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Reflog" identifier="GitX.View.Reflog" id="codex-view-reflog">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="showReflog:" target="-1" id="codex-view-reflog-action"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="929"/>
                             <menuItem title="Detail View" keyEquivalent="1" id="848">
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
