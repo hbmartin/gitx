@@ -50,7 +50,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     private var replacementAlert: NSAlert?
     private var presentationEnded = false
     private var recoverySavedContent: ForgeDraftContent?
-    private let recoveryNotice = NSTextField(wrappingLabelWithString: "The remote edit could not be confirmed. This recovered text has not been saved as a draft.")
+    private let recoveryNotice = NSTextField(wrappingLabelWithString: "This recovered edit text has not been saved as a draft.")
     private var isRecovery: Bool {
         if case .recovery = mode {
             return true
@@ -391,7 +391,6 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
 
     private func finishCancellation() {
         guard !hasFinished else { return }
-        abortRecoverySave()
         if isRecovery, recoverySavedContent != currentDraftContent(), let window {
             let alert = NSAlert()
             alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.CloseConfirmation")
@@ -399,7 +398,11 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
             alert.informativeText = "This recovered text has not been saved as a draft. Copy or save it before closing if you want to keep it."
             alert.addButton(withTitle: "Keep Editing")
             alert.addButton(withTitle: "Close Without Saving")
-            alert.beginSheetModal(for: window) { [weak self] response in
+            var confirmationParent = window
+            while let attached = confirmationParent.attachedSheet {
+                confirmationParent = attached
+            }
+            alert.beginSheetModal(for: confirmationParent) { [weak self] response in
                 guard response == .alertSecondButtonReturn else { return }
                 self?.finishClosingRecovery()
             }
@@ -410,6 +413,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
 
     private func finishClosingRecovery() {
         guard !hasFinished else { return }
+        abortRecoverySave()
         hasFinished = true
         let content = currentDraftContent()
         closeSheet()

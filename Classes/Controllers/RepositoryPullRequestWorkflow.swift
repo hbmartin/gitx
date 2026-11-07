@@ -988,11 +988,13 @@ nonisolated struct RepositoryPullRequestMutationCompletion: Sendable {
 @MainActor
 final class RepositoryEditSubmissionLifetime {
     enum Phase: Equatable { case persisting, cancelledBeforeAdmission, admitted, finished }
+    enum Disposition: Equatable { case notSent(savedAsDraft: Bool), succeeded, rejected, uncertain }
     let draftIdentity: ForgeDraftIdentity
     let destination: ForgeDestination
     let expectedUpdatedAt: Date?
-    var requiresFreshServerSnapshot = false
+    private(set) var wasAdmitted = false
     private(set) var phase = Phase.persisting
+    private(set) var disposition: Disposition?
     private(set) var saveResult: RepositoryDraftSubmissionSave?
     private(set) var superseded = false
     private(set) var outcome: RepositoryPullRequestEditOutcome?
@@ -1018,6 +1020,20 @@ final class RepositoryEditSubmissionLifetime {
         phase == .finished && needsCloseProtection
     }
 
+    var canRetire: Bool {
+        phase == .finished && !needsCloseProtection
+    }
+
+    var unsentNotice: String? {
+        guard let disposition, case let .notSent(savedAsDraft) = disposition else { return nil }
+        if superseded {
+            return savedAsDraft ? "This edit was not sent because another action replaced it before submission. Your text is saved as a draft."
+                : RepositoryPullRequestRecoveryReason.supersededBeforeAdmission
+        }
+        return savedAsDraft ? "This edit was not sent. Your text is saved as a draft."
+            : "This edit was not sent. This recovered text has not been saved as a draft."
+    }
+
     func supersede() {
         superseded = true
         if phase == .persisting {
@@ -1031,15 +1047,32 @@ final class RepositoryEditSubmissionLifetime {
 
     func admit() -> Bool {
         guard phase == .persisting else { return false }
+        wasAdmitted = true
         phase = .admitted
         return true
     }
 
     @discardableResult
-    func finish(_ outcome: RepositoryPullRequestEditOutcome? = nil) -> Bool {
+    func finish(_ outcome: RepositoryPullRequestEditOutcome? = nil, error: Error? = nil) -> Bool {
         guard phase != .finished else { return false }
         self.outcome = outcome
         phase = .finished
+        if outcome != nil {
+            disposition = .succeeded
+        } else if !wasAdmitted {
+            disposition = .notSent(savedAsDraft: saveResult?.snapshot != nil)
+        } else if let error, case ForgePullRequestWorkflowError.editConflict = error {
+            disposition = .rejected
+        } else if let error, case ForgeGitHubPullRequestCompositionError.authoritative = error {
+            disposition = .rejected
+        } else {
+            disposition = .uncertain
+        }
+        if let unsentNotice {
+            recoveryMessage = unsentNotice
+        } else if let error {
+            recoveryMessage = RepositoryPullRequestRecoveryReason.message(for: error)
+        }
         if outcome != nil {
             resolved = true
         }
@@ -1093,16 +1126,76 @@ nonisolated struct RepositoryPullRequestEditorQueue {
 @MainActor
 final class RepositoryPullRequestMutationAdmission {
     private(set) var admitted = false
+    private(set) var wasAdmitted = false
+    private(set) var finished = false
     var superseded = false
+    var task: Task<Void, Never>?
+    var editSubmission: RepositoryEditSubmissionLifetime?
+
+    func supersede() {
+        superseded = true
+        editSubmission?.supersede()
+        if !wasAdmitted, !finished, editSubmission == nil {
+            task?.cancel()
+        }
+    }
+
     func finish() {
         admitted = false
+        finished = true
+        task = nil
+        editSubmission = nil
     }
 
     func admit() -> Bool {
-        guard !superseded else { return false }
+        guard !superseded, !finished else { return false }
         admitted = true
+        wasAdmitted = true
         return true
     }
+}
+
+/// Network dependencies are awaited before a ready editor enters the sheet queue.
+/// Only durable operations occupy this chain; human consent never does.
+@MainActor
+final class RepositoryDraftOperationQueue {
+    private(set) var tail: Task<Void, Never>?
+
+    @discardableResult
+    func enqueue<Value: Sendable>(_ work: @escaping @MainActor () async -> Value) -> Task<Value, Never> {
+        let previous = tail
+        let task = Task { await previous?.value; return await work() }
+        tail = Task { _ = await task.value }
+        return task
+    }
+
+    func enqueueThrowing<Value: Sendable>(_ work: @escaping @MainActor () async throws -> Value) -> Task<Value, Error> {
+        let previous = tail
+        let task = Task { await previous?.value; return try await work() }
+        tail = Task { _ = try? await task.value }
+        return task
+    }
+}
+
+nonisolated struct RepositoryEditConflictFreshness {
+    private var rejectedUpdates: [ForgeDraftIdentity: Date] = [:]
+
+    mutating func requireRefresh(identity: ForgeDraftIdentity, after updatedAt: Date) {
+        rejectedUpdates[identity] = max(rejectedUpdates[identity] ?? updatedAt, updatedAt)
+    }
+
+    mutating func permits(identity: ForgeDraftIdentity, updatedAt: Date) -> Bool {
+        guard let rejected = rejectedUpdates[identity] else { return true }
+        guard updatedAt > rejected else { return false }
+        rejectedUpdates[identity] = nil
+        return true
+    }
+}
+
+nonisolated struct RepositoryPullRequestActivity: Equatable {
+    let identity: UUID
+    let message: String
+    let isBusy: Bool
 }
 
 nonisolated enum RepositoryPullRequestRecoveryReason {

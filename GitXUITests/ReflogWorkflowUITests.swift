@@ -41,6 +41,11 @@ final class ReflogWorkflowUITests: XCTestCase, @unchecked Sendable {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [created], timeout: 10), .completed)
         XCTAssertEqual(try head(fixture.repository), fixture.current)
+        waitUntilEnabled(app.buttons["GitX.Reflog.Reset"])
+        let references = app.popUpButtons["GitX.Reflog.Reference"]
+        references.click()
+        XCTAssertTrue(app.menuItems["recovery/ui-recovered"].waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
         screenshot("Reflog-Recovery-Branch-Created")
     }
 
@@ -71,6 +76,8 @@ final class ReflogWorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 10), .completed)
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "original\n")
         XCTAssertEqual(try workspace.git(["for-each-ref", "--format=%(objectname)", "refs/heads/recovery/"], in: fixture.repository).trimmingCharacters(in: .newlines), fixture.current)
+        waitUntilEnabled(app.buttons["GitX.Reflog.Reset"])
+        XCTAssertEqual(app.tables["GitX.Reflog.Events"].tableRows.count, 3)
         screenshot("Reflog-Reset-Completed-With-Backup")
     }
 

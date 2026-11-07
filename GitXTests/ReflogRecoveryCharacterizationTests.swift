@@ -1,3 +1,4 @@
+@testable import GitX
 import XCTest
 
 final class ReflogRecoveryCharacterizationTests: XCTestCase {
@@ -98,6 +99,43 @@ final class ReflogRecoveryCharacterizationTests: XCTestCase {
             XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: module.path).isEmpty, obstruction)
             XCTAssertEqual(try String(contentsOf: child.url.appendingPathComponent("tracked.txt"), encoding: .utf8), "initial\n")
         }
+    }
+}
+
+/// The external process waits for an explicit release token. XCTest observes
+/// the started marker, changes Git through another process, then releases it.
+final nonisolated class ReflogResetExecutionGate: Sendable {
+    let context: GitX.PBTaskExecutionContext
+    let started: URL
+    private let release: URL
+
+    init(repository: PBGitRepository, fixture: ReflogGitFixture) throws {
+        let original = try repository.task(withArguments: []).executionContext()
+        started = fixture.url.appendingPathComponent(".git/gitx-reset-started")
+        release = fixture.url.appendingPathComponent(".git/gitx-reset-release")
+        let wrapper = fixture.url.appendingPathComponent(".git/gitx-reset-wrapper")
+        let script = """
+        #!/bin/sh
+        for argument in "$@"; do
+            if [ "$argument" = reset ]; then
+                /usr/bin/touch "$GITX_RESET_STARTED"
+                while [ ! -f "$GITX_RESET_RELEASE" ]; do /bin/sleep 0.01; done
+            fi
+        done
+        exec "$GITX_RESET_REAL_GIT" "$@"
+        """
+        try Data(script.utf8).write(to: wrapper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+        var environment = original.environment
+        environment["GITX_RESET_STARTED"] = started.path
+        environment["GITX_RESET_RELEASE"] = release.path
+        environment["GITX_RESET_REAL_GIT"] = original.launchPath
+        context = GitX.PBTaskExecutionContext(launchPath: wrapper.path, arguments: original.arguments,
+                                              environment: environment, workingDirectory: original.workingDirectory)
+    }
+
+    func open() throws {
+        try Data("release\n".utf8).write(to: release)
     }
 }
 

@@ -63,13 +63,6 @@ nonisolated struct RepositoryWindowRefreshDelivery {
     }
 }
 
-enum RepositoryForgePreparation {
-    case reusable
-    case prepared(RepositoryForgeBindingResolution)
-    case refused
-    case suppressed
-}
-
 nonisolated enum RepositoryWindowActionAvailability {
     static func error(gitUnavailable: Bool, discoveryError: Error?) -> Error {
         if gitUnavailable, let discoveryError {
@@ -658,6 +651,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private final func revokeOwner(closing: Bool = false) {
         // Revocation precedes cancellation, KVO removal and potentially reentrant UI work.
         ownership.revoke(closing: closing)
+        approvedDocumentClose = nil
+        pullRequestActivity = nil
         if closing {
             pendingRefreshIntents.discard()
             globalOwnerNotifications.forEach(ownerNotifications.removeObserver)
@@ -667,7 +662,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         invalidateGitLoaders()
         lifetime?.invalidate()
         lifetime = nil
-        pullRequestOwnerRevocation?(); pullRequestUIController?.invalidateOwner()
+        if let revoke = pullRequestOwnerRevocation {
+            revoke()
+        } else {
+            pullRequestUIController?.invalidateOwner()
+        }
         resetActionCoordinators()
         repositoryForgeOverlaySession?.invalidate()
         repositoryForgeOverlaySession = nil
@@ -938,16 +937,16 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         let needsPreparation = forceMetadata || !forgeQueryPresentationIsCurrent(for: repository) ||
             (nibPresentationReady && repositoryForgeOverlaySession == nil && !suppressed)
-        let preparation: RepositoryForgePreparation
+        let preparation: RepositoryForgeBindingResolution?
         if suppressed {
             if needsPreparation {
                 _ = prepareForgeQueryPresentation()
             }
-            preparation = .suppressed
+            preparation = nil
         } else if needsPreparation {
-            preparation = prepareForgeQueryPresentation().map(RepositoryForgePreparation.prepared) ?? .refused
+            preparation = prepareForgeQueryPresentation()
         } else {
-            preparation = .reusable
+            preparation = nil
         }
         installRepositoryPanesIfReady(forgePreparation: preparation)
     }
@@ -1020,7 +1019,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
-    private final func installRepositoryPanesIfReady(forgePreparation: RepositoryForgePreparation) {
+    private final func installRepositoryPanesIfReady(forgePreparation: RepositoryForgeBindingResolution?) {
         guard nibPresentationReady, let repository, let window = super.window,
               sourceSplitView?.window === window, contentSplitView?.window === window else { return }
         if window.delegate == nil {
@@ -1028,9 +1027,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         // History binds its facts and badges while its view is mounted.
         // Make the repository session available before constructing either pane.
-        switch forgePreparation {
-        case let .prepared(resolution): installRepositoryForgeOverlaySession(resolution: resolution)
-        case .reusable, .refused, .suppressed: break
+        if let resolution = forgePreparation {
+            installRepositoryForgeOverlaySession(resolution: resolution)
         }
         if paneRepository == nil {
             paneRepository = ObjectIdentifier(repository)
@@ -1066,7 +1064,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         globalOwnerNotifications.forEach(ownerNotifications.removeObserver)
         ownership.revoke(closing: true)
         lifetime?.invalidate()
-        pullRequestOwnerRevocation?(); pullRequestUIController?.invalidateOwner()
+        if let revoke = pullRequestOwnerRevocation {
+            revoke()
+        } else {
+            pullRequestUIController?.invalidateOwner()
+        }
         repositoryForgeOverlaySession?.invalidate()
         repositoryStatusBarController?.uninstall()
         repositoryToolbarController?.uninstall()
@@ -1091,15 +1093,25 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private weak var pullRequestCloseGuardOwner: NSObject?
     private var pullRequestCloseProtection: ((@escaping () -> Void) -> Bool)?
+    private var pullRequestCloseDecision: ((@escaping (Bool) -> Void) -> Bool)?
     private var pullRequestOwnerRevocation: (() -> Void)?
     private var closingAfterDraftConfirmation = false
+    private var approvedDocumentClose: ObjectIdentifier?
 
-    final func registerPullRequestCloseGuard(owner: NSObject, protection: @escaping (@escaping () -> Void) -> Bool, revoke: @escaping () -> Void) {
+    final func approveDocumentClose(for document: NSDocument) {
+        guard self.document === document else { return }
+        approvedDocumentClose = ObjectIdentifier(document)
+    }
+
+    final func registerPullRequestCloseGuard(owner: NSObject, protection: @escaping (@escaping () -> Void) -> Bool, revoke: @escaping () -> Void,
+                                             decision: ((@escaping (Bool) -> Void) -> Bool)? = nil)
+    {
         if pullRequestCloseGuardOwner != nil, pullRequestCloseGuardOwner !== owner {
             pullRequestOwnerRevocation?()
         }
         pullRequestCloseGuardOwner = owner
         pullRequestCloseProtection = protection
+        pullRequestCloseDecision = decision
         pullRequestOwnerRevocation = revoke
     }
 
@@ -1107,14 +1119,33 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if pullRequestCloseGuardOwner === owner {
             pullRequestCloseGuardOwner = nil
             pullRequestCloseProtection = nil
+            pullRequestCloseDecision = nil
             pullRequestOwnerRevocation = nil
         }
     }
 
-    private func deferCloseForRecoveredText() -> Bool {
+    final func requestPullRequestCloseDecision(_ completion: @escaping (Bool) -> Void) -> Bool {
+        if let approvedDocumentClose, let document, approvedDocumentClose == ObjectIdentifier(document) {
+            return false
+        }
         guard !closingAfterDraftConfirmation, !ownership.closed, pullRequestCloseGuardOwner != nil,
               let protection = pullRequestCloseProtection else { return false }
-        return protection { [weak self] in
+        if let decision = pullRequestCloseDecision {
+            return decision(completion)
+        }
+        return protection { completion(true) }
+    }
+
+    private func deferCloseForRecoveredText() -> Bool {
+        guard !closingAfterDraftConfirmation, !ownership.closed else { return false }
+        if pullRequestCloseGuardOwner != nil, let document = document as? PBGitRepositoryDocument,
+           approvedDocumentClose != ObjectIdentifier(document)
+        {
+            document.requestRepositoryClose { _ in }
+            return true
+        }
+        return requestPullRequestCloseDecision { [weak self] allowed in
+            guard allowed else { return }
             guard let self, !self.ownership.closed else { return }
             self.closingAfterDraftConfirmation = true
             defer { self.closingAfterDraftConfirmation = false }
@@ -1128,6 +1159,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     override open func close() {
+        guard !ownership.closed else { return }
         guard !deferCloseForRecoveredText() else { return }
 
         windowWillClose(Notification(name: NSWindow.willCloseNotification))
@@ -1540,6 +1572,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             displayedStatus = status
             busy = contentController.isBusy
         }
+        if let pullRequestActivity {
+            displayedStatus = pullRequestActivity.message
+            busy = busy || pullRequestActivity.isBusy
+        }
         statusField?.stringValue = displayedStatus
         var baseTitle = ""
         if let document = document as? NSDocument {
@@ -1564,6 +1600,20 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc dynamic func setHistorySearch(_ searchString: String, mode: PBHistorySearchMode) {
         _historyViewController?.setHistorySearch(searchString, mode: mode)
+    }
+
+    private final var pullRequestActivity: RepositoryPullRequestActivity?
+
+    final func setPullRequestActivity(_ activity: RepositoryPullRequestActivity) {
+        guard !ownership.closed else { return }
+        pullRequestActivity = activity
+        updateStatus()
+    }
+
+    final func clearPullRequestActivity(_ identity: UUID) {
+        guard pullRequestActivity?.identity == identity else { return }
+        pullRequestActivity = nil
+        updateStatus()
     }
 
     @objc(selectedURLsFromSender:)

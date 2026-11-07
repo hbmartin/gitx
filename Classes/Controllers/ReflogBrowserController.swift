@@ -28,11 +28,17 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     private var closed = false
     private var generation: UInt64 = 0
     private var service: RepositoryReflogService?
-    private var operation: Task<Void, Never>?
+    private(set) var operation: Task<Void, Never>?
     private var mutating = false
+    private var restoringSelection = false
+    private var serviceFactory: (PBGitRepository) throws -> RepositoryReflogService = { try RepositoryReflogService(repository: $0) }
 
-    static func make(repository: PBGitRepository, windowController: PBGitWindowController? = nil) -> ReflogBrowserController? {
-        ReflogBrowserController(repository: repository, superController: windowController)
+    static func make(repository: PBGitRepository, windowController: PBGitWindowController? = nil,
+                     serviceFactory: @escaping (PBGitRepository) throws -> RepositoryReflogService = { try RepositoryReflogService(repository: $0) }) -> ReflogBrowserController?
+    {
+        let controller = ReflogBrowserController(repository: repository, superController: windowController)
+        controller?.serviceFactory = serviceFactory
+        return controller
     }
 
     @objc(initWithRepository:superController:)
@@ -50,8 +56,10 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     isolated deinit {
-        service?.cancel()
-        operation?.cancel()
+        if !mutating {
+            service?.cancel()
+            operation?.cancel()
+        }
     }
 
     override func loadView() {
@@ -185,8 +193,10 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         guard !closed else { return }
         closed = true
         generation &+= 1
-        service?.cancel()
-        operation?.cancel()
+        if !mutating {
+            service?.cancel()
+            operation?.cancel()
+        }
         isBusy = false
         for control in [referencePopup, refreshButton, moreButton, cancelButton] + selectionButtons {
             control.isEnabled = false
@@ -231,7 +241,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         let repositoryIdentity = ObjectIdentifier(repository)
         let started = ContinuousClock.now
         do {
-            let service = try RepositoryReflogService(repository: repository)
+            let service = try serviceFactory(repository)
             self.service = service
             mutating = mutation
             isBusy = true
@@ -276,18 +286,20 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         service?.cancel()
     }
 
-    private func loadPage(append: Bool) {
+    private func loadPage(append: Bool, successMessage: String? = nil) {
         guard !closed, !mutating else { return }
         let reference = selectedReference
+        let selectedObject = successMessage == nil ? nil : selectedEntry?.objectID
         let offset = append ? entries.count : 0
         let expected = append ? fingerprint : nil
         if !append {
+            fingerprint = nil
             entries = []
             table.reloadData()
-            detailText.string = ""
+            detailText.string = successMessage ?? ""
             hasMore = false
         }
-        run("Loading reflog…", work: { service in
+        run(successMessage ?? "Loading reflog…", work: { service in
             try ReflogBrowserLoad(branches: service.branches(), page: service.page(reference: reference, offset: offset, expectedFingerprint: expected))
         }) { owner, result in
             switch result {
@@ -300,6 +312,11 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                 owner.fingerprint = load.page.fingerprint
                 owner.hasMore = load.page.hasMore
                 owner.table.reloadData()
+                if let selectedObject, let row = owner.entries.firstIndex(where: { $0.objectID == selectedObject }) {
+                    owner.restoringSelection = true
+                    owner.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                    owner.restoringSelection = false
+                }
                 owner.message.stringValue = owner.entries.isEmpty
                     ? "This reflog has no retained events. Git may have expired older history."
                     : "\(owner.entries.count) events. Recovery is available only while Git retains the selected commit."
@@ -333,6 +350,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
 
     func tableViewSelectionDidChange(_: Notification) {
         updateControls()
+        guard !restoringSelection else { return }
         showDetails(compare: false)
     }
 
@@ -380,6 +398,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                     owner.repository?.reloadRefs()
                     owner.message.stringValue = "Created \(branchName)."
                     owner.status = owner.message.stringValue
+                    owner.loadPage(append: false, successMessage: owner.message.stringValue)
                 case let .failure(error): owner.show(error)
                 }
             }
@@ -463,6 +482,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                 owner.message.stringValue = "Reset complete. Previous committed history: \(backup)."
                 owner.status = owner.message.stringValue
                 owner.detailText.string = owner.message.stringValue
+                owner.loadPage(append: false, successMessage: owner.message.stringValue)
             case let .failure(error): owner.show(error)
             }
         }

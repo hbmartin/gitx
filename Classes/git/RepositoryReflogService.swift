@@ -28,7 +28,7 @@ nonisolated enum RepositoryReflogError: Error, LocalizedError {
         switch self {
         case let .unavailable(reason): reason
         case .changed: "The repository changed. Refresh the reflog or prepare a new reset preview, then confirm again."
-        case let .resetFailed(backup, reason): "Reset did not complete. The previous commit is preserved in \(backup).\n\n\(reason)"
+        case let .resetFailed(backup, reason): "Reset did not complete safely or its outcome could not be verified. The validated preview commit is preserved in \(backup).\n\n\(reason)"
         }
     }
 }
@@ -40,13 +40,17 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "ReflogRecovery")
     private let context: PBTaskExecutionContext
     private let writer: IndexWriterCoordinator
+    private let contentRead: @Sendable (String, Int) -> Void
     private let lock = NSRecursiveLock()
     private var cancelled = false
     private var activeTask: PBTask?
 
-    init(repository: PBGitRepository) throws {
-        context = try repository.task(withArguments: []).executionContext()
+    init(repository: PBGitRepository, context: PBTaskExecutionContext? = nil,
+         contentRead: @escaping @Sendable (String, Int) -> Void = { _, _ in }) throws
+    {
+        self.context = try context ?? repository.task(withArguments: []).executionContext()
         writer = IndexWriterCoordinator.coordinator(for: repository)
+        self.contentRead = contentRead
     }
 
     func cancel() {
@@ -165,7 +169,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
             guard !name.hasPrefix("-"), !name.isEmpty else { throw RepositoryReflogError.unavailable("Enter a valid branch name.") }
             _ = try data(["check-ref-format", "--branch", name])
             _ = try data(["branch", "--", name, objectID])
-            Self.logger.info("Created recovery branch")
+            Self.logger.info("Created recovery branch \(name, privacy: .public) at \(objectID, privacy: .public)")
         }
     }
 
@@ -237,7 +241,13 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
                 let isTarget = destination[candidate] != nil
                 var capturedPaths = Set<String>()
                 if visited.insert(candidate).inserted {
-                    try capture(url: url, relative: candidate, descend: isTarget, capturedPaths: &capturedPaths, record: record)
+                    let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+                    let obstruction = destination[path] != nil && attributes != nil &&
+                        (current[candidate] == nil || (isTarget && attributes?[.type] as? FileAttributeType == .typeDirectory)) &&
+                        (isTarget || attributes?[.type] as? FileAttributeType != .typeDirectory)
+                    let fullContent = mode == .hard && (affected.contains(candidate) || obstruction)
+                    try capture(url: url, relative: candidate, descend: isTarget, fullContent: fullContent,
+                                capturedPaths: &capturedPaths, record: record)
                 }
                 if destination[path] != nil,
                    let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -293,7 +303,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
             let candidate = components[...index].joined(separator: "/")
             let url = URL(fileURLWithPath: root).appendingPathComponent(candidate)
             var capturedPaths = Set<String>()
-            let kind = try capture(url: url, relative: candidate, descend: false, capturedPaths: &capturedPaths, record: record)
+            let kind = try capture(url: url, relative: candidate, descend: false, fullContent: true, capturedPaths: &capturedPaths, record: record)
             if kind == .typeDirectory {
                 continue
             }
@@ -309,7 +319,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
     }
 
     @discardableResult
-    private func capture(url: URL, relative: String, descend: Bool, capturedPaths: inout Set<String>, record: (Data) -> Void) throws -> FileAttributeType? {
+    private func capture(url: URL, relative: String, descend: Bool, fullContent: Bool, capturedPaths: inout Set<String>, record: (Data) -> Void) throws -> FileAttributeType? {
         try checkCancellation()
         record(Data(relative.utf8))
         let attributes: [FileAttributeKey: Any]
@@ -323,12 +333,16 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
         switch kind {
         case .typeRegular:
             let before = try WorktreeFileFingerprint.capture(path: url.path)
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            while let bytes = try handle.read(upToCount: 262_144), !bytes.isEmpty {
-                try checkCancellation(); record(bytes)
+            if fullContent {
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                while let bytes = try handle.read(upToCount: 262_144), !bytes.isEmpty {
+                    try checkCancellation()
+                    contentRead(relative, bytes.count)
+                    record(bytes)
+                }
+                guard try WorktreeFileFingerprint.capture(path: url.path) == before else { throw RepositoryReflogError.changed }
             }
-            guard try WorktreeFileFingerprint.capture(path: url.path) == before else { throw RepositoryReflogError.changed }
             record(Data(String(describing: before).utf8))
         case .typeSymbolicLink:
             try record(Data(FileManager.default.destinationOfSymbolicLink(atPath: url.path).utf8))
@@ -340,7 +354,8 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
                     throw RepositoryReflogError.unavailable("A nested repository obstructs this reset. Inspect it in Terminal first.")
                 }
                 for child in children {
-                    try capture(url: url.appendingPathComponent(child), relative: relative + "/" + child, descend: true, capturedPaths: &capturedPaths, record: record)
+                    try capture(url: url.appendingPathComponent(child), relative: relative + "/" + child, descend: true,
+                                fullContent: fullContent, capturedPaths: &capturedPaths, record: record)
                 }
             }
         default:
@@ -362,12 +377,35 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
                 guard try self.preview(target: preview.target, mode: preview.mode) == preview else { throw RepositoryReflogError.changed }
                 _ = try data(["reset", "--" + preview.mode.rawValue, "--no-recurse-submodules", preview.target])
                 guard try text(["rev-parse", "--verify", "HEAD"]) == preview.target else { throw RepositoryReflogError.changed }
+                let branch = try text(["rev-parse", "--abbrev-ref", "HEAD"])
+                guard branch == preview.branch else {
+                    throw RepositoryReflogError.unavailable("The checkout changed from \(preview.branch) to \(branch) during reset. The backup preserves the preview commit \(preview.previousHead) only; inspect the checkout before continuing.")
+                }
+                let original = try? text(["rev-parse", "--verify", "ORIG_HEAD^{commit}"])
+                let predecessor = try? text(["rev-parse", "--verify", "HEAD@{1}^{commit}"])
+                if let reason = RepositoryResetOutcomePolicy.problem(expected: preview.previousHead, original: original, predecessor: predecessor) {
+                    throw RepositoryReflogError.unavailable(reason)
+                }
             } catch {
-                Self.logger.error("Recovery reset failed after backup creation backup=\(backup, privacy: .public)")
+                Self.logger.error("Recovery reset failed after backup creation backup=\(backup, privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
                 throw RepositoryReflogError.resetFailed(backup: backup, reason: error.localizedDescription)
             }
             Self.logger.info("Recovery reset completed mode=\(preview.mode.rawValue, privacy: .public) backup=\(backup, privacy: .public)")
             return backup
         }
+    }
+}
+
+/// Post-reset evidence detects concurrent movement; it cannot prevent external writers.
+nonisolated enum RepositoryResetOutcomePolicy {
+    static func problem(expected: String, original: String?, predecessor: String?) -> String? {
+        let observations = [original, predecessor].compactMap { $0 }.filter(ReflogParser.isObjectID)
+        guard !observations.isEmpty else {
+            return "Reset outcome is unverified: expected to replace \(expected), but neither ORIG_HEAD nor the HEAD reflog provides a valid predecessor. Inspect the repository before continuing."
+        }
+        guard observations.allSatisfy({ $0 == expected }) else {
+            return "A concurrent HEAD change was detected. The preview validated \(expected); observed ORIG_HEAD is \(original ?? "unavailable") and HEAD reflog predecessor is \(predecessor ?? "unavailable"). The backup preserves the validated commit only. Inspect these commits before continuing; no automatic rollback was attempted."
+        }
+        return nil
     }
 }

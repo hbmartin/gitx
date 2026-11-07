@@ -2,6 +2,13 @@ import AppKit
 import XCTest
 
 extension XCTestCase {
+    func attachDiagnosticText(_ text: String, named name: String) {
+        let attachment = XCTAttachment(string: text)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     @MainActor
     func attachScreenshot(
         of view: NSView,

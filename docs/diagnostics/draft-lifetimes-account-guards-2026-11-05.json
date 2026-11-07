@@ -47,7 +47,7 @@
     "postcommitEvidence": "Prior 40915dc6 consumers and staging passed; current follow-up final post-commit full profile pending.",
     "followUpCharacterization": "56 focused tests passed after correcting the async cooldown fixture wait; production remained unchanged.",
     "followUpWordingRegression": "Exact not-sent notice failed against unchanged production and passed after the policy fix, with preserved text and zero remote mutations.",
-    "duplicateActionMutation": "Removing only the sheet guard produced2 callbacks during held loading and3 during consent instead of1, despite the downstream database guard; original source restored.",
+    "duplicateActionMutation": "Removing only the sheet guard produced 2 callbacks during held loading and 3 during consent instead of 1, despite the downstream database guard; original source restored.",
     "followUpFinalFocused": "56 tests passed with restored production guard, exact not-sent notice, independent duplicate-action callbacks/prompts/writes, and successful subsequent save.",
     "followUpConsumers": "pr125-review-final-consumers: Debug and Release test consumers plus interoperability passed.",
     "followUpCoverageCases": "Close delegate identity, live clock expiry, actual environment overrides, prepared-session suppression, stale enabled account action, native destination ownership adapter; all nine selected tests executed green. Catalogue edit invalidated the last aggregate receipt; frozen rerun retained separately."

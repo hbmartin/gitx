@@ -30,9 +30,12 @@ final class RepositoryPullRequestPresentationAuthority {
         isCurrent && mutationIdentity == identity
     }
 
-    func retry(for identity: UUID, action: @escaping @MainActor () -> Void) -> @MainActor () -> Void {
-        { [self] in
-            guard permitsMutation(identity) else { return }
+    func retry(for identity: UUID, onStale: @escaping @MainActor () -> Void = {}, action: @escaping @MainActor () -> Void) -> @MainActor () -> Void {
+        var settled = false
+        return { [self] in
+            guard isCurrent, !settled else { return }
+            settled = true
+            guard permitsMutation(identity) else { onStale(); return }
             action()
         }
     }
@@ -93,21 +96,25 @@ final class RepositoryPullRequestUIController {
     private var preparationTask: Task<Void, Never>?
     private var ordinaryPushPreparationTask: Task<Void, Never>?
     private(set) var mutationTask: Task<Void, Never>?
-    private var draftSaveTask: Task<Void, Never>?
+    private let draftQueue = RepositoryDraftOperationQueue()
     private var sheetController: ForgePullRequestSheetController?
     private var editorQueue = RepositoryPullRequestEditorQueue()
     private var editorRequests: [UUID: (NSWindow) -> Void] = [:]
+    private var recoveryRequests: [UUID: RepositoryEditSubmissionLifetime] = [:]
     private var ownedSheets: [UUID: ForgePullRequestSheetController] = [:]
     private var preparingEditorID: UUID?
     private var sheetObservation: NSObjectProtocol?
     private weak var observedSheetWindow: NSWindow?
     private var editSubmissions: [RepositoryEditSubmissionLifetime] = []
-    private var activeEditSubmission: RepositoryEditSubmissionLifetime?
-    private var remoteMutationAdmission: RepositoryPullRequestMutationAdmission?
+    private var activeMutation: RepositoryPullRequestMutationAdmission?
+    private var conflictFreshness = RepositoryEditConflictFreshness()
+    private(set) var activity: RepositoryPullRequestActivity?
+    private var pendingActivityNotice: String?
     private let closeGuardOwner = NSObject()
     private var ownerInvalidated = false
     private var closeConfirmation: NSAlert?
     private var closeConfirmationIdentity: UUID?
+    private var closeDecisions: [(Bool) -> Void] = []
     private var activePreparation: RepositoryPullRequestCreationPreparation?
     private var ordinaryPushPreparationCache = RepositoryPullRequestPreparationCacheStore()
     private var pullRequestOperation: RepositoryPullRequestOperation?
@@ -149,24 +156,20 @@ final class RepositoryPullRequestUIController {
         #if GITX_APP_TARGET
             windowController.registerPullRequestCloseGuard(owner: closeGuardOwner, protection: { [weak self] close in
                 self?.confirmClosingIfNeeded(close) ?? false
-            }, revoke: { [weak self] in self?.invalidateOwner() })
+            }, revoke: { [weak self] in self?.invalidateOwner() }, decision: { [weak self] completion in
+                self?.confirmClosingIfNeeded {
+                    completion(true)
+                } onCancelled: {
+                    completion(false)
+                } ?? false
+            })
         #endif
         preloadOrdinaryPushPreparation()
     }
 
     isolated deinit {
         authority.revoke()
-        preparationTask?.cancel()
-        ordinaryPushPreparationTask?.cancel()
-        editorQueue.invalidate()
-        editorRequests.removeAll()
-        Array(ownedSheets.values).forEach { $0.invalidatePresentation() }
-        if let closeConfirmation, let parent = closeConfirmation.window.sheetParent {
-            parent.endSheet(closeConfirmation.window, returnCode: .abort)
-        }
-        if let sheetObservation {
-            NotificationCenter.default.removeObserver(sheetObservation)
-        }
+        tearDownPresentation()
         // Already-admitted mutations and draft saves keep their captured targets.
     }
 
@@ -174,19 +177,32 @@ final class RepositoryPullRequestUIController {
         guard !ownerInvalidated else { return }
         ownerInvalidated = true
         authority.revoke()
+        tearDownPresentation()
+        windowController = nil
+        logger.notice("Revoked Pull Request presentation and admission; admitted mutations continue")
+    }
+
+    private func tearDownPresentation() {
+        activeMutation?.supersede()
+        activeMutation = nil
         cancelPreparation()
         cancelOrdinaryPushPreparation(clearCache: true)
         cancelDeferredPullRequestOperation()
         editorQueue.invalidate()
         editorRequests.removeAll()
+        recoveryRequests.values.forEach { $0.recoveryQueued = false }
+        recoveryRequests.removeAll()
         let sheets = Array(ownedSheets.values)
         ownedSheets.removeAll()
         sheetController = nil
         sheets.forEach { $0.invalidatePresentation() }
+        closeConfirmationIdentity = nil
+        let decisions = closeDecisions
+        closeDecisions.removeAll()
+        decisions.forEach { $0(false) }
         if let closeConfirmation, let parent = closeConfirmation.window.sheetParent {
             parent.endSheet(closeConfirmation.window, returnCode: .abort)
         }
-        closeConfirmationIdentity = nil
         closeConfirmation = nil
         if let sheetObservation {
             NotificationCenter.default.removeObserver(sheetObservation)
@@ -195,15 +211,18 @@ final class RepositoryPullRequestUIController {
         #if GITX_APP_TARGET
             windowController?.unregisterPullRequestCloseGuard(owner: closeGuardOwner)
         #endif
-        windowController = nil
-        logger.notice("Revoked Pull Request presentation and admission; admitted mutations continue")
+        #if GITX_APP_TARGET
+            if let activity {
+                windowController?.clearPullRequestActivity(activity.identity)
+            }
+        #endif
+        activity = nil
+        pendingActivityNotice = nil
     }
 
     func newPullRequest() {
         guard ownerIsCurrent() else { return }
-        supersedeMutation()
         cancelOrdinaryPushPreparation(clearCache: true)
-        cancelDeferredPullRequestOperation()
         guard let branch = repository.headRef()?.ref(), branch.isBranch else {
             windowController?.showErrorSheet(RepositoryPullRequestServiceError.noLocalBranch)
             return
@@ -324,7 +343,7 @@ final class RepositoryPullRequestUIController {
                 pullRequestOption: nil,
                 pullRequestOffer: nil,
                 suppressesPostPushBrowserSuggestion: false,
-                completion: nil
+                completion: { [weak self] in self?.handleOrdinaryPushEvent($0, branch: branch, remote: remote) }
             )
             logger.info("Started local push without a native Pull Request offer because current capability is unavailable")
             return
@@ -337,7 +356,7 @@ final class RepositoryPullRequestUIController {
                 pullRequestOption: nil,
                 pullRequestOffer: nil,
                 suppressesPostPushBrowserSuggestion: false,
-                completion: nil
+                completion: { [weak self] in self?.handleOrdinaryPushEvent($0, branch: branch, remote: remote) }
             )
             return
         }
@@ -375,11 +394,20 @@ final class RepositoryPullRequestUIController {
             pullRequestOffer: nil,
             suppressesPostPushBrowserSuggestion: false,
             completion: { [weak self] event in
-                guard event.isTerminal else { return }
-                self?.preloadOrdinaryPushPreparation(for: branch, remote: resolvedRemote)
+                self?.handleOrdinaryPushEvent(event, branch: branch, remote: resolvedRemote)
             }
         )
         logger.info("Started local push without waiting for Forge preparation")
+    }
+
+    private func handleOrdinaryPushEvent(_ event: RepositoryPushEvent, branch: PBGitRef?, remote: PBGitRef?) {
+        guard ownerIsCurrent() else { return }
+        if case .began = event {
+            supersedeMutation()
+        }
+        if event.isTerminal {
+            preloadOrdinaryPushPreparation(for: branch, remote: remote)
+        }
     }
 
     private func beginDeferredOrdinaryPush(
@@ -453,6 +481,7 @@ final class RepositoryPullRequestUIController {
             guard let self, self.deferredPullRequestOperation === operation else { return }
             switch event {
             case let .began(selected):
+                self.supersedeMutation()
                 operation.createPullRequestSelected = selected
                 if !selected {
                     self.cancelDeferredPullRequestOperation()
@@ -535,50 +564,56 @@ final class RepositoryPullRequestUIController {
         destination: ForgeDestination
     ) {
         guard ownerIsCurrent() else { return }
-        cancelPreparation()
-        supersedeMutation()
         let identity: ForgeDraftIdentity
         do {
-            identity = try RepositoryPullRequestDraftPolicy.editIdentity(
-                accountID: accountID,
-                snapshot: snapshot
-            )
+            identity = try RepositoryPullRequestDraftPolicy.editIdentity(accountID: accountID, snapshot: snapshot)
         } catch {
             windowController?.showErrorSheet(error)
             return
         }
+        guard windowController?.window != nil, ownerIsCurrent() else { return }
+        cancelPreparation()
+        supersedeMutation()
         let predecessors = editSubmissions.filter { $0.draftIdentity == identity }
         let request = UUID()
         preparingEditorID = request
-        enqueueEditorRequest(request) { [weak self] window in
-            guard let self else { return }
-            self.preparationTask = Task { [weak self] in
-                for submission in predecessors {
-                    await submission.task?.value
-                }
-                guard let self, self.ownerIsCurrent(), !Task.isCancelled, self.editorQueue.active == request else { return }
-                if predecessors.contains(where: \.needsRecovery) {
-                    self.finishEditorPresentation(request)
-                    self.queueAvailableRecoveries()
-                    return
-                }
-                if predecessors.contains(where: { $0.requiresFreshServerSnapshot && snapshot.updatedAt <= ($0.expectedUpdatedAt ?? snapshot.updatedAt) }) {
-                    self.finishEditorPresentation(request)
-                    self.windowController?.showMessageSheet("Refresh the Pull Request", infoText: "The server changed during the previous edit. Refresh its current data before opening a new edit; your saved draft remains protected.")
-                    return
-                }
-                let currentSnapshot = predecessors.compactMap(\.outcome?.snapshot).last ?? snapshot
-                do {
-                    let draft = try await self.serializedDraftLoad(identity: identity).value
-                    guard self.ownerIsCurrent(), !Task.isCancelled, self.editorQueue.active == request else { return }
-                    let content = RepositoryPullRequestDraftPolicy.restoredEditContent(snapshot: currentSnapshot, draft: draft)
+        presentActivity(identity: request, message: "Waiting for the preceding Pull Request edit…", busy: true)
+        preparationTask = Task { [weak self] in
+            for submission in predecessors {
+                await submission.task?.value
+            }
+            guard let self, self.ownerIsCurrent(), !Task.isCancelled, self.preparingEditorID == request else { return }
+            if predecessors.contains(where: \.needsRecovery) {
+                self.preparingEditorID = nil
+                self.clearActivity(request)
+                self.queueAvailableRecoveries()
+                return
+            }
+            guard self.conflictFreshness.permits(identity: identity, updatedAt: snapshot.updatedAt) else {
+                self.preparingEditorID = nil
+                self.clearActivity(request)
+                self.windowController?.showMessageSheet("Refresh the Pull Request", infoText: "The server changed during the previous edit. Refresh its current data before opening a new edit; your saved draft remains protected.")
+                return
+            }
+            let currentSnapshot = predecessors.compactMap(\.outcome?.snapshot).last ?? snapshot
+            do {
+                let draft = try await self.serializedDraftLoad(identity: identity).value
+                guard self.ownerIsCurrent(), !Task.isCancelled, self.preparingEditorID == request else { return }
+                let content = RepositoryPullRequestDraftPolicy.restoredEditContent(snapshot: currentSnapshot, draft: draft)
+                let accepted = self.enqueueEditorRequest(request) { [weak self] window in
+                    guard let self else { return }
                     self.presentEditSheet(accountID: accountID, snapshot: currentSnapshot, destination: destination,
                                           identity: identity, observedDraft: draft, content: content, presentationID: request, window: window)
-                } catch {
-                    guard self.ownerIsCurrent(), !Task.isCancelled else { return }
-                    self.finishEditorPresentation(request)
-                    self.windowController?.showErrorSheet(error)
                 }
+                if !accepted {
+                    self.preparingEditorID = nil
+                }
+                self.clearActivity(request)
+            } catch {
+                guard self.ownerIsCurrent(), !Task.isCancelled else { return }
+                self.preparingEditorID = nil
+                self.clearActivity(request)
+                self.windowController?.showErrorSheet(error)
             }
         }
     }
@@ -626,13 +661,18 @@ final class RepositoryPullRequestUIController {
     func checkout(_ plan: ForgePullRequestCheckoutPlan) {
         guard ownerIsCurrent() else { return }
         supersedeMutation()
+        let admission = RepositoryPullRequestMutationAdmission()
+        activeMutation = admission
         let executor = RepositoryPullRequestCheckoutExecutor(repository: repository)
+        let authority = authority
         mutationTask = Task { [weak self] in
+            defer { admission.finish() }
             do {
+                guard authority.isCurrent, admission.admit() else { return }
                 let receipt = try await Task.detached(priority: .userInitiated) {
                     try executor.execute(plan)
                 }.value
-                guard let self, self.ownerIsCurrent(), !Task.isCancelled else { return }
+                guard let self, self.ownerIsCurrent(), !admission.superseded, !Task.isCancelled else { return }
                 self.windowController?.showMessageSheet(
                     "Pull Request Checked Out",
                     infoText: "Checked out \(receipt.localBranch.value) from \(receipt.remoteName)."
@@ -641,16 +681,18 @@ final class RepositoryPullRequestUIController {
             } catch is CancellationError {
                 return
             } catch {
-                self?.windowController?.showErrorSheet(error)
+                guard let self, self.ownerIsCurrent(), !admission.superseded else { return }
+                self.windowController?.showErrorSheet(error)
             }
         }
+        admission.task = mutationTask
     }
 
     func checkout(_ pullRequest: ForgePullRequestSummary) {
         guard ownerIsCurrent() else { return }
-        supersedeMutation()
+        cancelPreparation()
         let planner = RepositoryPullRequestCheckoutPlanner(repository: repository)
-        mutationTask = Task { [weak self] in
+        preparationTask = Task { [weak self] in
             do {
                 let plan = try await planner.plan(for: pullRequest)
                 guard let self, self.ownerIsCurrent(), !Task.isCancelled, let windowController = self.windowController else { return }
@@ -679,12 +721,13 @@ final class RepositoryPullRequestUIController {
         supersedeMutation()
         let runner = RepositoryPullRequestObjectiveGitRunner(repository: repository)
         let coordinator = RepositorySyncForkCoordinator(service: service, runner: runner)
+        let authority = authority
         let admission = RepositoryPullRequestMutationAdmission()
-        remoteMutationAdmission = admission
+        activeMutation = admission
         mutationTask = Task { [weak self] in
             defer { admission.finish() }
             do {
-                guard admission.admit() else { return }
+                guard authority.isCurrent, admission.admit() else { return }
                 let receipt = try await coordinator.sync(accountID: accountID, plan: plan)
                 guard let self, self.ownerIsCurrent(), !admission.superseded, !Task.isCancelled else { return }
                 self.windowController?.showMessageSheet(
@@ -706,6 +749,7 @@ final class RepositoryPullRequestUIController {
                 }
             }
         }
+        admission.task = mutationTask
     }
 
     private func prepare(
@@ -949,6 +993,7 @@ final class RepositoryPullRequestUIController {
             do {
                 switch event {
                 case let .began(selected):
+                    self.supersedeMutation()
                     try operation.flow.pushBegan(createPullRequestSelected: selected)
                 case .succeeded:
                     try operation.flow.pushSucceeded()
@@ -1050,6 +1095,8 @@ final class RepositoryPullRequestUIController {
         enqueueEditorRequest(request) { [weak self] window in
             guard let self else { return }
             guard self.ownerIsCurrent(), self.pullRequestOperation === operation else { self.finishEditorPresentation(request); return }
+            self.cancelPreparation()
+            self.supersedeMutation()
             self.installEditorSheet(sheet, id: request)
             self.saveDraft(preparation: preparation, content: restored)
             sheet.beginSheet(for: window)
@@ -1076,30 +1123,26 @@ final class RepositoryPullRequestUIController {
     ) {
         let drafts = drafts
         let date = now()
-        let previousSave = draftSaveTask
-        draftSaveTask = Task {
-            await previousSave?.value
+        let logger = logger
+        draftQueue.enqueue {
             guard !Task.isCancelled else { return }
-            do {
-                try await drafts.save(identity: identity, content: content, at: date)
-            } catch {
-                logger.error("Could not autosave Pull Request draft")
-            }
+            do { try await drafts.save(identity: identity, content: content, at: date) }
+            catch { logger.error("Could not autosave Pull Request draft") }
         }
     }
 
     private func discardDraft(identity: ForgeDraftIdentity) {
         let drafts = drafts
-        let previousSave = draftSaveTask
-        draftSaveTask = Task { [weak self] in
-            await previousSave?.value
+        draftQueue.enqueue { [weak self] in
             guard !Task.isCancelled else { return }
             do {
                 try await drafts.delete(identity: identity)
                 self?.logger.notice("Deleted discarded Pull Request Forge Draft")
             } catch {
                 self?.logger.error("Could not delete discarded Pull Request Forge Draft")
-                self?.windowController?.showErrorSheet(error)
+                if self?.ownerIsCurrent() == true {
+                    self?.windowController?.showErrorSheet(error)
+                }
             }
         }
     }
@@ -1107,9 +1150,7 @@ final class RepositoryPullRequestUIController {
     private func saveEditDraft(editor: RepositoryEditDraftSession, content: ForgeDraftContent) {
         let drafts = drafts
         let date = now()
-        let previous = draftSaveTask
-        draftSaveTask = Task {
-            await previous?.value
+        draftQueue.enqueue {
             guard !Task.isCancelled else { return }
             await editor.autosave(content, drafts: drafts, at: date)
         }
@@ -1125,67 +1166,60 @@ final class RepositoryPullRequestUIController {
         supersedeMutation()
         let identity = authority.beginMutation()
         let admission = RepositoryPullRequestMutationAdmission()
-        remoteMutationAdmission = admission
-        saveDraft(
-            preparation: preparation,
-            content: ForgeDraftContent(title: form.title, body: form.bodyMarkdown)
-        )
-        let pendingDraftSave = draftSaveTask
+        activeMutation = admission
+        saveDraft(preparation: preparation, content: ForgeDraftContent(title: form.title, body: form.bodyMarkdown))
+        let pendingDraftSave = draftQueue.tail
+        let authority = authority
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
-        mutationTask = Task { [weak self] in
+        let task = Task { [weak self] in
             defer { admission.finish() }
             do {
                 await pendingDraftSave?.value
-                guard !Task.isCancelled, admission.admit() else { return }
+                guard !Task.isCancelled, authority.isCurrent, admission.admit() else {
+                    try operation.flow.creationFailed()
+                    return
+                }
                 let outcome = try await completion.create(accountID: accountID, form: form, preparation: preparation)
-                guard let self, self.mayPresentMutation(identity),
-                      self.pullRequestOperation === operation
-                else { return }
                 let destination: ForgeDestination
                 switch outcome {
                 case let .created(value):
                     destination = value
-                    self.logger.notice("Created Pull Request")
+                    try operation.flow.creationSucceeded(value)
                 case let .existing(value):
                     destination = value
-                    self.logger.notice("Detected existing Pull Request; skipped duplicate creation")
+                    try operation.flow.existingPullRequest(value)
                 }
-                switch outcome {
-                case .created:
-                    try operation.flow.creationSucceeded(destination)
-                case .existing:
-                    try operation.flow.existingPullRequest(destination)
-                }
+                guard let self, self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
+                self.logger.notice("Completed Pull Request creation independently of presentation")
                 self.onCreationOutcome?(outcome)
                 guard self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
                 let opened = self.destinationOpening(destination)
                 guard self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
                 self.onCreationDestinationOpened?(destination, opened)
-            } catch is CancellationError {
-                return
             } catch {
+                // Completion belongs to the captured operation even after UI supersession.
+                try? operation.flow.creationFailed()
                 guard let self, self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
+                guard !(error is CancellationError) else { return }
                 if self.presentAuthorizationRecovery(error, retry: self.authority.retry(for: identity) { [weak self] in
                     guard let self, self.pullRequestOperation === operation else { return }
-                    self.submitCreate(
-                        accountID: accountID,
-                        form: form,
-                        preparation: preparation,
-                        operation: operation
-                    )
+                    do {
+                        let intent = try ForgePushPullRequestIntent(form: form, draftIdentity: RepositoryPullRequestDraftPolicy.identity(preparation: preparation))
+                        let retryOperation = try self.beginNewPullRequestOperation(branchAlreadyPushed: true, intent: intent)
+                        self.submitCreate(accountID: accountID, form: form, preparation: preparation, operation: retryOperation)
+                    } catch {
+                        self.windowController?.showErrorSheet(error)
+                    }
                 }) {
                     self.logger.notice("Offered explicit authorization recovery for Pull Request creation")
                     return
-                }
-                do {
-                    try operation.flow.creationFailed()
-                } catch {
-                    self.logger.fault("Rejected invalid Pull Request creation failure transition")
                 }
                 self.windowController?.showErrorSheet(error)
                 self.logger.error("Pull Request creation failed; draft preserved without automatic retry")
             }
         }
+        admission.task = task
+        mutationTask = task
     }
 
     private func submitEdit(accountID: ForgeAccountID, edit: ForgePullRequestEdit, destination: ForgeDestination, editor: RepositoryEditDraftSession) {
@@ -1195,24 +1229,29 @@ final class RepositoryPullRequestUIController {
         let content = ForgeDraftContent(title: edit.title, body: edit.bodyMarkdown)
         let submission = RepositoryEditSubmissionLifetime(identity: editor.identity, destination: destination, content: content, expectedUpdatedAt: edit.expectedUpdatedAt)
         editSubmissions.append(submission)
-        activeEditSubmission = submission
-        let pending = draftSaveTask
+        let admission = RepositoryPullRequestMutationAdmission()
+        admission.editSubmission = submission
+        activeMutation = admission
+        let authority = authority
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
         let date = now()
-        let finalSave = Task {
-            await pending?.value
-            return await editor.saveSubmissionResult(content, drafts: completion.drafts, at: date)
+        let finalSave = draftQueue.enqueue {
+            await editor.saveSubmissionResult(content, drafts: completion.drafts, at: date)
         }
-        draftSaveTask = Task { _ = await finalSave.value }
         let task = Task { [weak self] in
+            defer { admission.finish() }
             let result = await finalSave.value
             submission.persisted(result)
-            guard submission.admit() else {
-                if result.snapshot == nil {
-                    submission.recoveryMessage = RepositoryPullRequestRecoveryReason.supersededBeforeAdmission
-                    self?.logger.notice("Retained unsent edit after pre-admission supersession")
-                }
+            if Task.isCancelled || !authority.isCurrent {
+                submission.supersede(); admission.supersede()
+            }
+            guard submission.admit(), admission.admit() else {
                 submission.finish()
+                if let message = submission.unsentNotice {
+                    self?.showUnsentNotice(message)
+                    self?.logger.notice("Settled edit cancelled before remote admission; saved=\(result.snapshot != nil, privacy: .public)")
+                }
+                self?.retireCompletedSubmissions()
                 self?.queueAvailableRecoveries()
                 return
             }
@@ -1221,37 +1260,44 @@ final class RepositoryPullRequestUIController {
                                                         identity: editor.identity, submittedDraft: result.snapshot)
                 submission.finish(outcome)
                 guard let self else { return }
-                self.editSubmissions.removeAll { $0 === submission }
+                _ = self.conflictFreshness.permits(identity: editor.identity, updatedAt: outcome.snapshot.updatedAt)
+                self.retireCompletedSubmissions()
                 self.queueAvailableRecoveries()
                 guard !submission.superseded, self.mayPresentMutation(presentation) else { return }
                 _ = self.destinationOpening(outcome.destination)
                 self.logger.notice("Saved conflict-aware Pull Request edit with independent completion")
             } catch {
-                submission.finish()
-                submission.recoveryMessage = RepositoryPullRequestRecoveryReason.message(for: error)
-                if case ForgePullRequestWorkflowError.editConflict = error {
-                    submission.requiresFreshServerSnapshot = true
-                }
+                submission.finish(error: error)
                 guard let self else { return }
+                if case ForgePullRequestWorkflowError.editConflict = error, let expected = submission.expectedUpdatedAt {
+                    self.conflictFreshness.requireRefresh(identity: editor.identity, after: expected)
+                }
+                self.retireCompletedSubmissions()
                 let diagnostic = error as NSError
                 self.logger.error("Pull Request edit failed; domain=\(diagnostic.domain, privacy: .public) code=\(diagnostic.code), unsaved=\(result.snapshot == nil, privacy: .public)")
                 guard self.ownerIsCurrent() else { return }
-                if submission.superseded || !self.mayPresentMutation(presentation) {
+                if submission.superseded || !self.mayPresentMutation(presentation) || error is CancellationError {
                     self.queueAvailableRecoveries()
                     return
                 }
-                if error is CancellationError {
-                    self.queueAvailableRecoveries()
-                    return
-                }
-                let offered = self.presentAuthorizationRecovery(error, retry: self.authority.retry(for: presentation) { [weak self] in
+                let offered = self.presentAuthorizationRecovery(error, retry: self.authority.retry(for: presentation, onStale: { [weak self] in
+                    self?.retireCompletedSubmissions()
+                    self?.queueAvailableRecoveries()
+                }) { [weak self] in
                     guard let self else { return }
                     submission.resolveRecovery()
+                    self.retireCompletedSubmissions()
                     self.submitEdit(accountID: accountID, edit: edit, destination: destination, editor: editor)
-                }, onDismissed: { [weak self] in self?.queueAvailableRecoveries() })
+                }, onDismissed: { [weak self] in
+                    self?.retireCompletedSubmissions()
+                    self?.queueAvailableRecoveries()
+                })
                 if !offered {
                     if submission.needsRecovery {
                         self.queueAvailableRecoveries()
+                    } else if case ForgePullRequestWorkflowError.editConflict = error {
+                        self.windowController?.showMessageSheet("Pull Request Changed",
+                                                                infoText: "Refresh the Pull Request before applying your title or body edit. Your text remains in the editor draft.")
                     } else {
                         self.windowController?.showErrorSheet(error)
                     }
@@ -1259,6 +1305,7 @@ final class RepositoryPullRequestUIController {
             }
         }
         submission.task = task
+        admission.task = task
         mutationTask = task
     }
 
@@ -1268,22 +1315,50 @@ final class RepositoryPullRequestUIController {
 
     private func supersedeMutation() {
         _ = authority.beginMutation()
-        if let activeEditSubmission, activeEditSubmission.phase != .finished {
-            activeEditSubmission.supersede()
-            self.activeEditSubmission = nil
-        } else if let remoteMutationAdmission, remoteMutationAdmission.admitted {
-            remoteMutationAdmission.superseded = true
-            self.remoteMutationAdmission = nil
+        let previous = activeMutation
+        activeMutation = nil
+        previous?.supersede()
+    }
+
+    private func retireCompletedSubmissions() {
+        editSubmissions.removeAll(where: \.canRetire)
+    }
+
+    private func presentActivity(identity: UUID, message: String, busy: Bool) {
+        guard ownerIsCurrent() else { return }
+        let presentation = RepositoryPullRequestActivity(identity: identity, message: message, isBusy: busy)
+        activity = presentation
+        #if GITX_APP_TARGET
+            windowController?.setPullRequestActivity(presentation)
+        #endif
+    }
+
+    private func showUnsentNotice(_ message: String) {
+        guard ownerIsCurrent() else { return }
+        if activity?.isBusy == true {
+            pendingActivityNotice = message
         } else {
-            remoteMutationAdmission?.superseded = true
-            remoteMutationAdmission = nil
-            activeEditSubmission = nil
-            mutationTask?.cancel()
+            presentActivity(identity: UUID(), message: message, busy: false)
+        }
+    }
+
+    private func clearActivity(_ identity: UUID) {
+        guard activity?.identity == identity else { return }
+        activity = nil
+        #if GITX_APP_TARGET
+            windowController?.clearPullRequestActivity(identity)
+        #endif
+        if let message = pendingActivityNotice {
+            pendingActivityNotice = nil
+            showUnsentNotice(message)
         }
     }
 
     private func cancelPreparation() {
         preparationTask?.cancel()
+        if let preparingEditorID {
+            clearActivity(preparingEditorID)
+        }
         if let preparingEditorID, ownedSheets[preparingEditorID] == nil {
             finishEditorPresentation(preparingEditorID)
         }
@@ -1291,18 +1366,13 @@ final class RepositoryPullRequestUIController {
     }
 
     private func serializedDraftLoad(identity: ForgeDraftIdentity) -> Task<ForgeDraft?, Error> {
-        let previous = draftSaveTask
         let drafts = drafts
-        let load = Task<ForgeDraft?, Error> {
-            await previous?.value
-            return try await drafts.load(identity: identity)
-        }
-        draftSaveTask = Task { _ = try? await load.value }
-        return load
+        return draftQueue.enqueueThrowing { try await drafts.load(identity: identity) }
     }
 
-    private func enqueueEditorRequest(_ id: UUID, begin: @escaping (NSWindow) -> Void) {
-        guard ownerIsCurrent(), let window = windowController?.window else { return }
+    @discardableResult
+    private func enqueueEditorRequest(_ id: UUID, onAccepted: () -> Void = {}, begin: @escaping (NSWindow) -> Void) -> Bool {
+        guard ownerIsCurrent(), let window = windowController?.window, ownerIsCurrent() else { return false }
         if observedSheetWindow !== window {
             if let sheetObservation {
                 NotificationCenter.default.removeObserver(sheetObservation)
@@ -1314,7 +1384,9 @@ final class RepositoryPullRequestUIController {
         }
         editorRequests[id] = begin
         editorQueue.enqueue(id)
+        onAccepted()
         drainEditorRequests()
+        return true
     }
 
     private func drainEditorRequests() {
@@ -1333,6 +1405,7 @@ final class RepositoryPullRequestUIController {
     }
 
     private func finishEditorPresentation(_ id: UUID) {
+        recoveryRequests.removeValue(forKey: id)?.recoveryQueued = false
         let previous = ownedSheets.removeValue(forKey: id)
         if let previous, sheetController === previous {
             sheetController = nil
@@ -1351,9 +1424,11 @@ final class RepositoryPullRequestUIController {
 
     private func enqueueRecovery(_ submission: RepositoryEditSubmissionLifetime) {
         guard ownerIsCurrent(), submission.needsRecovery, !submission.recoveryQueued else { return }
-        submission.recoveryQueued = true
         let request = UUID()
-        enqueueEditorRequest(request) { [weak self] window in
+        enqueueEditorRequest(request, onAccepted: {
+            submission.recoveryQueued = true
+            self.recoveryRequests[request] = submission
+        }) { [weak self] window in
             guard let self else { return }
             guard submission.needsRecovery else { self.finishEditorPresentation(request); return }
             let sheet = ForgePullRequestSheetController(mode: .recovery(destination: submission.destination), restoredContent: submission.recoveryContent,
@@ -1367,6 +1442,7 @@ final class RepositoryPullRequestUIController {
             sheet.onCancel = { [weak self] _ in
                 submission.resolveRecovery()
                 self?.editSubmissions.removeAll { $0 === submission }
+                self?.queueAvailableRecoveries()
             }
             sheet.onRecoverySaved = { [weak self] content in
                 submission.markRecoverySaved(content)
@@ -1385,14 +1461,10 @@ final class RepositoryPullRequestUIController {
     }
 
     private func enqueueRecoveryWrite(_ content: ForgeDraftContent, identity: ForgeDraftIdentity, expected: ForgeDraft?, at date: Date) -> Task<ForgeDraft?, Error> {
-        let previous = draftSaveTask
         let drafts = drafts
-        let write = Task<ForgeDraft?, Error> {
-            await previous?.value
-            return try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected)
+        return draftQueue.enqueueThrowing {
+            try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected)
         }
-        draftSaveTask = Task { _ = try? await write.value }
-        return write
     }
 
     private func saveRecoveredDraft(_ content: ForgeDraftContent, identity: ForgeDraftIdentity, sheet: ForgePullRequestSheetController) {
@@ -1426,27 +1498,45 @@ final class RepositoryPullRequestUIController {
         }
     }
 
-    func confirmClosingIfNeeded(_ close: @escaping () -> Void) -> Bool {
-        guard ownerIsCurrent(), editSubmissions.contains(where: \.needsCloseProtection), let window = windowController?.window else { return false }
-        guard closeConfirmationIdentity == nil else { return true }
-        sheetController?.abortRecoverySave()
+    func confirmClosingIfNeeded(_ close: @escaping () -> Void, onCancelled: @escaping () -> Void = {}) -> Bool {
+        guard ownerIsCurrent(), let window = windowController?.window else { return false }
+        if closeConfirmationIdentity != nil {
+            closeDecisions.append { $0 ? close() : onCancelled() }
+            return true
+        }
+        guard editSubmissions.contains(where: \.needsCloseProtection) else { return false }
+        closeDecisions.append { $0 ? close() : onCancelled() }
+        let pending = editSubmissions.contains { $0.needsCloseProtection && $0.phase != .finished }
+        let recoveryAvailable = ownedSheets.keys.contains { recoveryRequests[$0] != nil }
         let id = UUID()
         closeConfirmationIdentity = id
         let alert = NSAlert()
         closeConfirmation = alert
         alert.window.setAccessibilityIdentifier("GitX.PullRequest.Recovery.WindowCloseConfirmation")
-        alert.messageText = "Close Without Saving Recovered Text?"
-        alert.informativeText = "This window still owns Pull Request edit text that has not been saved. Keep the window open to copy or save it. Closing discards the memory-only text."
+        alert.messageText = pending ? "Close With a Pull Request Edit Pending?" : "Close Without Saving Recovered Text?"
+        alert.informativeText = pending
+            ? "A Pull Request edit is still being saved or sent. Keep this window open to wait for its result. Closing discards text that cannot be saved; an edit already sent may still finish."
+            : recoveryAvailable
+            ? "This window still owns Pull Request edit text that has not been saved. Keep the window open to copy or save it. Closing discards the memory-only text."
+            : "Recovered Pull Request text is waiting for an editor. Keep the window open to review it when the current sheet closes. Closing discards this unsaved text."
         alert.addButton(withTitle: "Keep Editing")
         alert.addButton(withTitle: "Close Without Saving")
-        alert.beginSheetModal(for: window.attachedSheet ?? window) { [weak self] response in
+        var confirmationParent = window
+        while let attached = confirmationParent.attachedSheet {
+            confirmationParent = attached
+        }
+        alert.beginSheetModal(for: confirmationParent) { [weak self] response in
             guard let self, self.closeConfirmationIdentity == id else { return }
             self.closeConfirmationIdentity = nil
             self.closeConfirmation = nil
-            guard self.ownerIsCurrent(), self.windowController?.window === window else { return }
-            guard response == .alertSecondButtonReturn else { return }
-            self.editSubmissions.forEach { $0.resolveRecovery() }
-            close()
+            let decisions = self.closeDecisions
+            self.closeDecisions.removeAll()
+            let allowed = self.ownerIsCurrent() && self.windowController?.window === window && response == .alertSecondButtonReturn
+            if allowed {
+                self.sheetController?.abortRecoverySave()
+                self.editSubmissions.forEach { $0.resolveRecovery() }
+            }
+            decisions.forEach { $0(allowed) }
         }
         return true
     }

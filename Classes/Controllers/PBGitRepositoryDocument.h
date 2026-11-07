@@ -20,6 +20,10 @@ extern NSString *PBGitRepositoryDocumentType;
 
 @property (nonatomic, strong, readonly) PBGitRepository *repository;
 
+#ifndef CLI
+/// Coalesces every repository-close entry point before releasing document state.
+- (void)requestRepositoryCloseWithCompletion:(void (^)(BOOL allowed))completion NS_SWIFT_NAME(requestRepositoryClose(completion:));
+#endif
 
 // Scripting Bridge
 /// Applies captured open options after the matching document has its window controllers.

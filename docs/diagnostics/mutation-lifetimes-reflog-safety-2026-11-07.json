@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "integration": {
+    "repository": "hbmartin/gitx",
+    "targetBranch": "master",
+    "branch": "codex/review-lifecycle-reflog-fixes",
+    "frozenBaseSHA": "67d158128196e7888fea5a0f5acb5efe919663ee"
+  },
+  "historicalEvidence": {
+    "path": "docs/diagnostics/draft-lifetimes-account-guards-2026-11-05.json",
+    "policy": "Preserve the historical PR125/126 provenance; this record describes the separate follow-up. Only missing spaces in the historical evidence text were corrected."
+  },
+  "implementation": [
+    "Operation-owned admission and tasks survive presentation supersession after admission; validated or confirmed actions replace pending edits.",
+    "Terminal edit dispositions retain admission history and distinguish not sent, succeeded, rejected and uncertain. Durable records retire; rejected server timestamps remain independently gated until newer data is observed.",
+    "Draft persistence uses one result-preserving serial queue; predecessor waits happen outside the FIFO presentation queue. Recovery flags follow enqueue acceptance and withdrawal.",
+    "Current authorization Retry settles once; stale Retry for a current owner preserves recovery. Window status carries owner-scoped waiting and saved-unsent feedback.",
+    "A Swift close coordinator protects document preflight, direct document close, window close, Close All and file-presenter deletion before teardown, while Objective-C lifecycle selectors and delegate ABI remain intact.",
+    "Keep Editing preserves recovery loading, replacement consent and admitted writes. Close warnings describe the current phase and available editor; persisted conflicts retain specific refresh guidance.",
+    "Manage Accounts stays accessible while account choices remain guarded. Preparation and teardown are simplified; the configuration-path cache includes the resolved home directory. Preferences synchronization is retained.",
+    "Reflog mutation workers retain their service after UI closure. Success reloads first-page events and references while preserving the success summary during loading.",
+    "Soft/mixed captures retain stat evidence. Hard captures additionally read affected and obstructing contents, including obstructing descendants and submodule paths. Index bytes, symlink, identity and nested-repository evidence remain protected.",
+    "Reset verifies target, checkout and predecessor evidence through ORIG_HEAD and the available HEAD reflog. Unsafe or unverified outcomes name expected and observed commits and the validated backup without automatic retry or rollback."
+  ],
+  "characterization": {
+    "commit": "37ae9ef1f9f1b1104d7eddce7e176be3658fcfdb",
+    "runId": "lifecycle-characterization-green",
+    "testsPassed": 96,
+    "objectiveCDocumentCoveredLines": 128,
+    "objectiveCDocumentExecutableLines": 130,
+    "coverageMeasuredBeforeExtraction": true,
+    "consumerBuildRunId": "lifecycle-characterization-consumers-v2",
+    "generatedInterfacesInspected": [
+      "Debug/GitX-Swift.h",
+      "Release/GitX-Swift.h"
+    ]
+  },
+  "regressionEvidence": [
+    {
+      "runId": "lifecycle-regressions-red",
+      "result": "expected failure",
+      "cases": [
+        "document teardown before consent",
+        "repeated supersession cancellation of admitted edit",
+        "stale reflog references after branch creation"
+      ]
+    },
+    {
+      "runId": "lifecycle-close-boundaries-red",
+      "result": "expected assertions reproduced",
+      "cases": [
+        "window/document duplicate consent",
+        "close warning stranded behind replacement consent"
+      ]
+    },
+    {
+      "runId": "lifecycle-frozen-focused",
+      "result": "passed",
+      "testsPassed": 115,
+      "scope": "Focused native lifecycle, recovery, reflog and presentation cases; partial delivery evidence."
+    },
+    {
+      "runId": "lifecycle-previous-behavior-faults-red-v2",
+      "result": "six expected regression failures; no fixture startup crash",
+      "faults": [
+        "ordinary push admission omitted",
+        "recovery flag set before enqueue acceptance",
+        "window close aborts admitted recovery save before consent",
+        "sheet close aborts admitted recovery save before consent",
+        "create settlement gated by presentation",
+        "stale authorization Retry ignores recovery"
+      ],
+      "restoration": "Both production files restored byte-for-byte in finally."
+    },
+    {
+      "runId": "lifecycle-restored-regressions-green",
+      "result": "passed",
+      "testsPassed": 6,
+      "scope": "The same six regression targets passed with restored production sources."
+    }
+  ],
+  "testSupport": {
+    "windowOwnership": "Standalone browser fixture windows disable release-on-close and clear the first responder before explicit teardown.",
+    "interop": "A small Objective-C test helper follows the existing window compatibility pattern; its native Swift superclass layout is initialized before allocation. Assertions remain in Swift XCTest.",
+    "screenshots": "Current XCTest image and text attachments cover pending and recovered close warnings, replacement consent, waiting/saved-unsent status, account cooldown help, saved conflict guidance, refreshed references and unsafe reset outcomes. Diagnostic palette layout occurs after behavior assertions."
+  },
+  "performance": {
+    "fixture": "32 MiB unchanged tracked payload plus one small changed path; five Release samples per reset mode; fixture setup is outside the measured interval.",
+    "beforeRunId": "lifecycle-reflog-release-before-v2",
+    "beforeProductionSHA": "67d158128196e7888fea5a0f5acb5efe919663ee",
+    "afterRunId": "lifecycle-reflog-release-after",
+    "measurements": {
+      "soft": {
+        "beforeMedianSeconds": 0.27792379166930914,
+        "afterMedianSeconds": 0.16889391653239727,
+        "reductionPercent": 39.23013372912037
+      },
+      "mixed": {
+        "beforeMedianSeconds": 0.27811558335088193,
+        "afterMedianSeconds": 0.16328808316029608,
+        "reductionPercent": 41.287690106064574
+      },
+      "hard": {
+        "beforeMedianSeconds": 0.2817240001168102,
+        "afterMedianSeconds": 0.1727337499614805,
+        "reductionPercent": 38.68688862508678
+      }
+    },
+    "captureReadEvidence": "The real FileHandle read observer measured zero service worktree-content bytes for soft/mixed; hard read only affected text and obstruction payloads, excluding the unchanged 8 MiB test payload."
+  },
+  "verificationEnvironment": {
+    "developerDirectory": "/Applications/Xcode.app/Contents/Developer",
+    "sdk": "MacOSX27.2.sdk",
+    "apolloCLI": "Existing resolved Apollo 2.3.0 archive; offline codegen checked.",
+    "newTestingOrAnalysisDependencies": false
+  },
+  "postCommitVerification": {
+    "status": "required before publication",
+    "profile": "full",
+    "coveragePolicy": "Use a complete passed correctness receipt; never lower floors; record genuine improvements and verify the final commit again."
+  },
+  "requestedFinalDebugBundle": "/Volumes/Pro2T/gitx/build/GitX.app",
+  "runIds": [
+    "lifecycle-characterization-consumers-v2",
+    "lifecycle-characterization-green",
+    "lifecycle-regressions-red",
+    "lifecycle-close-boundaries-red",
+    "lifecycle-frozen-focused",
+    "lifecycle-compatible-fixture-consumers-v2",
+    "lifecycle-compatible-fixture-green-v2",
+    "lifecycle-previous-behavior-faults-red-v2",
+    "lifecycle-restored-regressions-green",
+    "lifecycle-reflog-release-before-v2",
+    "lifecycle-reflog-release-after"
+  ]
+}
