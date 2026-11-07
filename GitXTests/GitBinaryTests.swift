@@ -868,6 +868,20 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertEqual(document.windowControllers.count, 1)
     }
 
+    func testUnprotectedDocumentCloseRemovesRegistrationAndFilePresenter() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let controller = NSDocumentController.shared
+        controller.addDocument(document)
+        XCTAssertTrue(controller.documents.contains { $0 === document })
+        XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+        document.close()
+        XCTAssertFalse(controller.documents.contains { $0 === document })
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === document })
+        document.close()
+        XCTAssertFalse(controller.documents.contains { $0 === document })
+    }
+
     func testCapturedScriptContextOnlyAppliesToItsOwnRepository() throws {
         try prepareFixture()
         defer { try? removeFixture() }
