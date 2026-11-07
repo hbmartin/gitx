@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 import GitXCore
-import OSLog
+import OSLog // swiftlint:disable:this unused_import -- Logger requires OSLog; removing it fails Debug compilation.
 
 nonisolated struct RepositoryReflogPage: Sendable {
     let entries: [ReflogEntry]

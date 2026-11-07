@@ -1527,9 +1527,9 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         second.finish()
         XCTAssertTrue(RepositoryEditRecoveryOrder.ready(in: [first, second]).isEmpty)
         first.finish()
-        XCTAssertEqual(RepositoryEditRecoveryOrder.ready(in: [first, second]).map(\.id), [first.id, second.id])
+        XCTAssertEqual(RepositoryEditRecoveryOrder.ready(in: [first, second]).map(ObjectIdentifier.init), [ObjectIdentifier(first), ObjectIdentifier(second)])
         first.recoveryQueued = true
-        XCTAssertEqual(RepositoryEditRecoveryOrder.ready(in: [first, second]).map(\.id), [second.id])
+        XCTAssertEqual(RepositoryEditRecoveryOrder.ready(in: [first, second]).map(ObjectIdentifier.init), [ObjectIdentifier(second)])
         second.resolveRecovery()
         XCTAssertTrue(RepositoryEditRecoveryOrder.ready(in: [first, second]).isEmpty)
     }

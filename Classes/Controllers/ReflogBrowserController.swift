@@ -1,6 +1,6 @@
 import AppKit
 import GitXCore
-import OSLog
+import OSLog // swiftlint:disable:this unused_import -- Logger requires OSLog; removing it fails Debug compilation.
 
 private nonisolated struct ReflogBrowserLoad: Sendable {
     let branches: [String]

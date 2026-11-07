@@ -66,7 +66,14 @@
     "reflog-review-ui-reproduction-ui-38906158",
     "reflog-analyzer-characterization-debug-test-build-b3830afb",
     "reflog-analyzer-characterization-release-test-build-d0c63bab",
-    "reflog-analyzer-characterization-correctness-4d738e86"
+    "reflog-analyzer-characterization-correctness-4d738e86",
+    "reflog-analyzer-cleanup-complete",
+    "reflog-analyzer-cleanup-complete-analyze-2bf62e67",
+    "reflog-analyzer-cleanup-complete-correctness-5b831cb8",
+    "reflog-analyzer-cleanup-complete-debug-test-build-7ba963c6",
+    "reflog-analyzer-cleanup-complete-release-test-build-b6d9792b",
+    "reflog-analyzer-cleanup-green",
+    "reflog-analyzer-cleanup-green-debug-test-build-fdeb28ff"
   ],
   "sourceSnapshot": "artifacts/verification/reflog-submodule-final-green/workflow.json",
   "sourceFingerprint": "337748c06d9af005105f443940aabe178ac1de9ea972eee369072edbe85ebc47",
@@ -237,5 +244,54 @@
     "behavior": "The unavailable clone-catalog fallback throws its existing unavailable error instead of returning an empty catalog.",
     "coverageReason": "Removing the unused covered UUID line would otherwise put the workflow file marginally below its existing 97.12% floor. Cover the existing unavailable-catalog fallback first; never lower the floor.",
     "fullVerification": "Required again after the cleanup commit."
+  },
+  "analyzerCleanup": {
+    "preparationCommit": "bf6817d3",
+    "removedUnusedProductionField": "RepositoryEditSubmissionLifetime.id",
+    "preservedOrderingAssertion": "Compare the same submission records using ObjectIdentifier.",
+    "compileProbe": {
+      "runId": "reflog-analyzer-cleanup-green",
+      "outcome": "Debug compilation failed because removing either OSLog import left Logger unresolved."
+    },
+    "requiredImports": {
+      "files": [
+        "Classes/Controllers/ReflogBrowserController.swift",
+        "Classes/git/RepositoryReflogService.swift"
+      ],
+      "resolution": "Restored OSLog with per-line unused_import annotations documenting the compiler-proven false positive; logging remains intact."
+    },
+    "finalPrecommitRunId": "reflog-analyzer-cleanup-complete",
+    "verification": {
+      "debugTestBuild": "passed",
+      "releaseTestBuild": "passed",
+      "correctness": {
+        "tests": 2328,
+        "failures": 0,
+        "evidence": "valid"
+      },
+      "analysis": {
+        "nativeCompilerWarnings": 0,
+        "swiftFiles": 290,
+        "violations": 0,
+        "evidence": "valid"
+      },
+      "format": {
+        "version": "0.62.1",
+        "files": 4,
+        "changesNeeded": 0
+      },
+      "lint": {
+        "version": "0.63.2",
+        "files": 4,
+        "violations": 0
+      },
+      "coverage": {
+        "file": "Classes/Controllers/RepositoryPullRequestWorkflow.swift",
+        "previousFloor": 0.9712,
+        "newFloor": 0.9753,
+        "plainChecker": "passed",
+        "otherFloors": "unchanged"
+      }
+    }
   }
 }
