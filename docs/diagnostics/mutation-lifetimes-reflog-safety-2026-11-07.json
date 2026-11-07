@@ -149,9 +149,82 @@
     "newTestingOrAnalysisDependencies": false
   },
   "postCommitVerification": {
-    "status": "required before publication",
+    "status": "passed",
     "profile": "full",
-    "coveragePolicy": "Use a complete passed correctness receipt; never lower floors; record genuine improvements and verify the final commit again."
+    "runId": "lifecycle-implementation-full-v3",
+    "implementationCommit": "ddd1bebf209c57e48eafb4b7cb37e6afbac92793",
+    "startedAt": "2026-11-07T19:16:22.728765+00:00",
+    "finishedAt": "2026-11-07T22:29:37.454926+00:00",
+    "checksPassed": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts",
+      "correctness",
+      "core",
+      "forgekit",
+      "address-undefined",
+      "thread-sanitizer",
+      "ui",
+      "performance",
+      "analyze",
+      "stage-debug"
+    ],
+    "reusedChecks": [],
+    "scriptTestsPassed": 876,
+    "correctnessTestsPassed": 2371,
+    "addressUndefinedTestsPassed": 2371,
+    "threadSanitizerTestsPassed": 2371,
+    "uiTestsPassed": 53,
+    "releasePerformanceTestsPassed": 40,
+    "coverage": {
+      "runId": "lifecycle-implementation-full-v3-correctness-caee888f",
+      "coveredLines": 80317,
+      "executableLines": 85516,
+      "previousApplicationFloor": 0.9389,
+      "applicationFloor": 0.9392,
+      "raisedFileFloors": {
+        "Classes/Controllers/PBGitRepositoryDocument.m": {
+          "previous": 0.9846,
+          "current": 0.9897
+        },
+        "Classes/Controllers/ReflogBrowserController.swift": {
+          "previous": 0.9775,
+          "current": 0.9787
+        },
+        "Classes/Controllers/RepositoryForgeCoordinator.swift": {
+          "previous": 0.9659,
+          "current": 0.966
+        },
+        "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+          "previous": 0.8848,
+          "current": 0.888
+        },
+        "Classes/Controllers/RepositoryPullRequestWorkflow.swift": {
+          "previous": 0.9753,
+          "current": 0.9774
+        },
+        "Classes/Views/ForgePullRequestSheetController.swift": {
+          "previous": 0.9345,
+          "current": 0.935
+        },
+        "Classes/git/RepositoryReflogService.swift": {
+          "previous": 0.9763,
+          "current": 0.9771
+        }
+      },
+      "floorsLowered": false,
+      "ratchet": "Validated complete passing correctness receipt; record-improvements followed by plain coverage recheck passed."
+    },
+    "diagnosticVisualReview": [
+      "Pending save or remote-work close warning describes the unfinished phase and makes Keep Editing primary.",
+      "Recovery warning preserves native nested consent and offers copying or saving only for available recovered text.",
+      "Waiting and saved-unsent notices are readable in the actual repository window status bar.",
+      "Account popup and Manage Accounts remain accessible with individual choices guarded during cooldown.",
+      "Unsafe reset details name expected/observed predecessor evidence and the validated backup without suggesting rollback."
+    ],
+    "coveragePolicy": "No floors lowered. The final commit, including this evidence and the increased baseline, requires another complete passing full profile before publication."
   },
   "requestedFinalDebugBundle": "/Volumes/Pro2T/gitx/build/GitX.app",
   "runIds": [
@@ -172,7 +245,9 @@
     "lifecycle-stale-conflict-red-v2",
     "lifecycle-boundary-and-coverage-consumers",
     "lifecycle-window-callback-green-v3",
-    "lifecycle-boundary-and-coverage-green-v2"
+    "lifecycle-boundary-and-coverage-green-v2",
+    "lifecycle-implementation-full-v3",
+    "lifecycle-implementation-full-v3-correctness-caee888f"
   ],
   "interruptedVerification": {
     "runId": "lifecycle-implementation-full",
@@ -212,5 +287,10 @@
   },
   "consumerBuildRunIds": [
     "lifecycle-boundary-and-coverage-consumers"
-  ]
+  ],
+  "finalDeliveryGate": {
+    "runId": "lifecycle-final-full",
+    "status": "required before publication",
+    "requirement": "Complete the full profile at the delivery commit, verify the staged Debug bundle, then publish a ready PR to hbmartin/gitx:master. The PR description records the final passing run and commit."
+  }
 }
