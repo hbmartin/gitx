@@ -90,12 +90,33 @@
       "result": "passed",
       "testsPassed": 2,
       "scope": "Accepted queued create supersedes a pending edit before remote admission; ready create remains available while another editor waits for admitted remote completion."
+    },
+    {
+      "runId": "lifecycle-stale-conflict-red-v2",
+      "result": "five expected behavior assertions failed; no fixture timeout",
+      "cases": [
+        "known stale conflict request superseded another edit while its final save was held",
+        "eligible edit was not sent, its draft did not retire and no destination opened"
+      ]
+    },
+    {
+      "runId": "lifecycle-window-callback-green-v3",
+      "result": "passed",
+      "testsPassed": 1,
+      "scope": "Reflection-free production callback factory releases its native window owner and returns hidden state after release."
+    },
+    {
+      "runId": "lifecycle-boundary-and-coverage-green-v2",
+      "result": "passed",
+      "testsPassed": 7,
+      "scope": "Account management/choice guards, known and newly discovered conflict freshness, rejected replacement preservation, independent conflict-gate lifetime, native callback release and nested recovery consent; no test-runner restart."
     }
   ],
   "testSupport": {
     "windowOwnership": "Standalone browser fixture windows disable release-on-close and clear the first responder before explicit teardown.",
     "interop": "A small Objective-C test helper follows the existing window compatibility pattern; its native Swift superclass layout is initialized before allocation. Assertions remain in Swift XCTest.",
-    "screenshots": "Current XCTest image and text attachments cover pending and recovered close warnings, replacement consent, waiting/saved-unsent status, account cooldown help, saved conflict guidance, refreshed references and unsafe reset outcomes. Diagnostic palette layout occurs after behavior assertions."
+    "screenshots": "Current XCTest image and text attachments cover pending and recovered close warnings, replacement consent, waiting/saved-unsent status, account cooldown help, saved conflict guidance, refreshed references and unsafe reset outcomes. Diagnostic palette layout occurs after behavior assertions.",
+    "escapedCallback": "A small production-used callback factory avoids reflecting into a stored Swift closure. The app-hosted probe returns a Boolean, keeping internal value layout inside the app module."
   },
   "performance": {
     "fixture": "32 MiB unchanged tracked payload plus one small changed path; five Release samples per reset mode; fixture setup is outside the measured interval.",
@@ -146,7 +167,12 @@
     "lifecycle-reflog-release-before-v2",
     "lifecycle-reflog-release-after",
     "lifecycle-queued-create-red-v2",
-    "lifecycle-queued-create-green"
+    "lifecycle-queued-create-green",
+    "lifecycle-implementation-full-v2",
+    "lifecycle-stale-conflict-red-v2",
+    "lifecycle-boundary-and-coverage-consumers",
+    "lifecycle-window-callback-green-v3",
+    "lifecycle-boundary-and-coverage-green-v2"
   ],
   "interruptedVerification": {
     "runId": "lifecycle-implementation-full",
@@ -157,5 +183,34 @@
     ],
     "scriptTestsPassed": 876,
     "reason": "Stopped the owned build guard to fix accepted create supersession at enqueue acceptance. This is not full delivery evidence."
-  }
+  },
+  "failedPostCommitVerification": {
+    "runId": "lifecycle-implementation-full-v2",
+    "commit": "0971795fceb19f0bf4fdde50cb683986f76eec13",
+    "passedChecks": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts"
+    ],
+    "correctness": {
+      "executed": 2367,
+      "passed": 2366,
+      "failed": 1,
+      "failure": "The app-hosted account proof still expected the whole toolbar popup disabled. It now requires enabled management and nonempty individually guarded choices, retaining its complete proof mask and action-refusal checks."
+    },
+    "coverageDiagnosticOnly": {
+      "appCoveredLines": 80260,
+      "appExecutableLines": 85484,
+      "belowFloors": [
+        "PBGitWindowController.swift: escaped weak-owner fallback",
+        "ForgePullRequestSheetController.swift: nested-consent closure"
+      ],
+      "policy": "Failed-run coverage did not ratchet any baseline; native behavior tests now exercise these paths."
+    }
+  },
+  "consumerBuildRunIds": [
+    "lifecycle-boundary-and-coverage-consumers"
+  ]
 }

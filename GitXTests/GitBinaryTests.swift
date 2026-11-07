@@ -1110,6 +1110,84 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertFalse(nativeWindow.isVisible)
     }
 
+    func testEscapedPushControlResolverDoesNotRetainTheWindowAndReturnsHiddenAfterRelease() throws {
+        #if DEBUG
+            try prepareFixture()
+            defer { try? removeFixture() }
+            document.removeWindowController(window)
+            var resolvesHidden: (() -> Bool)?
+            weak var releasedOwner: GitX.PBGitWindowController?
+            try autoreleasepool {
+                document.makeWindowControllers()
+                let owner = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+                releasedOwner = owner
+                owner.window?.makeKeyAndOrderFront(nil)
+                waitForBranch("main", in: owner)
+                resolvesHidden = try XCTUnwrap(GitX.ForgeMarkdownAvatarProductHarness.hiddenPushControlCallback(for: owner))
+                document.removeWindowController(owner)
+                owner.close()
+            }
+            XCTAssertNil(releasedOwner, "An escaped presentation callback must not retain its original window")
+            XCTAssertTrue(try XCTUnwrap(resolvesHidden)())
+        #endif
+    }
+
+    func testNativeRecoverySheetKeepEditingPreservesReplacementConsentAndSaveIdentity() async throws {
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let content = ForgeDraftContent(title: "Exact recovered title", body: "Preserve this text and its pending replacement decision.")
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        parent.isReleasedWhenClosed = false
+        let sheet = GitX.ForgePullRequestSheetController(mode: .recovery(destination: .repository(repository)), restoredContent: content)
+        defer { sheet.invalidatePresentation(); parent.close() }
+        parent.makeKeyAndOrderFront(nil)
+        sheet.beginSheet(for: parent)
+        let panel = try XCTUnwrap(sheet.window)
+        let identity = try XCTUnwrap(sheet.beginRecoverySave())
+        var decision: Bool?
+        var saved: [ForgeDraftContent] = []
+        var ended = 0
+        sheet.onRecoverySaved = { saved.append($0) }
+        sheet.onPresentationEnded = { ended += 1 }
+        let completed = expectation(description: "The original replacement consent completes")
+        let replacement = Task {
+            decision = await sheet.confirmRecoveryReplacement(identity)
+            completed.fulfill()
+        }
+        defer { replacement.cancel() }
+        let consentReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in panel.attachedSheet?.accessibilityIdentifier() == "GitX.PullRequest.Recovery.ReplaceConfirmation" }, object: nil)
+        await fulfillment(of: [consentReady], timeout: 5)
+        let consent = try XCTUnwrap(panel.attachedSheet)
+        XCTAssertFalse(sheet.windowShouldClose(panel))
+        let warningReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in consent.attachedSheet?.accessibilityIdentifier() == "GitX.PullRequest.Recovery.CloseConfirmation" }, object: nil)
+        await fulfillment(of: [warningReady], timeout: 5)
+        let warning = try XCTUnwrap(consent.attachedSheet)
+        try attachScreenshot(of: warning, named: "Native recovery sheet Keep Editing preserves replacement consent")
+        func button(_ title: String, in view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == title {
+                return button
+            }
+            return view.subviews.lazy.compactMap { button(title, in: $0) }.first
+        }
+        try XCTUnwrap(button("Keep Editing", in: XCTUnwrap(warning.contentView))).performClick(nil)
+        let kept = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in consent.attachedSheet == nil }, object: nil)
+        await fulfillment(of: [kept], timeout: 5)
+        XCTAssertTrue(panel.attachedSheet === consent)
+        XCTAssertTrue(sheet.acceptsRecoverySave(identity))
+        XCTAssertNil(decision)
+        try XCTUnwrap(button("Replace Draft", in: XCTUnwrap(consent.contentView))).performClick(nil)
+        await fulfillment(of: [completed], timeout: 5)
+        XCTAssertEqual(decision, true)
+        sheet.markRecoverySaved(content)
+        sheet.finishRecoverySave(identity)
+        XCTAssertEqual(saved, [content])
+        XCTAssertTrue(localStatusText("GitX.PullRequest.Recovery.Notice", in: panel.contentView)?.hasPrefix("Saved as a draft") == true)
+        XCTAssertFalse(sheet.windowShouldClose(panel))
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in parent.attachedSheet == nil }, object: nil)
+        await fulfillment(of: [closed], timeout: 5)
+        XCTAssertEqual(ended, 1)
+    }
+
     func testCapturedScriptContextOnlyAppliesToItsOwnRepository() throws {
         try prepareFixture()
         defer { try? removeFixture() }

@@ -4164,6 +4164,34 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Hold the final edit save, accept a create behind an occupied native sheet, then release persistence; require zero edit calls, the exact durable draft and a saved-unsent notice before allowing the create sheet to appear."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testStaleConflictReplacementDoesNotCancelAnotherEditAwaitingPersistence",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Establish a rejected server timestamp, hold another Pull Request final save, and reject the known stale editor request; the prior edit still sends once and conditionally retires only its own draft."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testWaitingEditRequiresFreshSnapshotAfterAdmittedConflictWithSavedText",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accept a waiting editor before its predecessor finishes; a later admitted conflict with durable text blocks stale presentation, preserves the exact draft and never resubmits."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testEscapedPushControlResolverDoesNotRetainTheWindowAndReturnsHiddenAfterRelease",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Capture the production callback factory through an app-hosted Boolean probe, release the actual window, and demand both deallocation and hidden presentation after release."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testNativeRecoverySheetKeepEditingPreservesReplacementConsentAndSaveIdentity",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Exercise the app-module recovery sheet with live replacement consent, attempt closure, keep editing, and require the same save identity, original consent result, saved-text callback and one terminal dismissal."
         }
       ]
     },

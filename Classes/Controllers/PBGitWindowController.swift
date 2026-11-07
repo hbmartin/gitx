@@ -512,9 +512,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                         presenting: self.window
                     )
                 },
-                createPullRequestControlResolving: { [weak self] in
-                    self?.createPullRequestControl ?? .hidden
-                }
+                createPullRequestControlResolving: makeCreatePullRequestControlResolver()
             )
         }
         if referenceActionCoordinator == nil {
@@ -646,6 +644,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                   self.repository.map(ObjectIdentifier.init) == originatingRepository else { return false }
             return self.currentOwnerIdentity() == identity
         }
+    }
+
+    final func makeCreatePullRequestControlResolver() -> () -> ForgeMutationControlPresentation {
+        { [weak self] in self?.createPullRequestControl ?? .hidden }
     }
 
     private final func revokeOwner(closing: Bool = false) {

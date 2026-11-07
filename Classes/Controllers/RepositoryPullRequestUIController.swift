@@ -572,6 +572,10 @@ final class RepositoryPullRequestUIController {
             return
         }
         guard windowController?.window != nil, ownerIsCurrent() else { return }
+        guard conflictFreshness.permits(identity: identity, updatedAt: snapshot.updatedAt) else {
+            showEditConflictRefreshGuidance()
+            return
+        }
         cancelPreparation()
         supersedeMutation()
         let predecessors = editSubmissions.filter { $0.draftIdentity == identity }
@@ -592,7 +596,7 @@ final class RepositoryPullRequestUIController {
             guard self.conflictFreshness.permits(identity: identity, updatedAt: snapshot.updatedAt) else {
                 self.preparingEditorID = nil
                 self.clearActivity(request)
-                self.windowController?.showMessageSheet("Refresh the Pull Request", infoText: "The server changed during the previous edit. Refresh its current data before opening a new edit; your saved draft remains protected.")
+                self.showEditConflictRefreshGuidance()
                 return
             }
             let currentSnapshot = predecessors.compactMap(\.outcome?.snapshot).last ?? snapshot
@@ -616,6 +620,10 @@ final class RepositoryPullRequestUIController {
                 self.windowController?.showErrorSheet(error)
             }
         }
+    }
+
+    private func showEditConflictRefreshGuidance() {
+        windowController?.showMessageSheet("Refresh the Pull Request", infoText: "The server changed during the previous edit. Refresh its current data before opening a new edit; your saved draft remains protected.")
     }
 
     private func presentEditSheet(

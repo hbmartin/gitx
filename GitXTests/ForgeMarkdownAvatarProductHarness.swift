@@ -27,6 +27,16 @@
             func openInBrowser(destination _: ForgeDestination) {}
         }
 
+        // The app-hosted test calls this Swift-only probe; keep the app's value
+        // layout inside this module and return a Boolean callback across the bridge.
+        // swiftlint:disable:next unused_declaration
+        static func hiddenPushControlCallback(for object: NSObject) -> (() -> Bool)? {
+            guard let owner = object as? PBGitWindowController else { return nil }
+            let resolve = owner.makeCreatePullRequestControlResolver()
+            guard resolve() == owner.createPullRequestControl else { return nil }
+            return { resolve() == .hidden }
+        }
+
         @objc static func factsReplacementProof() -> UInt64 {
             do {
                 let view = RepositoryFactsInspectorView(frame: .zero)
@@ -1874,6 +1884,13 @@
                 })?.state == .off
             }
 
+            func toolbarAvailabilityMatches(choicesEnabled: Bool) -> Bool {
+                let choices = toolbarPopup.itemArray.filter { $0.representedObject is ForgeAccountID }
+                let management = toolbarPopup.itemArray.first { $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount.Manage" }
+                return toolbarPopup.isEnabled && management?.isEnabled == true && !choices.isEmpty &&
+                    choices.allSatisfy { $0.isEnabled == choicesEnabled }
+            }
+
             func forceCollaborationSelection() async -> Bool {
                 guard let destinationIndex = collaborationPopup.itemArray.firstIndex(where: {
                     $0.representedObject as? String == alternateAccount.id.value
@@ -1958,7 +1975,7 @@
             let waitingControlsDisabled = await waitForCondition {
                 !collaborationPopup.isEnabled &&
                     collaborationPopup.accessibilityHelp() == waitingHelp &&
-                    !toolbarPopup.isEnabled &&
+                    toolbarAvailabilityMatches(choicesEnabled: false) &&
                     toolbarPopup.accessibilityHelp() == waitingHelp
             }
             let waitingState = await services.credentialCooldowns.retainedState(
@@ -1975,7 +1992,7 @@
             let retryPendingControlsDisabled = await waitForCondition {
                 !collaborationPopup.isEnabled &&
                     collaborationPopup.accessibilityHelp() == retryPendingHelp &&
-                    !toolbarPopup.isEnabled &&
+                    toolbarAvailabilityMatches(choicesEnabled: false) &&
                     toolbarPopup.accessibilityHelp() == retryPendingHelp
             }
             let retryPendingState = await services.credentialCooldowns.retainedState(
@@ -1996,7 +2013,7 @@
             let staleCooldownSelectionRefused = staleCooldownSelectionStarted &&
                 settings.forgeRepositoryBinding == binding &&
                 notificationCounter.value == 0 &&
-                !toolbarPopup.isEnabled &&
+                toolbarAvailabilityMatches(choicesEnabled: false) &&
                 toolbarPopup.accessibilityHelp() == retryPendingHelp
 
             var successfulRetryClearedState = false
@@ -2013,7 +2030,7 @@
             }
             let controlsReenabled = await waitForCondition {
                 collaborationPopup.isEnabled &&
-                    toolbarPopup.isEnabled &&
+                    toolbarAvailabilityMatches(choicesEnabled: true) &&
                     collaborationSelectionIsRestored() &&
                     toolbarSelectionIsRestored()
             }
