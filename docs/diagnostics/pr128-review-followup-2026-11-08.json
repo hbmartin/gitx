@@ -190,9 +190,9 @@
     "policy": "Current diagnostic screenshots only; no image comparisons."
   },
   "finalCommitVerification": {
-    "runId": "pr128-final-full",
-    "receipt": "artifacts/verification/pr128-final-full/workflow.json",
-    "requirement": "Run the full canonical profile after committing this evidence and baseline. Its receipt must pass with the final commit and matching inputs; this record does not predeclare that result."
+    "runId": "pr128-final-full-v2",
+    "receipt": "artifacts/verification/pr128-final-full-v2/workflow.json",
+    "requirement": "Run the full canonical profile after committing the deterministic coverage tests and this evidence. The prior full attempt stopped at coverage despite all tests passing. The new receipt must pass at the final commit with matching inputs; this record does not predeclare that result."
   },
   "stableDebugDestination": "/Volumes/Pro2T/gitx/build/GitX.app",
   "runs": [
@@ -207,6 +207,28 @@
     "pr128-postcommit-correctness",
     "pr128-static",
     "pr128-static-sdk-pinned",
-    "pr128-final-full"
-  ]
+    "pr128-final-full",
+    "pr128-singular-badge-coverage",
+    "pr128-badge-decision-coverage",
+    "pr128-final-full-v2"
+  ],
+  "coverageStabilization": {
+    "failedFullRunId": "pr128-final-full",
+    "commit": "e17c220998be6d5525fddc681931069dd8f47a54",
+    "testsPassed": 2389,
+    "testFailures": 0,
+    "coverageGate": "HistoryForgeOverlayPresentation.swift measured 595/604 lines (98.51%), below its raised 0.9867 floor. Other coverage gates passed.",
+    "cause": "Dedicated badge tests did not cover singular and unavailable-data decisions completely; complete-suite coverage depended on incidental overlay activity.",
+    "fix": "Add deterministic decision-level XCTest for singular text/accessibility with absent and explicit provider totals, plus unavailable provider data. Production behavior and all coverage floors remain unchanged.",
+    "testIdentifiers": [
+      "GitXTests/HistoryForgeOverlayPresentationTests/testSinglePullRequestBadgeUsesASingularAccessibleDescription",
+      "GitXTests/HistoryForgeOverlayPresentationTests/testUnavailablePullRequestBadgeDescribesMissingProviderData"
+    ],
+    "focusedRunId": "pr128-badge-decision-coverage",
+    "focusedTestsPassed": 9,
+    "decisionCoverage": {
+      "coveredLines": 16,
+      "executableLines": 16
+    }
+  }
 }
