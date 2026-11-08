@@ -157,6 +157,7 @@ final class ReflogBrowserTests: XCTestCase {
         await waitUntil { !browser.controller.isBusy && (try? self.control("Details", in: browser.controller, as: NSTextView.self).string.hasPrefix("Created recovery/from-sheet.")) == true }
         await waitUntilIdle(browser.controller)
         XCTAssertEqual(try fixture.git(["rev-parse", "recovery/from-sheet"]), original)
+        XCTAssertTrue(browser.repository.branches.contains { $0.description == "recovery/from-sheet" }, "A retained browser reconciles the repository branch snapshot")
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), current)
         XCTAssertTrue(try control("Reference", in: browser.controller, as: NSPopUpButton.self).itemTitles.contains("recovery/from-sheet"))
         XCTAssertEqual(try control("Events", in: browser.controller, as: NSTableView.self).numberOfRows, 2)

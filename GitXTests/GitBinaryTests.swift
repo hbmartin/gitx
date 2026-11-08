@@ -852,9 +852,11 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     private final class DocumentCloseReply: NSObject {
         var decisions: [Bool] = []
         var completed: XCTestExpectation?
+        var onDecision: ((NSDocument, Bool) -> Void)?
 
-        @objc func document(_: NSDocument, shouldClose: Bool, contextInfo _: UnsafeMutableRawPointer?) {
+        @objc func document(_ document: NSDocument, shouldClose: Bool, contextInfo _: UnsafeMutableRawPointer?) {
             decisions.append(shouldClose)
+            onDecision?(document, shouldClose)
             completed?.fulfill()
         }
 
@@ -862,6 +864,43 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
             decisions.append(didCloseAll)
             completed?.fulfill()
         }
+    }
+
+    func testAcceptedPreflightReportsConsentWithoutDocumentTeardown() throws {
+        try prepareFixture()
+        let token = NSObject()
+        var consent: ((Bool) -> Void)?
+        defer { window.unregisterPullRequestCloseGuard(owner: token); try? removeFixture() }
+        NSDocumentController.shared.addDocument(document)
+        window.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: { consent = $0; return true })
+        let reply = DocumentCloseReply()
+        document.canClose(withDelegate: reply, shouldClose: #selector(DocumentCloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+        XCTAssertTrue(reply.decisions.isEmpty)
+        try XCTUnwrap(consent)(true)
+        XCTAssertEqual(reply.decisions, [true])
+        XCTAssertTrue(NSDocumentController.shared.documents.contains { $0 === document })
+        XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+        XCTAssertTrue(document.windowControllers.contains { $0 === window })
+    }
+
+    func testAcceptedPreflightCanCloseSynchronouslyWithOneConsent() throws {
+        try prepareFixture()
+        let token = NSObject()
+        var prompts = 0
+        var consent: ((Bool) -> Void)?
+        defer { window.unregisterPullRequestCloseGuard(owner: token); try? removeFixture() }
+        NSDocumentController.shared.addDocument(document)
+        window.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: {
+            prompts += 1; consent = $0; return true
+        })
+        let reply = DocumentCloseReply()
+        reply.onDecision = { document, allowed in if allowed { document.close() } }
+        document.canClose(withDelegate: reply, shouldClose: #selector(DocumentCloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+        try XCTUnwrap(consent)(true)
+        XCTAssertEqual(reply.decisions, [true])
+        XCTAssertEqual(prompts, 1)
+        XCTAssertFalse(NSDocumentController.shared.documents.contains { $0 === document })
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === document })
     }
 
     func testCloseCoordinatorCoalescesDecisionsAndRejectsStaleOrForeignConsent() throws {
