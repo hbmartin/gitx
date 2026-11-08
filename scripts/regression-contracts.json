@@ -3771,7 +3771,7 @@
     {
       "id": "DRAFT-001",
       "family": "Mutation completion and conditional draft retirement",
-      "invariant": "Verified admitted create and edit outcomes retire only the exact submitted draft snapshot, independently of presentation ownership and post-success cancellation. Missing, unreadable or changed drafts survive. Cleanup failures never resubmit or change a successful remote result; revoked capabilities cannot present. Final edit submission serializes its exact title and body before capturing cleanup evidence; a failed local save does not block publication or retire an unverified snapshot. Harness activity timestamps never move backward and creation time is preserved. Each editor retains its observed or own saved snapshot; submission conditionally saves against that evidence atomically. A conflict or unavailable save never overwrites or adopts another editor's draft, never blocks remote submission, and never authorizes cleanup. Ordinary autosaves remain last-writer-wins. Save failure preserves the editor's last verified expectation; final persistence drains in the serialized chain independently of mutation cancellation. An unsaved failed submission reopens exact text in a current-owner memory-only recovery editor. Explicit replacement confirms and atomically compares the captured stored snapshot; concurrent changes preserve both texts. Owner teardown aborts recovery prompts without writing. Submission lifetime is independent of presentation: supersession cancels pre-admission only; admitted requests drain. Reopening waits for preceding persistence and same-PR remote completion, never restoring and autosaving older text. Unsaved terminal results retain operation-bound memory-only recovery; sheet presentation is serialized without replacing active ownership. Human replacement confirmation never occupies the persistence queue. Duplicate saves refuse admission, closure invalidates pending loads/confirmation, and explicit window closure protects deferred recovery. Authoritative server rejection remains visible. Replacement is accepted only after validation or confirmation, including ordinary push admission. Repeated supersession cannot cancel admitted work. Create-flow settlement and conditional cleanup precede presentation checks. Terminal records retire independently of persistent conflict freshness. Ready editors retain FIFO order while remote waiters remain outside the sheet queue. Enqueue acceptance owns the recovery flag. A stale authorization retry settles once and preserves required recovery. Keep Editing preserves recovery loading, consent and admitted writes. Window activity is owner-scoped and older completions cannot clear newer feedback.",
+      "invariant": "Verified admitted create and edit outcomes retire only the exact submitted draft snapshot, independently of presentation ownership and post-success cancellation. Missing, unreadable or changed drafts survive. Cleanup failures never resubmit or change a successful remote result; revoked capabilities cannot present. Final edit submission serializes its exact title and body before capturing cleanup evidence; a failed local save does not block publication or retire an unverified snapshot. Harness activity timestamps never move backward and creation time is preserved. Each editor retains its observed or own saved snapshot; submission conditionally saves against that evidence atomically. A conflict or unavailable save never overwrites or adopts another editor's draft, never blocks remote submission, and never authorizes cleanup. Ordinary autosaves remain last-writer-wins. Save failure preserves the editor's last verified expectation; final persistence drains in the serialized chain independently of mutation cancellation. An unsaved failed submission reopens exact text in a current-owner memory-only recovery editor. Explicit replacement confirms and atomically compares the captured stored snapshot; concurrent changes preserve both texts. Owner teardown aborts recovery prompts without writing. Submission lifetime is independent of presentation: supersession cancels pre-admission only; admitted requests drain. Reopening waits for preceding persistence and same-PR remote completion, never restoring and autosaving older text. Unsaved terminal results retain operation-bound memory-only recovery; sheet presentation is serialized without replacing active ownership. Human replacement confirmation never occupies the persistence queue. Duplicate saves refuse admission, closure invalidates pending loads/confirmation, and explicit window closure protects deferred recovery. Authoritative server rejection remains visible. Replacement is accepted only after validation or confirmation, including ordinary push admission. Repeated supersession cannot cancel admitted work. Create-flow settlement and conditional cleanup precede presentation checks. Terminal records retire independently of persistent conflict freshness. Ready editors retain FIFO order while remote waiters remain outside the sheet queue. Enqueue acceptance owns the recovery flag. A stale authorization retry settles once and preserves required recovery. Keep Editing preserves recovery loading, consent and admitted writes. Window activity is owner-scoped and older completions cannot clear newer feedback. Saved-unsent feedback expires after eight seconds of actual display; old expiry cannot clear newer activity or retain a revoked owner.",
       "rootCause": "Controller-bound cleanup loses drafts after owner teardown; unconditional deletion removes newer edits and raw ownership closures outlive revocation.",
       "sourcePaths": [
         "GitXTests/Milestone2CompositionCoverageHarness.swift",
@@ -4192,6 +4192,41 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Exercise the app-module recovery sheet with live replacement consent, attempt closure, keep editing, and require the same save identity, original consent result, saved-text callback and one terminal dismissal."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testUnsentNoticeExpiresAfterEightSeconds",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testOldNoticeExpiryCannotClearNewBusyActivity",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testOwnerRevocationCancelsNoticeExpiry",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testDeferredUnsentNoticeStartsExpiryOnlyWhenDisplayed",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testNoticeTimerDoesNotRetainTheController",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
         }
       ]
     },
@@ -4251,13 +4286,14 @@
     {
       "id": "CLOSE-001",
       "family": "Repository close consent before teardown",
-      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes.",
+      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes. Preflight consent is borrowed only during synchronous callback forwarding and actual teardown; abandoned preflight preserves recovery and cannot authorize later closure.",
       "rootCause": "A window-only close guard runs after NSDocument has already torn down its document, while independent entry points duplicate consent and repeated window close can release AppKit state twice.",
       "sourcePaths": [
         "Classes/Controllers/PBGitRepositoryDocument.h",
         "Classes/Controllers/PBGitRepositoryDocument.m",
         "Classes/Controllers/PBGitWindowController.swift",
-        "Classes/Controllers/RepositoryDocumentScripting.swift"
+        "Classes/Controllers/RepositoryDocumentScripting.swift",
+        "Classes/Controllers/RepositoryPullRequestUIController.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -4309,13 +4345,97 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Render waiting and saved-unsent activity through the real status bar, reject stale clearing, and repeat closure without resurrecting the owner."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testCloseCoordinatorCoalescesDecisionsAndRejectsStaleOrForeignConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Coalesce pending requests; reject stale or foreign consent; balance nested callback-scoped approvals."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testActualWindowCloseProtectionKeepsOwnershipUntilConfirmationAndRevokesOnce",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Confirm real protected window closure, repeat close, and require exactly one owner revocation."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAcceptedPreflightReportsConsentWithoutDocumentTeardown",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accepted preflight reports true while registration, presenter and window ownership remain intact."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAcceptedPreflightCanCloseSynchronouslyWithOneConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Close inside the real AppKit delegate callback and require one prompt and one teardown."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAbandonedPreflightRequiresFreshConsentForTheSameOrNewGuard",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Return from accepted preflight without closing; a later close requires fresh consent for unchanged and replaced guards."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testStaleCloseConsentCannotCloseAReplacementDocument",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move a controller to another document while consent is pending; the old callback must close neither document."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testCloseConsentPolicyRequiresMatchingDocumentAndOwnerAndBalancesTokens",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Permit only matching document/generation; nested tokens balance and revocation removes all authority."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testScopedConsentSkipsForeignControllersAndCannotApproveAReplacementGuard",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Ignore unrelated controllers and invalidate borrowed approval when the close guard owner changes."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testAcceptedPreflightPreservesRecoveryAndRequiresConsentAgain",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accept consent without closing; retain exact recovery text, loading/consent/write results and later close protection."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testAcceptedPreflightPreservesAnAdmittedRecoverySave",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accept consent without closing; retain exact recovery text, loading/consent/write results and later close protection."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testAcceptedPreflightPreservesRecoveryLoadingAndReplacementConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accept consent without closing; retain exact recovery text, loading/consent/write results and later close protection."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testScopedConsentCannotFollowAReplacementWindow",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Replace the native window during borrowed consent; the replacement must require a fresh decision."
         }
       ]
     },
     {
       "id": "REFLOG-001",
       "family": "Reflog mutation lifetime and reset evidence",
-      "invariant": "Closing a browser revokes presentation and cancels reads, while admitted mutation workers finish with their captured service. Successful recovery reloads references and first-page events while retiring pagination evidence. Soft and mixed previews read no worktree payloads; hard previews capture only affected paths and obstructions, retaining index, symlink, directory and nested-repository evidence. Reset verifies target, checkout and predecessor evidence through ORIG_HEAD and any available HEAD reflog. Unsafe or unverified outcomes identify expected and observed commits and the validated backup; they never trigger rollback or retry.",
+      "invariant": "Closing a browser revokes presentation and cancels reads, while admitted mutation workers finish with their captured service. Successful recovery reloads references and first-page events while retiring pagination evidence. Soft and mixed previews read no worktree payloads; hard previews capture only affected paths and obstructions, retaining index, symlink, directory and nested-repository evidence. Reset verifies target, checkout and predecessor evidence through ORIG_HEAD and any available HEAD reflog. Unsafe or unverified outcomes identify expected and observed commits and the validated backup; they never trigger rollback or retry. Repository reconciliation completes independently of browser presentation authority, including mutation failure.",
       "rootCause": "Presentation teardown cancels mutation workers; unconditional file reads scale with unchanged payload size; target-only verification misses the HEAD actually replaced by Git reset.",
       "sourcePaths": [
         "Classes/Controllers/ReflogBrowserController.swift",
@@ -4405,6 +4525,27 @@
           "role": "valid",
           "check": "correctness",
           "oracle": "Execute every mode in detached and linked worktrees; require target HEAD, validated backup, retained checkout identity and unchanged primary branch."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testDetachedBrowserReconcilesSoftAndMixedResetHistory",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release the browser during held real Git work with watcher disabled; require refreshed cached refs/history on completion, including failure after backup creation."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testDetachedBrowserReconcilesBackupAfterFailedReset",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release the browser during held real Git work with watcher disabled; require refreshed cached refs/history on completion, including failure after backup creation."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testDetachedBrowserReconcilesBranchCreationAndFailure",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release the browser during held real Git work with watcher disabled; require refreshed cached refs/history on completion, including failure after backup creation."
         }
       ]
     }

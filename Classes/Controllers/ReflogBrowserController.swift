@@ -7,6 +7,20 @@ private nonisolated struct ReflogBrowserLoad: Sendable {
     let page: RepositoryReflogPage
 }
 
+/// Repository reconciliation belongs to the operation, even after its browser closes.
+@MainActor
+private enum ReflogBrowserMutation {
+    case branch, reset
+
+    func reconcile(_ repository: PBGitRepository) {
+        repository.reloadRefs()
+        if self == .reset {
+            repository.hasChanged = true
+            repository.lazyReload()
+        }
+    }
+}
+
 /// Owns presentation and request lifetimes; Git and recovery decisions live in
 /// RepositoryReflogService and GitXCore.
 @MainActor
@@ -229,7 +243,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     private func run<Value: Sendable>(
-        _ title: String, mutation: Bool = false,
+        _ title: String, mutation: ReflogBrowserMutation? = nil,
         work: @escaping @Sendable (RepositoryReflogService) throws -> Value,
         completion: @escaping (ReflogBrowserController, Result<Value, Error>) -> Void
     ) {
@@ -243,13 +257,17 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         do {
             let service = try serviceFactory(repository)
             self.service = service
-            mutating = mutation
+            mutating = mutation != nil
             isBusy = true
             message.stringValue = title
             status = title
             updateControls()
-            operation = Task { [weak self] in
+            operation = Task { [weak self, weak repository] in
                 let result = await Task.detached(priority: .userInitiated) { try work(service) }.result
+                if let mutation, let repository {
+                    mutation.reconcile(repository)
+                    Self.logger.debug("Reconciled completed reflog mutation independently of browser presentation")
+                }
                 guard let self, !self.closed, self.generation == request,
                       self.repository.map(ObjectIdentifier.init) == repositoryIdentity else { return }
                 self.service = nil
@@ -392,10 +410,9 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self, !self.closed else { return }
             let branchName = name.stringValue
-            self.run("Creating recovery branch…", mutation: true, work: { try $0.createRecoveryBranch(objectID: entry.objectID, name: branchName) }) { owner, result in
+            self.run("Creating recovery branch…", mutation: .branch, work: { try $0.createRecoveryBranch(objectID: entry.objectID, name: branchName) }) { owner, result in
                 switch result {
                 case .success:
-                    owner.repository?.reloadRefs()
                     owner.message.stringValue = "Created \(branchName)."
                     owner.status = owner.message.stringValue
                     owner.loadPage(append: false, successMessage: owner.message.stringValue)
@@ -474,9 +491,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     private func performReset(_ preview: RepositoryRecoveryPreview, discard: Bool) {
-        run("Creating backup and resetting checkout…", mutation: true, work: { try $0.reset(confirmed: preview, discardConfirmed: discard) }) { owner, result in
-            owner.repository?.reloadRefs()
-            owner.repository?.lazyReload()
+        run("Creating backup and resetting checkout…", mutation: .reset, work: { try $0.reset(confirmed: preview, discardConfirmed: discard) }) { owner, result in
             switch result {
             case let .success(backup):
                 owner.message.stringValue = "Reset complete. Previous committed history: \(backup)."

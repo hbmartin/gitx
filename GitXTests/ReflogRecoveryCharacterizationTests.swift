@@ -109,7 +109,7 @@ final nonisolated class ReflogResetExecutionGate: Sendable {
     let started: URL
     private let release: URL
 
-    init(repository: PBGitRepository, fixture: ReflogGitFixture) throws {
+    init(repository: PBGitRepository, fixture: ReflogGitFixture, command: String = "reset") throws {
         let original = try repository.task(withArguments: []).executionContext()
         started = fixture.url.appendingPathComponent(".git/gitx-reset-started")
         release = fixture.url.appendingPathComponent(".git/gitx-reset-release")
@@ -117,7 +117,7 @@ final nonisolated class ReflogResetExecutionGate: Sendable {
         let script = """
         #!/bin/sh
         for argument in "$@"; do
-            if [ "$argument" = reset ]; then
+            if [ "$argument" = "$GITX_GATE_COMMAND" ]; then
                 /usr/bin/touch "$GITX_RESET_STARTED"
                 while [ ! -f "$GITX_RESET_RELEASE" ]; do /bin/sleep 0.01; done
             fi
@@ -127,6 +127,7 @@ final nonisolated class ReflogResetExecutionGate: Sendable {
         try Data(script.utf8).write(to: wrapper)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
         var environment = original.environment
+        environment["GITX_GATE_COMMAND"] = command
         environment["GITX_RESET_STARTED"] = started.path
         environment["GITX_RESET_RELEASE"] = release.path
         environment["GITX_RESET_REAL_GIT"] = original.launchPath

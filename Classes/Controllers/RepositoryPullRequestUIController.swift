@@ -91,6 +91,8 @@ final class RepositoryPullRequestUIController {
     let bindingResolving: () -> ForgeRepositoryBinding?
     let postPushBrowserFallback: (PBGitRef?) -> Void
     private let createPullRequestControlResolving: () -> ForgeMutationControlPresentation
+    private let noticeDelay: @Sendable (Duration) async throws -> Void
+    private(set) var activityExpiryTask: Task<Void, Never>?
     private let now: @Sendable () -> Date
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestWorkflow")
     private var preparationTask: Task<Void, Never>?
@@ -135,7 +137,8 @@ final class RepositoryPullRequestUIController {
         createPullRequestControlResolving: @escaping () -> ForgeMutationControlPresentation = {
             .capability(.verified(.knownAuthority), action: "create a Pull Request")
         },
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        noticeDelay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.repository = repository
         self.windowController = windowController
@@ -153,6 +156,7 @@ final class RepositoryPullRequestUIController {
         }
         self.createPullRequestControlResolving = createPullRequestControlResolving
         self.now = now
+        self.noticeDelay = noticeDelay
         #if GITX_APP_TARGET
             windowController.registerPullRequestCloseGuard(owner: closeGuardOwner, protection: { [weak self] close in
                 self?.confirmClosingIfNeeded(close) ?? false
@@ -183,6 +187,8 @@ final class RepositoryPullRequestUIController {
     }
 
     private func tearDownPresentation() {
+        activityExpiryTask?.cancel()
+        activityExpiryTask = nil
         activeMutation?.supersede()
         activeMutation = nil
         cancelPreparation()
@@ -1335,6 +1341,8 @@ final class RepositoryPullRequestUIController {
 
     private func presentActivity(identity: UUID, message: String, busy: Bool) {
         guard ownerIsCurrent() else { return }
+        activityExpiryTask?.cancel()
+        activityExpiryTask = nil
         let presentation = RepositoryPullRequestActivity(identity: identity, message: message, isBusy: busy)
         activity = presentation
         #if GITX_APP_TARGET
@@ -1347,12 +1355,22 @@ final class RepositoryPullRequestUIController {
         if activity?.isBusy == true {
             pendingActivityNotice = message
         } else {
-            presentActivity(identity: UUID(), message: message, busy: false)
+            let identity = UUID()
+            presentActivity(identity: identity, message: message, busy: false)
+            let delay = noticeDelay
+            activityExpiryTask = Task { [weak self] in
+                do { try await delay(.seconds(8)) } catch { return }
+                guard !Task.isCancelled, let self, self.ownerIsCurrent() else { return }
+                self.logger.debug("Saved-unsent notice delay completed")
+                self.clearActivity(identity)
+            }
         }
     }
 
     private func clearActivity(_ identity: UUID) {
         guard activity?.identity == identity else { return }
+        activityExpiryTask?.cancel()
+        activityExpiryTask = nil
         activity = nil
         #if GITX_APP_TARGET
             windowController?.clearPullRequestActivity(identity)
@@ -1541,10 +1559,8 @@ final class RepositoryPullRequestUIController {
             let decisions = self.closeDecisions
             self.closeDecisions.removeAll()
             let allowed = self.ownerIsCurrent() && self.windowController?.window === window && response == .alertSecondButtonReturn
-            if allowed {
-                self.sheetController?.abortRecoverySave()
-                self.editSubmissions.forEach { $0.resolveRecovery() }
-            }
+            // Consent is nondestructive. Actual owner teardown invalidates sheets
+            // and uncommitted consent; admitted persistence keeps its result.
             decisions.forEach { $0(allowed) }
         }
         return true

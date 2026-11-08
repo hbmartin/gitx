@@ -894,13 +894,125 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
             prompts += 1; consent = $0; return true
         })
         let reply = DocumentCloseReply()
-        reply.onDecision = { document, allowed in if allowed { document.close() } }
+        reply.onDecision = {
+            document, allowed in if allowed {
+                document.close()
+            }
+        }
         document.canClose(withDelegate: reply, shouldClose: #selector(DocumentCloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
         try XCTUnwrap(consent)(true)
         XCTAssertEqual(reply.decisions, [true])
         XCTAssertEqual(prompts, 1)
         XCTAssertFalse(NSDocumentController.shared.documents.contains { $0 === document })
         XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === document })
+    }
+
+    func testAbandonedPreflightRequiresFreshConsentForTheSameOrNewGuard() throws {
+        for replaceGuard in [false, true] {
+            try prepareFixture()
+            let token = NSObject()
+            var prompts = 0
+            var consent: ((Bool) -> Void)?
+            defer { window.unregisterPullRequestCloseGuard(owner: token); try? removeFixture() }
+            NSDocumentController.shared.addDocument(document)
+            let decision: (@escaping (Bool) -> Void) -> Bool = { prompts += 1; consent = $0; return true }
+            window.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: decision)
+            let reply = DocumentCloseReply()
+            document.canClose(withDelegate: reply, shouldClose: #selector(DocumentCloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+            try XCTUnwrap(consent)(true)
+            XCTAssertEqual(reply.decisions, [true])
+            if replaceGuard {
+                window.unregisterPullRequestCloseGuard(owner: token)
+                window.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: decision)
+            }
+            window.close()
+            XCTAssertEqual(prompts, 2, "A preflight that returned without closing cannot approve a later attempt")
+            XCTAssertTrue(NSDocumentController.shared.documents.contains { $0 === document })
+            XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+            try XCTUnwrap(consent)(false)
+        }
+    }
+
+    func testStaleCloseConsentCannotCloseAReplacementDocument() throws {
+        try prepareFixture()
+        let original = try XCTUnwrap(document)
+        let replacement = NSDocument()
+        let token = NSObject()
+        var consent: ((Bool) -> Void)?
+        defer { window.unregisterPullRequestCloseGuard(owner: token); replacement.removeWindowController(window); try? removeFixture() }
+        NSDocumentController.shared.addDocument(original)
+        window.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: { consent = $0; return true })
+        original.close()
+        original.removeWindowController(window)
+        replacement.addWindowController(window)
+        try XCTUnwrap(consent)(true)
+        XCTAssertTrue(NSDocumentController.shared.documents.contains { $0 === original })
+        XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === original })
+        XCTAssertTrue(replacement.windowControllers.contains { $0 === window })
+    }
+
+    func testCloseConsentPolicyRequiresMatchingDocumentAndOwnerAndBalancesTokens() {
+        var consent = GitX.RepositoryDocumentCloseConsent()
+        let document = NSDocument()
+        let other = NSDocument()
+        let identity = ObjectIdentifier(document)
+        let first = consent.begin(document: identity, generation: 1)
+        let second = consent.begin(document: identity, generation: 1)
+        XCTAssertTrue(consent.permits(document: identity, generation: 1))
+        XCTAssertFalse(consent.permits(document: ObjectIdentifier(other), generation: 1))
+        XCTAssertFalse(consent.permits(document: identity, generation: 2))
+        consent.end(second)
+        XCTAssertTrue(consent.permits(document: identity, generation: 1))
+        consent.revoke()
+        XCTAssertFalse(consent.permits(document: identity, generation: 1))
+        consent.end(first)
+    }
+
+    func testScopedConsentCannotFollowAReplacementWindow() {
+        let document = NSDocument()
+        let first = NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false)
+        let replacement = NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false)
+        first.isReleasedWhenClosed = false
+        replacement.isReleasedWhenClosed = false
+        let owner = GitX.PBGitWindowController(window: first)
+        document.addWindowController(owner)
+        let token = NSObject()
+        owner.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {})
+        let coordinator = GitX.RepositoryDocumentCloseCoordinator()
+        coordinator.withApprovedClose(for: document) {
+            XCTAssertFalse(owner.requestPullRequestCloseDecision { _ in })
+            owner.window = replacement
+            XCTAssertTrue(owner.requestPullRequestCloseDecision { _ in }, "Consent belongs to the original window object")
+        }
+        owner.unregisterPullRequestCloseGuard(owner: token)
+        document.removeWindowController(owner)
+        owner.close()
+        first.close()
+    }
+
+    func testScopedConsentSkipsForeignControllersAndCannotApproveAReplacementGuard() {
+        let document = NSDocument()
+        let owner = GitX.PBGitWindowController(window: NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false))
+        let foreign = NSWindowController(window: NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false))
+        document.addWindowController(foreign)
+        document.addWindowController(owner)
+        let token = NSObject()
+        let replacement = NSObject()
+        owner.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {})
+        let coordinator = GitX.RepositoryDocumentCloseCoordinator()
+        coordinator.withApprovedClose(for: document) {
+            XCTAssertFalse(owner.requestPullRequestCloseDecision { _ in XCTFail("Scoped approval should cover this owner") })
+            owner.registerPullRequestCloseGuard(owner: replacement, protection: { _ in true }, revoke: {})
+            XCTAssertTrue(owner.requestPullRequestCloseDecision { _ in })
+        }
+        owner.unregisterPullRequestCloseGuard(owner: replacement)
+        owner.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+        XCTAssertNil(owner.beginApprovedDocumentClose(for: document))
+        coordinator.withApprovedClose(for: document) {}
+        document.removeWindowController(owner)
+        document.removeWindowController(foreign)
+        owner.close()
+        foreign.close()
     }
 
     func testCloseCoordinatorCoalescesDecisionsAndRejectsStaleOrForeignConsent() throws {
@@ -934,11 +1046,17 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         try XCTUnwrap(decision)(true)
         XCTAssertEqual(results.last, false)
         document.addWindowController(owner)
-        owner.approveDocumentClose(for: NSDocument())
-        coordinator.prepareApprovedClose(for: document)
-        XCTAssertFalse(owner.requestPullRequestCloseDecision { _ in XCTFail("Approved teardown must not prompt again") })
-        coordinator.requestClose(for: document) { results.append($0) }
-        XCTAssertEqual(results.last, true)
+        XCTAssertNil(owner.beginApprovedDocumentClose(for: NSDocument()))
+        coordinator.withApprovedClose(for: document) {
+            coordinator.withApprovedClose(for: document) {
+                XCTAssertFalse(owner.requestPullRequestCloseDecision { _ in XCTFail("Approved teardown must not prompt again") })
+            }
+            XCTAssertFalse(owner.requestPullRequestCloseDecision { _ in XCTFail("Nested scopes preserve outer consent") })
+            coordinator.requestClose(for: document) { results.append($0) }
+            XCTAssertEqual(results.last, true)
+        }
+        XCTAssertTrue(owner.requestPullRequestCloseDecision { _ in })
+        try XCTUnwrap(decision)(false)
     }
 
     func testDocumentPreflightAndFileDeletionRespectDeclinedCloseConsent() async throws {
@@ -1144,6 +1262,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         try attachScreenshot(of: nativeWindow, named: "Saved unsent Pull Request notice in window status")
         actual.clearPullRequestActivity(saved.identity)
         XCTAssertNotEqual(localStatusText("GitX.RepositoryStatusBar.LocalOperation", in: nativeWindow.contentView), saved.message)
+        try attachScreenshot(of: nativeWindow, named: "Repository status restored after the unsent notice clears")
         actual.close()
         actual.setPullRequestActivity(waiting)
         XCTAssertFalse(nativeWindow.isVisible)
@@ -3663,8 +3782,11 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let discovery = GitBinaryDiscovery(preference: { nil }, environment: [:], output: { _, _ in "git version 2.50.1" }, notify: { _, _ in })
         XCTAssertTrue(discovery.accept(executable.path))
         document.removeWindowController(window)
-        document.makeWindowControllers()
-        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        // This contract controls ref/HEAD events. Startup index publications are
+        // independent status triggers and must not race its negative assertion.
+        let notifications = NotificationCenter()
+        let actual = GitX.PBGitWindowController(ownerNotifications: notifications)
+        document.addWindowController(actual)
         actual.gitDiscovery = discovery
         _ = actual.window
         defer { actual.close() }
@@ -3674,8 +3796,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
         let before = statusStarts()
         document.repository.currentBranch = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/topic"))
-        NotificationCenter.default.post(name: .PBGitRepositoryEvent, object: document.repository,
-                                        userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: 0)])
+        notifications.post(name: .PBGitRepositoryEvent, object: document.repository,
+                           userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: 0)])
         let unexpected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in statusStarts() > before }, object: nil)
         unexpected.isInverted = true
         wait(for: [unexpected], timeout: 2)
@@ -3702,8 +3824,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         document.repository.reloadRefs()
         waitForBranch("topic", in: actual)
         try GitXTestGitFixture.run(["checkout", "--detach", "main"], in: directory)
-        NotificationCenter.default.post(name: .PBGitRepositoryEvent, object: document.repository,
-                                        userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: PBGitRepositoryWatcherEventType.gitDirectory.rawValue)])
+        notifications.post(name: .PBGitRepositoryEvent, object: document.repository,
+                           userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: PBGitRepositoryWatcherEventType.gitDirectory.rawValue)])
         let detached = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             self.localBranch(in: actual.window?.contentView)?.hasPrefix("Detached") == true
         }, object: nil)

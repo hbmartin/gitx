@@ -46,7 +46,9 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
     private var activeTask: PBTask?
 
     init(repository: PBGitRepository, context: PBTaskExecutionContext? = nil,
-         contentRead: @escaping @Sendable (String, Int) -> Void = { _, _ in }) throws
+         contentRead: @escaping @Sendable (String, Int) -> Void = { _, _ in
+             // Production needs no observer; tests and diagnostics can measure content reads.
+         }) throws
     {
         self.context = try context ?? repository.task(withArguments: []).executionContext()
         writer = IndexWriterCoordinator.coordinator(for: repository)
@@ -169,7 +171,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
             guard !name.hasPrefix("-"), !name.isEmpty else { throw RepositoryReflogError.unavailable("Enter a valid branch name.") }
             _ = try data(["check-ref-format", "--branch", name])
             _ = try data(["branch", "--", name, objectID])
-            Self.logger.info("Created recovery branch \(name, privacy: .public) at \(objectID, privacy: .public)")
+            Self.logger.info("Created recovery branch \(name, privacy: .private) at \(objectID, privacy: .public)")
         }
     }
 
@@ -387,7 +389,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
                     throw RepositoryReflogError.unavailable(reason)
                 }
             } catch {
-                Self.logger.error("Recovery reset failed after backup creation backup=\(backup, privacy: .public) reason=\(error.localizedDescription, privacy: .public)")
+                Self.logger.error("Recovery reset failed after backup creation backup=\(backup, privacy: .public) reason=\(error.localizedDescription, privacy: .private)")
                 throw RepositoryReflogError.resetFailed(backup: backup, reason: error.localizedDescription)
             }
             Self.logger.info("Recovery reset completed mode=\(preview.mode.rawValue, privacy: .public) backup=\(backup, privacy: .public)")
