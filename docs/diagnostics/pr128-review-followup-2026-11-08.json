@@ -1,0 +1,212 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-08T17:38:24.908786+00:00",
+  "integration": {
+    "repository": "hbmartin/gitx",
+    "targetBranch": "master",
+    "branch": "codex/pr128-review-followup",
+    "frozenBaseSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
+    "reviewedPR": 128,
+    "reviewedSHA": "6dcb39c0b33ba01bb77ae6b4654f38fa64db3039",
+    "implementationCommit": "1ffb4003299648dac633a61e39017a452e5dcba0",
+    "localOnly": true,
+    "publishPolicy": "Do not push or open a PR."
+  },
+  "implementation": [
+    "Borrow close consent only during synchronous AppKit callback forwarding and actual teardown; balance nested tokens and invalidate on owner/guard replacement.",
+    "Preflight reports consent without resolving recovered text or aborting loading, replacement consent, or admitted draft writes. Actual closure invalidates presentation.",
+    "Reconcile weakly captured repository refs after branch/reset work before the browser presentation guard, including failure. Reset marks history changed and reloads it.",
+    "Expire saved-unsent notices eight seconds after actual display; replacement/teardown cancels the weakly captured timer and identity checks preserve newer activity.",
+    "Keep user-derived branch names and failure descriptions private in logs; explain the no-op diagnostic observer.",
+    "Map close coordinator, repeated closure, replacement ownership, detached reconciliation and notice lifetime regressions in the existing contracts."
+  ],
+  "interfaces": {
+    "documentLifecycleAndScriptingSelectors": "Preserved",
+    "runtimeClassNames": "Preserved",
+    "internalScopedSelector": "withApprovedCloseForDocument:perform:",
+    "generatedBlockContract": "SWIFT_NOESCAPE",
+    "consumerBuildRunId": "pr128-regressions-green",
+    "consumerConfigurations": [
+      "Debug",
+      "Release"
+    ],
+    "conversion": "Extend existing Swift decision seams; retain the Objective-C superclass/delegate ABI shell. No whole-document conversion."
+  },
+  "characterization": {
+    "commit": "8083406ebb227cb5d517df185a5c4d103a246281",
+    "runId": "pr128-characterization",
+    "testsPassed": 117,
+    "consumerBuilds": [
+      "Debug",
+      "Release"
+    ]
+  },
+  "regressionEvidence": [
+    {
+      "runId": "pr128-regressions-red-v2",
+      "result": "Two executed behavioral regressions failed: abandoned preflight approval and closed-browser cached refs. Initial UI selectors did not match their containing class and are not counted as negative evidence."
+    },
+    {
+      "runId": "pr128-ui-regressions-red",
+      "result": "Corrected three UI selectors failed against temporarily restored old behavior: repeated close protection, admitted recovery-save reporting, and unsent-notice expiry. Fixed sources restored before green execution."
+    },
+    {
+      "runId": "pr128-focused-complete",
+      "result": "206/207 passed; the existing history-selection status test caught an independent startup index publication during its strict inverted expectation."
+    },
+    {
+      "runId": "pr128-status-timer-stress",
+      "result": "Three selected cases passed three iterations each after isolating the status fixture through the existing notification-center seam; strict no-refresh assertion preserved. Timer deallocation checks actual weak-controller release."
+    },
+    {
+      "runId": "pr128-window-identity-red",
+      "result": "Positive replacement-window boundary already passed the scoped implementation. Existing ownership revocation suffices; no redundant identity field was added."
+    },
+    {
+      "runId": "pr128-precommit-final",
+      "result": "Seven final close/model/expiry/deallocation cases passed."
+    }
+  ],
+  "postCommitVerification": {
+    "correctnessRunId": "pr128-postcommit-correctness",
+    "correctnessReceipt": "artifacts/verification/pr128-postcommit-correctness-correctness-84b524a5/receipt.json",
+    "correctnessTests": {
+      "failed": 0,
+      "passed": 2389,
+      "skipped": 0,
+      "total": 2389
+    },
+    "correctnessStatus": "passed",
+    "staticRunId": "pr128-static-sdk-pinned",
+    "staticStatus": "passed",
+    "scriptTestsPassed": 876,
+    "scope": "Complete correctness and complete static verification; final delivery still requires the full canonical profile at the evidence commit."
+  },
+  "verificationEnvironment": {
+    "sdkRoot": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+    "reason": "Unqualified xcrun SDK-platform lookup failed with a missing Command Line Tools SDK. Explicit selected-SDK lookup succeeds; SDKROOT is pinned only in verification child environments. No machine setting, dependency or verification policy changed.",
+    "initialStaticRunId": "pr128-static",
+    "initialStaticResult": "855 script tests executed with one setUpClass error; 21 native diagnostics did not start. The SDK-pinned native diagnostics and complete 876-test static rerun passed."
+  },
+  "coverage": {
+    "previousReferenceRunId": "lifecycle-final-full-v2",
+    "previousReferenceCommit": "6dcb39c0b33ba01bb77ae6b4654f38fa64db3039",
+    "previous": {
+      "coveredLines": 80317,
+      "executableLines": 85516,
+      "lineCoverage": 0.9392043594181206
+    },
+    "current": {
+      "coveredLines": 80404,
+      "executableLines": 85603,
+      "lineCoverage": 0.9392661472144668
+    },
+    "targetFloorBefore": 0.9392,
+    "targetFloorAfter": 0.9392,
+    "floorPrecision": "Target floor remains at 0.9392 because the measured increase is below the next four-decimal floor; five file floors increase. No floor is lowered.",
+    "raisedFileFloors": {
+      "Classes/Controllers/HistoryForgeOverlayPresentation.swift": {
+        "before": 0.985,
+        "after": 0.9867
+      },
+      "Classes/Controllers/PBGitRepositoryDocument.m": {
+        "before": 0.9897,
+        "after": 0.9905
+      },
+      "Classes/Controllers/ReflogBrowserController.swift": {
+        "before": 0.9787,
+        "after": 0.979
+      },
+      "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+        "before": 0.888,
+        "after": 0.8884
+      },
+      "Classes/git/RepositoryReflogService.swift": {
+        "before": 0.9771,
+        "after": 0.9772
+      }
+    },
+    "affectedSources": {
+      "Classes/Controllers/PBGitRepositoryDocument.m": {
+        "coveredLines": 210,
+        "executableLines": 212,
+        "lineCoverage": 0.9905660377358491
+      },
+      "Classes/Controllers/PBGitWindowController.swift": {
+        "coveredLines": 2505,
+        "executableLines": 2505,
+        "lineCoverage": 1
+      },
+      "Classes/Controllers/ReflogBrowserController.swift": {
+        "coveredLines": 560,
+        "executableLines": 572,
+        "lineCoverage": 0.9790209790209791
+      },
+      "Classes/Controllers/RepositoryDocumentScripting.swift": {
+        "coveredLines": 145,
+        "executableLines": 145,
+        "lineCoverage": 1
+      },
+      "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+        "coveredLines": 1864,
+        "executableLines": 2098,
+        "lineCoverage": 0.888465204957102
+      },
+      "Classes/git/RepositoryReflogService.swift": {
+        "coveredLines": 430,
+        "executableLines": 440,
+        "lineCoverage": 0.9772727272727273
+      }
+    },
+    "ratchetSource": "artifacts/verification/pr128-postcommit-correctness-correctness-84b524a5/receipt.json",
+    "plainCheckerAfterRatchet": "passed"
+  },
+  "diagnostics": {
+    "resultBundle": "artifacts/verification/pr128-postcommit-correctness-correctness-84b524a5/Results/GitX.xcresult",
+    "manifest": "artifacts/verification/pr128-native-diagnostics/manifest.json",
+    "screenshots": [
+      {
+        "testIdentifier": "ReflogBrowserTests/testRecoveryBranchSheetUsesCapturedCommitAndRejectsClosedOwner()",
+        "name": "Recovery branch and repository references refreshed_0_69584EDF-CF8D-40D3-8899-B99283A07099.png",
+        "path": "artifacts/verification/pr128-native-diagnostics/CC090B53-3DF0-4C7C-92EF-2ED25C24B256.png",
+        "sha256": "a0e3e5f22b8abaae8826758c1bc11de33a9b4cf39543abcd0dfc32e574ee3214",
+        "visuallyInspected": true
+      },
+      {
+        "testIdentifier": "RepositoryDocumentScriptingCharacterizationTests/testPullRequestActivityUsesStatusPresentationAndCannotClearANewerNotice()",
+        "name": "Repository status restored after the unsent notice clears_0_FF19D331-4284-4E35-AE9C-386913271000.png",
+        "path": "artifacts/verification/pr128-native-diagnostics/EC3DB2B0-DD36-47C5-83DD-19F937FE079D.png",
+        "sha256": "3d3e00471fae512ee9c245427cc76a50706be72ee561a46b64f188a2a38c153d",
+        "visuallyInspected": true
+      },
+      {
+        "testIdentifier": "RepositoryMutationCompletionTests/testAcceptedPreflightPreservesRecoveryAndRequiresConsentAgain()",
+        "name": "Abandoned close preflight preserves recovered text and protection_0_B0A9D298-A2D8-4B67-AE93-DF700D0C6AAD.png",
+        "path": "artifacts/verification/pr128-native-diagnostics/73D3118C-D73C-4A39-8DCD-510FB9B256EE.png",
+        "sha256": "bc522fa48b6ea35ca7ba357406e604ed7837f85aa6dd6005ef1de950a6d9e151",
+        "visuallyInspected": true
+      }
+    ],
+    "policy": "Current diagnostic screenshots only; no image comparisons."
+  },
+  "finalCommitVerification": {
+    "runId": "pr128-final-full",
+    "receipt": "artifacts/verification/pr128-final-full/workflow.json",
+    "requirement": "Run the full canonical profile after committing this evidence and baseline. Its receipt must pass with the final commit and matching inputs; this record does not predeclare that result."
+  },
+  "stableDebugDestination": "/Volumes/Pro2T/gitx/build/GitX.app",
+  "runs": [
+    "lifecycle-final-full-v2",
+    "pr128-characterization",
+    "pr128-regressions-red-v2",
+    "pr128-ui-regressions-red",
+    "pr128-focused-complete",
+    "pr128-status-timer-stress",
+    "pr128-window-identity-red",
+    "pr128-precommit-final",
+    "pr128-postcommit-correctness",
+    "pr128-static",
+    "pr128-static-sdk-pinned",
+    "pr128-final-full"
+  ]
+}
