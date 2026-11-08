@@ -222,7 +222,7 @@ final class RepositoryForgeCoordinator: NSObject {
         resolveBinding(persistAutomaticBinding: true)
     }
 
-    private var configurationPathCache: (inputs: [String: String], paths: [String])?
+    private var configurationPathCache: (inputs: [String: String], home: URL, paths: [String])?
     private var queryRefreshPolicy = RepositoryForgeQueryRefreshPolicy()
     private var queryResolution: RepositoryForgeBindingResolution?
     private(set) var preparedBindingIsCurrent = false
@@ -610,11 +610,12 @@ final class RepositoryForgeCoordinator: NSObject {
         // Cache path construction only, never filesystem evidence. Relevant
         // environment changes are observed again across discovery boundaries.
         let inputs = Self.configurationEnvironment()
-        if let configurationPathCache, configurationPathCache.inputs == inputs {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        if let configurationPathCache, configurationPathCache.inputs == inputs, configurationPathCache.home == home {
             return configurationPathCache.paths
         }
-        let paths = Self.globalConfigurationPaths(environment: inputs)
-        configurationPathCache = (inputs, paths)
+        let paths = Self.globalConfigurationPaths(environment: inputs, home: home)
+        configurationPathCache = (inputs, home, paths)
         return paths
     }
 

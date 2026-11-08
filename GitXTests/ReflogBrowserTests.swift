@@ -5,6 +5,77 @@ import XCTest
 
 @MainActor
 final class ReflogBrowserTests: XCTestCase {
+    func testClosingAndReleasingBrowserLetsAnAdmittedHardResetFinish() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let target = try fixture.git(["rev-parse", "HEAD"])
+        try fixture.write("tracked.txt", "second\n")
+        try fixture.git(["commit", "-am", "second"])
+        let previous = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture)
+        defer { try? gate.open() }
+        var controller = try XCTUnwrap(ReflogBrowserController.make(repository: repository, serviceFactory: {
+            try RepositoryReflogService(repository: $0, context: gate.context)
+        })) as ReflogBrowserController?
+        weak let released = controller
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { controller?.closeView(); window.close() }
+        window.contentView = try XCTUnwrap(controller).view
+        window.makeKeyAndOrderFront(nil)
+        controller?.updateView()
+        try await waitUntilIdle(XCTUnwrap(controller))
+        try control("Events", in: XCTUnwrap(controller), as: NSTableView.self).selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        try await waitUntilIdle(XCTUnwrap(controller))
+        _ = try await preview(.hard, browser: (controller: XCTUnwrap(controller), window: window, repository: repository))
+        try dismissSheet(window, response: .alertFirstButtonReturn)
+        await waitUntil { self.sheetButton("Discard Changes and Reset", window: window) != nil }
+        try dismissSheet(window, response: .alertSecondButtonReturn)
+        await waitUntil { FileManager.default.fileExists(atPath: gate.started.path) }
+        let admitted = try XCTUnwrap(controller?.operation)
+        controller?.closeView()
+        window.makeFirstResponder(nil)
+        window.contentView = nil
+        window.close()
+        controller = nil
+        try gate.open()
+        await admitted.value
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), target)
+        XCTAssertEqual(try fixture.git(["for-each-ref", "--format=%(objectname)", "refs/heads/recovery/"]), previous)
+        XCTAssertEqual(try String(contentsOf: fixture.url.appendingPathComponent("tracked.txt"), encoding: .utf8), "initial\n")
+        await waitUntil { released == nil }
+        XCTAssertNil(released)
+    }
+
+    func testUnsafeResetDisplaysTheObservedHeadAndValidatedBackup() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let target = try fixture.git(["rev-parse", "HEAD"])
+        try fixture.git(["commit", "--allow-empty", "-m", "validated preview"])
+        let previous = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture)
+        defer { try? gate.open() }
+        let browser = try await presentedBrowser(fixture, row: 1, serviceFactory: { try RepositoryReflogService(repository: $0, context: gate.context) })
+        defer { browser.controller.closeView(); browser.window.close() }
+        _ = try await preview(.soft, browser: browser)
+        try dismissSheet(browser.window, response: .alertFirstButtonReturn)
+        await waitUntil { FileManager.default.fileExists(atPath: gate.started.path) }
+        try fixture.git(["commit", "--allow-empty", "-m", "external writer"])
+        let observed = try fixture.git(["rev-parse", "HEAD"])
+        try gate.open()
+        await waitUntilIdle(browser.controller)
+        let message = try control("Details", in: browser.controller, as: NSTextView.self).string
+        XCTAssertTrue(message.contains(previous))
+        XCTAssertTrue(message.contains(observed))
+        XCTAssertTrue(message.contains("validated commit only"))
+        XCTAssertTrue(message.contains("recovery/"))
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), target)
+        XCTAssertEqual(try fixture.git(["for-each-ref", "--format=%(objectname)", "refs/heads/recovery/"]), previous)
+        try attachScreenshot(of: browser.window, named: "Unsafe reset identifies observed HEAD and retained validated backup")
+    }
+
     func testNativeBrowserLoadsUnreachableDetailsAndCopiesPinnedCommit() async throws {
         let fixture = try ReflogGitFixture()
         defer { fixture.remove() }
@@ -83,9 +154,12 @@ final class ReflogBrowserTests: XCTestCase {
         try fixture.git(["commit", "--allow-empty", "-m", "new HEAD"])
         let current = try fixture.git(["rev-parse", "HEAD"])
         try dismissSheet(browser.window, response: .alertFirstButtonReturn)
-        await waitUntil { browser.controller.status == "Created recovery/from-sheet." }
+        await waitUntil { !browser.controller.isBusy && (try? self.control("Details", in: browser.controller, as: NSTextView.self).string.hasPrefix("Created recovery/from-sheet.")) == true }
+        await waitUntilIdle(browser.controller)
         XCTAssertEqual(try fixture.git(["rev-parse", "recovery/from-sheet"]), original)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), current)
+        XCTAssertTrue(try control("Reference", in: browser.controller, as: NSPopUpButton.self).itemTitles.contains("recovery/from-sheet"))
+        XCTAssertEqual(try control("Events", in: browser.controller, as: NSTableView.self).numberOfRows, 2)
         try control("CreateBranch", in: browser.controller, as: NSButton.self).performClick(nil)
         try sheetControl("BranchName", window: browser.window, as: NSTextField.self).stringValue = "recovery/closed-owner"
         browser.controller.closeView()
@@ -115,7 +189,11 @@ final class ReflogBrowserTests: XCTestCase {
                 XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), previous)
                 try dismissSheet(browser.window, response: .alertSecondButtonReturn)
             }
-            await waitUntil { browser.controller.status?.hasPrefix("Reset complete.") == true }
+            await waitUntil { !browser.controller.isBusy && (try? self.control("Details", in: browser.controller, as: NSTextView.self).string.hasPrefix("Reset complete.")) == true }
+            await waitUntilIdle(browser.controller)
+            XCTAssertTrue(try control("Details", in: browser.controller, as: NSTextView.self).string.hasPrefix("Reset complete."))
+            XCTAssertEqual(try control("Events", in: browser.controller, as: NSTableView.self).numberOfRows, 3)
+            XCTAssertTrue(try control("Reference", in: browser.controller, as: NSPopUpButton.self).itemTitles.contains { $0.hasPrefix("recovery/") })
             XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), target)
             XCTAssertEqual(try fixture.git(["for-each-ref", "--format=%(objectname)", "refs/heads/recovery/"]), previous)
             XCTAssertEqual(try fixture.git(["show", ":tracked.txt"]), mode == .soft ? "staged" : "initial")
@@ -221,9 +299,11 @@ final class ReflogBrowserTests: XCTestCase {
 
     private typealias PresentedBrowser = (controller: ReflogBrowserController, window: NSWindow, repository: GitX.PBGitRepository)
 
-    private func presentedBrowser(_ fixture: ReflogGitFixture, row: Int = 0) async throws -> PresentedBrowser {
+    private func presentedBrowser(_ fixture: ReflogGitFixture, row: Int = 0,
+                                  serviceFactory: @escaping (GitX.PBGitRepository) throws -> RepositoryReflogService = { try RepositoryReflogService(repository: $0) }) async throws -> PresentedBrowser
+    {
         let repository = try GitXTestGitRepository(url: fixture.url)
-        let controller = try XCTUnwrap(ReflogBrowserController.make(repository: repository))
+        let controller = try XCTUnwrap(ReflogBrowserController.make(repository: repository, serviceFactory: serviceFactory))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 950, height: 650), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = controller.view

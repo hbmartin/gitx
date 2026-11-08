@@ -52,6 +52,16 @@
 @implementation PBHistoryWindowControllerTestBase
 @end
 
+@implementation PBRecoveryEnqueueWindow
+- (nullable NSWindow *)window
+{
+	void (^onRead)(void) = self.onNextWindowRead;
+	self.onNextWindowRead = nil;
+	if (onRead) onRead();
+	return [super window];
+}
+@end
+
 @interface PBRepositoryToolbarController : NSObject
 - (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
 - (void)install;

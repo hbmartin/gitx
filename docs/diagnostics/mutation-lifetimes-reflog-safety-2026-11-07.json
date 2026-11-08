@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "integration": {
+    "repository": "hbmartin/gitx",
+    "targetBranch": "master",
+    "branch": "codex/review-lifecycle-reflog-fixes",
+    "frozenBaseSHA": "67d158128196e7888fea5a0f5acb5efe919663ee"
+  },
+  "historicalEvidence": {
+    "path": "docs/diagnostics/draft-lifetimes-account-guards-2026-11-05.json",
+    "policy": "Preserve the historical PR125/126 provenance; this record describes the separate follow-up. Only missing spaces in the historical evidence text were corrected."
+  },
+  "implementation": [
+    "Operation-owned admission and tasks survive presentation supersession after admission; validated or confirmed actions replace pending edits.",
+    "Terminal edit dispositions retain admission history and distinguish not sent, succeeded, rejected and uncertain. Durable records retire; rejected server timestamps remain independently gated until newer data is observed.",
+    "Draft persistence uses one result-preserving serial queue; predecessor waits happen outside the FIFO presentation queue. Recovery flags follow enqueue acceptance and withdrawal.",
+    "Current authorization Retry settles once; stale Retry for a current owner preserves recovery. Window status carries owner-scoped waiting and saved-unsent feedback.",
+    "A Swift close coordinator protects document preflight, direct document close, window close, Close All and file-presenter deletion before teardown, while Objective-C lifecycle selectors and delegate ABI remain intact.",
+    "Keep Editing preserves recovery loading, replacement consent and admitted writes. Close warnings describe the current phase and available editor; persisted conflicts retain specific refresh guidance.",
+    "Manage Accounts stays accessible while account choices remain guarded. Preparation and teardown are simplified; the configuration-path cache includes the resolved home directory. Preferences synchronization is retained.",
+    "Reflog mutation workers retain their service after UI closure. Success reloads first-page events and references while preserving the success summary during loading.",
+    "Soft/mixed captures retain stat evidence. Hard captures additionally read affected and obstructing contents, including obstructing descendants and submodule paths. Index bytes, symlink, identity and nested-repository evidence remain protected.",
+    "Reset verifies target, checkout and predecessor evidence through ORIG_HEAD and the available HEAD reflog. Unsafe or unverified outcomes name expected and observed commits and the validated backup without automatic retry or rollback."
+  ],
+  "characterization": {
+    "commit": "37ae9ef1f9f1b1104d7eddce7e176be3658fcfdb",
+    "runId": "lifecycle-characterization-green",
+    "testsPassed": 96,
+    "objectiveCDocumentCoveredLines": 128,
+    "objectiveCDocumentExecutableLines": 130,
+    "coverageMeasuredBeforeExtraction": true,
+    "consumerBuildRunId": "lifecycle-characterization-consumers-v2",
+    "generatedInterfacesInspected": [
+      "Debug/GitX-Swift.h",
+      "Release/GitX-Swift.h"
+    ]
+  },
+  "regressionEvidence": [
+    {
+      "runId": "lifecycle-regressions-red",
+      "result": "expected failure",
+      "cases": [
+        "document teardown before consent",
+        "repeated supersession cancellation of admitted edit",
+        "stale reflog references after branch creation"
+      ]
+    },
+    {
+      "runId": "lifecycle-close-boundaries-red",
+      "result": "expected assertions reproduced",
+      "cases": [
+        "window/document duplicate consent",
+        "close warning stranded behind replacement consent"
+      ]
+    },
+    {
+      "runId": "lifecycle-frozen-focused",
+      "result": "passed",
+      "testsPassed": 115,
+      "scope": "Focused native lifecycle, recovery, reflog and presentation cases; partial delivery evidence."
+    },
+    {
+      "runId": "lifecycle-previous-behavior-faults-red-v2",
+      "result": "six expected regression failures; no fixture startup crash",
+      "faults": [
+        "ordinary push admission omitted",
+        "recovery flag set before enqueue acceptance",
+        "window close aborts admitted recovery save before consent",
+        "sheet close aborts admitted recovery save before consent",
+        "create settlement gated by presentation",
+        "stale authorization Retry ignores recovery"
+      ],
+      "restoration": "Both production files restored byte-for-byte in finally."
+    },
+    {
+      "runId": "lifecycle-restored-regressions-green",
+      "result": "passed",
+      "testsPassed": 6,
+      "scope": "The same six regression targets passed with restored production sources."
+    },
+    {
+      "runId": "lifecycle-queued-create-red-v2",
+      "result": "expected failure",
+      "cases": [
+        "accepted create behind another sheet sent the replaced pending edit once and deleted its submitted draft"
+      ]
+    },
+    {
+      "runId": "lifecycle-queued-create-green",
+      "result": "passed",
+      "testsPassed": 2,
+      "scope": "Accepted queued create supersedes a pending edit before remote admission; ready create remains available while another editor waits for admitted remote completion."
+    },
+    {
+      "runId": "lifecycle-stale-conflict-red-v2",
+      "result": "five expected behavior assertions failed; no fixture timeout",
+      "cases": [
+        "known stale conflict request superseded another edit while its final save was held",
+        "eligible edit was not sent, its draft did not retire and no destination opened"
+      ]
+    },
+    {
+      "runId": "lifecycle-window-callback-green-v3",
+      "result": "passed",
+      "testsPassed": 1,
+      "scope": "Reflection-free production callback factory releases its native window owner and returns hidden state after release."
+    },
+    {
+      "runId": "lifecycle-boundary-and-coverage-green-v2",
+      "result": "passed",
+      "testsPassed": 7,
+      "scope": "Account management/choice guards, known and newly discovered conflict freshness, rejected replacement preservation, independent conflict-gate lifetime, native callback release and nested recovery consent; no test-runner restart."
+    },
+    {
+      "runId": "lifecycle-repair-foreground-green",
+      "result": "passed",
+      "testsPassed": 54,
+      "scope": "Repaired repository-switch diagnostic plus all 53 deferred worktree-presentation tests; no assertion failures or runner restarts."
+    }
+  ],
+  "testSupport": {
+    "windowOwnership": "Standalone browser fixture windows disable release-on-close and clear the first responder before explicit teardown.",
+    "interop": "A small Objective-C test helper follows the existing window compatibility pattern; its native Swift superclass layout is initialized before allocation. Assertions remain in Swift XCTest.",
+    "screenshots": "Current XCTest image and text attachments cover pending and recovered close warnings, replacement consent, waiting/saved-unsent status, account cooldown help, saved conflict guidance, refreshed references and unsafe reset outcomes. Diagnostic palette layout occurs after behavior assertions.",
+    "escapedCallback": "A small production-used callback factory avoids reflecting into a stored Swift closure. The app-hosted probe returns a Boolean, keeping internal value layout inside the app module.",
+    "foreground": "The repair fixture restores foreground readiness after repository rebinding, accepting either its key parent window or its already-attached key sheet before asserting repair presentation."
+  },
+  "performance": {
+    "fixture": "32 MiB unchanged tracked payload plus one small changed path; five Release samples per reset mode; fixture setup is outside the measured interval.",
+    "beforeRunId": "lifecycle-reflog-release-before-v2",
+    "beforeProductionSHA": "67d158128196e7888fea5a0f5acb5efe919663ee",
+    "afterRunId": "lifecycle-reflog-release-after",
+    "measurements": {
+      "soft": {
+        "beforeMedianSeconds": 0.27792379166930914,
+        "afterMedianSeconds": 0.16889391653239727,
+        "reductionPercent": 39.23013372912037
+      },
+      "mixed": {
+        "beforeMedianSeconds": 0.27811558335088193,
+        "afterMedianSeconds": 0.16328808316029608,
+        "reductionPercent": 41.287690106064574
+      },
+      "hard": {
+        "beforeMedianSeconds": 0.2817240001168102,
+        "afterMedianSeconds": 0.1727337499614805,
+        "reductionPercent": 38.68688862508678
+      }
+    },
+    "captureReadEvidence": "The real FileHandle read observer measured zero service worktree-content bytes for soft/mixed; hard read only affected text and obstruction payloads, excluding the unchanged 8 MiB test payload."
+  },
+  "verificationEnvironment": {
+    "developerDirectory": "/Applications/Xcode.app/Contents/Developer",
+    "sdk": "MacOSX27.2.sdk",
+    "apolloCLI": "Existing resolved Apollo 2.3.0 archive; offline codegen checked.",
+    "newTestingOrAnalysisDependencies": false
+  },
+  "postCommitVerification": {
+    "status": "passed",
+    "profile": "full",
+    "runId": "lifecycle-implementation-full-v3",
+    "implementationCommit": "ddd1bebf209c57e48eafb4b7cb37e6afbac92793",
+    "startedAt": "2026-11-07T19:16:22.728765+00:00",
+    "finishedAt": "2026-11-07T22:29:37.454926+00:00",
+    "checksPassed": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts",
+      "correctness",
+      "core",
+      "forgekit",
+      "address-undefined",
+      "thread-sanitizer",
+      "ui",
+      "performance",
+      "analyze",
+      "stage-debug"
+    ],
+    "reusedChecks": [],
+    "scriptTestsPassed": 876,
+    "correctnessTestsPassed": 2371,
+    "addressUndefinedTestsPassed": 2371,
+    "threadSanitizerTestsPassed": 2371,
+    "uiTestsPassed": 53,
+    "releasePerformanceTestsPassed": 40,
+    "coverage": {
+      "runId": "lifecycle-implementation-full-v3-correctness-caee888f",
+      "coveredLines": 80317,
+      "executableLines": 85516,
+      "previousApplicationFloor": 0.9389,
+      "applicationFloor": 0.9392,
+      "raisedFileFloors": {
+        "Classes/Controllers/PBGitRepositoryDocument.m": {
+          "previous": 0.9846,
+          "current": 0.9897
+        },
+        "Classes/Controllers/ReflogBrowserController.swift": {
+          "previous": 0.9775,
+          "current": 0.9787
+        },
+        "Classes/Controllers/RepositoryForgeCoordinator.swift": {
+          "previous": 0.9659,
+          "current": 0.966
+        },
+        "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+          "previous": 0.8848,
+          "current": 0.888
+        },
+        "Classes/Controllers/RepositoryPullRequestWorkflow.swift": {
+          "previous": 0.9753,
+          "current": 0.9774
+        },
+        "Classes/Views/ForgePullRequestSheetController.swift": {
+          "previous": 0.9345,
+          "current": 0.935
+        },
+        "Classes/git/RepositoryReflogService.swift": {
+          "previous": 0.9763,
+          "current": 0.9771
+        }
+      },
+      "floorsLowered": false,
+      "ratchet": "Validated complete passing correctness receipt; record-improvements followed by plain coverage recheck passed."
+    },
+    "diagnosticVisualReview": [
+      "Pending save or remote-work close warning describes the unfinished phase and makes Keep Editing primary.",
+      "Recovery warning preserves native nested consent and offers copying or saving only for available recovered text.",
+      "Waiting and saved-unsent notices are readable in the actual repository window status bar.",
+      "Account popup and Manage Accounts remain accessible with individual choices guarded during cooldown.",
+      "Unsafe reset details name expected/observed predecessor evidence and the validated backup without suggesting rollback."
+    ],
+    "coveragePolicy": "No floors lowered. The final commit, including this evidence and the increased baseline, requires another complete passing full profile before publication."
+  },
+  "requestedFinalDebugBundle": "/Volumes/Pro2T/gitx/build/GitX.app",
+  "runIds": [
+    "lifecycle-characterization-consumers-v2",
+    "lifecycle-characterization-green",
+    "lifecycle-regressions-red",
+    "lifecycle-close-boundaries-red",
+    "lifecycle-frozen-focused",
+    "lifecycle-compatible-fixture-consumers-v2",
+    "lifecycle-compatible-fixture-green-v2",
+    "lifecycle-previous-behavior-faults-red-v2",
+    "lifecycle-restored-regressions-green",
+    "lifecycle-reflog-release-before-v2",
+    "lifecycle-reflog-release-after",
+    "lifecycle-queued-create-red-v2",
+    "lifecycle-queued-create-green",
+    "lifecycle-implementation-full-v2",
+    "lifecycle-stale-conflict-red-v2",
+    "lifecycle-boundary-and-coverage-consumers",
+    "lifecycle-window-callback-green-v3",
+    "lifecycle-boundary-and-coverage-green-v2",
+    "lifecycle-implementation-full-v3",
+    "lifecycle-implementation-full-v3-correctness-caee888f",
+    "lifecycle-final-full",
+    "lifecycle-repair-foreground-green"
+  ],
+  "interruptedVerification": {
+    "runId": "lifecycle-implementation-full",
+    "commit": "5e8d31a8d303c2ec47d4c964e365a952f8a8b358",
+    "passedChecks": [
+      "static",
+      "interop"
+    ],
+    "scriptTestsPassed": 876,
+    "reason": "Stopped the owned build guard to fix accepted create supersession at enqueue acceptance. This is not full delivery evidence."
+  },
+  "failedPostCommitVerification": {
+    "runId": "lifecycle-implementation-full-v2",
+    "commit": "0971795fceb19f0bf4fdde50cb683986f76eec13",
+    "passedChecks": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts"
+    ],
+    "correctness": {
+      "executed": 2367,
+      "passed": 2366,
+      "failed": 1,
+      "failure": "The app-hosted account proof still expected the whole toolbar popup disabled. It now requires enabled management and nonempty individually guarded choices, retaining its complete proof mask and action-refusal checks."
+    },
+    "coverageDiagnosticOnly": {
+      "appCoveredLines": 80260,
+      "appExecutableLines": 85484,
+      "belowFloors": [
+        "PBGitWindowController.swift: escaped weak-owner fallback",
+        "ForgePullRequestSheetController.swift: nested-consent closure"
+      ],
+      "policy": "Failed-run coverage did not ratchet any baseline; native behavior tests now exercise these paths."
+    }
+  },
+  "consumerBuildRunIds": [
+    "lifecycle-boundary-and-coverage-consumers"
+  ],
+  "finalDeliveryGate": {
+    "runId": "lifecycle-final-full-v2",
+    "status": "required before publication",
+    "requirement": "Complete the full profile at the delivery commit, verify the staged Debug bundle, then publish a ready PR to hbmartin/gitx:master. The PR description records the final passing run and commit."
+  },
+  "failedFinalVerification": {
+    "runId": "lifecycle-final-full",
+    "commit": "62eb66f29c844ca673ec85311af2f1ee40fae6fb",
+    "passedChecks": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts"
+    ],
+    "correctness": {
+      "executed": 2371,
+      "passed": 2370,
+      "failed": 1,
+      "test": "RepositoryDocumentScriptingCharacterizationTests/testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository",
+      "observation": "The repair request remained queued under its correct owner, but the test timed out waiting for an attached sheet and could not capture its diagnostic view.",
+      "correction": "The existing fixture established active/key readiness only before rebinding. It now explicitly restores foreground readiness after rebinding and accepts an already-attached key sheet. All sheet, repository ownership, offer acknowledgement and no-repair assertions remain unchanged."
+    },
+    "coveragePolicy": "No baseline changes from this failed run or focused verification."
+  }
+}

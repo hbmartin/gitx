@@ -168,4 +168,10 @@ NS_ASSUME_NONNULL_BEGIN
 							   environment:(NSDictionary<NSString *, NSString *> *)environment;
 @end
 
+/// Objective-C owns this test subclass because the workflow fixtures use the
+/// compatibility declaration, while its Swift superclass layout is initialized first.
+@interface PBRecoveryEnqueueWindow : PBGitWindowController
+@property (nonatomic, copy, nullable) void(NS_SWIFT_UI_ACTOR ^ onNextWindowRead)(void);
+@end
+
 NS_ASSUME_NONNULL_END

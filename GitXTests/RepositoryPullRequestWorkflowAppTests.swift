@@ -1323,6 +1323,10 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await characterizeSuccessfulCreation(existing: false, newerDraft: true)
     }
 
+    func testSupersededAdmittedCreateSettlesItsFlowAndCleansItsDraft() async throws {
+        try await characterizeSuccessfulCreation(existing: false, supersedeWithEdit: true)
+    }
+
     func testExplicitRevocationDisablesEveryWrappedPresentationCapability() throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
@@ -1516,6 +1520,118 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         XCTAssertTrue(RepositoryPullRequestRecoveryReason.message(for: CancellationError()).contains("interrupted"))
     }
 
+    func testUnsentDispositionDistinguishesSavedConflictingAndUnavailablePersistence() throws {
+        let fixture = try PullRequestAppFixture()
+        let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: fixture.preparation())
+        let content = ForgeDraftContent(title: "Never sent", body: "Exact submitted text")
+        let saved = try ForgeDraft(identity: identity, content: content, createdAt: .distantPast, lastActivityAt: .distantPast)
+        for result in [RepositoryDraftSubmissionSave.saved(saved), .conflict, .unavailable] {
+            let submission = RepositoryEditSubmissionLifetime(identity: identity, destination: .repository(fixture.repository), content: content)
+            submission.persisted(result)
+            submission.supersede()
+            XCTAssertFalse(submission.admit())
+            submission.finish()
+            XCTAssertFalse(submission.wasAdmitted)
+            XCTAssertEqual(submission.disposition, .notSent(savedAsDraft: result.snapshot != nil))
+            XCTAssertEqual(submission.recoveryContent, content)
+            XCTAssertEqual(submission.canRetire, result.snapshot != nil)
+            XCTAssertEqual(submission.needsRecovery, result.snapshot == nil)
+            XCTAssertTrue(submission.unsentNotice?.contains(result.snapshot == nil ? "has not been saved" : "saved as a draft") == true)
+            XCTAssertEqual(submission.recoveryMessage, submission.unsentNotice)
+        }
+    }
+
+    func testMutationHandleNeverCancelsAdmittedWorkAndRejectsUnadmittedSupersession() async {
+        let started = expectation(description: "The admitted task starts")
+        let gate = IgnoringCancellationGate<Bool>()
+        var cancelled = true
+        let admission = RepositoryPullRequestMutationAdmission()
+        let task = Task { started.fulfill(); _ = await gate.wait(); cancelled = Task.isCancelled }
+        admission.task = task
+        XCTAssertTrue(admission.admit())
+        await fulfillment(of: [started], timeout: 5)
+        admission.supersede()
+        admission.supersede()
+        await gate.release(true)
+        await task.value
+        XCTAssertFalse(cancelled)
+        admission.finish()
+        XCTAssertTrue(admission.wasAdmitted)
+        XCTAssertNil(admission.task)
+        XCTAssertFalse(admission.admit())
+        let pending = RepositoryPullRequestMutationAdmission()
+        let pendingTask = Task {}
+        pending.task = pendingTask
+        pending.supersede()
+        XCTAssertTrue(pendingTask.isCancelled)
+        XCTAssertFalse(pending.admit())
+        await pendingTask.value
+    }
+
+    func testTerminalDispositionDistinguishesRejectionUncertaintyAndKnownSuccess() throws {
+        let fixture = try PullRequestAppFixture()
+        let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: fixture.preparation())
+        let content = ForgeDraftContent(title: "Exact", body: "Retain text")
+        for (error, expected) in [(ForgePullRequestWorkflowError.editConflict as Error, RepositoryEditSubmissionLifetime.Disposition.rejected),
+                                  (ForgeGitHubPullRequestCompositionError.authoritative("Rejected") as Error, .rejected),
+                                  (CancellationError() as Error, .uncertain), (CompletionFixtureError.unavailable as Error, .uncertain)]
+        {
+            let submission = RepositoryEditSubmissionLifetime(identity: identity, destination: .repository(fixture.repository), content: content)
+            submission.persisted(.unavailable)
+            XCTAssertTrue(submission.admit())
+            submission.finish(error: error)
+            XCTAssertEqual(submission.disposition, expected)
+            XCTAssertTrue(submission.wasAdmitted)
+            XCTAssertEqual(submission.recoveryContent, content)
+        }
+        for saved in [false, true] {
+            let submission = RepositoryEditSubmissionLifetime(identity: identity, destination: .repository(fixture.repository), content: content)
+            try submission.persisted(saved ? .saved(ForgeDraft(identity: identity, content: content, createdAt: .distantPast, lastActivityAt: .distantPast)) : .unavailable)
+            submission.finish(error: CancellationError())
+            XCTAssertEqual(submission.disposition, .notSent(savedAsDraft: saved))
+            XCTAssertTrue(submission.recoveryMessage?.hasPrefix("This edit was not sent.") == true)
+        }
+        let submission = RepositoryEditSubmissionLifetime(identity: identity, destination: .repository(fixture.repository), content: content)
+        XCTAssertNil(submission.disposition)
+        XCTAssertTrue(submission.admit())
+        let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "Exact", bodyMarkdown: content.body, updatedAt: .distantFuture)
+        submission.finish(RepositoryPullRequestEditOutcome(snapshot: snapshot, destination: .pullRequest(fixture.repository, snapshot.number)))
+        XCTAssertEqual(submission.disposition, .succeeded)
+    }
+
+    func testConflictFreshnessRequiresNewServerDataIndependentlyOfRecoveryLifetime() throws {
+        let fixture = try PullRequestAppFixture()
+        let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: fixture.preparation())
+        var freshness = RepositoryEditConflictFreshness()
+        let rejected = Date(timeIntervalSince1970: 100)
+        freshness.requireRefresh(identity: identity, after: rejected)
+        freshness.requireRefresh(identity: identity, after: rejected.addingTimeInterval(-1))
+        XCTAssertFalse(freshness.permits(identity: identity, updatedAt: rejected))
+        XCTAssertFalse(freshness.permits(identity: identity, updatedAt: rejected.addingTimeInterval(-1)))
+        XCTAssertTrue(freshness.permits(identity: identity, updatedAt: rejected.addingTimeInterval(1)))
+        XCTAssertTrue(freshness.permits(identity: identity, updatedAt: rejected))
+    }
+
+    func testDraftQueueDrainsAfterFailureWithoutReorderingLaterWork() async throws {
+        let queue = RepositoryDraftOperationQueue()
+        let gate = IgnoringCancellationGate<Bool>()
+        let started = expectation(description: "The first draft operation starts")
+        var order: [String] = []
+        let first = queue.enqueue { order.append("first"); started.fulfill(); _ = await gate.wait() }
+        let failure: Task<Void, Error> = queue.enqueueThrowing { order.append("failure"); throw CompletionFixtureError.unavailable }
+        let last = queue.enqueue { order.append("last"); return 42 }
+        await fulfillment(of: [started], timeout: 5)
+        XCTAssertEqual(order, ["first"])
+        await gate.release(true)
+        await first.value
+        do { try await failure.value; XCTFail("The failure must propagate") }
+        catch { XCTAssertEqual(error as? CompletionFixtureError, .unavailable) }
+        let result = await last.value
+        XCTAssertEqual(result, 42)
+        XCTAssertEqual(order, ["first", "failure", "last"])
+        await queue.tail?.value
+    }
+
     func testDeferredRecoveryPreservesAdmissionOrderAcrossOutOfOrderRemoteCompletion() throws {
         let fixture = try PullRequestAppFixture()
         let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: fixture.preparation())
@@ -1634,12 +1750,86 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Final snapshot", body: "Persist before the next editor"), pauseFinalSave: true)
     }
 
+    func testRejectedReplacementDoesNotCancelAnEditAwaitingFinalPersistence() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Still submitted", body: "A rejected new action does not replace this edit"), pauseFinalSave: true, rejectReplacement: true)
+    }
+
+    func testCancelledPushConfirmationLeavesThePendingEditEligible() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Still sent", body: "Confirmation was cancelled"), pauseFinalSave: true, pushReplacement: false)
+    }
+
+    func testAcceptedOrdinaryPushSupersedesAnEditAwaitingAdmission() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Saved unsent", body: "Push began first"), pauseFinalSave: true, pushReplacement: true)
+    }
+
+    func testOwnerRevocationBeforeAdmissionDrainsPersistenceWithoutSending() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Durable", body: "Owner closed before admission"), pauseFinalSave: true, revokeBeforeAdmission: true)
+    }
+
+    func testRejectedRecoveryEnqueueCanBeRetriedByTheCurrentOwner() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Retained", body: "Enqueue must be acknowledged"), finalSaveFails: true, pauseFinalSave: true, rejectRecoveryEnqueue: true)
+    }
+
+    func testKeepEditingPreservesPendingPersistenceAndExplainsThePhase() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Saving", body: "Keep pending text"), pauseFinalSave: true, keepEditingWhilePending: true)
+    }
+
+    func testStaleConflictReplacementDoesNotCancelAnotherEditAwaitingPersistence() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Conflict first", body: "Keep the newer pending edit eligible"), remoteFails: true, remoteConflict: true, rejectStaleReplacement: true)
+    }
+
+    func testSavedConflictShowsSpecificRefreshGuidanceAndRetiresItsRecord() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Saved conflict", body: "Keep the durable draft"), remoteFails: true, remoteConflict: true)
+    }
+
+    func testPreAdmissionDraftConflictRetainsTheNotSentReasonAndNewerStoredText() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Not sent", body: "Keep both versions"), newerBeforeSubmission: true, pauseFinalSave: true)
+    }
+
+    func testKeepEditingDuringRecoveryWriteRecordsTheCompletedSave() async throws {
+        try await exerciseRecovery(.keepEditingDuringWrite)
+    }
+
+    func testKeepEditingAtWindowClosePreservesRecoveryLoadingAndThenSaves() async throws {
+        try await exerciseRecovery(.windowKeepEditingDuringLoad)
+    }
+
+    func testKeepEditingAtWindowClosePreservesReplacementConsentAndThenSaves() async throws {
+        try await exerciseRecovery(.windowKeepEditingDuringConsent)
+    }
+
+    func testKeepEditingAtWindowClosePreservesAnAdmittedRecoveryWrite() async throws {
+        try await exerciseRecovery(.windowKeepEditingDuringWrite)
+    }
+
+    func testClosingConflictRecoveryDoesNotRemoveTheFreshSnapshotRequirement() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Conflict", body: "Keep this text"), finalSaveFails: true, remoteFails: true, recoveryAction: .closeConflictThenReopen, remoteConflict: true)
+    }
+
+    #if DEBUG
+        func testAcceptedCreateWaitingForSheetSupersedesPendingEditBeforeAdmission() async throws {
+            try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Saved before replacement", body: "Do not publish this replaced edit"), pauseFinalSave: true, queuedCreateReplacement: true)
+        }
+
+        func testReadyCreateSheetCanAppearWhileAnotherEditorWaitsForRemoteCompletion() async throws {
+            try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Waiting", body: "Unrelated sheets remain available"), reopenWhileAdmitted: true, unrelatedCreate: true)
+        }
+    #endif
+
     func testCancelledUnsavedFinalPersistenceRetainsRecoveryBeforeReopeningEdit() async throws {
         try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Cancelled exact text", body: "Keep this unsaved content"), finalSaveFails: true, pauseFinalSave: true)
     }
 
     func testReopeningAdmittedEditWaitsForSuccessAndLoadsTheReturnedSnapshot() async throws {
         try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Remote current title", body: "Remote current body"), reopenWhileAdmitted: true)
+    }
+
+    func testWaitingEditRequiresFreshSnapshotAfterAdmittedConflictWithSavedText() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Saved conflicting title", body: "Keep this durable draft while requiring refreshed server data"), remoteFails: true, remoteConflict: true, reopenWhileAdmitted: true)
+    }
+
+    func testRepeatedAcceptedReplacementDoesNotCancelAnAdmittedEdit() async throws {
+        try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Admitted", body: "Finish exactly once"), reopenWhileAdmitted: true, repeatReplacement: true)
     }
 
     func testReopeningFailedUnsavedAdmittedEditPresentsRecoveryFirst() async throws {
@@ -1658,17 +1848,22 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await exerciseRecovery(.revoke)
     }
 
-    private enum RecoveryAction { case inspect, copy, save, insert, conflict, unavailable, close, revoke, duplicate, closeDuringLoad, windowClose }
+    private enum RecoveryAction { case inspect, copy, save, insert, conflict, unavailable, close, revoke, duplicate, closeDuringLoad, windowClose, keepEditingDuringWrite, windowKeepEditingDuringWrite, closeConflictThenReopen, windowKeepEditingDuringLoad, windowKeepEditingDuringConsent }
 
     private func exerciseRecovery(_ action: RecoveryAction) async throws {
         try await exerciseEdit(ownerState: .current, finalContent: ForgeDraftContent(title: "Unsaved title", body: "Unsaved body"), finalSaveFails: true, remoteFails: true, recoveryAction: action)
     }
 
-    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false, newerBeforeSubmission: Bool = false, remoteFails: Bool = false, recoveryAction: RecoveryAction = .inspect, pauseFinalSave: Bool = false, remoteConflict: Bool = false, reopenWhileAdmitted: Bool = false) async throws {
+    private func exerciseEdit(ownerState: OwnerState, finalContent: ForgeDraftContent? = nil, finalSaveFails: Bool = false, newerAfterAdmission: Bool = false, newerBeforeSubmission: Bool = false, remoteFails: Bool = false, recoveryAction: RecoveryAction = .inspect, pauseFinalSave: Bool = false, remoteConflict: Bool = false, reopenWhileAdmitted: Bool = false, repeatReplacement: Bool = false, rejectReplacement: Bool = false, unrelatedCreate: Bool = false, pushReplacement: Bool? = nil, revokeBeforeAdmission: Bool = false, rejectRecoveryEnqueue: Bool = false, keepEditingWhilePending: Bool = false, queuedCreateReplacement: Bool = false, rejectStaleReplacement: Bool = false) async throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
-        var owner: PBGitWindowController? = PBGitWindowController(window: window)
+        // Initialize the Swift superclass layout before allocating through its
+        // Objective-C compatibility declaration, matching WindowControllerTests.
+        let nativeClass: AnyClass = ForgeWindowFixtureTools.windowControllerClass()
+        XCTAssertEqual(ObjectIdentifier(nativeClass), ObjectIdentifier(PBGitWindowController.self))
+        var owner: PBGitWindowController? = PBRecoveryEnqueueWindow(window: window)
+        var externalOwnerIsCurrent = true
         weak let weakOwner = owner
         let started = XCTestExpectation(description: "The edit reaches its captured service")
         let service = try CompletionMutationService(preparation: fixture.preparation(), started: started)
@@ -1684,7 +1879,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         try await drafts.save(identity: identity, content: initialContent, at: snapshot.updatedAt)
         var openings: [ForgeDestination] = []
         var controller: RepositoryPullRequestUIController? = try RepositoryPullRequestUIController(repository: local.repository, windowController: XCTUnwrap(owner),
-                                                                                                   remoteActions: RecordingRepositoryRemoteActions(events: []), service: service, drafts: drafts,
+                                                                                                   ownerIsCurrent: { externalOwnerIsCurrent }, remoteActions: RecordingRepositoryRemoteActions(events: pushReplacement == true ? [.began(createPullRequestSelected: false)] : [.cancelled]), service: service, drafts: drafts,
                                                                                                    destinationOpening: { openings.append($0); return true }, bindingResolving: { nil }, postPushBrowserFallback: { _ in XCTFail("An edit never opens push fallback") })
         weak let weakController = controller
         var saveWait: Task<Void, Never>?
@@ -1735,24 +1930,117 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         if let finalSaveStarted {
             await fulfillment(of: [finalSaveStarted], timeout: 5)
             let savingMutation = try XCTUnwrap(controller?.mutationTask)
+            #if DEBUG
+                if queuedCreateReplacement {
+                    await waitForNoSheet(on: window)
+                    let blockingSheet = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+                    blockingSheet.isReleasedWhenClosed = false
+                    window.beginSheet(blockingSheet, completionHandler: nil)
+                    defer {
+                        if blockingSheet.sheetParent != nil {
+                            window.endSheet(blockingSheet)
+                        }
+                        blockingSheet.close()
+                    }
+                    let preparation = try fixture.preparation()
+                    try controller?.beginUITestCreateJourney(preparation: preparation, initialForm: XCTUnwrap(preparation.initialForms().forms.first), branch: nil, requiresPush: false)
+                    XCTAssertTrue(window.attachedSheet === blockingSheet, "An accepted create must wait for the occupied sheet slot")
+                    await service.releaseEdit(outcome)
+                    await persistenceGate.release(true)
+                    await savingMutation.value
+                    let calls = await service.editCount
+                    XCTAssertEqual(calls, 0, "The accepted replacement must supersede before its sheet can appear")
+                    XCTAssertTrue(controller?.activity?.message.contains("saved as a draft") == true)
+                    let stored = try await drafts.load(identity: identity)
+                    XCTAssertEqual(stored?.content, finalContent)
+                    window.endSheet(blockingSheet)
+                    let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil && window.attachedSheet !== blockingSheet }, object: nil)
+                    await fulfillment(of: [ready], timeout: 5)
+                    XCTAssertEqual(try (find("GitX.PullRequest.Submit", in: XCTUnwrap(window.attachedSheet?.contentView)) as? NSButton)?.title, "Create Pull Request")
+                    return
+                }
+            #endif
+            if revokeBeforeAdmission {
+                controller?.invalidateOwner()
+                await persistenceGate.release(true)
+                await savingMutation.value
+                let calls = await service.editCount
+                XCTAssertEqual(calls, 0)
+                let stored = try await drafts.load(identity: identity)
+                XCTAssertEqual(stored?.content, finalContent)
+                XCTAssertNil(window.attachedSheet)
+                return
+            }
+            if rejectReplacement || pushReplacement == false || keepEditingWhilePending {
+                if rejectReplacement {
+                    controller?.newPullRequest()
+                }
+                if pushReplacement == false {
+                    controller?.performPush(branch: local.repository.headRef()?.ref(), remote: nil, requiresConfirmation: true)
+                }
+                if keepEditingWhilePending {
+                    await waitForNoSheet(on: window)
+                    let close = { controller?.invalidateOwner(); owner?.close() }
+                    if controller?.confirmClosingIfNeeded(close) != true {
+                        close()
+                    }
+                    let warning = try await attachedSheet(of: window, identifier: "GitX.PullRequest.Recovery.WindowCloseConfirmation")
+                    let messages = try strings(in: XCTUnwrap(warning.contentView)).joined(separator: " ")
+                    XCTAssertTrue(messages.contains("still being saved or sent"))
+                    XCTAssertFalse(messages.contains("copy or save"))
+                    try attachScreenshot(of: warning, named: "Close warning while final Pull Request persistence is pending")
+                    try XCTUnwrap(self.button(titled: "Keep Editing", in: XCTUnwrap(warning.contentView))).performClick(nil)
+                    await waitForNoSheet(on: window)
+                    XCTAssertTrue(window.isVisible)
+                }
+                await persistenceGate.release(true)
+                await fulfillment(of: [started], timeout: 5)
+                await service.releaseEdit(outcome)
+                await savingMutation.value
+                let calls = await service.editCount
+                XCTAssertEqual(calls, 1)
+                return
+            }
+            if pushReplacement == true {
+                controller?.performPush(branch: local.repository.headRef()?.ref(), remote: nil, requiresConfirmation: true)
+                await service.releaseEdit(outcome)
+                await persistenceGate.release(true)
+                await savingMutation.value
+                let calls = await service.editCount
+                XCTAssertEqual(calls, 0, "The push's accepted execution must supersede the edit before admission")
+                let stored = try await drafts.load(identity: identity)
+                XCTAssertEqual(stored?.content, finalContent)
+                XCTAssertTrue(controller?.activity?.message.contains("saved as a draft") == true)
+                return
+            }
             controller?.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: destination)
             await waitForNoSheet(on: window)
             XCTAssertNil(window.attachedSheet, "Reopening must wait for final persistence before loading and presenting restored text")
             let beforeRelease = await drafts.savedContents
-            XCTAssertEqual(beforeRelease.count, 2, "A later autosave must wait behind admitted final persistence")
+            XCTAssertEqual(beforeRelease.count, newerBeforeSubmission ? 3 : 2, "A later autosave must wait behind admitted final persistence")
+            if rejectRecoveryEnqueue {
+                (owner as? PBRecoveryEnqueueWindow)?.onNextWindowRead = { externalOwnerIsCurrent = false }
+            }
             await persistenceGate.release(true)
+            if rejectRecoveryEnqueue {
+                await savingMutation.value
+                XCTAssertFalse(externalOwnerIsCurrent)
+                XCTAssertNil(window.attachedSheet)
+                externalOwnerIsCurrent = true
+                controller?.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: destination)
+            }
             let replacement = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil && window.attachedSheet !== sheet }, object: nil)
             await fulfillment(of: [replacement], timeout: 5)
             let reopened = try XCTUnwrap(window.attachedSheet?.contentView)
             XCTAssertEqual((find("GitX.PullRequest.Title", in: reopened) as? NSTextField)?.stringValue, finalContent?.title)
-            if finalSaveFails {
+            if finalSaveFails || newerBeforeSubmission {
                 await savingMutation.value
                 XCTAssertNotNil(find("GitX.PullRequest.Recovery.Copy", in: reopened))
                 XCTAssertEqual((find("GitX.PullRequest.Recovery.Notice", in: reopened) as? NSTextField)?.stringValue,
                                "This edit was not sent because another action replaced it before submission. This recovered text has not been saved as a draft.")
                 try attachScreenshot(of: XCTUnwrap(window.attachedSheet), named: "Unsent edit recovered before remote admission")
                 let stored = try await drafts.load(identity: identity)
-                XCTAssertEqual(stored?.content, initialContent)
+                XCTAssertEqual(stored?.content, newerBeforeSubmission ? newerContent : initialContent)
                 let calls = await service.editCount
                 XCTAssertEqual(calls, 0)
                 return
@@ -1765,6 +2053,9 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             }
             await fulfillment(of: [ordered], timeout: 5)
             await savingMutation.value
+            XCTAssertTrue(controller?.activity?.message.contains("saved as a draft") == true)
+            let retained = try Mirror(reflecting: XCTUnwrap(controller)).children.first { $0.label == "editSubmissions" }?.value as? [RepositoryEditSubmissionLifetime]
+            XCTAssertEqual(retained?.count, 0, "Durable unsent submissions must retire after settlement")
             let saved = await drafts.savedContents
             XCTAssertEqual(Array(saved.suffix(2)), try [XCTUnwrap(finalContent), XCTUnwrap(finalContent)])
             let calls = await service.editCount
@@ -1780,14 +2071,44 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         if reopenWhileAdmitted {
             await waitForNoSheet(on: window)
             controller?.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: destination)
+            if repeatReplacement {
+                controller?.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: destination)
+            }
+            #if DEBUG
+                if unrelatedCreate {
+                    let preparation = try fixture.preparation()
+                    try controller?.beginUITestCreateJourney(preparation: preparation, initialForm: XCTUnwrap(preparation.initialForms().forms.first), branch: nil, requiresPush: false)
+                    let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
+                    await fulfillment(of: [ready], timeout: 5)
+                    let create = try XCTUnwrap(window.attachedSheet?.contentView)
+                    XCTAssertEqual((find("GitX.PullRequest.Submit", in: create) as? NSButton)?.title, "Create Pull Request")
+                    await service.releaseEdit(outcome)
+                    await admitted.value
+                    let cancelled = await service.editWasCancelled
+                    XCTAssertFalse(cancelled)
+                    return
+                }
+            #endif
             let premature = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
             premature.isInverted = true
             await fulfillment(of: [premature], timeout: 0.2)
             await service.releaseEdit(outcome)
             await admitted.value
+            let cancelled = await service.editWasCancelled
+            XCTAssertFalse(cancelled, "Accepted remote work must not be cancelled by repeated presentation replacement")
             let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
             await fulfillment(of: [shown], timeout: 5)
             let reopened = try XCTUnwrap(window.attachedSheet?.contentView)
+            if remoteConflict, !finalSaveFails {
+                XCTAssertTrue(strings(in: reopened).contains("Refresh the Pull Request"))
+                XCTAssertNil(find("GitX.PullRequest.Submit", in: reopened))
+                let stored = try await drafts.load(identity: identity)
+                XCTAssertEqual(stored?.content, finalContent)
+                let calls = await service.editCount
+                XCTAssertEqual(calls, 1)
+                XCTAssertTrue(openings.isEmpty)
+                return
+            }
             XCTAssertEqual((find("GitX.PullRequest.Title", in: reopened) as? NSTextField)?.stringValue, finalContent?.title)
             XCTAssertNotNil(find(remoteFails ? "GitX.PullRequest.Recovery.Copy" : "GitX.PullRequest.Submit", in: reopened))
             XCTAssertTrue(openings.isEmpty, "Superseded completion must not open a destination over the new editor")
@@ -1816,11 +2137,67 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             XCTAssertEqual(stored?.content, initialContent)
         } else if newerAfterAdmission || newerBeforeSubmission {
             XCTAssertEqual(stored?.content, newerContent)
+        } else if remoteFails {
+            XCTAssertEqual(stored?.content, finalContent ?? initialContent)
         } else {
             XCTAssertNil(stored)
         }
         XCTAssertEqual(openings, ownerState == .current && !remoteFails ? [destination] : [])
-        if remoteFails, ownerState == .current {
+        if remoteFails, !finalSaveFails, ownerState == .current {
+            let message = try XCTUnwrap(window.attachedSheet?.contentView)
+            XCTAssertTrue(strings(in: message).contains("Pull Request Changed"))
+            XCTAssertTrue(strings(in: message).joined(separator: " ").contains("Refresh the Pull Request"))
+            let retained = try Mirror(reflecting: XCTUnwrap(controller)).children.first { $0.label == "editSubmissions" }?.value as? [RepositoryEditSubmissionLifetime]
+            XCTAssertEqual(retained?.count, 0)
+            try attachScreenshot(of: XCTUnwrap(window.attachedSheet), named: "Saved edit conflict requires refreshing server data")
+            try XCTUnwrap(self.button(titled: "OK", in: message)).performClick(nil)
+            await waitForNoSheet(on: window)
+            if rejectStaleReplacement {
+                await service.failEditAfterAdmission(false)
+                let pendingSnapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(43), title: "Still eligible", bodyMarkdown: "This validated edit must be sent", updatedAt: snapshot.updatedAt)
+                let pendingDestination = ForgeDestination.pullRequest(fixture.repository, pendingSnapshot.number)
+                let pendingIdentity = try RepositoryPullRequestDraftPolicy.editIdentity(accountID: fixture.accountID, snapshot: pendingSnapshot)
+                let priorSaves = await drafts.savedContents.count
+                controller?.editPullRequest(accountID: fixture.accountID, snapshot: pendingSnapshot, destination: pendingDestination)
+                let presented = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
+                await fulfillment(of: [presented], timeout: 5)
+                let pendingEditor = try XCTUnwrap(window.attachedSheet?.contentView)
+                let autosaved = expectation(description: "The other Pull Request editor finishes its initial autosaves")
+                saveWait = Task {
+                    await drafts.waitForSaves(priorSaves + 1)
+                    guard !Task.isCancelled else { return }
+                    autosaved.fulfill()
+                }
+                await fulfillment(of: [autosaved], timeout: 5)
+                let persisting = expectation(description: "The other Pull Request final save is held")
+                await drafts.holdNextConditionalSave(persistenceGate, started: persisting)
+                try XCTUnwrap(find("GitX.PullRequest.Submit", in: pendingEditor) as? NSButton).performClick(nil)
+                await fulfillment(of: [persisting], timeout: 5)
+                let pendingTask = try XCTUnwrap(controller?.mutationTask)
+                await waitForNoSheet(on: window)
+                controller?.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: destination)
+                let rejected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
+                await fulfillment(of: [rejected], timeout: 5)
+                let rejection = try XCTUnwrap(window.attachedSheet?.contentView)
+                XCTAssertTrue(strings(in: rejection).contains("Refresh the Pull Request"))
+                XCTAssertNil(find("GitX.PullRequest.Submit", in: rejection))
+                try XCTUnwrap(self.button(titled: "OK", in: rejection)).performClick(nil)
+                await waitForNoSheet(on: window)
+                let published = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: pendingSnapshot.number, title: pendingSnapshot.title, bodyMarkdown: pendingSnapshot.bodyMarkdown, updatedAt: snapshot.updatedAt.addingTimeInterval(1))
+                await service.releaseEdit(RepositoryPullRequestEditOutcome(snapshot: published, destination: pendingDestination))
+                await persistenceGate.release(true)
+                await pendingTask.value
+                let calls = await service.editCount
+                XCTAssertEqual(calls, 2, "Rejecting a known stale snapshot must not supersede another pending edit")
+                let pendingDraft = try await drafts.load(identity: pendingIdentity)
+                XCTAssertNil(pendingDraft, "The eligible edit should publish and conditionally retire its own draft")
+                XCTAssertEqual(openings, [pendingDestination])
+                let submitted = await service.submittedEdit
+                XCTAssertEqual(submitted?.title, pendingSnapshot.title)
+                XCTAssertEqual(submitted?.bodyMarkdown, pendingSnapshot.bodyMarkdown)
+                return
+            }
+        } else if remoteFails, ownerState == .current {
             let recovery = try XCTUnwrap(window.attachedSheet?.contentView)
             XCTAssertNotNil(find("GitX.PullRequest.Recovery.Copy", in: recovery))
             XCTAssertNotNil(find("GitX.PullRequest.Recovery.SaveDraft", in: recovery))
@@ -1875,7 +2252,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             sheet.onCopyRecovery = nil
             try XCTUnwrap(find("GitX.PullRequest.Recovery.Copy", in: view) as? NSButton).performClick(nil)
             XCTAssertEqual(pasteboard.string(forType: .string), (expected.title ?? "") + "\n\n" + expected.body)
-        case .close:
+        case .close, .closeConflictThenReopen:
             let close = try XCTUnwrap(find("GitX.PullRequest.Recovery.Close", in: view) as? NSButton)
             close.performClick(nil)
             let warning = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.CloseConfirmation")
@@ -1887,6 +2264,19 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             let repeated = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.CloseConfirmation")
             try XCTUnwrap(button(titled: "Close Without Saving", in: XCTUnwrap(repeated.contentView))).performClick(nil)
             await waitForNoSheet(on: window)
+            if action == .closeConflictThenReopen {
+                reopenEditor()
+                let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
+                await fulfillment(of: [shown], timeout: 5)
+                let message = try XCTUnwrap(window.attachedSheet?.contentView)
+                XCTAssertNil(find("GitX.PullRequest.Submit", in: message))
+                func text(in view: NSView) -> [String] {
+                    (view as? NSTextField).map { [$0.stringValue] } ?? view.subviews.flatMap { text(in: $0) }
+                }
+                XCTAssertTrue(text(in: message).contains("Refresh the Pull Request"))
+                try XCTUnwrap(button(titled: "OK", in: message)).performClick(nil)
+                await waitForNoSheet(on: window)
+            }
         case .windowClose:
             closeOwner()
             let warning = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.WindowCloseConfirmation")
@@ -1901,13 +2291,30 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !window.isVisible }, object: nil)
             await fulfillment(of: [closed], timeout: 5)
             return
-        case .closeDuringLoad:
+        case .closeDuringLoad, .windowKeepEditingDuringLoad:
             let gate = IgnoringCancellationGate<Bool>()
             let started = expectation(description: "Recovery snapshot load starts")
             await drafts.holdNextLoad(gate, started: started)
             defer { Task { await gate.release(true) } }
             try XCTUnwrap(find("GitX.PullRequest.Recovery.SaveDraft", in: view) as? NSButton).performClick(nil)
             await fulfillment(of: [started], timeout: 5)
+            if action == .windowKeepEditingDuringLoad {
+                closeOwner()
+                let warning = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.WindowCloseConfirmation")
+                try XCTUnwrap(button(titled: "Keep Editing", in: XCTUnwrap(warning.contentView))).performClick(nil)
+                await waitForNoSheet(on: panel)
+                await drafts.failSaves(false)
+                await gate.release(true)
+                let consent = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.ReplaceConfirmation")
+                try XCTUnwrap(button(titled: "Replace Draft", in: XCTUnwrap(consent.contentView))).performClick(nil)
+                let saved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    (self.find("GitX.PullRequest.Recovery.Notice", in: view) as? NSTextField)?.stringValue.hasPrefix("Saved as a draft") == true
+                }, object: nil)
+                await fulfillment(of: [saved], timeout: 5)
+                let stored = try await drafts.load(identity: identity)
+                XCTAssertEqual(stored?.content, expected)
+                return
+            }
             try XCTUnwrap(find("GitX.PullRequest.Recovery.Close", in: view) as? NSButton).performClick(nil)
             let warning = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.CloseConfirmation")
             try XCTUnwrap(button(titled: "Close Without Saving", in: XCTUnwrap(warning.contentView))).performClick(nil)
@@ -1924,12 +2331,18 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             Task { await drafts.waitForSaves(3); saved.fulfill() }
             await fulfillment(of: [saved], timeout: 5)
             return
-        case .save, .insert, .conflict, .unavailable, .revoke, .duplicate:
+        case .save, .insert, .conflict, .unavailable, .revoke, .duplicate, .keepEditingDuringWrite, .windowKeepEditingDuringWrite, .windowKeepEditingDuringConsent:
             await drafts.failSaves(action == .unavailable)
             if action == .insert {
                 try await drafts.delete(identity: identity)
             }
             let conditionalWritesBefore = await drafts.conditionalSaves
+            let writeGate = IgnoringCancellationGate<Bool>()
+            let writeStarted = action == .keepEditingDuringWrite || action == .windowKeepEditingDuringWrite ? expectation(description: "Recovery conditional write is admitted") : nil
+            defer { Task { await writeGate.release(true) } }
+            if let writeStarted {
+                await drafts.holdNextConditionalSave(writeGate, started: writeStarted)
+            }
             let savedContentsBefore = await drafts.savedContents.count
             let snapshotGate = IgnoringCancellationGate<Bool>()
             defer { Task { await snapshotGate.release(true) } }
@@ -1965,6 +2378,14 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             }
             if action != .insert {
                 let confirmation = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.ReplaceConfirmation")
+                if action == .windowKeepEditingDuringConsent {
+                    closeOwner()
+                    let warning = try await attachedSheet(of: confirmation, identifier: "GitX.PullRequest.Recovery.WindowCloseConfirmation")
+                    try attachScreenshot(of: warning, named: "Keep Editing preserves pending recovery replacement consent")
+                    try XCTUnwrap(button(titled: "Keep Editing", in: XCTUnwrap(warning.contentView))).performClick(nil)
+                    await waitForNoSheet(on: confirmation)
+                    XCTAssertTrue(panel.attachedSheet === confirmation)
+                }
                 if action == .duplicate {
                     try attachScreenshot(of: confirmation, named: "Replacement confirmation while recovery save is reserved")
                     XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(saveButton.action), to: saveButton.target, from: saveButton))
@@ -1983,6 +2404,20 @@ final class RepositoryMutationCompletionTests: XCTestCase {
                     try await drafts.save(identity: identity, content: ForgeDraftContent(title: "Concurrent title", body: "Concurrent body"), at: .distantFuture)
                 }
                 try XCTUnwrap(button(titled: "Replace Draft", in: XCTUnwrap(confirmation.contentView))).performClick(nil)
+            }
+            if let writeStarted {
+                await fulfillment(of: [writeStarted], timeout: 5)
+                if action == .windowKeepEditingDuringWrite {
+                    closeOwner()
+                } else {
+                    try XCTUnwrap(find("GitX.PullRequest.Recovery.Close", in: view) as? NSButton).performClick(nil)
+                }
+                let identifier = action == .windowKeepEditingDuringWrite ? "GitX.PullRequest.Recovery.WindowCloseConfirmation" : "GitX.PullRequest.Recovery.CloseConfirmation"
+                let warning = try await attachedSheet(of: panel, identifier: identifier)
+                try attachScreenshot(of: warning, named: "Keep Editing while a recovery write is admitted")
+                try XCTUnwrap(button(titled: "Keep Editing", in: XCTUnwrap(warning.contentView))).performClick(nil)
+                await waitForNoSheet(on: panel)
+                await writeGate.release(true)
             }
             if action == .conflict || action == .unavailable {
                 let failure = try await attachedSheet(of: panel, identifier: "GitX.PullRequest.Recovery.SaveError")
@@ -2046,7 +2481,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         return view.subviews.lazy.compactMap { [self] in button(titled: title, in: $0) }.first
     }
 
-    private func characterizeSuccessfulCreation(existing: Bool, ownerState: OwnerState = .current, newerDraft: Bool = false, cancelAfterAdmission: Bool = false, revokeDuringOutcome: Bool = false) async throws {
+    private func characterizeSuccessfulCreation(existing: Bool, ownerState: OwnerState = .current, newerDraft: Bool = false, cancelAfterAdmission: Bool = false, revokeDuringOutcome: Bool = false, supersedeWithEdit: Bool = false) async throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 450), styleMask: [.titled], backing: .buffered, defer: false)
@@ -2096,6 +2531,13 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         let pending = try await drafts.load(identity: identity)
         XCTAssertEqual(pending?.content, ForgeDraftContent(title: form.title, body: form.bodyMarkdown))
         let admittedTask = try XCTUnwrap(controller?.mutationTask)
+        if supersedeWithEdit {
+            await waitForNoSheet(on: window)
+            let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(24), title: "Another edit", bodyMarkdown: "Independent editor", updatedAt: Date(timeIntervalSince1970: 100))
+            controller?.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: .pullRequest(fixture.repository, snapshot.number))
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
+            await fulfillment(of: [ready], timeout: 5)
+        }
         if cancelAfterAdmission {
             admittedTask.cancel()
         }
@@ -2121,11 +2563,19 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         } else {
             XCTAssertNil(saved)
         }
-        XCTAssertEqual(outcomes, ownerState == .current && !cancelAfterAdmission ? [outcome] : [])
-        XCTAssertEqual(openings, ownerState == .current && !cancelAfterAdmission && !revokeDuringOutcome ? [destination] : [])
-        XCTAssertEqual(destinationCallbacks, ownerState == .current && !cancelAfterAdmission && !revokeDuringOutcome ? 1 : 0)
+        XCTAssertEqual(outcomes, ownerState == .current && !cancelAfterAdmission && !supersedeWithEdit ? [outcome] : [])
+        XCTAssertEqual(openings, ownerState == .current && !cancelAfterAdmission && !revokeDuringOutcome && !supersedeWithEdit ? [destination] : [])
+        XCTAssertEqual(destinationCallbacks, ownerState == .current && !cancelAfterAdmission && !revokeDuringOutcome && !supersedeWithEdit ? 1 : 0)
         let calls = await service.createCount
         XCTAssertEqual(calls, 1)
+        if supersedeWithEdit {
+            let cancel = try XCTUnwrap(find("GitX.PullRequest.Cancel", in: XCTUnwrap(window.attachedSheet?.contentView)) as? NSButton)
+            cancel.performClick(nil)
+            await waitForNoSheet(on: window)
+            #if DEBUG
+                XCTAssertNoThrow(try controller?.beginUITestCreateJourney(preparation: preparation, initialForm: form, branch: nil, requiresPush: false), "A settled superseded create must release its flow for a later request")
+            #endif
+        }
     }
 
     private func find(_ identifier: String, in view: NSView) -> NSView? {
@@ -2134,10 +2584,41 @@ final class RepositoryMutationCompletionTests: XCTestCase {
         }
         return view.subviews.lazy.compactMap { self.find(identifier, in: $0) }.first
     }
+
+    private func strings(in view: NSView) -> [String] {
+        if let text = view as? NSTextField {
+            return [text.stringValue]
+        }
+        if let text = view as? NSTextView {
+            return [text.string]
+        }
+        return view.subviews.flatMap { strings(in: $0) }
+    }
 }
 
 @MainActor
 final class RepositoryMutationPresentationTests: XCTestCase {
+    func testStaleRetrySettlesOnceAndRevokedRetryDoesNotPresentRecovery() {
+        let authority = RepositoryPullRequestPresentationAuthority(validation: { true })
+        let identity = authority.beginMutation()
+        var recoveries = 0
+        var submissions = 0
+        let stale = authority.retry(for: identity, onStale: { recoveries += 1 }) { submissions += 1 }
+        _ = authority.beginMutation()
+        stale(); stale()
+        XCTAssertEqual(recoveries, 1)
+        XCTAssertEqual(submissions, 0)
+        let current = authority.beginMutation()
+        let retry = authority.retry(for: current, onStale: { recoveries += 1 }) { submissions += 1 }
+        retry(); retry()
+        XCTAssertEqual(submissions, 1)
+        let revoked = authority.retry(for: identity, onStale: { recoveries += 1 }) { submissions += 1 }
+        authority.revoke()
+        revoked()
+        XCTAssertEqual(recoveries, 1)
+        XCTAssertEqual(submissions, 1)
+    }
+
     func testDeferredRetriesRequireTheCurrentMutationAndExternalOwner() {
         var externalOwnerIsCurrent = true
         let authority = RepositoryPullRequestPresentationAuthority(validation: { externalOwnerIsCurrent })
@@ -2325,6 +2806,7 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
     private(set) var createCount = 0
     private(set) var editCount = 0
     private(set) var submittedEdit: ForgePullRequestEdit?
+    private(set) var editWasCancelled = false
     let editGate = IgnoringCancellationGate<RepositoryPullRequestEditOutcome>()
     private var rejectsMutation = false
     private var editFailsAfterAdmission = false
@@ -2373,6 +2855,7 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
             throw CompletionFixtureError.unavailable
         }
         let outcome = await editGate.wait()
+        editWasCancelled = Task.isCancelled
         if editConflictsAfterAdmission {
             throw ForgePullRequestWorkflowError.editConflict
         }

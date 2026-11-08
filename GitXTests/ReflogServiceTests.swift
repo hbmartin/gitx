@@ -1,8 +1,140 @@
 @testable import GitX
 import GitXCore
+import Synchronization
 import XCTest
 
 final class ReflogServiceTests: XCTestCase {
+    func testEveryResetModePreservesDetachedAndLinkedWorktreeIdentities() throws {
+        for linked in [false, true] {
+            for mode in ReflogResetMode.allCases {
+                let fixture = try ReflogGitFixture()
+                defer { fixture.remove() }
+                let target = try fixture.git(["rev-parse", "HEAD"])
+                let checkout = linked ? fixture.url.appendingPathComponent("linked") : fixture.url
+                if linked {
+                    try fixture.git(["worktree", "add", "-b", "linked-topic", checkout.path])
+                } else {
+                    try fixture.git(["checkout", "--detach", target])
+                }
+                let prefix = ["-C", checkout.path]
+                try fixture.git(prefix + ["commit", "--allow-empty", "-m", "checkout-only"])
+                let previous = try fixture.git(prefix + ["rev-parse", "HEAD"])
+                let repository = try GitXTestGitRepository(url: checkout)
+                let service = try RepositoryReflogService(repository: repository)
+                let preview = try service.preview(target: target, mode: mode)
+                XCTAssertEqual(preview.branch, linked ? "linked-topic" : "HEAD")
+                let backup = try service.reset(confirmed: preview, discardConfirmed: mode == .hard)
+                XCTAssertEqual(try fixture.git(prefix + ["rev-parse", "HEAD"]), target)
+                XCTAssertEqual(try fixture.git(prefix + ["rev-parse", backup]), previous)
+                XCTAssertEqual(try fixture.git(prefix + ["rev-parse", "--abbrev-ref", "HEAD"]), preview.branch)
+                XCTAssertEqual(try fixture.git(["rev-parse", "refs/heads/main"]), target)
+            }
+        }
+    }
+
+    @MainActor
+    func testResetReportsTheActualInterveningHeadWithoutAutomaticRollback() async throws {
+        for mode in ReflogResetMode.allCases {
+            let fixture = try ReflogGitFixture()
+            defer { fixture.remove() }
+            let target = try fixture.git(["rev-parse", "HEAD"])
+            try fixture.git(["commit", "--allow-empty", "-m", "validated"])
+            let previous = try fixture.git(["rev-parse", "HEAD"])
+            let repository = try GitXTestGitRepository(url: fixture.url)
+            let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture)
+            defer { try? gate.open() }
+            let service = try RepositoryReflogService(repository: repository, context: gate.context)
+            let preview = try service.preview(target: target, mode: mode)
+            let reset = Task.detached { try service.reset(confirmed: preview, discardConfirmed: mode == .hard) }
+            let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: gate.started.path) }, object: nil)
+            await fulfillment(of: [started], timeout: 10)
+            try fixture.git(["commit", "--allow-empty", "-m", "external writer"])
+            let intervening = try fixture.git(["rev-parse", "HEAD"])
+            try gate.open()
+            do { _ = try await reset.value; XCTFail("The changed predecessor must not be reported as a safe reset") }
+            catch {
+                guard case let RepositoryReflogError.resetFailed(backup, reason) = error else { return XCTFail("Expected a retained-backup failure: \(error)") }
+                XCTAssertTrue(reason.contains(previous))
+                XCTAssertTrue(reason.contains(intervening))
+                XCTAssertEqual(try fixture.git(["rev-parse", backup]), previous)
+            }
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), target)
+            XCTAssertEqual(try fixture.git(["rev-parse", "ORIG_HEAD"]), intervening)
+        }
+    }
+
+    func testPreviewReadsContentsOnlyForHardResetOverwrites() throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        try Data(repeating: 0x61, count: 8 * 1024 * 1024).write(to: fixture.url.appendingPathComponent("unchanged.bin"))
+        try fixture.git(["add", "unchanged.bin"])
+        try fixture.git(["commit", "-m", "large unchanged file"])
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let changed = "Unsaved overwrite evidence\n"
+        try fixture.write("tracked.txt", changed)
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        for mode in ReflogResetMode.allCases {
+            let reads = Mutex<[String: Int]>([:])
+            let service = try RepositoryReflogService(repository: repository, contentRead: { path, count in reads.withLock { $0[path, default: 0] += count } })
+            _ = try service.preview(target: head, mode: mode)
+            XCTAssertEqual(reads.withLock { $0 }, mode == .hard ? ["tracked.txt": changed.utf8.count] : [:])
+        }
+    }
+
+    @MainActor
+    func testResetReportsASameCommitCheckoutRaceAndRetainsTheValidatedBackup() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let previous = try fixture.git(["rev-parse", "HEAD"])
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture)
+        defer { try? gate.open() }
+        let service = try RepositoryReflogService(repository: repository, context: gate.context)
+        let preview = try service.preview(target: previous, mode: .soft)
+        let reset = Task.detached { try service.reset(confirmed: preview, discardConfirmed: false) }
+        let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: gate.started.path) }, object: nil)
+        await fulfillment(of: [started], timeout: 10)
+        try fixture.git(["checkout", "-b", "intervening"])
+        try gate.open()
+        do { _ = try await reset.value; XCTFail("A changed checkout must not certify the original preview") }
+        catch {
+            guard case let RepositoryReflogError.resetFailed(backup, reason) = error else { return XCTFail("Expected the retained-backup diagnostic") }
+            XCTAssertTrue(reason.contains("main")); XCTAssertTrue(reason.contains("intervening"))
+            XCTAssertEqual(try fixture.git(["rev-parse", backup]), previous)
+        }
+        XCTAssertEqual(try fixture.git(["rev-parse", "--abbrev-ref", "HEAD"]), "intervening")
+    }
+
+    func testResetOutcomePolicyHandlesMissingContradictoryAndChangedEvidence() {
+        let expected = String(repeating: "a", count: 40)
+        let other = String(repeating: "b", count: 40)
+        XCTAssertNil(RepositoryResetOutcomePolicy.problem(expected: expected, original: expected, predecessor: expected))
+        XCTAssertNil(RepositoryResetOutcomePolicy.problem(expected: expected, original: expected, predecessor: nil))
+        XCTAssertNil(RepositoryResetOutcomePolicy.problem(expected: expected, original: nil, predecessor: expected))
+        XCTAssertTrue(RepositoryResetOutcomePolicy.problem(expected: expected, original: nil, predecessor: "invalid")?.contains("unverified") == true)
+        let mismatch = RepositoryResetOutcomePolicy.problem(expected: expected, original: other, predecessor: expected)
+        XCTAssertTrue(mismatch?.contains(expected) == true)
+        XCTAssertTrue(mismatch?.contains(other) == true)
+        XCTAssertTrue(RepositoryResetOutcomePolicy.problem(expected: expected, original: expected, predecessor: other)?.contains("backup preserves the validated commit only") == true)
+        XCTAssertNotNil(RepositoryResetOutcomePolicy.problem(expected: expected, original: other, predecessor: nil))
+    }
+
+    func testResetWithoutReflogsUsesTheActualOrigHeadEvidence() throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let target = try fixture.git(["rev-parse", "HEAD"])
+        try fixture.git(["commit", "--allow-empty", "-m", "second"])
+        let previous = try fixture.git(["rev-parse", "HEAD"])
+        try fixture.git(["config", "core.logAllRefUpdates", "false"])
+        try FileManager.default.removeItem(at: fixture.url.appendingPathComponent(".git/logs"))
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let service = try RepositoryReflogService(repository: repository)
+        let backup = try service.reset(confirmed: service.preview(target: target, mode: .soft), discardConfirmed: false)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), target)
+        XCTAssertEqual(try fixture.git(["rev-parse", "ORIG_HEAD"]), previous)
+        XCTAssertEqual(try fixture.git(["rev-parse", backup]), previous)
+    }
+
     func testReadsPinnedEventsAndUnreachableCommitDetails() throws {
         let fixture = try ReflogGitFixture()
         defer { fixture.remove() }
@@ -329,7 +461,8 @@ final class ReflogServiceTests: XCTestCase {
             let obstruction = fixture.url.appendingPathComponent(obstructionPath)
             try FileManager.default.removeItem(at: obstruction)
             let repository = try GitXTestGitRepository(url: fixture.url)
-            let service = try RepositoryReflogService(repository: repository)
+            let reads = Mutex<[String: Int]>([:])
+            let service = try RepositoryReflogService(repository: repository, contentRead: { path, count in reads.withLock { $0[path, default: 0] += count } })
             let missing = try service.preview(target: head, mode: .hard)
             XCTAssertTrue(missing.affectedPaths.contains(modulePath))
             XCTAssertEqual(missing.discardedPaths, [modulePath], "Reset reverses this local directory deletion")
@@ -339,7 +472,9 @@ final class ReflogServiceTests: XCTestCase {
             XCTAssertTrue(try fixture.git(["for-each-ref", "--format=%(refname)", "refs/heads/recovery/"]).isEmpty)
             try FileManager.default.removeItem(at: obstruction)
             try fixture.write(obstructionPath, "explicitly discard this obstruction\n")
+            reads.withLock { $0.removeAll() }
             let filePreview = try service.preview(target: head, mode: .hard)
+            XCTAssertEqual(reads.withLock { $0 }, [obstructionPath: "explicitly discard this obstruction\n".utf8.count])
             XCTAssertTrue(filePreview.affectedPaths.contains(modulePath))
             XCTAssertTrue(filePreview.discardedPaths.contains(obstructionPath))
             XCTAssertThrowsError(try service.reset(confirmed: filePreview, discardConfirmed: false))
@@ -368,8 +503,10 @@ final class ReflogServiceTests: XCTestCase {
         try FileManager.default.removeItem(at: fixture.url.appendingPathComponent("tracked.txt"))
         try fixture.write("tracked.txt/local.txt", "local content\n")
         let repository = try GitXTestGitRepository(url: fixture.url)
-        let service = try RepositoryReflogService(repository: repository)
+        let reads = Mutex<[String: Int]>([:])
+        let service = try RepositoryReflogService(repository: repository, contentRead: { path, count in reads.withLock { $0[path, default: 0] += count } })
         let preview = try service.preview(target: head, mode: .hard)
+        XCTAssertEqual(reads.withLock { $0 }, ["tracked.txt/local.txt": "local content\n".utf8.count])
         XCTAssertEqual(preview.discardedPaths, ["tracked.txt", "tracked.txt/local.txt"])
         XCTAssertEqual(preview.affectedPaths, ["tracked.txt", "tracked.txt/local.txt"])
     }

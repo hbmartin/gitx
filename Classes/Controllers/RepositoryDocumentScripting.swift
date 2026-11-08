@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Canonical Git-directory identity is recomputed at each synchronous opening decision.
 @MainActor
@@ -117,5 +117,60 @@ final class RepositoryDocumentScripting: NSObject {
     @objc(discardPendingForDocument:)
     static func discardPending(for document: PBGitRepositoryDocument) { // swiftlint:disable:this unused_declaration
         pending.removeObject(forKey: document)
+    }
+}
+
+@MainActor
+@objc(PBRepositoryDocumentCloseCoordinator)
+final class RepositoryDocumentCloseCoordinator: NSObject {
+    private var pending = false
+    private var requestIdentity: UUID?
+    private weak var pendingDocument: NSDocument?
+    private var completions: [(Bool) -> Void] = []
+
+    @objc(prepareApprovedCloseForDocument:)
+    func prepareApprovedClose(for document: NSDocument) {
+        document.windowControllers.compactMap { $0 as? PBGitWindowController }.forEach { $0.approveDocumentClose(for: document) }
+    }
+
+    @objc(requestCloseForDocument:completion:)
+    func requestClose(for document: NSDocument, completion: @escaping (Bool) -> Void) {
+        if pending {
+            guard pendingDocument === document else { completion(false); return }
+            completions.append(completion)
+            return
+        }
+        pending = true
+        pendingDocument = document
+        completions = [completion]
+        let request = UUID()
+        requestIdentity = request
+        advance(request: request, document: document, controllers: document.windowControllers.compactMap { $0 as? PBGitWindowController }, index: 0)
+    }
+
+    private func advance(request: UUID, document: NSDocument, controllers: [PBGitWindowController], index: Int) {
+        guard requestIdentity == request else { return }
+        guard controllers.indices.contains(index) else { finish(true); return }
+        let controller = controllers[index]
+        guard document.windowControllers.contains(where: { $0 === controller }) else { finish(false); return }
+        let deferred = controller.requestPullRequestCloseDecision { [self, document] allowed in
+            guard requestIdentity == request else { return }
+            guard allowed else { finish(false); return }
+            guard document.windowControllers.contains(where: { $0 === controller }) else { finish(false); return }
+            advance(request: request, document: document, controllers: controllers, index: index + 1)
+        }
+        if !deferred {
+            advance(request: request, document: document, controllers: controllers, index: index + 1)
+        }
+    }
+
+    private func finish(_ allowed: Bool) {
+        let callbacks = completions
+        completions.removeAll()
+        pending = false
+        requestIdentity = nil
+        pendingDocument = nil
+        NSLog("[GitX] Document close consent completed allowed=%@", allowed ? "yes" : "no")
+        callbacks.forEach { $0(allowed) }
     }
 }

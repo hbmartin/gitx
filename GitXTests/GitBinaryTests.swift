@@ -849,6 +849,154 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
     }
 
+    private final class DocumentCloseReply: NSObject {
+        var decisions: [Bool] = []
+        var completed: XCTestExpectation?
+
+        @objc func document(_: NSDocument, shouldClose: Bool, contextInfo _: UnsafeMutableRawPointer?) {
+            decisions.append(shouldClose)
+            completed?.fulfill()
+        }
+
+        @objc func documentController(_: NSDocumentController, didCloseAll: Bool, contextInfo _: UnsafeMutableRawPointer?) {
+            decisions.append(didCloseAll)
+            completed?.fulfill()
+        }
+    }
+
+    func testCloseCoordinatorCoalescesDecisionsAndRejectsStaleOrForeignConsent() throws {
+        let coordinator = GitX.RepositoryDocumentCloseCoordinator()
+        let document = NSDocument()
+        var results: [Bool] = []
+        coordinator.requestClose(for: document) { results.append($0) }
+        XCTAssertEqual(results, [true])
+        results.removeAll()
+        let window = NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false)
+        let owner = GitX.PBGitWindowController(window: window)
+        let token = NSObject()
+        document.addWindowController(owner)
+        defer { owner.unregisterPullRequestCloseGuard(owner: token); document.close() }
+        var decision: ((Bool) -> Void)?
+        owner.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: { decision = $0; return true })
+        coordinator.requestClose(for: document) { results.append($0) }
+        let stale = try XCTUnwrap(decision)
+        coordinator.requestClose(for: document) { results.append($0) }
+        coordinator.requestClose(for: NSDocument()) { results.append($0) }
+        XCTAssertEqual(results, [false])
+        stale(false)
+        XCTAssertEqual(results, [false, false, false])
+        coordinator.requestClose(for: document) { results.append($0) }
+        stale(true)
+        XCTAssertEqual(results.count, 3)
+        try XCTUnwrap(decision)(true)
+        XCTAssertEqual(results.last, true)
+        coordinator.requestClose(for: document) { results.append($0) }
+        document.removeWindowController(owner)
+        try XCTUnwrap(decision)(true)
+        XCTAssertEqual(results.last, false)
+        document.addWindowController(owner)
+        owner.approveDocumentClose(for: NSDocument())
+        coordinator.prepareApprovedClose(for: document)
+        XCTAssertFalse(owner.requestPullRequestCloseDecision { _ in XCTFail("Approved teardown must not prompt again") })
+        coordinator.requestClose(for: document) { results.append($0) }
+        XCTAssertEqual(results.last, true)
+    }
+
+    func testDocumentPreflightAndFileDeletionRespectDeclinedCloseConsent() async throws {
+        let ready = gitReadinessExpectation()
+        await fulfillment(of: [ready], timeout: 10)
+        try createRepositoryFixture()
+        let token = NSObject()
+        var decision: ((Bool) -> Void)?
+        var prompted: XCTestExpectation?
+        defer { window?.unregisterPullRequestCloseGuard(owner: token); try? removeFixture() }
+        NSDocumentController.shared.addDocument(document)
+        window.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: {
+            decision = $0
+            prompted?.fulfill()
+            return true
+        })
+        let reply = DocumentCloseReply()
+        document.canClose(withDelegate: reply, shouldClose: #selector(DocumentCloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+        XCTAssertTrue(reply.decisions.isEmpty)
+        try XCTUnwrap(decision)(false)
+        XCTAssertEqual(reply.decisions, [false])
+        XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+
+        prompted = expectation(description: "File deletion asks before teardown")
+        let declined = expectation(description: "Declined deletion replies once")
+        document.accommodatePresentedItemDeletion { error in
+            XCTAssertEqual((error as NSError?)?.code, NSUserCancelledError)
+            declined.fulfill()
+        }
+        try await fulfillment(of: [XCTUnwrap(prompted)], timeout: 5)
+        try XCTUnwrap(decision)(false)
+        await fulfillment(of: [declined], timeout: 5)
+        XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+
+        prompted = expectation(description: "Accepted deletion obtains fresh consent")
+        let accepted = expectation(description: "Accepted deletion replies after teardown")
+        document.accommodatePresentedItemDeletion { error in
+            XCTAssertNil(error)
+            accepted.fulfill()
+        }
+        try await fulfillment(of: [XCTUnwrap(prompted)], timeout: 5)
+        try XCTUnwrap(decision)(true)
+        await fulfillment(of: [accepted], timeout: 5)
+        prompted = nil
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === document })
+        XCTAssertFalse(NSDocumentController.shared.documents.contains { $0 === document })
+    }
+
+    func testCloseAllReturnsCancellationWithoutRemovingTheProtectedDocument() async throws {
+        let ready = gitReadinessExpectation()
+        await fulfillment(of: [ready], timeout: 10)
+        try createRepositoryFixture()
+        let token = NSObject()
+        var decision: ((Bool) -> Void)?
+        defer { window?.unregisterPullRequestCloseGuard(owner: token); try? removeFixture() }
+        NSDocumentController.shared.addDocument(document)
+        let prompted = expectation(description: "Close All requests document consent")
+        window.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: {
+            decision = $0; prompted.fulfill(); return true
+        })
+        let reply = DocumentCloseReply()
+        reply.completed = expectation(description: "Close All reports its declined result")
+        NSDocumentController.shared.closeAllDocuments(withDelegate: reply,
+                                                      didCloseAllSelector: #selector(DocumentCloseReply.documentController(_:didCloseAll:contextInfo:)), contextInfo: nil)
+        await fulfillment(of: [prompted], timeout: 5)
+        try XCTUnwrap(decision)(false)
+        try await fulfillment(of: [XCTUnwrap(reply.completed)], timeout: 5)
+        XCTAssertEqual(reply.decisions, [false])
+        XCTAssertTrue(NSDocumentController.shared.documents.contains { $0 === document })
+    }
+
+    func testAcceptedCloseAllUsesOneConsentAndRemovesTheOriginalDocument() async throws {
+        let ready = gitReadinessExpectation()
+        await fulfillment(of: [ready], timeout: 10)
+        try createRepositoryFixture()
+        let token = NSObject()
+        var decision: ((Bool) -> Void)?
+        var prompts = 0
+        defer { window?.unregisterPullRequestCloseGuard(owner: token); try? removeFixture() }
+        NSDocumentController.shared.addDocument(document)
+        let prompted = expectation(description: "Close All requests consent once")
+        window.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: {
+            prompts += 1; decision = $0; prompted.fulfill(); return true
+        })
+        let reply = DocumentCloseReply()
+        reply.completed = expectation(description: "Close All completes after accepted teardown")
+        NSDocumentController.shared.closeAllDocuments(withDelegate: reply,
+                                                      didCloseAllSelector: #selector(DocumentCloseReply.documentController(_:didCloseAll:contextInfo:)), contextInfo: nil)
+        await fulfillment(of: [prompted], timeout: 5)
+        try XCTUnwrap(decision)(true)
+        try await fulfillment(of: [XCTUnwrap(reply.completed)], timeout: 5)
+        XCTAssertEqual(prompts, 1)
+        XCTAssertEqual(reply.decisions, [true])
+        XCTAssertFalse(NSDocumentController.shared.documents.contains { $0 === document })
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === document })
+    }
+
     func testDocumentActionsAndPresentationRemainWired() throws {
         try prepareFixture()
         defer { try? removeFixture() }
@@ -866,6 +1014,178 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertNil(document.windowController())
         document.makeWindowControllers()
         XCTAssertEqual(document.windowControllers.count, 1)
+    }
+
+    func testUnprotectedDocumentCloseRemovesRegistrationAndFilePresenter() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let controller = NSDocumentController.shared
+        controller.addDocument(document)
+        XCTAssertTrue(controller.documents.contains { $0 === document })
+        XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+        document.close()
+        XCTAssertFalse(controller.documents.contains { $0 === document })
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === document })
+        document.close()
+        XCTAssertFalse(controller.documents.contains { $0 === document })
+    }
+
+    func testProtectedDocumentCloseDefersTeardownAndCoalescesRepeatedRequests() throws {
+        try prepareFixture()
+        let token = NSObject()
+        var consent: (() -> Void)?
+        var prompts = 0
+        defer {
+            window?.unregisterPullRequestCloseGuard(owner: token)
+            consent?()
+            try? removeFixture()
+        }
+        NSDocumentController.shared.addDocument(document)
+        window.window?.makeKeyAndOrderFront(nil)
+        window.registerPullRequestCloseGuard(owner: token, protection: {
+            prompts += 1
+            consent = $0
+            return true
+        }, revoke: {})
+        document.close()
+        document.close()
+        XCTAssertTrue(NSDocumentController.shared.documents.contains { $0 === document })
+        XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+        XCTAssertEqual(prompts, 1)
+        XCTAssertTrue(window.window?.isVisible == true)
+        try XCTUnwrap(consent)()
+        consent = nil
+        XCTAssertFalse(NSDocumentController.shared.documents.contains { $0 === document })
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === document })
+        XCTAssertFalse(window.window?.isVisible == true)
+    }
+
+    func testWindowAndDocumentCloseShareOneConsentAndTeardown() throws {
+        try prepareFixture()
+        let token = NSObject()
+        var consent: (() -> Void)?
+        var prompts = 0
+        defer { window?.unregisterPullRequestCloseGuard(owner: token); consent?(); try? removeFixture() }
+        NSDocumentController.shared.addDocument(document)
+        window.window?.makeKeyAndOrderFront(nil)
+        window.registerPullRequestCloseGuard(owner: token, protection: { prompts += 1; consent = $0; return true }, revoke: {})
+        window.close()
+        document.close()
+        XCTAssertEqual(prompts, 1, "Every entry point must join the document's pending consent")
+        XCTAssertTrue(NSDocumentController.shared.documents.contains { $0 === document })
+        XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+        try XCTUnwrap(consent)()
+        consent = nil
+        XCTAssertFalse(NSDocumentController.shared.documents.contains { $0 === document })
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === document })
+        XCTAssertFalse(window.window?.isVisible == true)
+    }
+
+    func testPullRequestActivityUsesStatusPresentationAndCannotClearANewerNotice() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let visible = ApplicationSettings.repositoryStatusBarVisible
+        ApplicationSettings.repositoryStatusBarVisible = true
+        defer { ApplicationSettings.repositoryStatusBarVisible = visible }
+        document.removeWindowController(window)
+        document.makeWindowControllers()
+        let actual = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+        let nativeWindow = try XCTUnwrap(actual.window)
+        defer { actual.close() }
+        nativeWindow.makeKeyAndOrderFront(nil)
+        waitForBranch("main", in: actual)
+        let waiting = GitX.RepositoryPullRequestActivity(identity: UUID(), message: "Waiting for the preceding Pull Request edit…", isBusy: true)
+        actual.setPullRequestActivity(waiting)
+        XCTAssertEqual(localStatusText("GitX.RepositoryStatusBar.LocalOperation", in: nativeWindow.contentView), waiting.message)
+        try attachScreenshot(of: nativeWindow, named: "Pull Request waiting status without a sheet")
+        let saved = GitX.RepositoryPullRequestActivity(identity: UUID(), message: "This edit was not sent. Your text is saved as a draft.", isBusy: false)
+        actual.setPullRequestActivity(saved)
+        actual.clearPullRequestActivity(waiting.identity)
+        XCTAssertEqual(localStatusText("GitX.RepositoryStatusBar.LocalOperation", in: nativeWindow.contentView), saved.message)
+        try attachScreenshot(of: nativeWindow, named: "Saved unsent Pull Request notice in window status")
+        actual.clearPullRequestActivity(saved.identity)
+        XCTAssertNotEqual(localStatusText("GitX.RepositoryStatusBar.LocalOperation", in: nativeWindow.contentView), saved.message)
+        actual.close()
+        actual.setPullRequestActivity(waiting)
+        XCTAssertFalse(nativeWindow.isVisible)
+    }
+
+    func testEscapedPushControlResolverDoesNotRetainTheWindowAndReturnsHiddenAfterRelease() throws {
+        #if DEBUG
+            try prepareFixture()
+            defer { try? removeFixture() }
+            document.removeWindowController(window)
+            var resolvesHidden: (() -> Bool)?
+            weak var releasedOwner: GitX.PBGitWindowController?
+            try autoreleasepool {
+                document.makeWindowControllers()
+                let owner = try XCTUnwrap(document.windowControllers.first as? GitX.PBGitWindowController)
+                releasedOwner = owner
+                owner.window?.makeKeyAndOrderFront(nil)
+                waitForBranch("main", in: owner)
+                resolvesHidden = try XCTUnwrap(GitX.ForgeMarkdownAvatarProductHarness.hiddenPushControlCallback(for: owner))
+                document.removeWindowController(owner)
+                owner.close()
+            }
+            XCTAssertNil(releasedOwner, "An escaped presentation callback must not retain its original window")
+            XCTAssertTrue(try XCTUnwrap(resolvesHidden)())
+        #endif
+    }
+
+    func testNativeRecoverySheetKeepEditingPreservesReplacementConsentAndSaveIdentity() async throws {
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let content = ForgeDraftContent(title: "Exact recovered title", body: "Preserve this text and its pending replacement decision.")
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        parent.isReleasedWhenClosed = false
+        let sheet = GitX.ForgePullRequestSheetController(mode: .recovery(destination: .repository(repository)), restoredContent: content)
+        defer { sheet.invalidatePresentation(); parent.close() }
+        parent.makeKeyAndOrderFront(nil)
+        sheet.beginSheet(for: parent)
+        let panel = try XCTUnwrap(sheet.window)
+        let identity = try XCTUnwrap(sheet.beginRecoverySave())
+        var decision: Bool?
+        var saved: [ForgeDraftContent] = []
+        var ended = 0
+        sheet.onRecoverySaved = { saved.append($0) }
+        sheet.onPresentationEnded = { ended += 1 }
+        let completed = expectation(description: "The original replacement consent completes")
+        let replacement = Task {
+            decision = await sheet.confirmRecoveryReplacement(identity)
+            completed.fulfill()
+        }
+        defer { replacement.cancel() }
+        let consentReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in panel.attachedSheet?.accessibilityIdentifier() == "GitX.PullRequest.Recovery.ReplaceConfirmation" }, object: nil)
+        await fulfillment(of: [consentReady], timeout: 5)
+        let consent = try XCTUnwrap(panel.attachedSheet)
+        XCTAssertFalse(sheet.windowShouldClose(panel))
+        let warningReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in consent.attachedSheet?.accessibilityIdentifier() == "GitX.PullRequest.Recovery.CloseConfirmation" }, object: nil)
+        await fulfillment(of: [warningReady], timeout: 5)
+        let warning = try XCTUnwrap(consent.attachedSheet)
+        try attachScreenshot(of: warning, named: "Native recovery sheet Keep Editing preserves replacement consent")
+        func button(_ title: String, in view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == title {
+                return button
+            }
+            return view.subviews.lazy.compactMap { button(title, in: $0) }.first
+        }
+        try XCTUnwrap(button("Keep Editing", in: XCTUnwrap(warning.contentView))).performClick(nil)
+        let kept = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in consent.attachedSheet == nil }, object: nil)
+        await fulfillment(of: [kept], timeout: 5)
+        XCTAssertTrue(panel.attachedSheet === consent)
+        XCTAssertTrue(sheet.acceptsRecoverySave(identity))
+        XCTAssertNil(decision)
+        try XCTUnwrap(button("Replace Draft", in: XCTUnwrap(consent.contentView))).performClick(nil)
+        await fulfillment(of: [completed], timeout: 5)
+        XCTAssertEqual(decision, true)
+        sheet.markRecoverySaved(content)
+        sheet.finishRecoverySave(identity)
+        XCTAssertEqual(saved, [content])
+        XCTAssertTrue(localStatusText("GitX.PullRequest.Recovery.Notice", in: panel.contentView)?.hasPrefix("Saved as a draft") == true)
+        XCTAssertFalse(sheet.windowShouldClose(panel))
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in parent.attachedSheet == nil }, object: nil)
+        await fulfillment(of: [closed], timeout: 5)
+        XCTAssertEqual(ended, 1)
     }
 
     func testCapturedScriptContextOnlyAppliesToItsOwnRepository() throws {
@@ -1650,6 +1970,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
             }
             actual.repository = replacement
             actual.windowDidBecomeMain(Notification(name: NSWindow.didBecomeMainNotification, object: nativeWindow))
+            // The queue drains after rebinding and requires its original foreground window.
+            // An already-presented sheet owns key status instead of its parent.
+            activateFixtureWindow(nativeWindow, acceptingAttachedSheet: true)
             let offered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in nativeWindow.attachedSheet != nil }, object: nil)
             wait(for: [offered], timeout: 5)
             XCTAssertTrue(actual.offeredWorktreeRepair)
@@ -2126,29 +2449,29 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         await fulfillment(of: [scheduled], timeout: 5)
         let currentItem = popup.item(at: 0)
         let currentAvatar = stack.arrangedSubviews.first?.subviews.first
-        XCTAssertFalse(popup.isEnabled)
+        XCTAssertTrue(popup.isEnabled, "Account management stays accessible during cooldown")
+        XCTAssertTrue(popup.itemArray.first { $0.title == "Manage Accounts…" }?.isEnabled == true)
         XCTAssertTrue(popup.toolTip?.contains("rate-limit window") == true)
-        stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
-        try attachScreenshot(of: stack, named: "Forge cooldown help before deadline")
+        let beforeDiagnostic = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .init("GitX.Toolbar.ForgeAccount"), willBeInsertedIntoToolbar: false)?.view)
         XCTAssertEqual(popup.accessibilityHelp(), popup.toolTip)
-        let beforeHelp = try XCTAttachment(string: XCTUnwrap(popup.toolTip))
-        beforeHelp.name = "Forge cooldown help before deadline text"
-        beforeHelp.lifetime = .keepAlways
-        add(beforeHelp)
+        try attachDiagnosticText(XCTUnwrap(popup.toolTip), named: "Forge cooldown help before deadline text")
         time.withLock { $0 = Date(timeIntervalSince1970: 161) }
         await gate.release()
         let updated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in popup.toolTip?.contains("successful GitHub retry") == true }, object: nil)
         await fulfillment(of: [updated], timeout: 5)
-        XCTAssertFalse(popup.isEnabled, "Expiry changes the explanation, never cooldown authority")
+        XCTAssertTrue(popup.isEnabled, "The popup remains available for account management")
+        XCTAssertTrue(popup.itemArray.filter { $0.representedObject is ForgeAccountID }.allSatisfy { !$0.isEnabled }, "Expiry must not enable account changes")
         XCTAssertTrue(popup.item(at: 0) === currentItem)
         XCTAssertTrue(stack.arrangedSubviews.first?.subviews.first === currentAvatar)
         XCTAssertFalse(avatar === currentAvatar, "The account notification installs the account avatar once before the deadline")
-        try attachScreenshot(of: stack, named: "Forge cooldown help after deadline awaiting successful validation")
         XCTAssertEqual(popup.accessibilityHelp(), popup.toolTip)
-        let afterHelp = try XCTAttachment(string: XCTUnwrap(popup.toolTip))
-        afterHelp.name = "Forge cooldown help after deadline text"
-        afterHelp.lifetime = .keepAlways
-        add(afterHelp)
+        try attachDiagnosticText(XCTUnwrap(popup.toolTip), named: "Forge cooldown help after deadline text")
+        // Diagnostic layout uses independent palette views after all behavior assertions.
+        beforeDiagnostic.frame = NSRect(origin: .zero, size: beforeDiagnostic.fittingSize)
+        try attachScreenshot(of: beforeDiagnostic, named: "Forge cooldown help before deadline")
+        let afterDiagnostic = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .init("GitX.Toolbar.ForgeAccount"), willBeInsertedIntoToolbar: false)?.view)
+        afterDiagnostic.frame = NSRect(origin: .zero, size: afterDiagnostic.fittingSize)
+        try attachScreenshot(of: afterDiagnostic, named: "Forge cooldown help after deadline awaiting successful validation")
     }
 
     func testPreparedToolbarPreservesTheFirstUnchangedMenuAndAvatar() throws {
@@ -2270,7 +2593,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let newBinding = try XCTUnwrap(settings.forgeRepositoryBinding)
         actual.refreshPreferenceDidChange(nil)
         XCTAssertEqual(popup.title, "Switching account…", "Old account details must not masquerade as the newly requested account")
-        XCTAssertFalse(popup.isEnabled, "Switching cannot admit another account change without validated cooldown evidence")
+        XCTAssertTrue(popup.isEnabled, "Account management stays accessible while validation is pending")
+        XCTAssertTrue(popup.itemArray.filter { $0.representedObject is ForgeAccountID }.allSatisfy { !$0.isEnabled })
         NotificationCenter.default.post(name: .repositoryForgeAccountDidChange, object: repository, userInfo: [GitX.RepositoryForgeAccountNotificationKey.binding: newBinding,
                                                                                                                GitX.RepositoryForgeAccountNotificationKey.providerName: "GitHub",
                                                                                                                GitX.RepositoryForgeAccountNotificationKey.accountID: newAccount,
@@ -4032,7 +4356,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertTrue(try Data(contentsOf: captured).contains(Data("branch.head main".utf8)))
     }
 
-    private func activateFixtureWindow(_ window: NSWindow) {
+    private func activateFixtureWindow(_ window: NSWindow, acceptingAttachedSheet: Bool = false) {
         let activated = expectation(description: "Launch Services activates the existing test host")
         Task { @MainActor in
             await activateWorktreeTestApplication()
@@ -4040,7 +4364,10 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
         wait(for: [activated], timeout: 5)
         window.makeKeyAndOrderFront(nil)
-        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in NSApp.isActive && window.isKeyWindow }, object: nil)
+        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let sheetIsKey = acceptingAttachedSheet && window.attachedSheet?.isKeyWindow == true
+            return NSApp.isActive && (window.isKeyWindow || sheetIsKey)
+        }, object: nil)
         wait(for: [foreground], timeout: 5)
     }
 

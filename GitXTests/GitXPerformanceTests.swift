@@ -4,6 +4,7 @@ import ForgeKit
 @testable import class GitX.PBCommitList
 @testable import class GitX.RepositoryForgeOverlayLoader
 @testable import class GitX.RepositoryForgeOverlaySession
+@testable import class GitX.RepositoryReflogService
 import GitXCore
 import XCTest
 
@@ -12,6 +13,34 @@ import XCTest
 /// correctness and sanitizer plans.
 @MainActor
 final class GitXPerformanceTests: XCTestCase {
+    func testReflogPreviewWithLargeUnchangedWorktree() throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        try Data(repeating: 0x61, count: 32 * 1024 * 1024).write(to: fixture.url.appendingPathComponent("unchanged.bin"))
+        try fixture.git(["add", "unchanged.bin"])
+        try fixture.git(["commit", "-m", "large unchanged worktree"])
+        let target = try fixture.git(["rev-parse", "HEAD"])
+        try fixture.write("tracked.txt", "small affected path\n")
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let service = try GitX.RepositoryReflogService(repository: repository)
+        var measurements: [[String: Any]] = []
+        for mode in ReflogResetMode.allCases {
+            for sample in 0 ..< 5 {
+                let started = ProcessInfo.processInfo.systemUptime
+                let preview = try service.preview(target: target, mode: mode)
+                let duration = ProcessInfo.processInfo.systemUptime - started
+                XCTAssertEqual(preview.affectedPaths, ["tracked.txt"])
+                measurements.append(["mode": mode.rawValue, "sample": sample, "seconds": duration, "unchangedBytes": 32 * 1024 * 1024])
+            }
+        }
+        let data = try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys])
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "Reflog preview with a large unchanged worktree"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        print("REFLOG_PREVIEW_MEASUREMENTS \(String(decoding: data, as: UTF8.self))")
+    }
+
     private final class RebindingHistory: PBGitHistoryController {
         let arranged = NSArrayController()
         override var commitController: NSArrayController {

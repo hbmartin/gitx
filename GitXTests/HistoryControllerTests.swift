@@ -1971,7 +1971,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 RepositoryForgeAccountNotificationKey.accountRebindingCooldownDeadline: cooldownDeadline,
             ]
         )
-        XCTAssertFalse(accountPopup.isEnabled)
+        XCTAssertTrue(accountPopup.isEnabled, "Account management remains available while account changes are paused")
+        XCTAssertTrue(accountPopup.itemArray.first { $0.title == "Manage Accounts…" }?.isEnabled == true)
         XCTAssertEqual(
             accountPopup.accessibilityHelp(),
             "Account changes are paused until GitHub’s rate-limit window ends."

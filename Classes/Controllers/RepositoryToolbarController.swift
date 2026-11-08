@@ -867,7 +867,10 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         let allowed = RepositoryForgeAccountAdmissionPolicy.permitsSelection(isSwitching: isForgeAccountSwitching, rebindingEnabled: isForgeAccountRebindingEnabled)
         let rebinding = RepositoryForgeAccountRebindingPresentation.present(isEnabled: allowed, cooldownDeadline: forgeAccountRebindingCooldownDeadline, now: accountClock.now())
         let help = isForgeAccountSwitching ? "Validating the selected Forge account" : rebinding.helpText
-        views.accountPopup.isEnabled = allowed
+        views.accountPopup.isEnabled = true
+        for item in views.accountPopup.itemArray where item.representedObject is ForgeAccountID {
+            item.isEnabled = allowed
+        }
         views.accountPopup.toolTip = allowed ? forgeAccountPresentation.toolTip : help
         views.accountPopup.setAccessibilityLabel(forgeAccountPresentation.accessibilityLabel)
         views.accountPopup.setAccessibilityHelp(help)
@@ -893,6 +896,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         _ popup: NSPopUpButton,
         presentation: RepositoryForgeAccountControlPresentation
     ) {
+        popup.menu?.autoenablesItems = false
         popup.removeAllItems()
         popup.addItem(withTitle: presentation.title)
         popup.item(at: 0)?.isEnabled = false
@@ -953,9 +957,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     }
 
     @objc private func selectForgeAccount(_ sender: NSMenuItem) {
-        guard presentationOwnerIsCurrent(),
-              RepositoryForgeAccountAdmissionPolicy.permitsSelection(isSwitching: isForgeAccountSwitching, rebindingEnabled: isForgeAccountRebindingEnabled) else { NSSound.beep(); return }
-        guard let accountID = sender.representedObject as? ForgeAccountID,
+        guard presentationOwnerIsCurrent(), let accountID = sender.representedObject as? ForgeAccountID,
               RepositoryForgeAccountAdmissionPolicy.permitsSelection(isSwitching: isForgeAccountSwitching, rebindingEnabled: isForgeAccountRebindingEnabled,
                                                                      candidateAvailable: forgeAccountChoices.contains(where: { $0.id == accountID })),
               let repository = windowController?.repository, repository === boundRepository,

@@ -20,6 +20,13 @@
 
 NSString *PBGitRepositoryDocumentType = @"Git Repository";
 
+#ifndef CLI
+@interface PBGitRepositoryDocument ()
+@property (nonatomic, strong) PBRepositoryDocumentCloseCoordinator *repositoryCloseCoordinator;
+@property (nonatomic) BOOL repositoryCloseCompleted;
+@end
+#endif
+
 @implementation PBGitRepositoryDocument
 
 - (BOOL)readFromURL:(NSURL *)absoluteURL ofType:(NSString *)typeName error:(NSError **)outError
@@ -60,6 +67,61 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 
 - (void)close
 {
+#ifdef CLI
+	[self completeRepositoryClose];
+#else
+	[self requestRepositoryCloseWithCompletion:^(BOOL allowed){
+	}];
+#endif
+}
+
+#ifndef CLI
+- (PBRepositoryDocumentCloseCoordinator *)repositoryCloseCoordinator
+{
+	if (!_repositoryCloseCoordinator)
+		_repositoryCloseCoordinator = [[PBRepositoryDocumentCloseCoordinator alloc] init];
+	return _repositoryCloseCoordinator;
+}
+
+- (void)requestRepositoryCloseWithCompletion:(void (^)(BOOL allowed))completion
+{
+	if (self.repositoryCloseCompleted) {
+		completion(YES);
+		return;
+	}
+	[self.repositoryCloseCoordinator requestCloseForDocument:self
+												  completion:^(BOOL allowed) {
+													  if (allowed)
+														  [self completeRepositoryClose];
+													  completion(allowed);
+												  }];
+}
+
+- (void)canCloseDocumentWithDelegate:(id)delegate shouldCloseSelector:(SEL)selector contextInfo:(void *)context
+{
+	[self.repositoryCloseCoordinator requestCloseForDocument:self
+												  completion:^(BOOL allowed) {
+													  if (allowed) {
+														  [self.repositoryCloseCoordinator prepareApprovedCloseForDocument:self];
+														  [super canCloseDocumentWithDelegate:delegate shouldCloseSelector:selector contextInfo:context];
+													  } else if (delegate && selector) {
+														  // Preserve Cocoa's three-argument callback ABI in the Objective-C lifecycle shell.
+														  void (*reply)(id, SEL, NSDocument *, BOOL, void *) = (void (*)(id, SEL, NSDocument *, BOOL, void *))[delegate methodForSelector:selector];
+														  if (reply)
+															  reply(delegate, selector, self, NO, context);
+													  }
+												  }];
+}
+#endif
+
+- (void)completeRepositoryClose
+{
+#ifndef CLI
+	if (self.repositoryCloseCompleted)
+		return;
+	self.repositoryCloseCompleted = YES;
+	[self.repositoryCloseCoordinator prepareApprovedCloseForDocument:self];
+#endif
 	[PBRepositoryDocumentScripting discardPendingForDocument:self];
 	/* FIXME: Check that this deallocs the repo */
 	//	[revisionList cleanup];
@@ -191,11 +253,15 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 {
 	// The repository was deleted, close the document
 	dispatch_async(dispatch_get_main_queue(), ^{
+#ifdef CLI
 		[self close];
-
-		if (completionHandler) {
-			completionHandler(nil);
-		}
+		if (completionHandler) completionHandler(nil);
+#else
+		[self requestRepositoryCloseWithCompletion:^(BOOL allowed) {
+			if (completionHandler)
+				completionHandler(allowed ? nil : [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:nil]);
+		}];
+#endif
 	});
 }
 
