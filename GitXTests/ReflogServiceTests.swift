@@ -74,6 +74,11 @@ final class ReflogServiceTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["rev-parse", "recovery/cancellation"]), head)
     }
 
+    func testReadDeadlinesDoNotApplyToMutationCommands() {
+        XCTAssertEqual(RepositoryReflogCommandExecution.read.timeout, 60)
+        XCTAssertEqual(RepositoryReflogCommandExecution.mutation.timeout, 0)
+    }
+
     func testEveryResetModePreservesDetachedAndLinkedWorktreeIdentities() throws {
         for linked in [false, true] {
             for mode in ReflogResetMode.allCases {
