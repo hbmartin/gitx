@@ -19,6 +19,8 @@ import OSLog // swiftlint:disable:this unused_import
             case stagingCreate = "staging-create"
             case syncFork = "sync-fork"
             case partialPatchCopy = "partial-patch-copy"
+            case recoveryQuit = "recovery-quit"
+            case localMutationQuit = "local-mutation-quit"
         }
 
         private let windowController: PBGitWindowController
@@ -302,6 +304,10 @@ import OSLog // swiftlint:disable:this unused_import
                     windowController.showUncommittedChanges(self)
                 case .syncFork:
                     try startSyncFork(repository: repository)
+                case .localMutationQuit:
+                    try startLocalMutationQuit(repository: repository)
+                case .recoveryQuit:
+                    try startRecoveryQuit(repository: repository)
                 case .partialPatchCopy:
                     let result = CommitPatchCopyResult(patches: ["UI diagnostic patch", nil])
                     windowController.showMessageSheet(result.warningMessage ?? "", infoText: result.warningInfo)
@@ -469,6 +475,56 @@ import OSLog // swiftlint:disable:this unused_import
                 form,
                 .pullRequest(primary, ForgeItemNumber(42))
             )
+        }
+
+        private func startLocalMutationQuit(repository: PBGitRepository) throws {
+            let original = try repository.task(withArguments: []).executionContext()
+            let gitDirectory = try repository.outputOfTask(withArguments: ["rev-parse", "--absolute-git-dir"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let wrapper = URL(fileURLWithPath: gitDirectory).appendingPathComponent("quit-local-wrapper")
+            let script = #"""
+            #!/bin/sh
+            is_branch=0
+            for argument in "$@"; do
+                if [ "$argument" = branch ]; then
+                    is_branch=1
+                    /usr/bin/touch "$GITX_QUIT_LOCAL_STARTED"
+                    while [ ! -f "$GITX_QUIT_LOCAL_RELEASE" ]; do /bin/sleep 0.01; done
+                fi
+            done
+            "$GITX_QUIT_LOCAL_GIT" "$@"
+            result=$?
+            if [ "$is_branch" = 1 ]; then /usr/bin/touch "$GITX_QUIT_LOCAL_COMPLETED"; fi
+            exit "$result"
+            """#
+            try script.write(to: wrapper, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+            var executionEnvironment = original.environment
+            executionEnvironment["GITX_QUIT_LOCAL_GIT"] = original.launchPath
+            executionEnvironment["GITX_QUIT_LOCAL_STARTED"] = gitDirectory + "/quit-local-started"
+            executionEnvironment["GITX_QUIT_LOCAL_RELEASE"] = gitDirectory + "/quit-local-release"
+            executionEnvironment["GITX_QUIT_LOCAL_COMPLETED"] = gitDirectory + "/quit-local-completed"
+            let context = PBTaskExecutionContext(launchPath: wrapper.path, arguments: original.arguments, environment: executionEnvironment, workingDirectory: original.workingDirectory)
+            let service = try RepositoryReflogService(repository: repository, context: context)
+            let head = try repository.outputOfTask(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            Task.detached {
+                do { try service.createRecoveryBranch(objectID: head, name: "recovery/quit-local") }
+                catch { Logger(subsystem: "com.gitx.gitx", category: "Milestone2UITestHarness").error("Held local mutation failed; diagnostic=\(error.localizedDescription, privacy: .private)") }
+            }
+        }
+
+        private func startRecoveryQuit(repository: PBGitRepository) throws {
+            let fixture = try pullRequestFixture(repository: repository, branchAlreadyPushed: true)
+            let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.preparation.repository, number: ForgeItemNumber(42),
+                                                                title: "Recovery Quit title", bodyMarkdown: "Exact unsaved recovery body", updatedAt: .distantPast)
+            let controller = RepositoryPullRequestUIController(
+                repository: repository, windowController: windowController,
+                ownerIsCurrent: windowController.repositoryPresentationValidation(for: repository),
+                remoteActions: RepositoryRemoteActionCoordinator(repository: repository, windowController: windowController),
+                service: Milestone2RecoveryService(),
+                destinationOpening: { _ in false }, bindingResolving: { nil }, postPushBrowserFallback: { _ in }
+            )
+            pullRequestController = controller
+            controller.editPullRequest(accountID: fixture.preparation.accountID, snapshot: snapshot, destination: fixture.destination)
         }
 
         private func startExactCheckout(repository: PBGitRepository) throws {
@@ -696,6 +752,8 @@ import OSLog // swiftlint:disable:this unused_import
             throw RepositoryPullRequestServiceError.nativeCreationUnavailable
         }
     }
+
+    private struct Milestone2RecoveryService: RepositoryPullRequestMutationServing {}
 
     private struct Milestone2PullRequestService: RepositoryPullRequestMutationServing {
         enum Outcome: Sendable {

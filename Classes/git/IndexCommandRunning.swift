@@ -95,7 +95,13 @@ final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexBinaryComma
             } catch { completion(transfer.task.standardOutputData, error) }
         }
         if IndexWriterCoordinator.writesIndex(arguments) {
-            coordinator.schedule(arguments.joined(separator: " "), launch)
+            do {
+                let activity = try RepositoryLocalMutationRegistry.shared.admitContinuation()
+                coordinator.schedule(arguments.joined(separator: " ")) {
+                    defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
+                    RepositoryLocalMutationRegistry.shared.withStartedActivity(activity, launch)
+                }
+            } catch { completion(nil, error) }
         } else {
             DispatchQueue.global(qos: .userInitiated).async(execute: launch)
         }
@@ -186,12 +192,16 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
     func schedule<Value: Sendable>(_ operation: String, work: @escaping @Sendable () -> Value,
                                    completion: @escaping @Sendable (Value) -> Void)
     {
+        let activity = RepositoryLocalMutationRegistry.shared.trackContinuation()
         stateLock.lock()
         pending += 1
         publishState()
         queue.async { [self] in
+            defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
             lock.lock()
-            let result = withOwnedState(operation, scheduled: true, work)
+            let result = RepositoryLocalMutationRegistry.shared.withStartedActivity(activity) {
+                withOwnedState(operation, scheduled: true, work)
+            }
             // The writer and its idle observation are released before delivery.
             completion(result)
         }
@@ -259,6 +269,12 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
     /// Synchronous admission for user submissions. Rejected work never joins
     /// the FIFO, while calls made by the owning thread remain reentrant.
     func performIfAvailable<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
+        let activity = try RepositoryLocalMutationRegistry.shared.admit()
+        defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
+        return try performIfAvailableAdmitted(operation, body)
+    }
+
+    private func performIfAvailableAdmitted<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
         guard lock.try() else {
             NSLog("[GitX] Index writer refused %@: another thread owns the index", operation)
             throw Self.busyError()
@@ -275,6 +291,12 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
     }
 
     func perform<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
+        let activity = try RepositoryLocalMutationRegistry.shared.admit()
+        defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
+        return try performAdmitted(operation, body)
+    }
+
+    private func performAdmitted<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
         let onWriterQueue = DispatchQueue.getSpecific(key: queueIdentity) == true
         if lock.try() {
             stateLock.lock()

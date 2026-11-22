@@ -490,6 +490,11 @@
 		6F66FC0DB5FE4F6794F8C10B /* RepositoryPullRequestRecoverySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2893771F79354B34BB81CED6 /* RepositoryPullRequestRecoverySession.swift */; };
 		51764F8050D047A1A7C8823D /* RepositoryPullRequestRecoverySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2893771F79354B34BB81CED6 /* RepositoryPullRequestRecoverySession.swift */; };
 		BEFFB929AAFD4F7FB71F87D3 /* NativeRecoverySessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D008256DBA224AF98AA56EE1 /* NativeRecoverySessionTests.swift */; };
+		1F27FFE59EFA4B67AC6EAFF5 /* RepositoryTerminationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 996BB515630540599989CA23 /* RepositoryTerminationCoordinator.swift */; };
+		EDF69AE864A24C16A749BE33 /* RepositoryLocalMutationRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */; };
+		070BD02A56C340F4B69FA9E3 /* RepositoryLocalMutationRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */; };
+		E685F5129E634CFCA57FF291 /* RepositoryTerminationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B091A2D38E0540DB916EBB76 /* RepositoryTerminationTests.swift */; };
+		E66001916A6A43AA8453EC67 /* NativeTerminationIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E16460105E444C89FF67782 /* NativeTerminationIntegrationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1246,6 +1251,10 @@
 		88CAE775693545A7B87AF730 /* NativeRecoveryMoveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRecoveryMoveTests.swift; sourceTree = "<group>"; };
 		2893771F79354B34BB81CED6 /* RepositoryPullRequestRecoverySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestRecoverySession.swift; sourceTree = "<group>"; };
 		D008256DBA224AF98AA56EE1 /* NativeRecoverySessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRecoverySessionTests.swift; sourceTree = "<group>"; };
+		996BB515630540599989CA23 /* RepositoryTerminationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryTerminationCoordinator.swift; sourceTree = "<group>"; };
+		F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLocalMutationRegistry.swift; sourceTree = "<group>"; };
+		B091A2D38E0540DB916EBB76 /* RepositoryTerminationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryTerminationTests.swift; sourceTree = "<group>"; };
+		2E16460105E444C89FF67782 /* NativeTerminationIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTerminationIntegrationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1629,6 +1638,7 @@
 				4A5D763A14A9A9CC00DF6C68 /* PBPrefsWindowController.h */,
 				4A5D763B14A9A9CC00DF6C68 /* PBPrefsWindowController.m */,
 				4A5D763F14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift */,
+				996BB515630540599989CA23 /* RepositoryTerminationCoordinator.swift */,
 				C0DE90330000000000000002 /* RepositoryDocumentScripting.swift */,
 				4A5D764014A9A9CC00DF6C68 /* PBServicesController.h */,
 				4A5D764114A9A9CC00DF6C68 /* PBServicesController.m */,
@@ -1698,6 +1708,7 @@
 				C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */,
 				C05900000000000000000013 /* RepositoryIgnoreFileService.swift */,
 				C0DEE0000000000000000011 /* IndexSnapshot.swift */,
+				F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */,
 				C0DEE0000000000000000013 /* IndexCommandRunning.swift */,
 				C0DEE0000000000000000014 /* IndexMutationService.swift */,
 				C0DEE0000000000000000016 /* IndexCommitService.swift */,
@@ -1987,6 +1998,8 @@
 				B6325439A81D468EB3D1F5D2 /* NativeLocalMutationLifetimeTests.swift */,
 				88CAE775693545A7B87AF730 /* NativeRecoveryMoveTests.swift */,
 				D008256DBA224AF98AA56EE1 /* NativeRecoverySessionTests.swift */,
+				B091A2D38E0540DB916EBB76 /* RepositoryTerminationTests.swift */,
+				2E16460105E444C89FF67782 /* NativeTerminationIntegrationTests.swift */,
 				45121CC71B4E4DD68BA5FA68 /* NativePullRequestCompletionTests.swift */,
 				F0F200000000000000000201 /* RepositoryPullRequestWorkflowAppTests.swift */,
 				F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */,
@@ -2489,6 +2502,7 @@
 				C0DE90000000000000000008 /* PBGitRepository+ServiceForwarding.m in Sources */,
 				C05900000000000000000002 /* RepositoryIgnoreFileService.swift in Sources */,
 				C0DEE0000000000000000001 /* IndexSnapshot.swift in Sources */,
+				EDF69AE864A24C16A749BE33 /* RepositoryLocalMutationRegistry.swift in Sources */,
 				C0DEE0000000000000000003 /* IndexCommandRunning.swift in Sources */,
 				C0DEE0000000000000000004 /* IndexMutationService.swift in Sources */,
 				C0DEE0000000000000000006 /* IndexCommitService.swift in Sources */,
@@ -2605,6 +2619,7 @@
 				4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */,
 				6C4855C81D57DCFC0027A7B4 /* PBTerminalUtil.m in Sources */,
 				4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift in Sources */,
+				1F27FFE59EFA4B67AC6EAFF5 /* RepositoryTerminationCoordinator.swift in Sources */,
 				C0DE90330000000000000001 /* RepositoryDocumentScripting.swift in Sources */,
 				4A5D76EE14A9A9CC00DF6C68 /* PBServicesController.m in Sources */,
 				4A5D76EF14A9A9CC00DF6C68 /* PBViewController.m in Sources */,
@@ -2812,11 +2827,14 @@
 				6E885A6FDA734E5EA28AF939 /* NativeLocalMutationLifetimeTests.swift in Sources */,
 				3568F55D52884EF588770583 /* NativeRecoveryMoveTests.swift in Sources */,
 				BEFFB929AAFD4F7FB71F87D3 /* NativeRecoverySessionTests.swift in Sources */,
+				E685F5129E634CFCA57FF291 /* RepositoryTerminationTests.swift in Sources */,
+				E66001916A6A43AA8453EC67 /* NativeTerminationIntegrationTests.swift in Sources */,
 				0A0FB43E40544AE5B725A0EB /* NativePullRequestCompletionTests.swift in Sources */,
 				F0F200000000000000000017 /* RepositoryPullRequestWorkflowAppTests.swift in Sources */,
 				F0F200000000000000000018 /* GitHubPullRequestComposition.swift in Sources */,
 				F0F200000000000000000020 /* Milestone2DiagnosticPresenters.swift in Sources */,
 				51764F8050D047A1A7C8823D /* RepositoryPullRequestRecoverySession.swift in Sources */,
+				070BD02A56C340F4B69FA9E3 /* RepositoryLocalMutationRegistry.swift in Sources */,
 				F0F200000000000000000021 /* RepositoryPullRequestUIController.swift in Sources */,
 				F0F300000000000000000003 /* ForgeMutationQuitCoordinator.swift in Sources */,
 				F0F300000000000000000004 /* ForgeUnknownMutationOutcomeStore.swift in Sources */,

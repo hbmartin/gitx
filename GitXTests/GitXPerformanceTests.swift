@@ -6,6 +6,7 @@ import ForgeKit
 @testable import class GitX.RepositoryForgeOverlaySession
 @testable import class GitX.RepositoryReflogService
 import GitXCore
+import Synchronization
 import XCTest
 
 /// Scheduled microbenchmarks for deterministic parsing and presentation policy.
@@ -17,20 +18,33 @@ final class GitXPerformanceTests: XCTestCase {
         let fixture = try ReflogGitFixture()
         defer { fixture.remove() }
         try Data(repeating: 0x61, count: 32 * 1024 * 1024).write(to: fixture.url.appendingPathComponent("unchanged.bin"))
-        try fixture.git(["add", "unchanged.bin"])
+        let extraPayload = Data(repeating: 0x62, count: 128 * 1024)
+        for index in 0 ..< 100 {
+            try extraPayload.write(to: fixture.url.appendingPathComponent("unchanged-\(index).bin"))
+        }
+        let unchangedBytes = 32 * 1024 * 1024 + 100 * extraPayload.count
+        try fixture.git(["add", "."])
         try fixture.git(["commit", "-m", "large unchanged worktree"])
         let target = try fixture.git(["rev-parse", "HEAD"])
         try fixture.write("tracked.txt", "small affected path\n")
         let repository = try GitXTestGitRepository(url: fixture.url)
-        let service = try GitX.RepositoryReflogService(repository: repository)
+        let reads = Mutex<[String: Int]>([:])
+        let service = try GitX.RepositoryReflogService(repository: repository, contentRead: { path, bytes in
+            reads.withLock { $0[path, default: 0] += bytes }
+        })
         var measurements: [[String: Any]] = []
         for mode in ReflogResetMode.allCases {
             for sample in 0 ..< 5 {
+                reads.withLock { $0.removeAll() }
                 let started = ProcessInfo.processInfo.systemUptime
                 let preview = try service.preview(target: target, mode: mode)
                 let duration = ProcessInfo.processInfo.systemUptime - started
                 XCTAssertEqual(preview.affectedPaths, ["tracked.txt"])
-                measurements.append(["mode": mode.rawValue, "sample": sample, "seconds": duration, "unchangedBytes": 32 * 1024 * 1024])
+                let captured = reads.withLock { $0 }
+                XCTAssertEqual(captured, mode == .hard ? ["tracked.txt": "small affected path\n".utf8.count] : [:])
+                measurements.append(["mode": mode.rawValue, "sample": sample, "seconds": duration, "unchangedBytes": unchangedBytes,
+                                     "unchangedFiles": 101, "fingerprintContentFilesRead": captured.count, "fingerprintContentBytesRead": captured.values.reduce(0, +),
+                                     "measurementScope": "Application fingerprint capture; existing Git subprocess I/O is not instrumented"])
             }
         }
         let data = try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys])

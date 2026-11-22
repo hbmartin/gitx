@@ -30,6 +30,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     var onPresentationEnded: (() -> Void)?
     var onRecoverySaved: ((ForgeDraftContent) -> Void)?
     var onCopyRecovery: ((ForgeDraftContent) -> Void)?
+    var recoveryPasteboard: NSPasteboard = .general
 
     private let mode: Mode
     private let titleField = NSTextField()
@@ -443,8 +444,8 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         if let onCopyRecovery {
             onCopyRecovery(content)
         } else {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString((content.title ?? "") + "\n\n" + content.body, forType: .string)
+            recoveryPasteboard.clearContents()
+            recoveryPasteboard.setString((content.title ?? "") + "\n\n" + content.body, forType: .string)
         }
     }
 

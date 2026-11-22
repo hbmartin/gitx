@@ -68,7 +68,7 @@
                             </menuItem>
                             <menuItem title="Quit Half Dark" keyEquivalent="q" id="136">
                                 <connections>
-                                    <action selector="terminate:" target="-1" id="cQq-Bb-5Zs"/>
+                                    <action selector="terminate:" target="205" id="cQq-Bb-5Zs"/>
                                 </connections>
                             </menuItem>
                         </items>

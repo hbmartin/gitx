@@ -787,6 +787,12 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         try createRepositoryFixture()
     }
 
+    private func prepareFixture(asynchronously: Void) async throws {
+        let ready = gitReadinessExpectation()
+        await fulfillment(of: [ready], timeout: 10)
+        try createRepositoryFixture()
+    }
+
     private func createRepositoryFixture() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -899,9 +905,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     func testUnprotectedRepositoryMoveClosesTheOriginalDocumentAndFilePresenter() async throws {
-        let ready = gitReadinessExpectation()
-        await fulfillment(of: [ready], timeout: 10)
-        try createRepositoryFixture()
+        try await prepareFixture(asynchronously: ())
         defer { try? removeFixture() }
         let original = try XCTUnwrap(document)
         NSDocumentController.shared.addDocument(original)
@@ -2619,9 +2623,7 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
     }
 
     func testCooldownDeadlineUpdatesHelpWithoutRebuildingTheMenuOrEnablingChanges() async throws {
-        let ready = gitReadinessExpectation()
-        await fulfillment(of: [ready], timeout: 10)
-        try createRepositoryFixture()
+        try await prepareFixture(asynchronously: ())
         defer { try? removeFixture() }
         let repository = try XCTUnwrap(document.repository)
         let owner = RepositoryOverrideWindowProbe(ownerNotifications: NotificationCenter())

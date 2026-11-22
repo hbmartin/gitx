@@ -99,6 +99,8 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
     }
 
     private func withMutation<Value>(_ work: () throws -> Value) throws -> Value {
+        let activity = try RepositoryLocalMutationRegistry.shared.admit()
+        defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
         lock.lock()
         guard !cancelled else { lock.unlock(); throw CancellationError() }
         mutationDepth += 1

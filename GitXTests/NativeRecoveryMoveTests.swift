@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class NativeRecoveryMoveTests: XCTestCase {
     private enum Phase { case ready, loading, consent, writing, finalSave, remote, queued, preflight }
-    @MainActor private final class Owner { var controller: GitX.RepositoryPullRequestUIController? }
+    @MainActor private final class Owner { var controller: GitX.RepositoryPullRequestUIController?; var submission: Task<Void, Never>? }
 
     func testMoveDetachesExactRecoveredTextAndCanSaveToOriginalDraftIdentity() async throws {
         try await exerciseMove(.ready)
@@ -79,8 +79,11 @@ final class NativeRecoveryMoveTests: XCTestCase {
                                                                    service: service, drafts: NativeCompletionDraftStore(store: store), destinationOpening: { _ in XCTFail("An obsolete destination cannot reopen"); return false }, bindingResolving: { nil }, postPushBrowserFallback: { _ in })
         let moved = local.directory.appendingPathExtension("moved")
         addTeardownBlock { @MainActor [self] in
+            defer { defaults.set(watcher, forKey: "PBUseRepositoryWatcher") }
+            let pendingSubmission = holder.submission
             await loadGate.release(true); await writeGate.release(true); await finalGate.release(true)
             await service.releaseEdit(outcome); await store.releaseSaveWaiters()
+            await pendingSubmission?.value
             holder.controller?.invalidateOwner(); holder.controller = nil
             for panel in NSApp.windows where panel.isVisible && panel.accessibilityIdentifier() == "GitX.PullRequest.DetachedRecovery" {
                 if let close = panel.contentView.flatMap({ self.find("GitX.PullRequest.Recovery.Close", in: $0) }) as? NSButton {
@@ -98,11 +101,13 @@ final class NativeRecoveryMoveTests: XCTestCase {
                 #if DEBUG
                     let drained = XCTestExpectation(description: "Moved fixture work drains")
                     worktrees.drainForTesting { drained.fulfill() }
-                    await self.fulfillment(of: [drained], timeout: 15)
+                    guard await XCTWaiter.fulfillment(of: [drained], timeout: 15) == .completed else {
+                        XCTFail("Retaining undrained moved fixture at " + moved.path)
+                        return
+                    }
                 #endif
             }
             local.cleanup(); try? FileManager.default.removeItem(at: moved)
-            defaults.set(watcher, forKey: "PBUseRepositoryWatcher")
         }
         holder.controller?.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: destination)
         await wait("Original editor", until: { window.attachedSheet != nil })
@@ -119,6 +124,7 @@ final class NativeRecoveryMoveTests: XCTestCase {
         }
         try XCTUnwrap(find("GitX.PullRequest.Submit", in: XCTUnwrap(editor.contentView)) as? NSButton).performClick(nil)
         let submitted = try XCTUnwrap(holder.controller?.mutationTask)
+        holder.submission = submitted
         if phase == .finalSave {
             await fulfillment(of: [finalStarted], timeout: 5)
         } else {

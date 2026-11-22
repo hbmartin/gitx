@@ -255,6 +255,96 @@ final class NativeRecoverySessionTests: XCTestCase {
         XCTAssertFalse(NSApp.windows.contains { $0.isVisible && $0.accessibilityIdentifier() == "GitX.PullRequest.DetachedRecovery" })
     }
 
+    func testDetachedCompletionSettlesOldPlaceholderConsentBeforePresentingRecovery() async throws {
+        let fixture = try await fixture(pending: true, presented: false)
+        fixture.session.detach(presented: [])
+        let pending = try XCTUnwrap(NSApp.windows.first { $0.isVisible && $0.accessibilityIdentifier() == "GitX.PullRequest.DetachedRecovery.Waiting" })
+        var decisions: [Bool] = []
+        XCTAssertTrue(fixture.session.requestCloseDecision { decisions.append($0) })
+        await wait { pending.attachedSheet != nil }
+        let old = try XCTUnwrap(pending.attachedSheet)
+        fixture.submission.finish()
+        fixture.session.didSettle()
+        await wait { decisions.count == 1 }
+        XCTAssertEqual(decisions, [false], "The obsolete placeholder must not hold a termination attempt open")
+        let recovered = try XCTUnwrap(NSApp.windows.first { $0.isVisible && $0.accessibilityIdentifier() == "GitX.PullRequest.DetachedRecovery" })
+        let sheet = try XCTUnwrap(recovered.windowController as? GitX.ForgePullRequestSheetController)
+        XCTAssertEqual(sheet.recoveryContentSnapshot, fixture.exact)
+        XCTAssertTrue(fixture.submission.needsRecovery)
+        old.sheetParent?.endSheet(old, returnCode: .alertSecondButtonReturn)
+        XCTAssertEqual(decisions, [false])
+        sheet.onCancel?(fixture.exact)
+        sheet.invalidatePresentation()
+    }
+
+    func testKeepEditingDuringQuitPreservesRecoveryLoadingAndReplacementConsent() async throws {
+        for duringLoad in [true, false] {
+            let fixture = try await fixture()
+            let loadStarted = duringLoad ? expectation(description: "Recovery load reaches its deterministic gate") : nil
+            if let loadStarted {
+                await fixture.store.holdNextLoad(fixture.loadGate, started: loadStarted)
+            }
+            try button("GitX.PullRequest.Recovery.SaveDraft", fixture: fixture).performClick(nil)
+            if let loadStarted {
+                await fulfillment(of: [loadStarted], timeout: 5)
+            } else {
+                _ = try await alert("GitX.PullRequest.Recovery.ReplaceConfirmation", on: fixture)
+            }
+            var replies: [Bool] = []
+            let coordinator = GitX.RepositoryTerminationCoordinator(mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [fixture.session] }, remoteDecision: {
+                XCTFail("Keep Editing must cancel Quit before the remote decision"); return .terminateNow
+            }, remoteCancelled: {}, reply: { replies.append($0) })
+            XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+            let consent = try await alert("GitX.PullRequest.Recovery.WindowCloseConfirmation", on: fixture)
+            if duringLoad {
+                await fixture.loadGate.release(true)
+            }
+            consent.sheetParent?.endSheet(consent, returnCode: .alertFirstButtonReturn)
+            await wait { replies == [false] }
+            XCTAssertEqual(fixture.sheet.recoveryContentSnapshot, fixture.exact)
+            let replacement = try await alert("GitX.PullRequest.Recovery.ReplaceConfirmation", on: fixture)
+            replacement.sheetParent?.endSheet(replacement, returnCode: .alertFirstButtonReturn)
+            await wait { !fixture.submission.needsCloseProtection }
+            let saved = try await fixture.store.load(identity: fixture.identity)
+            let writes = await fixture.store.conditionalSaves
+            XCTAssertEqual(saved?.content, fixture.exact)
+            XCTAssertEqual(writes, 1)
+            XCTAssertEqual(replies, [false])
+        }
+    }
+
+    func testFinalAcceptedQuitDiscardsAttachedAndDetachedRecoveryOnlyAtItsReply() async throws {
+        for detached in [false, true] {
+            let fixture = try await fixture()
+            let original = try await fixture.store.load(identity: fixture.identity)
+            if detached {
+                fixture.session.detach(presented: [(fixture.submission, fixture.sheet)])
+            }
+            let panel = try XCTUnwrap(fixture.sheet.window)
+            let replied = expectation(description: "Every guard agrees before recovery is discarded")
+            let coordinator = GitX.RepositoryTerminationCoordinator(mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [fixture.session] }, remoteDecision: {
+                XCTAssertTrue(panel.isVisible)
+                XCTAssertTrue(fixture.submission.needsCloseProtection)
+                XCTAssertEqual(fixture.sheet.recoveryContentSnapshot, fixture.exact)
+                return .terminateNow
+            }, remoteCancelled: {}, reply: { allowed in
+                XCTAssertTrue(allowed)
+                XCTAssertFalse(panel.isVisible)
+                XCTAssertTrue(fixture.session.submissions.isEmpty)
+                replied.fulfill()
+            })
+            XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+            await wait { panel.attachedSheet?.accessibilityIdentifier() == "GitX.PullRequest.Recovery.WindowCloseConfirmation" }
+            XCTAssertEqual(fixture.sheet.recoveryContentSnapshot, fixture.exact)
+            let consent = try XCTUnwrap(panel.attachedSheet)
+            consent.sheetParent?.endSheet(consent, returnCode: .alertSecondButtonReturn)
+            await fulfillment(of: [replied], timeout: 5)
+            let stored = try await fixture.store.load(identity: fixture.identity)
+            XCTAssertEqual(stored, original)
+            XCTAssertFalse(GitX.RepositoryPullRequestRecoverySession.protectedSessions.contains { $0 === fixture.session })
+        }
+    }
+
     private func button(_ identifier: String, fixture: Fixture) throws -> NSButton {
         try XCTUnwrap(find(identifier, in: fixture.sheet.window?.contentView) as? NSButton)
     }

@@ -159,6 +159,17 @@ final class RepositoryPullRequestRecoverySession {
         return true
     }
 
+    /// Called only after every Quit guard has agreed, immediately before AppKit's
+    /// final affirmative reply. Earlier consent remains nondestructive.
+    func completeAcceptedTermination() {
+        invalidated = true
+        attachedCloseDecision = nil
+        cancelPendingCloseDecision()
+        submissions.forEach { $0.resolveRecovery() }
+        presentations.values.compactMap(\.sheet).forEach { $0.invalidatePresentation() }
+        retire()
+    }
+
     func cancelPendingCloseDecision() {
         closeIdentity = nil
         let callbacks = closeDecisions; closeDecisions.removeAll()
@@ -185,7 +196,7 @@ final class RepositoryPullRequestRecoverySession {
                     guard await sheet.confirmRecoveryReplacement(attempt) else { return }
                 }
                 guard isCurrent, sheet.acceptsRecoverySave(attempt) else { return }
-                let write = queue.enqueueThrowing { try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected) }
+                let write = queue.enqueueThrowing(writes: true) { try await drafts.saveSnapshot(identity: identity, content: content, at: date, matching: expected) }
                 let saved = try await write.value
                 guard isCurrent, sheet.acceptsRecoverySave(attempt) else { return }
                 if saved != nil {
@@ -268,6 +279,9 @@ final class RepositoryPullRequestRecoverySession {
                 waitingWindow = panel
                 panel.center(); panel.makeKeyAndOrderFront(nil)
             } else if !pending || !sheets.isEmpty {
+                if waitingWindow != nil {
+                    session.cancelPendingCloseDecision()
+                }
                 waitingWindow?.orderOut(nil)
                 waitingWindow?.delegate = nil
                 waitingWindow?.close()

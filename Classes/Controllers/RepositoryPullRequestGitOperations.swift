@@ -255,6 +255,8 @@ nonisolated struct RepositoryPullRequestCheckoutExecutor: Sendable {
     }
 
     func execute(_ plan: ForgePullRequestCheckoutPlan) throws -> RepositoryPullRequestCheckoutReceipt {
+        let activity = try RepositoryLocalMutationRegistry.shared.admit()
+        defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
         try ensureSafeWorkingState()
         if plan.addsRemote {
             _ = try runner.run(["remote", "add", plan.remote.name, plan.remote.fetchURL.absoluteString])
@@ -344,6 +346,8 @@ nonisolated struct RepositorySyncForkCoordinator: Sendable {
     ) async throws -> RepositorySyncForkReceipt {
         let server = try await service.syncFork(accountID: accountID, plan: plan)
         do {
+            let activity = try RepositoryLocalMutationRegistry.shared.admit()
+            defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
             _ = try runner.run([
                 "fetch", "--no-tags", plan.localFetchRemoteName,
                 "+refs/heads/\(plan.branch.value):refs/remotes/\(plan.localFetchRemoteName)/\(plan.branch.value)",

@@ -1584,7 +1584,6 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             submission.supersede()
             XCTAssertFalse(submission.admit())
             submission.finish()
-            XCTAssertFalse(submission.wasAdmitted)
             XCTAssertEqual(submission.disposition, .notSent(savedAsDraft: result.snapshot != nil))
             XCTAssertEqual(submission.recoveryContent, content)
             XCTAssertEqual(submission.canRetire, result.snapshot != nil)
@@ -1634,7 +1633,6 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             XCTAssertTrue(submission.admit())
             submission.finish(error: error)
             XCTAssertEqual(submission.disposition, expected)
-            XCTAssertTrue(submission.wasAdmitted)
             XCTAssertEqual(submission.recoveryContent, content)
         }
         for saved in [false, true] {
@@ -2441,20 +2439,9 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             sheet.onCopyRecovery = { copied = $0 }
             try XCTUnwrap(find("GitX.PullRequest.Recovery.Copy", in: view) as? NSButton).performClick(nil)
             XCTAssertEqual(copied, expected)
-            let pasteboard = NSPasteboard.general
-            let originalItems: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
-                let copy = NSPasteboardItem()
-                for type in item.types {
-                    if let data = item.data(forType: type) {
-                        copy.setData(data, forType: type)
-                    }
-                }
-                return copy
-            } ?? []
-            defer {
-                pasteboard.clearContents()
-                pasteboard.writeObjects(originalItems.map { $0 as NSPasteboardWriting })
-            }
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("GitX.RecoveryCopyTest." + UUID().uuidString))
+            defer { pasteboard.releaseGlobally() }
+            sheet.recoveryPasteboard = pasteboard
             sheet.onCopyRecovery = nil
             try XCTUnwrap(find("GitX.PullRequest.Recovery.Copy", in: view) as? NSButton).performClick(nil)
             XCTAssertEqual(pasteboard.string(forType: .string), (expected.title ?? "") + "\n\n" + expected.body)

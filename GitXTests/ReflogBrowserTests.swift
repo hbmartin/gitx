@@ -89,12 +89,12 @@ final class ReflogBrowserTests: XCTestCase {
     func testUnsupportedReferenceIsEscapedAndDisabledWhileHeadRemainsUsable() async throws {
         let fixture = try ReflogGitFixture()
         defer { fixture.remove() }
-        let repository = try GitXTestGitRepository(url: fixture.url)
         let oid = try fixture.git(["rev-parse", "HEAD"])
         var packed = Data("# pack-refs with: peeled fully-peeled sorted\n\(oid) refs/heads/invalid-".utf8)
         packed.append(0xFF)
         packed.append(0x0A)
         try packed.write(to: fixture.url.appendingPathComponent(".git/packed-refs"))
+        let repository = try GitXTestGitRepository(url: fixture.url)
         let controller = try XCTUnwrap(ReflogBrowserController.make(repository: repository))
         defer { controller.closeView() }
         _ = controller.view
@@ -370,6 +370,10 @@ final class ReflogBrowserTests: XCTestCase {
                 try fixture.git(["branch", branchName, previous])
             }
         }
+        let reconciliation = repository.observe(\.refs) { _, _ in
+            XCTAssertTrue(GitX.RepositoryLocalMutationRegistry.shared.hasActivity, "Quit must retain the started mutation through original-repository reconciliation")
+        }
+        defer { reconciliation.invalidate() }
         let admitted = try XCTUnwrap(controller?.operation)
         controller?.closeView()
         window.makeFirstResponder(nil)
@@ -378,6 +382,7 @@ final class ReflogBrowserTests: XCTestCase {
         controller = nil
         try gate.open()
         await admitted.value
+        reconciliation.invalidate()
         let expectedHead = mode == nil || failing ? previous : target
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), expectedHead)
         if mode != nil {

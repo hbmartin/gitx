@@ -321,8 +321,11 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         let kind = mutation == nil ? kind : .mutation
         guard !closed, requests.permits(kind), let repository else { return false }
         let service: RepositoryReflogService
-        do { service = try serviceFactory(repository) }
-        catch {
+        let activity: RepositoryLocalMutationRegistry.Ticket?
+        do {
+            service = try serviceFactory(repository)
+            activity = mutation == nil ? nil : try RepositoryLocalMutationRegistry.shared.admitContinuation()
+        } catch {
             if self.service == nil {
                 isBusy = false; requests.active = nil; updateControls()
             }
@@ -356,7 +359,17 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                 }
             }
             operation = Task { [weak self, weak repository] in
-                let result = await Task.detached(priority: .userInitiated) { try work(service) }.result
+                defer {
+                    if let activity {
+                        RepositoryLocalMutationRegistry.shared.finish(activity)
+                    }
+                }
+                let result = await Task.detached(priority: .userInitiated) {
+                    if let activity {
+                        return try RepositoryLocalMutationRegistry.shared.withStartedActivity(activity) { try work(service) }
+                    }
+                    return try work(service)
+                }.result
                 if let mutation, let repository {
                     mutation.reconcile(repository)
                     Self.logger.debug("Reconciled completed reflog mutation independently of browser presentation")

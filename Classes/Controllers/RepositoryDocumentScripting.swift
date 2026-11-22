@@ -145,6 +145,8 @@ final class RepositoryDocumentCloseCoordinator: NSObject {
         action()
     }
 
+    // PBGitRepositoryDocument.m calls this lifecycle hook through GitX-Swift.h.
+    // swiftlint:disable unused_declaration
     @objc(handleMoveForDocument:toURL:performClose:)
     func handleMove(for document: NSDocument, to _: URL, performClose: () -> Void) {
         if pending {
@@ -154,6 +156,8 @@ final class RepositoryDocumentCloseCoordinator: NSObject {
         NSLog("[GitX] Repository moved; detached recovery before obsolete document teardown")
         withApprovedClose(for: document, perform: performClose)
     }
+
+    // swiftlint:enable unused_declaration
 
     @objc(requestCloseForDocument:completion:)
     func requestClose(for document: NSDocument, completion: @escaping (Bool) -> Void) {

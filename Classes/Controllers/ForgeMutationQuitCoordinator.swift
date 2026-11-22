@@ -105,11 +105,11 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
             return database
         }
 
-        static let shared = ForgeMutationQuitCoordinator(
+        static let shared: ForgeMutationQuitCoordinator = .init(
             persistence: sharedPersistence,
             choiceProvider: ForgeMutationQuitAlert.choice,
             terminationReply: { shouldTerminate in
-                NSApplication.shared.reply(toApplicationShouldTerminate: shouldTerminate)
+                RepositoryTerminationCoordinator.shared.remoteTerminationReply(shouldTerminate)
             }
         )
     #endif
@@ -147,6 +147,10 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         scope: ForgeUnknownMutationOutcomeScope = .repositoryWide,
         startedAt: Date = Date()
     ) throws -> ForgeMutationRegistration {
+        let admission: RepositoryLocalMutationRegistry.Ticket
+        do { admission = try RepositoryLocalMutationRegistry.shared.admitContinuation(requiresOpenAdmission: true) }
+        catch { throw ForgeMutationQuitCoordinatorError.terminationPending }
+        defer { RepositoryLocalMutationRegistry.shared.finish(admission) }
         let mutation = try ForgeInFlightMutation(
             accountID: accountID,
             repository: repository,
@@ -166,23 +170,24 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
 
     @discardableResult
     func finish(_ registration: ForgeMutationRegistration) -> Bool {
-        let result = lock.withForgeMutationLock { () -> (removed: Bool, reply: Bool) in
+        let result = lock.withForgeMutationLock { () -> (removed: Bool, reply: Bool, generation: UInt64) in
             guard active.removeValue(forKey: registration.mutation.registrationID) != nil else {
-                return (false, false)
+                return (false, false, terminationAttemptGeneration)
             }
             if case .waiting = terminationState, active.isEmpty {
                 terminationState = .replyingToTermination
                 activeTerminationAttemptID = nil
-                return (true, true)
+                return (true, true, terminationAttemptGeneration)
             }
-            return (true, false)
+            return (true, false, terminationAttemptGeneration)
         }
         guard result.removed else { return false }
         logger.info(
             "Finished in-flight Forge mutation operation=\(registration.mutation.operation.rawValue, privacy: .public)"
         )
         if result.reply {
-            Task { @MainActor [terminationReply] in
+            Task { @MainActor [self, terminationReply] in
+                guard lock.withForgeMutationLock({ terminationAttemptGeneration == result.generation }) else { return }
                 terminationReply(true)
             }
         }
@@ -223,6 +228,14 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
             operation: operation,
             scope: scope
         )
+    }
+
+    func cancelApplicationTermination() {
+        lock.withForgeMutationLock {
+            terminationAttemptGeneration &+= 1
+            activeTerminationAttemptID = nil
+            terminationState = .idle
+        }
     }
 
     @MainActor
@@ -408,17 +421,6 @@ private enum ForgeMutationQuitAlert {
         return alert.runModal() == .alertSecondButtonReturn ? .quitAnyway : .wait
     }
 }
-
-#if GITX_APP_TARGET
-    extension ApplicationController {
-        /// Objective-C runtime hook for the optional NSApplicationDelegate method.
-        /// Keeping the selector in Swift avoids substantive churn in the legacy app delegate.
-        // swiftlint:disable:next unused_declaration
-        func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
-            ForgeMutationQuitCoordinator.shared.applicationShouldTerminate()
-        }
-    }
-#endif
 
 private nonisolated extension NSLock {
     func withForgeMutationLock<Result>(_ body: () throws -> Result) rethrows -> Result {

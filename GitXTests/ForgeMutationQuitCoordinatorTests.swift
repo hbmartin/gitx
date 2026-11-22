@@ -604,6 +604,45 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         await database.close()
     }
 
+    func testLocalQuitSealRejectsRemoteRegistrationEvenInsideAnExistingLocalWriter() throws {
+        let mutations = RepositoryLocalMutationRegistry.shared
+        let local = try mutations.admit()
+        defer { mutations.finish(local); mutations.reopenAdmission() }
+        mutations.sealAdmission()
+        let fixture = try Fixture()
+        let coordinator = makeCoordinator(choices: ChoiceSpy(choice: .wait), replies: ReplySpy())
+        XCTAssertThrowsError(try coordinator.register(accountID: fixture.accountID, repository: fixture.repository, operation: .editPullRequest)) {
+            XCTAssertEqual($0 as? ForgeMutationQuitCoordinatorError, .terminationPending)
+        }
+        XCTAssertTrue(coordinator.activeMutations().isEmpty)
+    }
+
+    func testCancelledRemoteAttemptCannotDeliverItsQueuedSuccessToANewAttempt() async throws {
+        let choices = ChoiceSpy(choice: .wait)
+        let replies = ReplySpy()
+        let coordinator = makeCoordinator(choices: choices, replies: replies)
+        defer { coordinator.cancelApplicationTermination() }
+        let fixture = try Fixture()
+        let first = try coordinator.register(accountID: fixture.accountID, repository: fixture.repository, operation: .editPullRequest)
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        XCTAssertTrue(coordinator.finish(first))
+        coordinator.cancelApplicationTermination()
+        let second = try coordinator.register(accountID: fixture.accountID, repository: fixture.repository, operation: .createPullRequest)
+        defer { _ = coordinator.finish(second) }
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        XCTAssertTrue(replies.values.isEmpty, "The queued result belongs to the cancelled attempt")
+        let replied = expectation(description: "Only the current remote attempt replies")
+        replied.assertForOverFulfill = true
+        replies.expectation = replied
+        XCTAssertTrue(coordinator.finish(second))
+        await fulfillment(of: [replied], timeout: 5)
+        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(choices.requestCount, 2)
+    }
+
     private func makeCoordinator(
         persistence: PersistenceDouble = PersistenceDouble(),
         choices: ChoiceSpy = ChoiceSpy(choice: .wait),

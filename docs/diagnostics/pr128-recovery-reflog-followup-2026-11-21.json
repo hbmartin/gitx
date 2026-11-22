@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "The recovery-session implementation passes complete post-commit correctness and coverage with Debug/Release consumers and interoperability. Native Quit implementation and final full-profile verification remain pending.",
+  "status": "Implementation passes focused native coverage and Debug/Release consumers. The preceding iteration passed all five native-menu UI cases, all forty Release performance cases and fresh compiler/Clang/whole-scope semantic analysis; its 917 recorded production inputs are unchanged, and only the native bridge coverage fixture was subsequently extended. Earlier package/static iterations passed, but the offscreen workflow failed on two Objective-C-only semantic annotations, since corrected. Complete post-commit correctness, coverage and the final canonical full profile remain required.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -23,7 +23,17 @@
     "pr128-next-recovery-session-admission",
     "pr128-next-post-session-correctness",
     "pr128-next-native-close-characterization",
-    "pr128-next-post-native-close-correctness"
+    "pr128-next-post-native-close-correctness",
+    "pr128-next-native-quit-red-v2",
+    "pr128-next-native-quit-fixtures-red-v3",
+    "pr128-next-termination-native-red-v5",
+    "pr128-next-termination-boundary-red",
+    "pr128-next-termination-green",
+    "pr128-next-termination-static",
+    "pr128-next-native-quit-selector-green",
+    "pr128-next-native-quit-bridge-coverage",
+    "pr128-next-native-quit-forwarder-green",
+    "pr128-next-offscreen-verification"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -86,6 +96,39 @@
     {
       "runId": "pr128-next-post-session-correctness",
       "result": "All 2440 tests passed. UI controller coverage was 1813/2053 (88.31%) below the unchanged 89.00% floor. Session coverage was 334/339 (98.53%), app coverage 93.99% and reflog service 98.38%. No ratchet was taken from the failed gate."
+    },
+    {
+      "runId": "pr128-next-native-quit-red-v2",
+      "result": "Attached recovery and a held real Git mutation reached menu Quit and reproduced the bypass. Detached/multiple-document setup queries were corrected before their separate red run."
+    },
+    {
+      "runId": "pr128-next-native-quit-fixtures-red-v3",
+      "result": "Actual coordinated move and two-document fixtures reached menu Quit and reproduced the missing protection."
+    },
+    {
+      "runId": "pr128-next-termination-native-red-v5",
+      "result": "Known pre-send admission refusals were classified uncertain, and completion left old detached-placeholder consent pending. Separate fixture errors were corrected before accepting their results."
+    },
+    {
+      "runId": "pr128-next-termination-boundary-red",
+      "result": "Actual tag creation bypassed sealed admission; checkout and detached reflog completion released local activity before original-repository reconciliation. Session and termination decision regressions passed."
+    },
+    {
+      "runId": "pr128-next-termination-green",
+      "result": "All 206 selected native cases and Debug/Release consumers passed. Four protected native-menu Quit cases still failed because AppKit did not reach the Swift-only delegate extension. The unprotected Quit characterization passed."
+    },
+    {
+      "runId": "pr128-next-native-quit-forwarder-green",
+      "receipt": "artifacts/verification/pr128-next-native-quit-forwarder-green-ui-a541b646/receipt.json",
+      "result": "With the delegate hook present, detached recovery and held local mutation Quit passed, while attached recovery and multiple documents exposed AppKit waiting for attached sheets before consulting the delegate. Menu routing now performs Swift consent before calling AppKit. A subsequent test-only build failure used a helper private to another fixture; corrected to observable XCTest expectations."
+    },
+    {
+      "runId": "pr128-next-offscreen-verification",
+      "result": "Compiler/Clang analysis, static checks, Core and ForgeKit passed; whole-scope semantic analysis rejected two Objective-C-only entrypoints. Both now have narrow caller-explained annotations, with no relaxed baseline."
+    },
+    {
+      "runId": "pr128-next-native-quit-selector-green",
+      "result": "Explicit Objective-C export on the imported delegate extension failed compilation with a selector conflict. A thin Objective-C forwarding hook provides the required runtime entry point."
     }
   ],
   "characterization": [
@@ -109,9 +152,8 @@
     "reason": "Wait for complete final verification."
   },
   "remaining": [
-    "native Quit and local mutation admission",
-    "remaining fixture/performance/contract cleanups",
-    "complete final canonical profile and verified stable Debug app"
+    "complete post-commit correctness and coverage ratchet",
+    "complete final canonical profile, final contract assessment and verified stable Debug app"
   ],
   "recoverySessionImplementation": {
     "changes": [
@@ -200,5 +242,134 @@
       }
     },
     "notFinalDeliveryEvidence": true
+  },
+  "terminationImplementation": {
+    "verifiedAtUTC": "2026-11-22T09:59:08.942136+00:00",
+    "parentCommit": "98e03ef28740446e4c4063e073108937a07763a3",
+    "verificationScope": "Partial pre-commit checks; final delivery requires complete post-commit evidence.",
+    "runIds": [
+      "pr128-next-native-quit-bridge-coverage",
+      "pr128-next-native-quit-forwarder-green",
+      "pr128-next-offscreen-verification"
+    ],
+    "earlierPartialEvidence": {
+      "runId": "pr128-next-offscreen-verification",
+      "status": "failed",
+      "passedChecks": [
+        "static",
+        "core",
+        "forgekit"
+      ],
+      "limitation": "Sources subsequently changed for the native delegate hook, scoped Objective-C entrypoint annotations, native-event test dispatch, and the unsupported-reference startup fixture; these children are earlier partial evidence only. Fresh full-profile checks remain required."
+    },
+    "newFileCoverageAdmission": {
+      "Classes/git/RepositoryLocalMutationRegistry.swift": {
+        "coveredLines": 113,
+        "executableLines": 114,
+        "lineCoverage": 0.9912280701754386,
+        "initialFloor": 0.9912
+      },
+      "Classes/Controllers/RepositoryTerminationCoordinator.swift": {
+        "coveredLines": 198,
+        "executableLines": 200,
+        "lineCoverage": 0.99,
+        "initialFloor": 0.99
+      }
+    },
+    "precedingProductionVerification": {
+      "runId": "pr128-next-native-quit-forwarder-green",
+      "checks": [
+        "ui",
+        "performance",
+        "analyze"
+      ],
+      "productionFilesMatched": 917,
+      "limitation": "Earlier partial evidence. One native XCTest fixture changed afterward to execute both thin Quit bridges under coverage; canonical final evidence must be rerun at the final commit."
+    },
+    "releasePreviewMeasurements": {
+      "scope": "Application fingerprint capture; existing Git subprocess I/O is not instrumented",
+      "unchangedBytes": 46661632,
+      "unchangedFiles": 101,
+      "modes": {
+        "soft": {
+          "samples": 5,
+          "medianSeconds": 0.24255820829421282,
+          "maxSeconds": 0.2496988750062883,
+          "contentBytes": [
+            0
+          ],
+          "contentFiles": [
+            0
+          ]
+        },
+        "mixed": {
+          "samples": 5,
+          "medianSeconds": 0.23991095833480358,
+          "maxSeconds": 0.25192316668108106,
+          "contentBytes": [
+            0
+          ],
+          "contentFiles": [
+            0
+          ]
+        },
+        "hard": {
+          "samples": 5,
+          "medianSeconds": 0.24716429179534316,
+          "maxSeconds": 0.25244941655546427,
+          "contentBytes": [
+            20
+          ],
+          "contentFiles": [
+            1
+          ]
+        }
+      },
+      "bundle": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-native-quit-forwarder-green-performance-3473601e/Results/GitXPerformance.xcresult",
+      "attachment": "/private/tmp/pr128-current-preview-measurements/F7135631-5688-4D5A-8B53-76F71C76A60C.json"
+    },
+    "diagnosticAttachments": {
+      "nativeWaiting": "/private/tmp/pr128-current-quit-waiting/manifest.json",
+      "nativeMenuQuit": "/private/tmp/pr128-native-menu-quit-images/manifest.json",
+      "inspection": "Visually inspected current attached and detached recovered-text consent plus the Cancel Quit waiting panel."
+    },
+    "coveragePolicy": "Only the new policy files receive measured initial floors here. Existing floors are unchanged until one complete passing correctness receipt permits the atomic ratchet.",
+    "applicationDelegatePreparation": {
+      "path": "Classes/Controllers/ApplicationController.m",
+      "runId": "pr128-next-post-native-close-correctness",
+      "commit": "a0ea55c966fb4bbc5735768b95addd8a0b59decd",
+      "coveredLines": 284,
+      "executableLines": 301,
+      "lineCoverage": 0.9435215946843853,
+      "requiredMinimum": 0.9,
+      "normalFailureBoundaryTests": [
+        "GitXFeatureTests/testApplicationDelegateCompatibilitySurface",
+        "GitXFeatureTests/testApplicationDelegateDebugRejectsPlainSharedDocumentController",
+        "GitXFeatureTests/testApplicationDelegateOpeningFilesRepliesForSuccessAndFailure",
+        "GitXFeatureTests/testApplicationDelegateUntitledAndWindowClosePolicies"
+      ],
+      "scope": "Objective-C forwards the AppKit selector to the Swift coordinator. Existing class names, selectors, scripting and command-line behavior remain intact. The header is already annotated and is unchanged."
+    },
+    "testDispatch": "The direct native Quit fixture uses a zero-delay Cocoa run-loop event so its suspended Swift test task does not occupy AppKit termination execution. The earlier synchronous task invocation was cancelled after sampling its nested AppKit loop.",
+    "nativeMenuRouting": "The terminate: selector and Command-Q are preserved. The menu explicitly targets the existing application delegate, whose thin Objective-C action requests Swift consent before AppKit waits for attached sheets. A direct AppKit request joining pending menu consent receives exactly one AppKit reply.",
+    "generatedInterfaces": [
+      {
+        "configuration": "Debug",
+        "headerPath": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Debug/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Debug/GitX.build/DerivedSources/GitX-Swift.h",
+        "headerSHA256": "465ce31ed57c4edc2a25c729f79cfe8f41e2101214c9770e36c18147b79aec7d",
+        "unchangedDocumentInterface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)handleMoveForDocument:(NSDocument * _Nonnull)document toURL:(NSURL * _Nonnull)_ performClose:(SWIFT_NOESCAPE void (^ _Nonnull)(void))performClose;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end",
+        "terminationInterface": "@interface RepositoryTerminationCoordinator : NSObject\n/// Thin Objective-C delegate hook; every lifecycle decision stays here.\n+ (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication * _Nonnull)application SWIFT_WARN_UNUSED_RESULT;\n+ (void)requestApplicationTermination:(id _Nullable)sender;\n- (void)cancelPendingQuit;\n- (nonnull instancetype)init SWIFT_UNAVAILABLE;\n+ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG(\"-init is unavailable\");\n@end"
+      },
+      {
+        "configuration": "Release",
+        "headerPath": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Release/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Release/GitX.build/DerivedSources/GitX-Swift.h",
+        "headerSHA256": "3f32817334913cc9c61bf9e7f8516b49af832eab8a157c6cd3d0cbff1012b822",
+        "unchangedDocumentInterface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)handleMoveForDocument:(NSDocument * _Nonnull)document toURL:(NSURL * _Nonnull)_ performClose:(SWIFT_NOESCAPE void (^ _Nonnull)(void))performClose;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end",
+        "terminationInterface": "@interface RepositoryTerminationCoordinator : NSObject\n/// Thin Objective-C delegate hook; every lifecycle decision stays here.\n+ (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication * _Nonnull)application SWIFT_WARN_UNUSED_RESULT;\n+ (void)requestApplicationTermination:(id _Nullable)sender;\n- (void)cancelPendingQuit;\n- (nonnull instancetype)init SWIFT_UNAVAILABLE;\n+ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG(\"-init is unavailable\");\n@end"
+      }
+    ],
+    "execution": "Local admission is sealed during Quit; started local writers and admitted durable draft work drain. Keep Editing and Cancel Quit reopen admission without cancelling started work. Every final reply revalidates current attached and detached recovery.",
+    "completion": "Checkout and reflog activity retain execution ownership through original-repository reconciliation. Tag creation uses the same admission guard. Known refused remote admission remains not sent.",
+    "cleanup": "Recovery Copy tests use an isolated pasteboard. Native move fixtures drain captured submissions before deletion. Release measurements include 101 unchanged payload files; content-read counts refer to application fingerprint capture, with Git subprocess I/O explicitly outside that instrumentation."
   }
 }

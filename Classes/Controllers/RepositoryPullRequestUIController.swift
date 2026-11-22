@@ -697,11 +697,19 @@ final class RepositoryPullRequestUIController {
         let logger = logger
         let authority = authority
         mutationTask = Task { [weak self, weak repository] in
-            defer { admission.finish() }
+            var activity: RepositoryLocalMutationRegistry.Ticket?
+            defer {
+                if let activity {
+                    RepositoryLocalMutationRegistry.shared.finish(activity)
+                }
+                admission.finish()
+            }
             do {
                 guard authority.isCurrent, admission.admit() else { return }
+                let started = try RepositoryLocalMutationRegistry.shared.admitContinuation()
+                activity = started
                 let receipt = try await Task.detached(priority: .userInitiated) {
-                    try executor.execute(plan)
+                    try RepositoryLocalMutationRegistry.shared.withStartedActivity(started) { try executor.execute(plan) }
                 }.value
                 repository?.reloadRefs()
                 repository?.hasChanged = true
@@ -719,8 +727,7 @@ final class RepositoryPullRequestUIController {
                 repository?.lazyReload()
                 guard let self else { return }
                 if admission.superseded || !self.ownerIsCurrent() || error is CancellationError {
-                    self.reportSupersededFailure(RepositoryOperationFailure(operation: "Pull Request checkout", disposition: .uncertain,
-                                                                            details: "The checkout did not finish safely. The repository may contain a fetched reference or a newly created branch. Review its current state before trying again.\n\n" + error.localizedDescription))
+                    self.reportSupersededFailure(.checkout(error))
                     return
                 }
                 self.windowController?.showErrorSheet(error)
@@ -1329,8 +1336,8 @@ final class RepositoryPullRequestUIController {
             } catch {
                 logger.error("Pull Request edit failed; diagnostic=\(error.localizedDescription, privacy: .private)")
                 submission.finish(error: error)
-                recoverySession.didSettle()
                 let failure = submission.failure
+                recoverySession.didSettle()
                 guard let self else { return }
                 if case ForgePullRequestWorkflowError.editConflict = error, let expected = submission.expectedUpdatedAt {
                     self.conflictFreshness.requireRefresh(identity: editor.identity, after: expected)
@@ -1398,6 +1405,8 @@ final class RepositoryPullRequestUIController {
 
     private func retireCompletedSubmissions() {
         recoverySession.retire()
+        let retained = retainedSubmissionCount
+        logger.debug("Retained Pull Request submission records: \(retained, privacy: .public)")
     }
 
     private func presentActivity(identity: UUID, message: String, busy: Bool) {

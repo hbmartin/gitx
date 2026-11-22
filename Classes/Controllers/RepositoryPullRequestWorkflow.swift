@@ -992,7 +992,6 @@ final class RepositoryEditSubmissionLifetime {
     let draftIdentity: ForgeDraftIdentity
     let destination: ForgeDestination
     let expectedUpdatedAt: Date?
-    private(set) var wasAdmitted = false
     private(set) var phase = Phase.persisting
     private(set) var disposition: Disposition?
     private(set) var failure: RepositoryOperationFailure?
@@ -1048,7 +1047,6 @@ final class RepositoryEditSubmissionLifetime {
 
     func admit() -> Bool {
         guard phase == .persisting else { return false }
-        wasAdmitted = true
         phase = .admitted
         return true
     }
@@ -1056,11 +1054,12 @@ final class RepositoryEditSubmissionLifetime {
     @discardableResult
     func finish(_ outcome: RepositoryPullRequestEditOutcome? = nil, error: Error? = nil) -> Bool {
         guard phase != .finished else { return false }
+        let admitted = phase == .admitted
         self.outcome = outcome
         phase = .finished
         if outcome != nil {
             disposition = .succeeded
-        } else if !wasAdmitted {
+        } else if !admitted || error.map(RepositoryOperationFailure.wasNotSent) == true {
             disposition = .notSent(savedAsDraft: saveResult?.snapshot != nil)
         } else if let error, case ForgePullRequestWorkflowError.editConflict = error {
             disposition = .rejected
@@ -1164,19 +1163,41 @@ final class RepositoryPullRequestMutationAdmission {
 /// Only durable operations occupy this chain; human consent never does.
 @MainActor
 final class RepositoryDraftOperationQueue {
+    private let mutations: RepositoryLocalMutationRegistry
+    init(mutations: RepositoryLocalMutationRegistry = .shared) {
+        self.mutations = mutations
+    }
+
     private(set) var tail: Task<Void, Never>?
 
     @discardableResult
     func enqueue<Value: Sendable>(_ work: @escaping @MainActor () async -> Value) -> Task<Value, Never> {
         let previous = tail
-        let task = Task { await previous?.value; return await work() }
+        let activity = mutations.trackContinuation()
+        let task = Task {
+            defer { mutations.finish(activity) }
+            await previous?.value
+            return await work()
+        }
         tail = Task { _ = await task.value }
         return task
     }
 
-    func enqueueThrowing<Value: Sendable>(_ work: @escaping @MainActor () async throws -> Value) -> Task<Value, Error> {
+    func enqueueThrowing<Value: Sendable>(writes: Bool = false, _ work: @escaping @MainActor () async throws -> Value) -> Task<Value, Error> {
         let previous = tail
-        let task = Task { await previous?.value; return try await work() }
+        let admission: Result<RepositoryLocalMutationRegistry.Ticket?, Error> = Result {
+            writes ? try mutations.admitContinuation() : nil
+        }
+        let task = Task {
+            await previous?.value
+            let activity = try admission.get()
+            defer {
+                if let activity {
+                    mutations.finish(activity)
+                }
+            }
+            return try await work()
+        }
         tail = Task { _ = try? await task.value }
         return task
     }
@@ -1256,7 +1277,27 @@ nonisolated struct RepositoryOperationFailure: Equatable, Identifiable {
         }
     }
 
+    static func checkout(_ error: Error) -> Self {
+        let disposition = disposition(for: error)
+        let details = disposition == .notSent ? error.localizedDescription
+            : "The checkout did not finish safely. The repository may contain a fetched reference or a newly created branch. Review its current state before trying again.\n\n" + error.localizedDescription
+        return Self(operation: "Pull Request checkout", disposition: disposition, details: details)
+    }
+
+    static func wasNotSent(_ error: Error) -> Bool {
+        if let error = error as? RepositoryLocalMutationError, error == .terminationPending {
+            return true
+        }
+        if let error = error as? ForgeMutationQuitCoordinatorError, error == .terminationPending {
+            return true
+        }
+        return false
+    }
+
     static func disposition(for error: Error) -> Disposition {
+        if wasNotSent(error) {
+            return .notSent
+        }
         if case ForgePullRequestWorkflowError.editConflict = error {
             return .rejected
         }

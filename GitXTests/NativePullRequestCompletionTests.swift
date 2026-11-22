@@ -123,6 +123,32 @@ final class NativePullRequestCompletionTests: XCTestCase {
         }
     #endif
 
+    func testQuitAdmissionRefusalsRemainNotSentAfterLogicalSubmissionAdmission() throws {
+        let fixture = try PullRequestAppFixture()
+        let identity = try ForgeDraftIdentity(accountID: fixture.accountID, destination: .pullRequest(repository: fixture.repository, number: ForgeItemNumber(42)))
+        let content = ForgeDraftContent(title: "Exact unsent title", body: "No remote admission occurred")
+        let errors: [Error] = [GitX.RepositoryLocalMutationError.terminationPending, GitX.ForgeMutationQuitCoordinatorError.terminationPending]
+        for error in errors {
+            XCTAssertEqual(GitX.RepositoryOperationFailure.disposition(for: error), .notSent)
+            XCTAssertTrue(GitX.RepositoryOperationFailure.wasNotSent(error))
+            let checkout = GitX.RepositoryOperationFailure.checkout(error)
+            XCTAssertEqual(checkout.disposition, .notSent)
+            XCTAssertEqual(checkout.details, error.localizedDescription)
+            let submission = GitX.RepositoryEditSubmissionLifetime(identity: identity, destination: .repository(fixture.repository), content: content)
+            submission.persisted(.unavailable)
+            XCTAssertTrue(submission.admit())
+            XCTAssertTrue(submission.finish(error: error))
+            XCTAssertEqual(submission.disposition, .notSent(savedAsDraft: false))
+            XCTAssertEqual(submission.failure?.disposition, .notSent)
+            XCTAssertEqual(submission.recoveryContent, content)
+            XCTAssertTrue(submission.recoveryMessage?.contains("was not sent") == true)
+            XCTAssertTrue(submission.needsRecovery)
+        }
+        XCTAssertEqual(GitX.RepositoryOperationFailure.disposition(for: CancellationError()), .uncertain)
+        XCTAssertFalse(GitX.RepositoryOperationFailure.wasNotSent(CancellationError()))
+        XCTAssertTrue(GitX.RepositoryOperationFailure.checkout(CancellationError()).details.contains("may contain a fetched reference"))
+    }
+
     private func waitForEditor(on window: NSWindow) async {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
         await fulfillment(of: [ready], timeout: 5)
@@ -263,6 +289,12 @@ final class NativePullRequestCompletionTests: XCTestCase {
             try Data().write(to: release)
             return
         }
+        let reconciliation = local.repository.observe(\.refs) { _, _ in
+            if characterize {
+                XCTAssertTrue(GitX.RepositoryLocalMutationRegistry.shared.hasActivity, "Quit must retain the checkout through original-repository reconciliation")
+            }
+        }
+        defer { reconciliation.invalidate() }
         let admitted = try XCTUnwrap(controller?.mutationTask)
         var editor: NSWindow?
         if characterize {
@@ -278,6 +310,7 @@ final class NativePullRequestCompletionTests: XCTestCase {
         }
         try Data().write(to: release)
         await admitted.value
+        reconciliation.invalidate()
         if characterize {
             await waitForEditor(on: window)
             let result = try XCTUnwrap(window.attachedSheet)
