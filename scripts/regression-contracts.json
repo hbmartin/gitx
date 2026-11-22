@@ -1553,6 +1553,13 @@
           "role": "valid",
           "oracle": "With explicit continuous watching, an external tracked edit inserts working state while preserving the older commit selection.",
           "check": "ui"
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Use the real native confirmation buttons after foreground readiness. Lock, removal and prune each require their own affirmative choice; cancellation preserves exact worktree and repository contents."
         }
       ]
     },
@@ -2981,7 +2988,7 @@
           "identifier": "GitXTests/GitBinaryReliabilityTests/testCancelledAndExpiredQueueEntriesImmediatelyReleaseAdmissionCapacity",
           "role": "boundary",
           "check": "correctness",
-          "oracle": "Cancel and expire accepted queue entries, refill both freed slots without busy rejection, and require each outcome exactly once."
+          "oracle": "Cancel and expire accepted queue entries, refill both freed slots without busy rejection, and require each outcome exactly once. Hold occupied factories until explicit release, prove expired queued probes never enter a factory, and drain both held factories before teardown."
         },
         {
           "source": "GitXTests/GitBinaryReliabilityTests.swift",

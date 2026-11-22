@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "Implementation and complete post-commit correctness/coverage passed. Final delivery is governed by the declared canonical workflow and installed-app evidence records.",
+  "status": "Production changes and complete correctness/coverage passed. Sanitizer-exposed native fixture corrections pass both affected classes under correctness and both sanitizer plans; final canonical verification at the local correction commit remains required.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -44,7 +44,13 @@
     "pr128-all-presentations-quit-green",
     "pr128-mixed-quit-boundary-green",
     "pr128-post-all-presentations-correctness",
-    "pr128-post-all-presentations-static"
+    "pr128-post-all-presentations-static",
+    "pr128-probe-fixture-drain-green",
+    "pr128-native-fixtures-address",
+    "pr128-native-fixtures-thread",
+    "pr128-native-fixtures-green",
+    "pr128-native-fixtures-address-diagnostic",
+    "pr128-native-fixtures-thread-diagnostic"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -159,6 +165,23 @@
       "runId": "pr128-saved-sheet-quit-characterized-red",
       "commit": "a8e6e9bd717f69f535297270f60a34a618d9405a",
       "result": "After the separate passing saved-recovery characterization commit, both native regressions again failed with the same three assertions. No failing test was committed."
+    },
+    {
+      "runId": "pr128-next-final-full",
+      "commit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-address-undefined-9acf3700/receipt.json",
+      "result": "Eight canonical checks passed, including all 2476 correctness tests and coverage. The complete Address/Undefined Behavior plan reported 2474 passes and two failures after a held discovery-factory fixture outlived its ten-second semaphore timeout. A stale XCTest callback overfulfilled an expectation in following tests and aborted the host. Retain this failed receipt; no sanitizer pass is claimed."
+    },
+    {
+      "runId": "pr128-probe-fixture-drain-green",
+      "commit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-probe-fixture-drain-green-thread-sanitizer-6689a7ae/receipt.json",
+      "result": "With the discovery fixture correction, its 36 correctness cases and all 2476 Address/Undefined Behavior tests passed. The complete Thread Sanitizer plan reported 2474 passes and two AppKit fixture failures: the foreground owner never became key before synchronization, and a chained Remove Anyway sheet stayed queued after programmatic sheet dismissal. Keep the failed receipt; no Thread Sanitizer pass is claimed."
+    },
+    {
+      "runId": "pr128-native-fixtures-thread",
+      "receipt": "artifacts/verification/pr128-native-fixtures-thread/receipt.json",
+      "result": "The focused Thread Sanitizer run reported 92 passes and four owner-readiness/queued-consent failures. Preserve this receipt; the following diagnostic reproduction records the exact current source and failure snapshots rather than relaxing assertions."
     }
   ],
   "characterization": [
@@ -641,5 +664,197 @@
       }
     },
     "static": "Passed all 876 script tests, pinned SwiftLint, pinned SwiftFormat and canonical static guards."
+  },
+  "sanitizerFixtureCorrections": {
+    "verifiedAtUTC": "2026-11-22T15:44:09.492765+00:00",
+    "parentCommit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+    "runIds": [
+      "pr128-native-fixtures-green",
+      "pr128-native-fixtures-address-diagnostic",
+      "pr128-native-fixtures-thread-diagnostic"
+    ],
+    "initialFailure": {
+      "commit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-address-undefined-9acf3700/receipt.json",
+      "bundle": "artifacts/verification/pr128-next-final-full-address-undefined-9acf3700/Results/GitXAddressUndefined.xcresult",
+      "summary": {
+        "totalTestCount": 2476,
+        "passedTests": 2474,
+        "failedTests": 2,
+        "skippedTests": 0,
+        "result": "Failed",
+        "testFailures": [
+          {
+            "failureText": "API violation - multiple calls made to -[XCTestExpectation fulfill] for Two blocked factories retain both workers. (NSInternalInconsistencyException)",
+            "targetName": "GitXTests",
+            "testIdentifier": 250,
+            "testIdentifierString": "GitBinaryReliabilityTests/testColdAvailabilityCallbacksKeepTheirRequestOrder()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/GitBinaryReliabilityTests/testColdAvailabilityCallbacksKeepTheirRequestOrder",
+            "testName": "testColdAvailabilityCallbacksKeepTheirRequestOrder()"
+          },
+          {
+            "failureText": "Crash: GitX at closure #1 in GitDiscoveryProbeRunner.run(path:arguments:timeout:deadline:completion:). libsystem_c.dylib: abort() called",
+            "targetName": "GitXTests",
+            "testIdentifier": 252,
+            "testIdentifierString": "GitBinaryReliabilityTests/testColdExhaustionCanBeRetriedExplicitlyWithoutBackgroundRetryLoops()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/GitBinaryReliabilityTests/testColdExhaustionCanBeRetriedExplicitlyWithoutBackgroundRetryLoops",
+            "testName": "testColdExhaustionCanBeRetriedExplicitlyWithoutBackgroundRetryLoops()"
+          }
+        ]
+      },
+      "priorPassedChecks": [
+        "static",
+        "interop",
+        "debug-test-build",
+        "release-test-build",
+        "release-contracts",
+        "correctness",
+        "core",
+        "forgekit"
+      ]
+    },
+    "intermediateCompleteSanitizers": {
+      "commit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+      "runId": "pr128-probe-fixture-drain-green",
+      "results": {
+        "correctness": {
+          "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-probe-fixture-drain-green-correctness-e92653c0/receipt.json",
+          "bundle": "artifacts/verification/pr128-probe-fixture-drain-green-correctness-e92653c0/Results/GitX.xcresult",
+          "totalTestCount": 36,
+          "passedTests": 36,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "result": "Passed",
+          "testFailures": []
+        },
+        "address-undefined": {
+          "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-probe-fixture-drain-green-address-undefined-b73b6b4f/receipt.json",
+          "bundle": "artifacts/verification/pr128-probe-fixture-drain-green-address-undefined-b73b6b4f/Results/GitXAddressUndefined.xcresult",
+          "totalTestCount": 2476,
+          "passedTests": 2476,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "result": "Passed",
+          "testFailures": []
+        },
+        "thread-sanitizer": {
+          "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-probe-fixture-drain-green-thread-sanitizer-6689a7ae/receipt.json",
+          "bundle": "artifacts/verification/pr128-probe-fixture-drain-green-thread-sanitizer-6689a7ae/Results/GitXThreadSanitizer.xcresult",
+          "totalTestCount": 2476,
+          "passedTests": 2474,
+          "failedTests": 2,
+          "skippedTests": 0,
+          "result": "Failed",
+          "testFailures": [
+            {
+              "failureText": "XCTAssertTrue failed",
+              "targetName": "GitXTests",
+              "testIdentifier": 2256,
+              "testIdentifierString": "WorktreeAppKitTests/testCapturedWorktreeSynchronizationKeepsItsOriginAfterBothSameOIDRowsChange()",
+              "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testCapturedWorktreeSynchronizationKeepsItsOriginAfterBothSameOIDRowsChange",
+              "testName": "testCapturedWorktreeSynchronizationKeepsItsOriginAfterBothSameOIDRowsChange()"
+            },
+            {
+              "failureText": "XCTAssertTrue failed",
+              "targetName": "GitXTests",
+              "testIdentifier": 2284,
+              "testIdentifierString": "WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation()",
+              "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation",
+              "testName": "testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation()"
+            }
+          ]
+        }
+      }
+    },
+    "intermediateFocusedOutcomes": {
+      "pr128-native-fixtures-address": {
+        "receipt": "artifacts/verification/pr128-native-fixtures-address/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-address/Results/GitXAddressUndefined.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 96,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed",
+        "testFailures": []
+      },
+      "pr128-native-fixtures-thread": {
+        "receipt": "artifacts/verification/pr128-native-fixtures-thread/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-thread/Results/GitXThreadSanitizer.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 92,
+        "failedTests": 4,
+        "skippedTests": 0,
+        "result": "Failed",
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed",
+            "targetName": "GitXTests",
+            "testIdentifier": 59,
+            "testIdentifierString": "WorktreeAppKitTests/testGitCapabilityLossInvalidatesAnOpenPruneConfirmation()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testGitCapabilityLossInvalidatesAnOpenPruneConfirmation",
+            "testName": "testGitCapabilityLossInvalidatesAnOpenPruneConfirmation()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed",
+            "targetName": "GitXTests",
+            "testIdentifier": 69,
+            "testIdentifierString": "WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation",
+            "testName": "testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed",
+            "targetName": "GitXTests",
+            "testIdentifier": 71,
+            "testIdentifierString": "WorktreeAppKitTests/testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent",
+            "testName": "testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed",
+            "targetName": "GitXTests",
+            "testIdentifier": 73,
+            "testIdentifierString": "WorktreeAppKitTests/testMovedNestedRepairIsOfferedOnceAndBlocksPruneUntilVerified()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testMovedNestedRepairIsOfferedOnceAndBlocksPruneUntilVerified",
+            "testName": "testMovedNestedRepairIsOfferedOnceAndBlocksPruneUntilVerified()"
+          }
+        ]
+      }
+    },
+    "currentResults": {
+      "correctness": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-fixtures-green-correctness-a41bd98b/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-green-correctness-a41bd98b/Results/GitX.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 96,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "address-undefined": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-fixtures-address-diagnostic/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-address-diagnostic/Results/GitXAddressUndefined.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 96,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "thread-sanitizer": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-fixtures-thread-diagnostic/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-thread-diagnostic/Results/GitXThreadSanitizer.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 96,
+        "failedTests": 0,
+        "skippedTests": 0
+      }
+    },
+    "scope": "Partial pre-commit evidence for both complete affected classes, using canonical Debug/Release consumers, correctness and explicit-selector sanitizer entrypoints. Complete final verification without selectors remains required after committing.",
+    "changes": [
+      "Hold occupied discovery factories until explicit release, observe that expired queued probes never enter a factory, and drain held factories before teardown. Preserve exact cancellation/expiry outcomes and all eighteen callbacks.",
+      "Activate the native app before requesting its key window. Use actual Lock, Cancel, Remove, Remove Anyway, OK and Prune buttons in the multi-stage confirmation test. Preserve foreground readiness, exact repository state and every cancellation/consent assertion."
+    ],
+    "readinessDiagnostics": "Keep the four additional focused Thread Sanitizer readiness failures. Failure-only snapshots record actual application activity, the XCTest marker and visible/key/main owner windows before and after a consent wait. No predicate or timeout is weakened. A later 96-case Thread Sanitizer reproduction passed; final full verification remains mandatory.",
+    "production": "No production file, dependency, target, test-plan selection or coverage floor changes.",
+    "styleVerification": "Pinned SwiftFormat and strict SwiftLint pass for both modified test files.",
+    "coveragePolicy": "Focused evidence cannot ratchet floors. Existing complete-run improvements remain enforced."
   }
 }
