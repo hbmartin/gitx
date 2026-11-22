@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "The all-presentation Quit correction passes focused native, mixed-consent and six actual-menu UI cases. Complete post-commit coverage and the declared final canonical workflow are required before delivery.",
+  "status": "Implementation and complete post-commit correctness/coverage passed. Final delivery is governed by the declared canonical workflow and installed-app evidence records.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -42,7 +42,9 @@
     "pr128-saved-sheet-characterization",
     "pr128-saved-sheet-quit-characterized-red",
     "pr128-all-presentations-quit-green",
-    "pr128-mixed-quit-boundary-green"
+    "pr128-mixed-quit-boundary-green",
+    "pr128-post-all-presentations-correctness",
+    "pr128-post-all-presentations-static"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -568,5 +570,76 @@
     "implementation": "Keep all current sessions for final accepted teardown, while consent depends only on unsaved protection. End saved recovery sheets and revoke attached controller presentation authority before forwarding to AppKit. Keep Editing remains nondestructive. Clear the attached termination callback on owner revocation and repository-move detachment.",
     "compatibility": "Three existing Swift files change; Objective-C hooks, generated interfaces, targets, dependencies and external APIs are unchanged.",
     "coveragePolicy": "No existing floor is changed here. Ratchet only after complete passing post-commit correctness."
+  },
+  "postPresentationClosureVerification": {
+    "verifiedAtUTC": "2026-11-22T12:19:39.607150+00:00",
+    "commit": "b492c7ef654085bb3cb90afb1ad05e712b2a3933",
+    "runIds": [
+      "pr128-post-all-presentations-correctness",
+      "pr128-post-all-presentations-static"
+    ],
+    "correctnessReceipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-post-all-presentations-correctness-correctness-72a2fdc3/receipt.json",
+    "correctnessBundle": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-post-all-presentations-correctness-correctness-72a2fdc3/Results/GitX.xcresult",
+    "tests": {
+      "totalTestCount": 2476,
+      "passedTests": 2476,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "result": "Passed"
+    },
+    "runtimeWarningCount": 16,
+    "coverage": {
+      "status": "passed; complete-run atomic ratchet and plain checker passed",
+      "proposal": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-post-all-presentations-correctness/coverage-proposal.json",
+      "minimumBefore": 0.9405,
+      "minimumAfter": 0.9405,
+      "raisedFiles": {
+        "Classes/Controllers/RepositoryPullRequestRecoverySession.swift": {
+          "before": 0.9915,
+          "after": 0.9916
+        },
+        "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+          "before": 0.8937,
+          "after": 0.8938
+        }
+      },
+      "groupsBefore": {
+        "Application Preferences surfaces": {
+          "files": [
+            "Classes/Controllers/ApplicationSettings.swift",
+            "Classes/Controllers/ApplicationPreferencesUI.swift",
+            "Classes/Controllers/TerminalIntegration.swift"
+          ],
+          "minimumLineCoverage": 0.9089
+        },
+        "Repository Configuration surfaces": {
+          "files": [
+            "Classes/Controllers/RepositorySettingsStore.swift",
+            "Classes/Controllers/RepositorySettingsController.swift",
+            "Classes/Controllers/RepositoryPresentationPolicies.swift"
+          ],
+          "minimumLineCoverage": 0.8714
+        }
+      },
+      "groupsAfter": {
+        "Application Preferences surfaces": {
+          "files": [
+            "Classes/Controllers/ApplicationSettings.swift",
+            "Classes/Controllers/ApplicationPreferencesUI.swift",
+            "Classes/Controllers/TerminalIntegration.swift"
+          ],
+          "minimumLineCoverage": 0.9089
+        },
+        "Repository Configuration surfaces": {
+          "files": [
+            "Classes/Controllers/RepositorySettingsStore.swift",
+            "Classes/Controllers/RepositorySettingsController.swift",
+            "Classes/Controllers/RepositoryPresentationPolicies.swift"
+          ],
+          "minimumLineCoverage": 0.8714
+        }
+      }
+    },
+    "static": "Passed all 876 script tests, pinned SwiftLint, pinned SwiftFormat and canonical static guards."
   }
 }
