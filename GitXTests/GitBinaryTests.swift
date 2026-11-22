@@ -866,6 +866,22 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
     }
 
+    func testUnprotectedRepositoryMoveClosesTheOriginalDocumentAndFilePresenter() async throws {
+        let ready = gitReadinessExpectation()
+        await fulfillment(of: [ready], timeout: 10)
+        try createRepositoryFixture()
+        defer { try? removeFixture() }
+        let original = try XCTUnwrap(document)
+        NSDocumentController.shared.addDocument(original)
+        original.presentedItemDidMove(to: directory.appendingPathComponent("moved-repository"))
+        let removed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !NSDocumentController.shared.documents.contains { $0 === original }
+        }, object: nil)
+        await fulfillment(of: [removed], timeout: 5)
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === original })
+        XCTAssertFalse(window.window?.isVisible == true)
+    }
+
     func testAcceptedPreflightReportsConsentWithoutDocumentTeardown() throws {
         try prepareFixture()
         let token = NSObject()

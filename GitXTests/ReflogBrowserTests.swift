@@ -5,6 +5,22 @@ import XCTest
 
 @MainActor
 final class ReflogBrowserTests: XCTestCase {
+    func testInitialServiceConstructionFailureLeavesTheBrowserIdleAndRefreshable() throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let controller = try XCTUnwrap(ReflogBrowserController.make(repository: repository, serviceFactory: { _ in
+            throw NSError(domain: "ReflogConstruction", code: 1, userInfo: [NSLocalizedDescriptionKey: "Cannot construct a reflog reader"])
+        }))
+        defer { controller.closeView() }
+        _ = controller.view
+        controller.refresh(nil)
+        XCTAssertFalse(controller.isBusy)
+        XCTAssertEqual(controller.status, "Cannot construct a reflog reader")
+        XCTAssertTrue(try control("Refresh", in: controller, as: NSButton.self).isEnabled)
+        XCTAssertFalse(try control("Cancel", in: controller, as: NSButton.self).isEnabled)
+    }
+
     func testClosingAndReleasingBrowserLetsAnAdmittedHardResetFinish() async throws {
         try await exerciseDetachedMutation(mode: .hard)
     }
