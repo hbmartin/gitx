@@ -107,9 +107,14 @@ final class NativeRecoverySessionTests: XCTestCase {
 
     func testNativeRegistrySynchronizesFurtherVisibleTextAfterARecoveryWasSaved() async throws {
         let fixture = try await fixture()
+        try await fixture.store.save(identity: fixture.identity, content: fixture.exact, at: .now)
         fixture.sheet.markRecoverySaved(fixture.exact)
         XCTAssertTrue(fixture.submission.canRetire)
         XCTAssertTrue(fixture.session.submissions.isEmpty)
+        XCTAssertTrue(fixture.sheet.window?.isVisible == true)
+        XCTAssertFalse(GitX.RepositoryPullRequestRecoverySession.protectedSessions.contains { $0 === fixture.session })
+        let saved = try await fixture.store.load(identity: fixture.identity)
+        XCTAssertEqual(saved?.content, fixture.exact)
         let body = try XCTUnwrap(find("GitX.PullRequest.Body", in: fixture.sheet.window?.contentView) as? NSTextView)
         body.string = "Further exact unsaved text"
         let protected = GitX.RepositoryPullRequestRecoverySession.protectedSessions
