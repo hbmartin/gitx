@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "All 2440 post-session correctness tests passed, but the UI-controller coverage floor failed after extraction. Three passing native characterization tests cover the missed lifecycle behavior; complete coverage verification is being repeated without lowering a floor.",
+  "status": "The recovery-session implementation passes complete post-commit correctness and coverage with Debug/Release consumers and interoperability. Native Quit implementation and final full-profile verification remain pending.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -22,7 +22,8 @@
     "pr128-next-reset-diagnostics-green-v2",
     "pr128-next-recovery-session-admission",
     "pr128-next-post-session-correctness",
-    "pr128-next-native-close-characterization"
+    "pr128-next-native-close-characterization",
+    "pr128-next-post-native-close-correctness"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -164,5 +165,40 @@
     "newlyExercisedControllerLines": 16,
     "combinedCoverageExpectationOnly": 0.8908913784705309,
     "completePassingReceiptStillRequired": true
+  },
+  "postSessionVerification": {
+    "commit": "a0ea55c966fb4bbc5735768b95addd8a0b59decd",
+    "runId": "pr128-next-post-native-close-correctness",
+    "workflow": "artifacts/verification/pr128-next-post-native-close-correctness/workflow.json",
+    "bundle": "artifacts/verification/pr128-next-post-native-close-correctness-correctness-77f8627d/Results/GitX.xcresult",
+    "receipt": "artifacts/verification/pr128-next-post-native-close-correctness-correctness-77f8627d/receipt.json",
+    "summary": {
+      "result": "Passed",
+      "totalTestCount": 2443,
+      "passedTests": 2443,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "expectedFailures": 0
+    },
+    "coveragePolicy": "Atomic improvements recorded from the complete passing receipt; plain checker passed; no floor lowered.",
+    "coverageImprovements": {
+      "Classes/Controllers/PBGitRepositoryDocument.m": {
+        "before": 0.9905,
+        "after": 0.9911
+      },
+      "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+        "before": 0.89,
+        "after": 0.8933
+      },
+      "Classes/Views/ForgePullRequestSheetController.swift": {
+        "before": 0.935,
+        "after": 0.9431
+      },
+      "Classes/git/RepositoryReflogService.swift": {
+        "before": 0.9804,
+        "after": 0.9838
+      }
+    },
+    "notFinalDeliveryEvidence": true
   }
 }
