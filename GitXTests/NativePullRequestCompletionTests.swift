@@ -52,6 +52,77 @@ final class NativePullRequestCompletionTests: XCTestCase {
         }
     }
 
+    func testSavedEditFailureRetiresItsRecordAndShowsTheActualError() async throws {
+        let fixture = try PullRequestAppFixture()
+        let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        defer { local.cleanup() }
+        let owner = GitX.PBGitWindowController()
+        owner.repository = local.repository
+        owner.showWindow(nil)
+        defer { owner.close() }
+        let window = try XCTUnwrap(owner.window)
+        let started = expectation(description: "Persisted edit reaches its service")
+        let offline = URLError(.notConnectedToInternet)
+        let service = NativePullRequestMutationService(started: started, error: offline)
+        let store = CompletionDraftStore()
+        let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "Durable failed edit", bodyMarkdown: "Exact durable body", updatedAt: .distantPast)
+        let identity = try GitX.RepositoryPullRequestDraftPolicy.editIdentity(accountID: fixture.accountID, snapshot: snapshot)
+        let destination = ForgeDestination.pullRequest(fixture.repository, snapshot.number)
+        let outcome = GitX.RepositoryPullRequestEditOutcome(snapshot: snapshot, destination: destination)
+        let controller = GitX.RepositoryPullRequestUIController(repository: local.repository, windowController: owner, ownerIsCurrent: owner.repositoryPresentationValidation(for: local.repository), remoteActions: GitX.RepositoryRemoteActionCoordinator(repository: local.repository, windowController: owner), service: service, drafts: NativeCompletionDraftStore(store: store), destinationOpening: { _ in XCTFail("Failure cannot open a destination"); return false }, bindingResolving: { nil }, postPushBrowserFallback: { _ in })
+        defer { controller.invalidateOwner(); Task { await service.releaseEdit(outcome) } }
+        controller.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: destination)
+        await waitForEditor(on: window)
+        let editor = try XCTUnwrap(window.attachedSheet)
+        try XCTUnwrap(find("GitX.PullRequest.Submit", in: XCTUnwrap(editor.contentView)) as? NSButton).performClick(nil)
+        await fulfillment(of: [started], timeout: 5)
+        let submitted = try XCTUnwrap(controller.mutationTask)
+        await waitForNoSheet(on: window)
+        await service.releaseEdit(outcome)
+        await submitted.value
+        await waitForEditor(on: window)
+        let error = try XCTUnwrap(window.attachedSheet)
+        XCTAssertFalse(error === editor)
+        XCTAssertNil(try find("GitX.PullRequest.Recovery.Copy", in: XCTUnwrap(error.contentView)))
+        XCTAssertEqual(controller.retainedSubmissionCount, 0)
+        let saved = try await store.load(identity: identity)
+        XCTAssertEqual(saved?.content, ForgeDraftContent(title: snapshot.title, body: snapshot.bodyMarkdown))
+        try XCTUnwrap(button(titled: "OK", in: XCTUnwrap(error.contentView))).performClick(nil)
+        await waitForNoSheet(on: window)
+    }
+
+    #if DEBUG
+        func testPendingNativeCreateNoticeClearsWhenItsControllerIsRevoked() async throws {
+            let fixture = try PullRequestAppFixture()
+            let original = try fixture.preparation()
+            let preparation = try GitX.RepositoryPullRequestCreationPreparation(accountID: original.accountID, repository: original.repository, base: original.base, head: original.head, branchAlreadyPushed: true, templates: original.templates, commitsOldestFirst: original.commitsOldestFirst)
+            let form = try XCTUnwrap(preparation.initialForms().forms.first)
+            let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+            defer { local.cleanup() }
+            let owner = GitX.PBGitWindowController()
+            owner.repository = local.repository
+            owner.showWindow(nil)
+            defer { owner.close() }
+            let window = try XCTUnwrap(owner.window)
+            var bindingReads = 0
+            let controller = GitX.RepositoryPullRequestUIController(repository: local.repository, windowController: owner, ownerIsCurrent: owner.repositoryPresentationValidation(for: local.repository), remoteActions: GitX.RepositoryRemoteActionCoordinator(repository: local.repository, windowController: owner), service: NativePullRequestMutationService(started: nil), destinationOpening: { _ in false }, bindingResolving: { bindingReads += 1; return nil }, postPushBrowserFallback: { _ in })
+            defer { controller.invalidateOwner() }
+            try controller.beginUITestCreateJourney(preparation: preparation, initialForm: form, branch: nil, requiresPush: false)
+            await waitForEditor(on: window)
+            let editor = try XCTUnwrap(window.attachedSheet)
+            let previousReads = bindingReads
+            controller.newPullRequest()
+            XCTAssertEqual(bindingReads, previousReads)
+            XCTAssertTrue(window.attachedSheet === editor)
+            XCTAssertEqual(controller.activity?.isBusy, false)
+            XCTAssertEqual(controller.activity?.message, "A Pull Request workflow is already pending. Finish or cancel it before starting another.")
+            controller.invalidateOwner()
+            XCTAssertNil(controller.activity)
+            XCTAssertFalse(editor.isVisible)
+            XCTAssertTrue(window.isVisible)
+        }
+    #endif
+
     private func waitForEditor(on window: NSWindow) async {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
         await fulfillment(of: [ready], timeout: 5)
@@ -307,8 +378,8 @@ final class NativePullRequestCompletionTests: XCTestCase {
 
 nonisolated struct NativePullRequestMutationService: GitX.RepositoryPullRequestMutationServing {
     private let storage: NativePullRequestMutationStorage
-    init(started: XCTestExpectation?) {
-        storage = NativePullRequestMutationStorage(started: started)
+    init(started: XCTestExpectation?, error: Error = ForgePullRequestWorkflowError.editConflict) {
+        storage = NativePullRequestMutationStorage(started: started, error: error)
     }
 
     var editCount: Int {
@@ -342,11 +413,13 @@ nonisolated struct NativePullRequestMutationService: GitX.RepositoryPullRequestM
 
 private actor NativePullRequestMutationStorage {
     let started: XCTestExpectation?
+    let failure: Error
     private(set) var editCount = 0
     private var released = false
     private var waiter: CheckedContinuation<Void, Never>?
-    init(started: XCTestExpectation?) {
+    init(started: XCTestExpectation?, error: Error) {
         self.started = started
+        failure = error
     }
 
     func capabilities(accountID: ForgeAccountID, repository: ForgeRepositoryIdentity, operations: Set<ForgeOperation>) async throws -> [ForgeOperation: ForgeOperationCapability] {
@@ -367,7 +440,7 @@ private actor NativePullRequestMutationStorage {
         if !released {
             await withCheckedContinuation { waiter = $0 }
         }
-        throw ForgePullRequestWorkflowError.editConflict
+        throw failure
     }
 
     func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) async throws -> GitX.RepositorySyncForkOutcome {

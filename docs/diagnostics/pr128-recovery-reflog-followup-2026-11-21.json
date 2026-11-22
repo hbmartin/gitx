@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "Shared recovery sessions, repository move transfer and post-write verification regressions pass. Native Quit implementation and complete final verification remain pending.",
+  "status": "All 2440 post-session correctness tests passed, but the UI-controller coverage floor failed after extraction. Three passing native characterization tests cover the missed lifecycle behavior; complete coverage verification is being repeated without lowering a floor.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -20,7 +20,9 @@
     "pr128-next-recovery-move-reset-red-v2",
     "pr128-next-recovery-session-green-v3",
     "pr128-next-reset-diagnostics-green-v2",
-    "pr128-next-recovery-session-admission"
+    "pr128-next-recovery-session-admission",
+    "pr128-next-post-session-correctness",
+    "pr128-next-native-close-characterization"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -79,6 +81,10 @@
     {
       "runId": "pr128-next-recovery-session-green-v3",
       "result": "All native move/session, document, PR completion and retirement cases passed. One reset evidence case failed two assertions because the unsafe diagnostic omitted Git stderr; the subsequent fix preserves the redacted cause."
+    },
+    {
+      "runId": "pr128-next-post-session-correctness",
+      "result": "All 2440 tests passed. UI controller coverage was 1813/2053 (88.31%) below the unchanged 89.00% floor. Session coverage was 334/339 (98.53%), app coverage 93.99% and reflog service 98.38%. No ratchet was taken from the failed gate."
     }
   ],
   "characterization": [
@@ -145,5 +151,18 @@
       "kind": "Explicit initial policy admission from passing focused tests; existing floors unchanged. Complete post-commit correctness still required."
     },
     "notFinalDeliveryEvidence": true
+  },
+  "nativeCloseCharacterization": {
+    "runId": "pr128-next-native-close-characterization",
+    "tests": 3,
+    "failures": 0,
+    "behavior": [
+      "Session and document consent callbacks preserve exact recovery text, the index owner and file-presenter registration; accepting preflight without closure requires fresh consent.",
+      "Owner revocation clears an informational pending-create notice without further preparation.",
+      "A persisted failed edit retains durable text, retires its record and presents the failure."
+    ],
+    "newlyExercisedControllerLines": 16,
+    "combinedCoverageExpectationOnly": 0.8908913784705309,
+    "completePassingReceiptStillRequired": true
   }
 }

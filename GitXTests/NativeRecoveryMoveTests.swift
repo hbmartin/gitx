@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class NativeRecoveryMoveTests: XCTestCase {
-    private enum Phase { case ready, loading, consent, writing, finalSave, remote, queued }
+    private enum Phase { case ready, loading, consent, writing, finalSave, remote, queued, preflight }
     @MainActor private final class Owner { var controller: GitX.RepositoryPullRequestUIController? }
 
     func testMoveDetachesExactRecoveredTextAndCanSaveToOriginalDraftIdentity() async throws {
@@ -34,6 +34,17 @@ final class NativeRecoveryMoveTests: XCTestCase {
 
     func testMoveMakesQueuedRecoveryAvailableWithoutTheObsoleteEditorSlot() async throws {
         try await exerciseMove(.queued)
+    }
+
+    func testNativeControllerConsentHooksPreserveRecoveryBeforeARepositoryMove() async throws {
+        try await exerciseMove(.preflight)
+    }
+
+    @MainActor private final class CloseReply: NSObject {
+        var decisions: [Bool] = []
+        @objc func document(_ document: NSDocument, shouldClose: Bool, contextInfo: UnsafeMutableRawPointer?) {
+            decisions.append(shouldClose)
+        }
     }
 
     private func exerciseMove(_ phase: Phase) async throws {
@@ -139,7 +150,7 @@ final class NativeRecoveryMoveTests: XCTestCase {
             if phase == .writing {
                 await store.holdNextConditionalSave(writeGate, started: saveStarted)
             }
-            if phase != .ready {
+            if phase != .ready && phase != .preflight {
                 try XCTUnwrap(find("GitX.PullRequest.Recovery.SaveDraft", in: XCTUnwrap(recovered?.contentView)) as? NSButton).performClick(nil)
                 if phase == .loading {
                     await fulfillment(of: [saveStarted], timeout: 5)
@@ -152,6 +163,33 @@ final class NativeRecoveryMoveTests: XCTestCase {
                     }
                 }
             }
+        }
+        if phase == .preflight {
+            let session = try XCTUnwrap(GitX.RepositoryPullRequestRecoverySession.protectedSessions.first { $0.protectionState.contains { $0.content == exact } })
+            var sessionReplies: [Bool] = []
+            let documentReplies = CloseReply()
+            for usingDocument in [false, true] {
+                for accepted in [true, false] {
+                    let expectedCount = usingDocument ? documentReplies.decisions.count + 1 : sessionReplies.count + 1
+                    if usingDocument {
+                        document.canClose(withDelegate: documentReplies, shouldClose: #selector(CloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+                    } else {
+                        XCTAssertTrue(session.requestCloseDecision { sessionReplies.append($0) })
+                    }
+                    await wait("The actual controller requests recovery consent", until: { recovered?.attachedSheet != nil })
+                    let consent = try XCTUnwrap(recovered?.attachedSheet)
+                    try XCTUnwrap(button(accepted ? "Close Without Saving" : "Keep Editing", in: XCTUnwrap(consent.contentView))).performClick(nil)
+                    await wait("Native close callback settles", until: { (usingDocument ? documentReplies.decisions.count : sessionReplies.count) == expectedCount })
+                    XCTAssertEqual(usingDocument ? documentReplies.decisions.last : sessionReplies.last, accepted)
+                    XCTAssertTrue(window.isVisible)
+                    XCTAssertTrue(window.attachedSheet === recovered)
+                    XCTAssertTrue(NSDocumentController.shared.documents.contains { $0 === document })
+                    XCTAssertTrue(NSFileCoordinator.filePresenters.contains { $0 === document })
+                    XCTAssertEqual(session.protectionState.first?.content, exact)
+                }
+            }
+            XCTAssertEqual(sessionReplies, [true, false])
+            XCTAssertEqual(documentReplies.decisions, [true, false])
         }
         weak let releasedController = holder.controller
         try FileManager.default.moveItem(at: local.directory, to: moved)
@@ -187,7 +225,7 @@ final class NativeRecoveryMoveTests: XCTestCase {
             await wait("Load completes into standalone replacement consent", until: { standalone.attachedSheet != nil })
             consent = standalone.attachedSheet
         }
-        if phase == .ready || phase == .finalSave || phase == .remote || phase == .queued {
+        if phase == .ready || phase == .preflight || phase == .finalSave || phase == .remote || phase == .queued {
             try XCTUnwrap(find("GitX.PullRequest.Recovery.SaveDraft", in: XCTUnwrap(standalone.contentView)) as? NSButton).performClick(nil)
             await wait("Standalone uses original draft identity", until: { standalone.attachedSheet != nil })
             consent = standalone.attachedSheet
