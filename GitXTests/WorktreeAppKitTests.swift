@@ -34,6 +34,19 @@ func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt 
 }
 
 @MainActor
+func observeWorktreeTestForeground(for testName: String) -> [NSObjectProtocol] {
+    let center = NSWorkspace.shared.notificationCenter
+    let frontmost = NSWorkspace.shared.frontmostApplication
+    print("NATIVE_FIXTURE_FOCUS \(testName): begin frontmost=\(frontmost?.bundleIdentifier ?? "none"), pid=\(frontmost?.processIdentifier ?? 0)")
+    return [NSWorkspace.didActivateApplicationNotification, NSWorkspace.didDeactivateApplicationNotification].map { name in
+        center.addObserver(forName: name, object: nil, queue: .main) { notification in
+            let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            print("NATIVE_FIXTURE_FOCUS \(testName): \(notification.name.rawValue), app=\(application?.bundleIdentifier ?? "none"), pid=\(application?.processIdentifier ?? 0)")
+        }
+    }
+}
+
+@MainActor
 private final class SidebarMenuActionRecorder: NSResponder {
     private(set) var checkoutRequests = 0
     private(set) var removalRequests = 0
@@ -887,6 +900,8 @@ final class WorktreeAppKitTests: XCTestCase {
     }
 
     func testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent() async throws {
+        let foregroundObservers = observeWorktreeTestForeground(for: name)
+        defer { foregroundObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver) }
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
@@ -2737,6 +2752,8 @@ final class WorktreeAppKitTests: XCTestCase {
     }
 
     func testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune() async throws {
+        let foregroundObservers = observeWorktreeTestForeground(for: name)
+        defer { foregroundObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver) }
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         let nested = fixture.main.appendingPathComponent("nested")

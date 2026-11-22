@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "Production changes and prior complete correctness/coverage passed. The diagnosed repair/prune fixture collision is isolated with an explicit repair-history precondition; all sixty affected tests pass under correctness and both sanitizer plans. Final canonical verification at the local correction commit remains required.",
+  "status": "Pre-commit evidence: production changes and complete correctness/coverage passed. A later complete sanitizer run failed three native readiness/consent tests with unconfirmed foreground-loss attribution. Diagnostic-only changes pass focused correctness and Address/Undefined plus pinned/static and Debug/Release/interoperability checks. The canonical final workflow receipt remains the authority for delivery.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -55,7 +55,10 @@
     "pr128-prune-repair-context-address",
     "pr128-prune-repair-context-thread",
     "pr128-prune-context-activation-address",
-    "pr128-prune-context-activation-thread"
+    "pr128-prune-context-activation-thread",
+    "pr128-document-worktree-foreground-diagnostic-address",
+    "pr128-native-foreground-diagnostics-green",
+    "pr128-native-foreground-diagnostics-formatted-address"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -198,6 +201,12 @@
       "runId": "pr128-prune-repair-context-thread",
       "receipt": "artifacts/verification/pr128-prune-repair-context-thread/receipt.json",
       "result": "All sixty correctness and Address/Undefined Behavior cases passed with the explicit repair-history fixture. Thread Sanitizer reported 59 passes and one failure after the host remained inactive despite requested self-activation. The snapshot has no attached repair sheet; keep this separate activation failure and the strict foreground oracle."
+    },
+    {
+      "runId": "pr128-next-final-full",
+      "commit": "f7f26874114f6b365aa9be48266e85cf4716482c",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-address-undefined-31e0a14a/receipt.json",
+      "result": "Eight final checks passed, including complete correctness (2476 passed) and coverage. Complete Address/Undefined then reported 2473 passes and three native failures. The document-replacement fixture timed out waiting for foreground/key readiness before replacement. The two worktree consent waits began with an active/key/main owner and ended with the app inactive, owner non-key/non-main and no attached sheet. Keep this failed receipt; the cause of foreground loss is unconfirmed."
     }
   ],
   "characterization": [
@@ -961,5 +970,80 @@
     "nativeActivation": "If NSWorkspace returns the existing test PID while the host remains inactive, request that same bundle through the built-in macOS open command. Require request success and retain the existing actual application-active/key-window checks; no timeout or predicate is relaxed.",
     "interoperability": "A small helper in the existing Swift fixture file accepts NSWindowController and casts to its existing testable Swift controller type. The large AppKit fixture retains its Objective-C imported controller view. No unsafe cast, production API or dependency is added.",
     "scope": "Partial pre-commit evidence for all sixty WorktreeAppKitTests under correctness and both sanitizer plans, with Debug/Release consumers and pinned style checks. No production source, test-plan selection, timeout, predicate, repository-state assertion or coverage floor changes. The final full profile must rerun at the local correction commit."
+  },
+  "nativeForegroundDiagnostics": {
+    "verifiedAtUTC": "2026-11-22T19:56:42.272508+00:00",
+    "parentCommit": "f7f26874114f6b365aa9be48266e85cf4716482c",
+    "scope": "Test-only diagnostic instrumentation. Production code, test plans, wait deadlines, readiness predicates, repository assertions and coverage floors are unchanged. Passing focused runs do not identify the earlier cause or demonstrate a production fix for foreground loss.",
+    "historicalFullRun": {
+      "commit": "f7f26874114f6b365aa9be48266e85cf4716482c",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-address-undefined-31e0a14a/receipt.json",
+      "bundle": "artifacts/verification/pr128-next-final-full-address-undefined-31e0a14a/Results/GitXAddressUndefined.xcresult",
+      "tests": {
+        "totalTestCount": 2476,
+        "passedTests": 2473,
+        "failedTests": 3,
+        "skippedTests": 0
+      },
+      "failedCases": [
+        "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository",
+        "GitXTests/WorktreeAppKitTests/testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent",
+        "GitXTests/WorktreeAppKitTests/testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune"
+      ],
+      "assertions": [
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/GitBinaryTests.swift:4582: error: -[GitXTests.RepositoryDocumentScriptingCharacterizationTests testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository] : Asynchronous wait failed: Exceeded timeout of 5 seconds, with unfulfilled expectations: \"Expect predicate `BLOCKPREDICATE(0x6040035d5790)`\".",
+        "Test Case '-[GitXTests.RepositoryDocumentScriptingCharacterizationTests testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository]' failed (14.706 seconds).",
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/WorktreeAppKitTests.swift:930: error: -[GitXTests.WorktreeAppKitTests testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent] : XCTAssertTrue failed",
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/WorktreeAppKitTests.swift:930: error: -[GitXTests.WorktreeAppKitTests testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent] : XCTUnwrap failed: expected non-nil value of type \"NSWindow\"",
+        "Test Case '-[GitXTests.WorktreeAppKitTests testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent]' failed (18.786 seconds).",
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/WorktreeAppKitTests.swift:2839: error: -[GitXTests.WorktreeAppKitTests testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune] : XCTAssertTrue failed",
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/WorktreeAppKitTests.swift:2839: error: -[GitXTests.WorktreeAppKitTests testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune] : XCTUnwrap failed: expected non-nil value of type \"NSWindow\"",
+        "Test Case '-[GitXTests.WorktreeAppKitTests testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune]' failed (18.243 seconds)."
+      ],
+      "foregroundEvidence": "Both worktree attachments show active/key/main=true before waiting, then active/key/main=false and no attached sheet. The first document foreground timeout lacked a window-state snapshot. Do not infer the foreground app or blame an automatic Welcome window from these observations.",
+      "excludedInspection": "A later live AX lookup returned a Welcome window after the test host exited. This is not evidence of the failure state. A narrow historical loginwindow query returned no events, which does not prove the desktop stayed unlocked."
+    },
+    "initialDiagnosticRun": {
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-document-worktree-foreground-diagnostic-address/receipt.json",
+      "tests": {
+        "totalTestCount": 174,
+        "passedTests": 174,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "sourceState": "Diagnostic-only changes before pinned formatting; not exact current source inputs.",
+      "observation": "All three scoped focus logs begin with the intended test-host bundle and PID; no intervening activation/deactivation event was logged. The read-only lock sampler recorded only unlocked samples during this focused run."
+    },
+    "formattedResults": {
+      "correctness": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-foreground-diagnostics-green-correctness-c386d4bd/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-foreground-diagnostics-green-correctness-c386d4bd/Results/GitX.xcresult",
+        "totalTestCount": 174,
+        "passedTests": 174,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "address-undefined": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-foreground-diagnostics-formatted-address/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-foreground-diagnostics-formatted-address/Results/GitXAddressUndefined.xcresult",
+        "totalTestCount": 174,
+        "passedTests": 174,
+        "failedTests": 0,
+        "skippedTests": 0
+      }
+    },
+    "checks": {
+      "static": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/Coordination/pr128-native-foreground-diagnostics-green-static-496f121a.json",
+      "interop": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/Coordination/pr128-native-foreground-diagnostics-green-interop-2597b1a4.json",
+      "debug-test-build": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-foreground-diagnostics-green-debug-test-build-fb911983/receipt.json",
+      "release-test-build": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-foreground-diagnostics-green-release-test-build-8513a3ec/receipt.json"
+    },
+    "changes": [
+      "Capture application/running-app activity and owner, attached sheet, key, main, modal and ordered windows before activation, after its callback, after the key request and after a failed wait. Attach only on failure and report the originating test line.",
+      "Observe application activate/deactivate notifications only during the three affected cases. Retain only test labels, application identifiers and PIDs; remove each observer at scope exit.",
+      "Keep the original five-second foreground condition and fifteen-second consent readiness checks. Do not retry, force an inactive owner to present, or relax visibility and identity guards."
+    ],
+    "coveragePolicy": "The complete correctness proposal exactly equals the committed baseline. No additional ratchet is available; displayed hundredth-percent differences are rounding.",
+    "finalRequirement": "Rerun the complete canonical fourteen-check profile without selectors at the local diagnostic commit before staging or refreshing the original Debug app."
   }
 }

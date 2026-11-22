@@ -2139,6 +2139,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
 
         func testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository() throws {
+            let foregroundObservers = observeWorktreeTestForeground(for: name)
+            defer { foregroundObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver) }
             try prepareFixture()
             defer { try? removeFixture() }
             let other = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -4567,19 +4569,38 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertTrue(try Data(contentsOf: captured).contains(Data("branch.head main".utf8)))
     }
 
-    private func activateFixtureWindow(_ window: NSWindow, acceptingAttachedSheet: Bool = false) {
+    private func activateFixtureWindow(_ window: NSWindow, acceptingAttachedSheet: Bool = false, file: StaticString = #filePath, line: UInt = #line) {
+        func describe(_ candidate: NSWindow?) -> String {
+            guard let candidate else { return "none" }
+            return "\(ObjectIdentifier(candidate)) \(type(of: candidate)): title=\(candidate.title), visible=\(candidate.isVisible), key=\(candidate.isKeyWindow), main=\(candidate.isMainWindow), miniaturized=\(candidate.isMiniaturized), canBecomeKey=\(candidate.canBecomeKey), sheetParent=\(candidate.sheetParent != nil)"
+        }
+        func state() -> String {
+            "App active=\(NSApp.isActive), running active=\(NSRunningApplication.current.isActive), hidden=\(NSApp.isHidden)\nOwner: \(describe(window))\nAttached sheet: \(describe(window.attachedSheet))\nKey: \(describe(NSApp.keyWindow))\nMain: \(describe(NSApp.mainWindow))\nModal: \(describe(NSApp.modalWindow))\nOrdered windows:\n\(NSApp.orderedWindows.map { describe($0) }.joined(separator: "\n"))"
+        }
+        let before = state()
         let activated = expectation(description: "Launch Services activates the existing test host")
         Task { @MainActor in
             await activateWorktreeTestApplication()
             activated.fulfill()
         }
         wait(for: [activated], timeout: 5)
+        let afterActivation = state()
         window.makeKeyAndOrderFront(nil)
+        let afterRequest = state()
         let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let sheetIsKey = acceptingAttachedSheet && window.attachedSheet?.isKeyWindow == true
             return NSApp.isActive && (window.isKeyWindow || sheetIsKey)
         }, object: nil)
-        wait(for: [foreground], timeout: 5)
+        let result = XCTWaiter.wait(for: [foreground], timeout: 5)
+        if result != .completed {
+            let evidence = "\(name), caller=\(file):\(line), acceptingAttachedSheet=\(acceptingAttachedSheet)\nBefore activation:\n\(before)\nAfter activation callback:\n\(afterActivation)\nAfter key request:\n\(afterRequest)\nAfter waiting:\n\(state())"
+            let attachment = XCTAttachment(string: evidence)
+            attachment.name = "Document fixture foreground wait state"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            print("DOCUMENT_FOREGROUND_WAIT \(evidence)")
+        }
+        XCTAssertEqual(result, .completed, "The original fixture owner must become foreground and key", file: file, line: line)
     }
 
     private func waitForBranch(_ branch: String, in controller: GitX.PBGitWindowController) {
