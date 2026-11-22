@@ -484,6 +484,7 @@
 		4C584BD1CCD5441E9FC66115 /* ReflogBrowserController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F70CA399F3A642658072C91E /* ReflogBrowserController.swift */; };
 		5D8C48E3584A4A8980BC33AA /* ReflogBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */; };
 		C38599D0B4BF490F8D4C1F0E /* ReflogWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */; };
+		0A0FB43E40544AE5B725A0EB /* NativePullRequestCompletionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45121CC71B4E4DD68BA5FA68 /* NativePullRequestCompletionTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1235,6 +1236,7 @@
 		F70CA399F3A642658072C91E /* ReflogBrowserController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserController.swift; sourceTree = "<group>"; };
 		83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserTests.swift; sourceTree = "<group>"; };
 		70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogWorkflowUITests.swift; sourceTree = "<group>"; };
+		45121CC71B4E4DD68BA5FA68 /* NativePullRequestCompletionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePullRequestCompletionTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1972,6 +1974,7 @@
 				F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */,
 				F0B200000000000000000012 /* GitHubReadCompositionTests.swift */,
 				F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */,
+				45121CC71B4E4DD68BA5FA68 /* NativePullRequestCompletionTests.swift */,
 				F0F200000000000000000201 /* RepositoryPullRequestWorkflowAppTests.swift */,
 				F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */,
 				F0F500000000000000000201 /* RepositoryPullRequestReviewDiffSelectionTests.swift */,
@@ -2792,6 +2795,7 @@
 				F0F200000000000000000012 /* RepositoryPullRequestGitOperations.swift in Sources */,
 				F0F200000000000000000015 /* ForgePullRequestSheetController.swift in Sources */,
 				F0F200000000000000000016 /* ForgeRepositoryCloneSheetController.swift in Sources */,
+				0A0FB43E40544AE5B725A0EB /* NativePullRequestCompletionTests.swift in Sources */,
 				F0F200000000000000000017 /* RepositoryPullRequestWorkflowAppTests.swift in Sources */,
 				F0F200000000000000000018 /* GitHubPullRequestComposition.swift in Sources */,
 				F0F200000000000000000020 /* Milestone2DiagnosticPresenters.swift in Sources */,

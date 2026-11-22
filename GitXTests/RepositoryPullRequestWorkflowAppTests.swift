@@ -4209,7 +4209,7 @@ private final class RecordingRepositoryRemoteActions: RepositoryRemoteActionCoor
 }
 
 @MainActor
-private final class LocalPullRequestRepositoryFixture {
+final class LocalPullRequestRepositoryFixture {
     let directory: URL
     let repository: PBGitRepository
 
@@ -4346,7 +4346,7 @@ private struct StubPullRequestMutationService: RepositoryPullRequestMutationServ
     private enum StubError: Error { case unexpectedCall }
 }
 
-private struct PullRequestAppFixture {
+struct PullRequestAppFixture {
     let repository: ForgeRepositoryIdentity
     let fork: ForgeRepositoryIdentity
     let accountID: ForgeAccountID
