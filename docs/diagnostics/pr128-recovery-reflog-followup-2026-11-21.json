@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "Implementation passes focused native coverage and Debug/Release consumers. The preceding iteration passed all five native-menu UI cases, all forty Release performance cases and fresh compiler/Clang/whole-scope semantic analysis; its 917 recorded production inputs are unchanged, and only the native bridge coverage fixture was subsequently extended. Earlier package/static iterations passed, but the offscreen workflow failed on two Objective-C-only semantic annotations, since corrected. Complete post-commit correctness, coverage and the final canonical full profile remain required.",
+  "status": "Implementation and complete post-commit correctness/coverage passed. Final delivery is governed by the declared canonical workflow and installed-app evidence records.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -33,7 +33,10 @@
     "pr128-next-native-quit-selector-green",
     "pr128-next-native-quit-bridge-coverage",
     "pr128-next-native-quit-forwarder-green",
-    "pr128-next-offscreen-verification"
+    "pr128-next-offscreen-verification",
+    "pr128-next-post-termination-correctness",
+    "pr128-next-post-termination-static",
+    "pr128-next-final-full"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -148,13 +151,9 @@
   },
   "stableApp": {
     "path": "/Volumes/Pro2T/gitx/build/GitX.app",
-    "refreshed": false,
-    "reason": "Wait for complete final verification."
+    "verificationRecord": "artifacts/verification/pr128-next-final-full/stable-app.json",
+    "refreshPolicy": "Refresh only after every required final check passes; record the installed commit, signature verification and source bundle identity separately."
   },
-  "remaining": [
-    "complete post-commit correctness and coverage ratchet",
-    "complete final canonical profile, final contract assessment and verified stable Debug app"
-  ],
   "recoverySessionImplementation": {
     "changes": [
       "Exact recovered content, original draft identity, conditional save attempts and submission completion outlive an obsolete repository document.",
@@ -371,5 +370,137 @@
     "execution": "Local admission is sealed during Quit; started local writers and admitted durable draft work drain. Keep Editing and Cancel Quit reopen admission without cancelling started work. Every final reply revalidates current attached and detached recovery.",
     "completion": "Checkout and reflog activity retain execution ownership through original-repository reconciliation. Tag creation uses the same admission guard. Known refused remote admission remains not sent.",
     "cleanup": "Recovery Copy tests use an isolated pasteboard. Native move fixtures drain captured submissions before deletion. Release measurements include 101 unchanged payload files; content-read counts refer to application fingerprint capture, with Git subprocess I/O explicitly outside that instrumentation."
-  }
+  },
+  "postTerminationVerification": {
+    "verifiedAtUTC": "2026-11-22T10:31:10.407614+00:00",
+    "commit": "86bef169304c34b9734f63e6f1877889be6ca6f7",
+    "runIds": [
+      "pr128-next-post-termination-correctness",
+      "pr128-next-post-termination-static"
+    ],
+    "correctnessReceipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-post-termination-correctness-correctness-713a09a6/receipt.json",
+    "correctnessBundle": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-post-termination-correctness-correctness-713a09a6/Results/GitX.xcresult",
+    "tests": {
+      "totalTestCount": 2473,
+      "passedTests": 2473,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "result": "Passed"
+    },
+    "runtimeWarningCount": 16,
+    "coverage": {
+      "status": "passed; complete-run atomic ratchet and plain checker passed",
+      "proposal": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-post-termination-correctness/coverage-proposal.json",
+      "minimumBefore": 0.94,
+      "minimumAfter": 0.9405,
+      "raisedFiles": {
+        "Classes/Controllers/ApplicationController.m": {
+          "before": 0.9435,
+          "after": 0.9446
+        },
+        "Classes/Controllers/ForgeMutationQuitCoordinator.swift": {
+          "before": 0.9119,
+          "after": 0.9247
+        },
+        "Classes/Controllers/Milestone2UITestHarness.swift": {
+          "before": 0.9334,
+          "after": 0.9356
+        },
+        "Classes/Controllers/ReflogBrowserController.swift": {
+          "before": 0.9944,
+          "after": 0.9946
+        },
+        "Classes/Controllers/RepositoryPullRequestGitOperations.swift": {
+          "before": 0.9783,
+          "after": 0.9784
+        },
+        "Classes/Controllers/RepositoryPullRequestRecoverySession.swift": {
+          "before": 0.9852,
+          "after": 0.9915
+        },
+        "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+          "before": 0.8933,
+          "after": 0.8937
+        },
+        "Classes/Controllers/RepositoryPullRequestWorkflow.swift": {
+          "before": 0.9798,
+          "after": 0.9799
+        },
+        "Classes/Views/ForgePullRequestSheetController.swift": {
+          "before": 0.9431,
+          "after": 0.9432
+        },
+        "Classes/git/RepositoryMutationService.swift": {
+          "before": 0.9797,
+          "after": 0.9959
+        }
+      },
+      "groupsBefore": {
+        "Application Preferences surfaces": {
+          "files": [
+            "Classes/Controllers/ApplicationSettings.swift",
+            "Classes/Controllers/ApplicationPreferencesUI.swift",
+            "Classes/Controllers/TerminalIntegration.swift"
+          ],
+          "minimumLineCoverage": 0.9089
+        },
+        "Repository Configuration surfaces": {
+          "files": [
+            "Classes/Controllers/RepositorySettingsStore.swift",
+            "Classes/Controllers/RepositorySettingsController.swift",
+            "Classes/Controllers/RepositoryPresentationPolicies.swift"
+          ],
+          "minimumLineCoverage": 0.8714
+        }
+      },
+      "groupsAfter": {
+        "Application Preferences surfaces": {
+          "files": [
+            "Classes/Controllers/ApplicationSettings.swift",
+            "Classes/Controllers/ApplicationPreferencesUI.swift",
+            "Classes/Controllers/TerminalIntegration.swift"
+          ],
+          "minimumLineCoverage": 0.9089
+        },
+        "Repository Configuration surfaces": {
+          "files": [
+            "Classes/Controllers/RepositorySettingsStore.swift",
+            "Classes/Controllers/RepositorySettingsController.swift",
+            "Classes/Controllers/RepositoryPresentationPolicies.swift"
+          ],
+          "minimumLineCoverage": 0.8714
+        }
+      }
+    },
+    "static": "Passed all 876 script tests, pinned SwiftLint, pinned SwiftFormat and canonical static guards."
+  },
+  "finalVerification": {
+    "runId": "pr128-next-final-full",
+    "workflowReceipt": "artifacts/verification/pr128-next-final-full/workflow.json",
+    "profile": "full",
+    "testSelectors": [],
+    "expectedChecks": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts",
+      "correctness",
+      "core",
+      "forgekit",
+      "address-undefined",
+      "thread-sanitizer",
+      "ui",
+      "performance",
+      "analyze",
+      "stage-debug"
+    ],
+    "statusAuthority": "The canonical workflow receipt records final commit identity, every executed check, valid evidence and delivery eligibility. This declaration is not a passing receipt."
+  },
+  "deliveryGates": [
+    "All fourteen final checks pass at the evidence commit with no selectors.",
+    "Affected regression contracts are assessed using final receipts.",
+    "The installed Debug app matches the final verified commit and its code signature verifies.",
+    "All commits remain local; no push or pull request."
+  ]
 }
