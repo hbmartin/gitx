@@ -10,6 +10,24 @@ func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt 
     do {
         let application = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
         XCTAssertEqual(application.processIdentifier, ProcessInfo.processInfo.processIdentifier, "Activate the existing test host", file: file, line: line)
+        if !NSRunningApplication.current.isActive {
+            // The app cannot always grant itself foreground authority after its
+            // last fixture window closes. Let Launch Services handle an external
+            // request for this same bundle; the existing PID remains the oracle.
+            let opener = Process()
+            opener.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            opener.arguments = ["-a", Bundle.main.bundlePath]
+            let status: Int32 = try await withCheckedThrowingContinuation { continuation in
+                opener.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                do {
+                    try opener.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+            XCTAssertEqual(status, 0, "Request foreground return through Launch Services", file: file, line: line)
+            print("WORKTREE_ACTIVATION requested system open for existing PID \(ProcessInfo.processInfo.processIdentifier), status=\(status)")
+        }
     } catch {
         XCTFail("Could not activate the test host: \(error)", file: file, line: line)
     }
@@ -2137,7 +2155,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         await ready(service)
-        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
+        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller, repairOfferAlreadyHandled: true)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         let head = try fixture.git(["rev-parse", "HEAD"])
@@ -3145,7 +3163,7 @@ final class WorktreeAppKitTests: XCTestCase {
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
-            await showForegroundWindow(controller)
+            await showForegroundWindow(controller, repairOfferAlreadyHandled: true)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close(); service.cancel(); gate.report.finish(nil, error: CancellationError()) }
             try FileManager.default.removeItem(at: fixture.linked)
@@ -3206,7 +3224,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let service = try await installPruneService(in: repository, gate: gate)
         let controller = PBGitWindowController()
         controller.repository = repository
-        await showForegroundWindow(controller)
+        await showForegroundWindow(controller, repairOfferAlreadyHandled: true)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel(); gate.report.finish(nil, error: CancellationError()) }
         try FileManager.default.removeItem(at: fixture.linked)
@@ -3262,7 +3280,7 @@ final class WorktreeAppKitTests: XCTestCase {
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
-            await showForegroundWindow(controller)
+            await showForegroundWindow(controller, repairOfferAlreadyHandled: true)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close(); service.cancel() }
             try FileManager.default.removeItem(at: fixture.linked)
@@ -3333,12 +3351,20 @@ final class WorktreeAppKitTests: XCTestCase {
         menu.items.filter { !$0.isSeparatorItem && !$0.title.isEmpty }
     }
 
-    private func showForegroundWindow(_ controller: PBGitWindowController, file: StaticString = #filePath, line: UInt = #line) async {
+    private func showForegroundWindow(_ controller: PBGitWindowController, repairOfferAlreadyHandled: Bool = false, file: StaticString = #filePath, line: UInt = #line) async {
         controller.showWindow(nil)
+        if repairOfferAlreadyHandled {
+            // Explicit Prune fixtures model a previously handled automatic offer.
+            // Automatic repair journeys keep the default and their own UI coverage.
+            XCTAssertTrue(establishHandledWorktreeRepairOffer(controller), file: file, line: line)
+        }
         guard let window = controller.window else { XCTFail("The test window did not load", file: file, line: line); return }
         await activateWorktreeTestApplication(file: file, line: line)
         window.makeKeyAndOrderFront(nil)
         await waitUntil({ NSApp.isActive && (window.isKeyWindow || window.attachedSheet?.isKeyWindow == true) }, file: file, line: line)
+        if repairOfferAlreadyHandled {
+            XCTAssertNil(window.attachedSheet, file: file, line: line)
+        }
     }
 
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {

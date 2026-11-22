@@ -1560,6 +1560,27 @@
           "check": "correctness",
           "role": "boundary",
           "oracle": "Use the real native confirmation buttons after foreground readiness. Lock, removal and prune each require their own affirmative choice; cancellation preserves exact worktree and repository contents."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Close during held preview, confirmed preview and deferred click; reject late consent and preserve exact registrations and HEAD."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Model handled automatic repair, hold the actual Prune report and hide its owner; retain the completed preview until explicit return without cancellation or background presentation."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testGitCapabilityLossInvalidatesAnOpenPruneConfirmation",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Lose and optionally restore capability during Prune consent; reject the obsolete token without pruning, while preserving exact administrative metadata."
         }
       ]
     },

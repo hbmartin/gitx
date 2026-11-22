@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "Production changes and complete correctness/coverage passed. Sanitizer-exposed native fixture corrections pass both affected classes under correctness and both sanitizer plans; final canonical verification at the local correction commit remains required.",
+  "status": "Production changes and prior complete correctness/coverage passed. The diagnosed repair/prune fixture collision is isolated with an explicit repair-history precondition; all sixty affected tests pass under correctness and both sanitizer plans. Final canonical verification at the local correction commit remains required.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -50,7 +50,12 @@
     "pr128-native-fixtures-thread",
     "pr128-native-fixtures-green",
     "pr128-native-fixtures-address-diagnostic",
-    "pr128-native-fixtures-thread-diagnostic"
+    "pr128-native-fixtures-thread-diagnostic",
+    "pr128-prune-repair-context-green",
+    "pr128-prune-repair-context-address",
+    "pr128-prune-repair-context-thread",
+    "pr128-prune-context-activation-address",
+    "pr128-prune-context-activation-thread"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -182,6 +187,17 @@
       "runId": "pr128-native-fixtures-thread",
       "receipt": "artifacts/verification/pr128-native-fixtures-thread/receipt.json",
       "result": "The focused Thread Sanitizer run reported 92 passes and four owner-readiness/queued-consent failures. Preserve this receipt; the following diagnostic reproduction records the exact current source and failure snapshots rather than relaxing assertions."
+    },
+    {
+      "runId": "pr128-next-final-full",
+      "commit": "a03e3eec5fe7b610713294273cfefb069cccf01f",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-correctness-819811b2/receipt.json",
+      "result": "Five final canonical checks passed. Complete correctness reported 2475 passes and one failure in the hidden-window prune fixture. Its diagnostic snapshot confirms an active app, a present XCTest marker and an already-attached automatic broken-link repair-choice sheet. The fixture expected no sheet and then Prune consent; the two legitimate presentations were competing. Preserve this failed receipt."
+    },
+    {
+      "runId": "pr128-prune-repair-context-thread",
+      "receipt": "artifacts/verification/pr128-prune-repair-context-thread/receipt.json",
+      "result": "All sixty correctness and Address/Undefined Behavior cases passed with the explicit repair-history fixture. Thread Sanitizer reported 59 passes and one failure after the host remained inactive despite requested self-activation. The snapshot has no attached repair sheet; keep this separate activation failure and the strict foreground oracle."
     }
   ],
   "characterization": [
@@ -856,5 +872,94 @@
     "production": "No production file, dependency, target, test-plan selection or coverage floor changes.",
     "styleVerification": "Pinned SwiftFormat and strict SwiftLint pass for both modified test files.",
     "coveragePolicy": "Focused evidence cannot ratchet floors. Existing complete-run improvements remain enforced."
+  },
+  "pruneFixtureRepairContext": {
+    "verifiedAtUTC": "2026-11-22T17:15:50.888905+00:00",
+    "parentCommit": "a03e3eec5fe7b610713294273cfefb069cccf01f",
+    "runIds": [
+      "pr128-prune-repair-context-green",
+      "pr128-prune-context-activation-address",
+      "pr128-prune-context-activation-thread"
+    ],
+    "historicalFailure": {
+      "commit": "a03e3eec5fe7b610713294273cfefb069cccf01f",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-correctness-819811b2/receipt.json",
+      "bundle": "artifacts/verification/pr128-next-final-full-correctness-819811b2/Results/GitX.xcresult",
+      "totalTestCount": 2476,
+      "passedTests": 2475,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "testFailures": [
+        {
+          "failureText": "XCTAssertNil failed: \"<_NSAlertPanel: 0x784afd9e00>\"",
+          "targetName": "GitXTests",
+          "testIdentifier": 2277,
+          "testIdentifierString": "WorktreeAppKitTests/testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns",
+          "testName": "testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns()"
+        }
+      ],
+      "observedState": "The app is active and its XCTest configuration marker is present. A broken-link repair-choice sheet is already attached while the fixture expects no sheet and then a Prune sheet."
+    },
+    "historicalActivationFailure": {
+      "receipt": "artifacts/verification/pr128-prune-repair-context-thread/receipt.json",
+      "bundle": "artifacts/verification/pr128-prune-repair-context-thread/Results/GitXThreadSanitizer.xcresult",
+      "totalTestCount": 60,
+      "passedTests": 59,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "testFailures": [
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "GitXTests",
+          "testIdentifier": 13,
+          "testIdentifierString": "WorktreeAppKitTests/testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks",
+          "testName": "testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks()"
+        }
+      ],
+      "observedState": "The repair-history precondition is established and no sheet is attached. The test host remains inactive before and after the consent wait despite its requested self-activation."
+    },
+    "currentResults": {
+      "correctness": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-prune-repair-context-green-correctness-3c7a0e4e/receipt.json",
+        "bundle": "artifacts/verification/pr128-prune-repair-context-green-correctness-3c7a0e4e/Results/GitX.xcresult",
+        "totalTestCount": 60,
+        "passedTests": 60,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "address-undefined": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-prune-context-activation-address/receipt.json",
+        "bundle": "artifacts/verification/pr128-prune-context-activation-address/Results/GitXAddressUndefined.xcresult",
+        "totalTestCount": 60,
+        "passedTests": 60,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "thread-sanitizer": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-prune-context-activation-thread/receipt.json",
+        "bundle": "artifacts/verification/pr128-prune-context-activation-thread/Results/GitXThreadSanitizer.xcresult",
+        "totalTestCount": 60,
+        "passedTests": 60,
+        "failedTests": 0,
+        "skippedTests": 0
+      }
+    },
+    "explicitPruneScenarios": [
+      "testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation",
+      "testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks",
+      "testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns",
+      "testGitCapabilityLossInvalidatesAnOpenPruneConfirmation"
+    ],
+    "independentAutomaticRepairCoverage": [
+      "testMissingWorktreeGitFileOffersSameLocationRepairWithoutCheckout",
+      "testMovedNestedRepairIsOfferedOnceAndBlocksPruneUntilVerified",
+      "testPreferredRelativeRepairOffersItsStyleAndReclaimsOnlyAfterExplicitConsent"
+    ],
+    "precondition": "The four explicit-Prune fixtures start after the automatic repair offer was already handled. Reuse the existing controller recordWorktreeRepairOffer state transition and assert that the recorded state and initial sheet-free owner are established. Automatic-repair journeys retain the default behavior.",
+    "nativeActivation": "If NSWorkspace returns the existing test PID while the host remains inactive, request that same bundle through the built-in macOS open command. Require request success and retain the existing actual application-active/key-window checks; no timeout or predicate is relaxed.",
+    "interoperability": "A small helper in the existing Swift fixture file accepts NSWindowController and casts to its existing testable Swift controller type. The large AppKit fixture retains its Objective-C imported controller view. No unsafe cast, production API or dependency is added.",
+    "scope": "Partial pre-commit evidence for all sixty WorktreeAppKitTests under correctness and both sanitizer plans, with Debug/Release consumers and pinned style checks. No production source, test-plan selection, timeout, predicate, repository-state assertion or coverage floor changes. The final full profile must rerun at the local correction commit."
   }
 }
