@@ -4329,7 +4329,7 @@
     {
       "id": "CLOSE-001",
       "family": "Repository close consent before teardown",
-      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes. Preflight consent is borrowed only during synchronous callback forwarding and actual teardown; abandoned preflight preserves recovery and cannot authorize later closure. Repository moves transfer exact recovered content, original draft identity and admitted persistence to standalone recovery before obsolete-document teardown. Native Quit waits for started local mutations, seals new admission, composes existing remote choices and revalidates every attached or detached recovery before its one final reply. Cancel Quit and Keep Editing preserve work and text; preflight never discards text.",
+      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes. Preflight consent is borrowed only during synchronous callback forwarding and actual teardown; abandoned preflight preserves recovery and cannot authorize later closure. Repository moves transfer exact recovered content, original draft identity and admitted persistence to standalone recovery before obsolete-document teardown. Native Quit waits for started local mutations, seals new admission, composes existing remote choices and revalidates every attached or detached recovery before its one final reply. Cancel Quit and Keep Editing preserve work and text; preflight never discards text. Final accepted Quit ends every current Pull Request presentation, including saved recovery and unchanged editors, before forwarding to AppKit; declining consent ends none.",
       "rootCause": "A window-only close guard runs after NSDocument has already torn down its document, while independent entry points duplicate consent and repeated window close can release AppKit state twice.",
       "sourcePaths": [
         "Classes/Controllers/PBGitRepositoryDocument.h",
@@ -4846,6 +4846,34 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "A direct AppKit termination joining pending menu consent receives exactly one terminal reply and cannot launch a second termination."
+        },
+        {
+          "identifier": "GitXTests/NativeRecoverySessionTests/testMenuQuitEndsASavedRecoverySheetBeforeForwardingToAppKit",
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Preserve exact durable draft contents; a saved recovery remains editable before Quit and its attached sheet ends before AppKit receives accepted termination."
+        },
+        {
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testMenuQuitEndsAnUnchangedEditorBeforeForwardingToAppKit",
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "End an unchanged native editor and revoke further presentation authority only at final accepted Quit; leave document teardown to AppKit."
+        },
+        {
+          "identifier": "GitXTests/RepositoryTerminationTests/testKeepEditingPreservesSavedPresentationsWhileAnotherSessionNeedsConsent",
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Declining one unsaved session preserves other saved presentations and their ownership; no final teardown callback runs."
+        },
+        {
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testNativeMenuQuitClosesAnUnchangedPullRequestEditor",
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "check": "ui",
+          "role": "boundary",
+          "oracle": "Use the actual application menu with an unchanged Pull Request sheet and require process termination instead of AppKit waiting indefinitely."
         }
       ]
     },

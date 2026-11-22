@@ -7,10 +7,14 @@ import OSLog // swiftlint:disable:this unused_import
 final class RepositoryPullRequestRecoverySession {
     private static let live = NSHashTable<RepositoryPullRequestRecoverySession>.weakObjects()
     private static var detachedHosts: [UUID: DetachedRecoveryHost] = [:]
-    static var protectedSessions: [RepositoryPullRequestRecoverySession] {
+    static var currentSessions: [RepositoryPullRequestRecoverySession] {
         let current = live.allObjects.filter(\.isCurrent)
         current.forEach { $0.synchronizeRecoveredContent() }
-        return current.filter { !$0.protectionState.isEmpty }
+        return current
+    }
+
+    static var protectedSessions: [RepositoryPullRequestRecoverySession] {
+        currentSessions.filter { !$0.protectionState.isEmpty }
     }
 
     struct Protection: Equatable {
@@ -27,6 +31,7 @@ final class RepositoryPullRequestRecoverySession {
     let queue = RepositoryDraftOperationQueue()
     var submissions: [RepositoryEditSubmissionLifetime] = []
     var attachedCloseDecision: ((@escaping (Bool) -> Void) -> Bool)?
+    var onAcceptedTermination: (() -> Void)?
     private let drafts: any RepositoryPullRequestDraftPersisting
     private let now: @Sendable () -> Date
     private let ownerIsCurrent: () -> Bool
@@ -89,6 +94,7 @@ final class RepositoryPullRequestRecoverySession {
         guard !isDetached else { return }
         invalidated = true
         attachedCloseDecision = nil
+        onAcceptedTermination = nil
         cancelPendingCloseDecision()
     }
 
@@ -97,6 +103,7 @@ final class RepositoryPullRequestRecoverySession {
         cancelPendingCloseDecision()
         isDetached = true
         attachedCloseDecision = nil
+        onAcceptedTermination = nil
         let host = DetachedRecoveryHost(session: self, presented: presented)
         self.host = host
         Self.detachedHosts[identity] = host
@@ -162,12 +169,15 @@ final class RepositoryPullRequestRecoverySession {
     /// Called only after every Quit guard has agreed, immediately before AppKit's
     /// final affirmative reply. Earlier consent remains nondestructive.
     func completeAcceptedTermination() {
+        let endAttachedPresentation = onAcceptedTermination
+        onAcceptedTermination = nil
         invalidated = true
         attachedCloseDecision = nil
         cancelPendingCloseDecision()
         submissions.forEach { $0.resolveRecovery() }
         presentations.values.compactMap(\.sheet).forEach { $0.invalidatePresentation() }
         retire()
+        endAttachedPresentation?()
     }
 
     func cancelPendingCloseDecision() {

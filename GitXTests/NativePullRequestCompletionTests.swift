@@ -52,6 +52,38 @@ final class NativePullRequestCompletionTests: XCTestCase {
         }
     }
 
+    func testMenuQuitEndsAnUnchangedEditorBeforeForwardingToAppKit() async throws {
+        let fixture = try PullRequestAppFixture()
+        let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        defer { local.cleanup() }
+        let owner = GitX.PBGitWindowController()
+        owner.repository = local.repository
+        owner.showWindow(nil)
+        defer { owner.close() }
+        let window = try XCTUnwrap(owner.window)
+        let snapshot = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "Unchanged server title", bodyMarkdown: "Unchanged server body", updatedAt: .distantPast)
+        var bindingReads = 0
+        let controller = GitX.RepositoryPullRequestUIController(repository: local.repository, windowController: owner, ownerIsCurrent: owner.repositoryPresentationValidation(for: local.repository), remoteActions: GitX.RepositoryRemoteActionCoordinator(repository: local.repository, windowController: owner), service: NativePullRequestMutationService(started: nil), destinationOpening: { _ in false }, bindingResolving: { bindingReads += 1; return nil }, postPushBrowserFallback: { _ in })
+        defer { controller.invalidateOwner() }
+        controller.editPullRequest(accountID: fixture.accountID, snapshot: snapshot, destination: .pullRequest(fixture.repository, snapshot.number))
+        await waitForEditor(on: window)
+        let editor = try XCTUnwrap(window.attachedSheet)
+        XCTAssertEqual(controller.retainedSubmissionCount, 0)
+        let forwarded = expectation(description: "Unchanged editor is dismissed before AppKit starts Quit")
+        let coordinator = GitX.RepositoryTerminationCoordinator(mutations: GitX.RepositoryLocalMutationRegistry(), remoteDecision: { .terminateNow }, remoteCancelled: {
+            XCTFail("An unchanged editor does not need discard consent")
+        }, terminate: {
+            XCTAssertFalse(editor.isVisible, "An unchanged editor must not leave AppKit waiting for a sheet")
+            forwarded.fulfill()
+        }, reply: { _ in XCTFail("Menu Quit must forward after consent") })
+        coordinator.requestTermination()
+        await fulfillment(of: [forwarded], timeout: 5)
+        let previous = bindingReads
+        controller.newPullRequest()
+        XCTAssertEqual(bindingReads, previous, "Final closure must revoke outstanding presentation authority")
+        XCTAssertTrue(window.isVisible)
+    }
+
     func testSavedEditFailureRetiresItsRecordAndShowsTheActualError() async throws {
         let fixture = try PullRequestAppFixture()
         let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")

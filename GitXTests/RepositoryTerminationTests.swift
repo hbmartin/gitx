@@ -75,6 +75,33 @@ final class RepositoryTerminationTests: XCTestCase {
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
     }
 
+    func testKeepEditingPreservesSavedPresentationsWhileAnotherSessionNeedsConsent() async throws {
+        let saved = try recovery()
+        let savedSubmission = try XCTUnwrap(saved.submissions.first)
+        savedSubmission.markRecoverySaved(savedSubmission.recoveryContent)
+        saved.retire()
+        let unsaved = try recovery()
+        var endedPresentations = 0
+        saved.onAcceptedTermination = { endedPresentations += 1 }
+        let consent = expectation(description: "Only the unsaved session requires consent")
+        var answer: ((Bool) -> Void)?
+        saved.attachedCloseDecision = { _ in XCTFail("Saved text needs no discard decision"); return false }
+        unsaved.attachedCloseDecision = { answer = $0; consent.fulfill(); return true }
+        let replied = expectation(description: "Keep Editing cancels the attempt")
+        let coordinator = GitX.RepositoryTerminationCoordinator(mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [saved, unsaved] }, remoteDecision: {
+            XCTFail("Declined recovery consent precedes remote choices"); return .terminateNow
+        }, remoteCancelled: {}, terminate: { XCTFail("Cancelled consent cannot start AppKit Quit") }, reply: { XCTAssertFalse($0); replied.fulfill() })
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        await fulfillment(of: [consent], timeout: 5)
+        let reply = try XCTUnwrap(answer); answer = nil
+        reply(false)
+        await fulfillment(of: [replied], timeout: 5)
+        XCTAssertEqual(endedPresentations, 0)
+        XCTAssertTrue(GitX.RepositoryPullRequestRecoverySession.currentSessions.contains { $0 === saved })
+        XCTAssertFalse(GitX.RepositoryPullRequestRecoverySession.protectedSessions.contains { $0 === saved })
+        XCTAssertFalse(unsaved.protectionState.isEmpty)
+    }
+
     func testEmptyQuitCoalescesAndSendsOneTerminalReply() async {
         let registry = GitX.RepositoryLocalMutationRegistry()
         let replied = expectation(description: "Exactly one AppKit reply")

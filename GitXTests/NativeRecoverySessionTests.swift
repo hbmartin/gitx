@@ -105,6 +105,30 @@ final class NativeRecoverySessionTests: XCTestCase {
         XCTAssertFalse(GitX.RepositoryPullRequestRecoverySession.protectedSessions.contains { $0 === fixture.session })
     }
 
+    func testMenuQuitEndsASavedRecoverySheetBeforeForwardingToAppKit() async throws {
+        let fixture = try await fixture()
+        try await fixture.store.save(identity: fixture.identity, content: fixture.exact, at: .now)
+        fixture.sheet.markRecoverySaved(fixture.exact)
+        XCTAssertTrue(fixture.session.protectionState.isEmpty)
+        XCTAssertFalse(GitX.RepositoryPullRequestRecoverySession.protectedSessions.contains { $0 === fixture.session })
+        XCTAssertTrue(fixture.sheet.window?.isVisible == true, "Saved recovery remains available for further editing")
+        fixture.session.attachedCloseDecision = { _ in
+            XCTFail("Already saved recovery must not need discard consent"); return false
+        }
+        let forwarded = expectation(description: "AppKit receives Quit after presentation teardown")
+        let coordinator = GitX.RepositoryTerminationCoordinator(mutations: GitX.RepositoryLocalMutationRegistry(), remoteDecision: { .terminateNow }, remoteCancelled: {
+            XCTFail("Saved recovery cannot cancel Quit")
+        }, terminate: {
+            XCTAssertFalse(fixture.sheet.window?.isVisible == true, "AppKit waits for an attached sheet before consulting its delegate")
+            forwarded.fulfill()
+        }, reply: { _ in XCTFail("Menu preflight must forward instead of replying") })
+        coordinator.requestTermination()
+        await fulfillment(of: [forwarded], timeout: 5)
+        let stored = try await fixture.store.load(identity: fixture.identity)
+        XCTAssertEqual(stored?.content, fixture.exact)
+        XCTAssertTrue(fixture.parent.isVisible, "The coordinator closes presentation before AppKit owns document teardown")
+    }
+
     func testNativeRegistrySynchronizesFurtherVisibleTextAfterARecoveryWasSaved() async throws {
         let fixture = try await fixture()
         try await fixture.store.save(identity: fixture.identity, content: fixture.exact, at: .now)

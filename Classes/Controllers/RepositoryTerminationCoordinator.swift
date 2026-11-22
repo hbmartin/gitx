@@ -51,7 +51,7 @@ final class RepositoryTerminationCoordinator: NSObject {
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryTermination")
 
     init(mutations: RepositoryLocalMutationRegistry = .shared,
-         sessions: @escaping () -> [RepositoryPullRequestRecoverySession] = { RepositoryPullRequestRecoverySession.protectedSessions },
+         sessions: @escaping () -> [RepositoryPullRequestRecoverySession] = { RepositoryPullRequestRecoverySession.currentSessions },
          remoteDecision: @escaping () -> NSApplication.TerminateReply,
          remoteCancelled: @escaping () -> Void,
          waitingPresented: @escaping (NSPanel) -> Void = { _ in },

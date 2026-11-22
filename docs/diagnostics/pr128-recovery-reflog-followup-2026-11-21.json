@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "Implementation and complete post-commit correctness/coverage passed. Final delivery is governed by the declared canonical workflow and installed-app evidence records.",
+  "status": "The all-presentation Quit correction passes focused native, mixed-consent and six actual-menu UI cases. Complete post-commit coverage and the declared final canonical workflow are required before delivery.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -36,7 +36,13 @@
     "pr128-next-offscreen-verification",
     "pr128-next-post-termination-correctness",
     "pr128-next-post-termination-static",
-    "pr128-next-final-full"
+    "pr128-next-final-full",
+    "pr128-saved-sheet-quit-red",
+    "pr128-unchanged-editor-quit-ui-red",
+    "pr128-saved-sheet-characterization",
+    "pr128-saved-sheet-quit-characterized-red",
+    "pr128-all-presentations-quit-green",
+    "pr128-mixed-quit-boundary-green"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -132,6 +138,25 @@
     {
       "runId": "pr128-next-native-quit-selector-green",
       "result": "Explicit Objective-C export on the imported delegate extension failed compilation with a selector conflict. A thin Objective-C forwarding hook provides the required runtime entry point."
+    },
+    {
+      "runId": "pr128-next-final-full",
+      "commit": "8ae9244314ba639b130adb2fe1a3c8ae03550137",
+      "receipt": "artifacts/verification/pr128-next-final-full-address-undefined-eebae68b/receipt.json",
+      "result": "The first eight checks passed, including all 2473 correctness cases and raised coverage floors. Interrupted only the owned sanitizer compiler before sanitizer testing to investigate saved/unchanged editor Quit. No sanitizer outcome is claimed. The final full workflow must rerun at the correction commit."
+    },
+    {
+      "runId": "pr128-saved-sheet-quit-red",
+      "result": "Two native regressions failed with three assertions: accepted Quit forwarded while saved recovery and unchanged editor sheets stayed open, and the unchanged editor retained presentation authority."
+    },
+    {
+      "runId": "pr128-unchanged-editor-quit-ui-red",
+      "result": "Actual menu Quit was accepted by the coordinator, then the process stayed open because AppKit waited for its unchanged editor sheet."
+    },
+    {
+      "runId": "pr128-saved-sheet-quit-characterized-red",
+      "commit": "a8e6e9bd717f69f535297270f60a34a618d9405a",
+      "result": "After the separate passing saved-recovery characterization commit, both native regressions again failed with the same three assertions. No failing test was committed."
     }
   ],
   "characterization": [
@@ -502,5 +527,46 @@
     "Affected regression contracts are assessed using final receipts.",
     "The installed Debug app matches the final verified commit and its code signature verifies.",
     "All commits remain local; no push or pull request."
-  ]
+  ],
+  "presentationClosureCorrection": {
+    "verifiedAtUTC": "2026-11-22T11:47:44.073117+00:00",
+    "parentCommit": "a8e6e9bd717f69f535297270f60a34a618d9405a",
+    "characterizationCommit": "a8e6e9bd717f69f535297270f60a34a618d9405a",
+    "runIds": [
+      "pr128-saved-sheet-quit-red",
+      "pr128-unchanged-editor-quit-ui-red",
+      "pr128-saved-sheet-characterization",
+      "pr128-saved-sheet-quit-characterized-red",
+      "pr128-all-presentations-quit-green",
+      "pr128-mixed-quit-boundary-green"
+    ],
+    "native": {
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-all-presentations-quit-green-correctness-c89355dd/receipt.json",
+      "bundle": "artifacts/verification/pr128-all-presentations-quit-green-correctness-c89355dd/Results/GitX.xcresult",
+      "totalTestCount": 56,
+      "passedTests": 56,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "nativeMenuUI": {
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-all-presentations-quit-green-ui-fd7bd034/receipt.json",
+      "bundle": "artifacts/verification/pr128-all-presentations-quit-green-ui-fd7bd034/Results/GitXUI.xcresult",
+      "totalTestCount": 6,
+      "passedTests": 6,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "mixedConsent": {
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-mixed-quit-boundary-green-correctness-23d4207b/receipt.json",
+      "bundle": "artifacts/verification/pr128-mixed-quit-boundary-green-correctness-23d4207b/Results/GitX.xcresult",
+      "totalTestCount": 19,
+      "passedTests": 19,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "scope": "Partial pre-commit evidence; complete post-commit verification and final canonical delivery remain required. Only the added mixed-consent test changed after the broader native/UI run; all recorded production input identities match.",
+    "implementation": "Keep all current sessions for final accepted teardown, while consent depends only on unsaved protection. End saved recovery sheets and revoke attached controller presentation authority before forwarding to AppKit. Keep Editing remains nondestructive. Clear the attached termination callback on owner revocation and repository-move detachment.",
+    "compatibility": "Three existing Swift files change; Objective-C hooks, generated interfaces, targets, dependencies and external APIs are unchanged.",
+    "coveragePolicy": "No existing floor is changed here. Ratchet only after complete passing post-commit correctness."
+  }
 }
