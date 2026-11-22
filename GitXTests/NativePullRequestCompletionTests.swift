@@ -10,6 +10,71 @@ final class NativePullRequestCompletionTests: XCTestCase {
         await fulfillment(of: [ready], timeout: 5)
     }
 
+    func testSupersededEditFailureAppearsWithoutInterruptingTheNewEditor() async throws {
+        let fixture = try PullRequestAppFixture()
+        let local = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        defer { local.cleanup() }
+        let owner = GitX.PBGitWindowController()
+        owner.repository = local.repository
+        owner.showWindow(nil)
+        defer { owner.close() }
+        let window = try XCTUnwrap(owner.window)
+        let started = expectation(description: "First edit reaches the server")
+        let service = NativePullRequestMutationService(started: started)
+        let drafts = GitX.NullRepositoryPullRequestDraftStore()
+        let first = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(42), title: "First edit", bodyMarkdown: "First exact body", updatedAt: .distantPast)
+        let next = try ForgePullRequestEditableSnapshot(repository: fixture.repository, number: ForgeItemNumber(43), title: "Newer editor", bodyMarkdown: "Do not interrupt these bytes", updatedAt: .distantPast)
+        let controller = GitX.RepositoryPullRequestUIController(repository: local.repository, windowController: owner,
+                                                                ownerIsCurrent: owner.repositoryPresentationValidation(for: local.repository),
+                                                                remoteActions: GitX.RepositoryRemoteActionCoordinator(repository: local.repository, windowController: owner), service: service, drafts: drafts,
+                                                                destinationOpening: { _ in XCTFail("A superseded destination must stay closed"); return false },
+                                                                bindingResolving: { nil }, postPushBrowserFallback: { _ in })
+        defer { controller.invalidateOwner() }
+        let outcome = GitX.RepositoryPullRequestEditOutcome(snapshot: first, destination: .pullRequest(fixture.repository, first.number))
+        defer { Task { await service.releaseEdit(outcome) } }
+        controller.editPullRequest(accountID: fixture.accountID, snapshot: first, destination: outcome.destination)
+        await waitForEditor(on: window)
+        let old = try XCTUnwrap(window.attachedSheet)
+        try XCTUnwrap(find("GitX.PullRequest.Submit", in: XCTUnwrap(old.contentView)) as? NSButton).performClick(nil)
+        await fulfillment(of: [started], timeout: 5)
+        let submitted = try XCTUnwrap(controller.mutationTask)
+        await waitForNoSheet(on: window)
+        controller.editPullRequest(accountID: fixture.accountID, snapshot: next, destination: .pullRequest(fixture.repository, next.number))
+        await waitForEditor(on: window)
+        let editor = try XCTUnwrap(window.attachedSheet)
+        await service.releaseEdit(outcome)
+        await submitted.value
+        let row = try find("GitX.RepositoryFailure.Message", in: XCTUnwrap(window.contentView)) as? NSTextField
+        XCTAssertNotNil(row, "An admitted superseded failure needs an owner-scoped nonmodal result")
+        XCTAssertTrue(row?.stringValue.contains("rejected") == true)
+        XCTAssertTrue(window.attachedSheet === editor)
+        XCTAssertEqual(try (find("GitX.PullRequest.Body", in: XCTUnwrap(editor.contentView)) as? NSTextView)?.string, next.bodyMarkdown)
+        if let row {
+            XCTAssertFalse(row.isHiddenOrHasHiddenAncestor)
+            try attachScreenshot(of: window, named: "Superseded failure stays outside the newer Pull Request editor")
+            let details = try XCTUnwrap(try find("GitX.RepositoryFailure.Details", in: XCTUnwrap(window.contentView)) as? NSButton)
+            details.performClick(nil)
+            let diagnostic = try await attachedSheet(of: editor, identifier: "GitX.RepositoryFailure.Details")
+            details.performClick(nil)
+            XCTAssertNil(diagnostic.attachedSheet)
+            try XCTUnwrap(button(titled: "OK", in: XCTUnwrap(diagnostic.contentView))).performClick(nil)
+            await waitForNoSheet(on: editor)
+            XCTAssertTrue(window.attachedSheet === editor)
+            try XCTUnwrap(try find("GitX.RepositoryFailure.Dismiss", in: XCTUnwrap(window.contentView)) as? NSButton).performClick(nil)
+            XCTAssertTrue(row.isHiddenOrHasHiddenAncestor)
+        }
+        let calls = await service.editCount
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testCheckoutReconcilesItsOriginalRepositoryAfterSupersessionOrOwnerRevocation() async throws {
+        for failing in [false, true] {
+            for revoked in [false, true] {
+                try await exerciseHeldCheckout(failing: failing, revokeOwner: revoked)
+            }
+        }
+    }
+
     func testCurrentOwnerCheckoutReportsActualGitSuccessAndFailure() async throws {
         for failing in [false, true] {
             try await exerciseHeldCheckout(failing: failing, revokeOwner: false, characterize: true)
@@ -119,6 +184,45 @@ final class NativePullRequestCompletionTests: XCTestCase {
         if failing {
             XCTAssertEqual(try String(contentsOf: local.directory.appendingPathComponent("blocked.txt"), encoding: .utf8), "untracked obstruction\n")
         }
+    }
+
+    func testFailureRowKeepsHiddenStatusPreferenceAndRevokesOldDetailsOnReplacement() async throws {
+        let firstRepository = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        let secondRepository = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/contributor/gitx.git")
+        defer { firstRepository.cleanup(); secondRepository.cleanup() }
+        let previouslyVisible = GitX.ApplicationSettings.repositoryStatusBarVisible
+        GitX.ApplicationSettings.repositoryStatusBarVisible = false
+        defer { GitX.ApplicationSettings.repositoryStatusBarVisible = previouslyVisible }
+        let owner = GitX.PBGitWindowController()
+        owner.repository = firstRepository.repository
+        owner.showWindow(nil)
+        defer { owner.close() }
+        let window = try XCTUnwrap(owner.window)
+        let content = try XCTUnwrap(window.contentView)
+        let first = GitX.RepositoryOperationFailure(operation: "First edit", disposition: .rejected, details: "First exact diagnostic")
+        let second = GitX.RepositoryOperationFailure(operation: "Second edit", disposition: .uncertain, details: "Second exact diagnostic")
+        owner.recordOperationFailure(first)
+        owner.recordOperationFailure(second)
+        let row = try XCTUnwrap(find("GitX.RepositoryFailure.Message", in: content) as? NSTextField)
+        XCTAssertEqual(row.stringValue, first.message)
+        XCTAssertFalse(row.isHiddenOrHasHiddenAncestor)
+        XCTAssertTrue(try XCTUnwrap(find("GitX.RepositoryStatusBar.LocalBranch", in: content)).isHiddenOrHasHiddenAncestor)
+        XCTAssertFalse(GitX.ApplicationSettings.repositoryStatusBarVisible)
+        try XCTUnwrap(find("GitX.RepositoryFailure.Details", in: content) as? NSButton).performClick(nil)
+        _ = try await attachedSheet(of: window, identifier: "GitX.RepositoryFailure.Details")
+        owner.repository = secondRepository.repository
+        await waitForNoSheet(on: window)
+        XCTAssertTrue(row.window == nil || row.isHiddenOrHasHiddenAncestor)
+        let fresh = GitX.RepositoryOperationFailure(operation: "Fresh edit", disposition: .uncertain, details: "Fresh diagnostic")
+        owner.recordOperationFailure(fresh)
+        let currentContent = try XCTUnwrap(window.contentView)
+        let current = try XCTUnwrap(find("GitX.RepositoryFailure.Message", in: currentContent) as? NSTextField)
+        XCTAssertEqual(current.stringValue, fresh.message)
+        try XCTUnwrap(find("GitX.RepositoryFailure.Dismiss", in: currentContent) as? NSButton).performClick(nil)
+        XCTAssertTrue(current.isHiddenOrHasHiddenAncestor)
+        owner.close()
+        owner.recordOperationFailure(first)
+        XCTAssertFalse(window.isVisible)
     }
 
     private func text(in view: NSView) -> [String] {

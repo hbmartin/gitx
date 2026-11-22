@@ -678,6 +678,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         ownership.revoke(closing: closing)
         documentCloseConsent.revoke()
         pullRequestActivity = nil
+        operationFailures.removeAll()
+        operationFailureDetails = nil
+        if let alert = operationFailureAlert, let parent = alert.window.sheetParent {
+            parent.endSheet(alert.window, returnCode: .abort)
+            alert.window.orderOut(nil)
+        }
+        operationFailureAlert = nil
+        repositoryStatusBarController?.updateFailure(nil)
         if closing {
             pendingRefreshIntents.discard()
             globalOwnerNotifications.forEach(ownerNotifications.removeObserver)
@@ -1641,6 +1649,41 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private final var pullRequestActivity: RepositoryPullRequestActivity?
+    private var operationFailures = RepositoryOperationFailureQueue()
+    private var operationFailureDetails: UUID?
+    private var operationFailureAlert: NSAlert?
+
+    final func recordOperationFailure(_ failure: RepositoryOperationFailure) {
+        guard !ownership.closed else { return }
+        operationFailures.append(failure)
+        repositoryStatusBarController?.updateFailure(operationFailures.first)
+    }
+
+    private func dismissOperationFailure(_ identity: UUID) {
+        guard operationFailures.dismiss(identity) else { return }
+        repositoryStatusBarController?.updateFailure(operationFailures.first)
+    }
+
+    private func showOperationFailure(_ failure: RepositoryOperationFailure) {
+        guard !ownership.closed, operationFailureDetails == nil, let window else { return }
+        let identity = UUID()
+        operationFailureDetails = identity
+        let alert = NSAlert()
+        operationFailureAlert = alert
+        alert.window.setAccessibilityIdentifier("GitX.RepositoryFailure.Details")
+        alert.messageText = failure.message
+        alert.informativeText = failure.details
+        alert.addButton(withTitle: "OK")
+        var parent = window
+        while let attached = parent.attachedSheet {
+            parent = attached
+        }
+        alert.beginSheetModal(for: parent) { [weak self] _ in
+            guard self?.operationFailureDetails == identity else { return }
+            self?.operationFailureDetails = nil
+            self?.operationFailureAlert = nil
+        }
+    }
 
     final func setPullRequestActivity(_ activity: RepositoryPullRequestActivity) {
         guard !ownership.closed else { return }
@@ -2138,6 +2181,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             )
         }
         repositoryStatusBarController = controller
+        controller.failureDetails = { [weak self] in self?.showOperationFailure($0) }
+        controller.failureDismissed = { [weak self] in self?.dismissOperationFailure($0) }
+        controller.updateFailure(operationFailures.first)
         controller.install(visible: ApplicationSettings.repositoryStatusBarVisible)
         updateStatus()
         if let repositoryForgeOverlaySession {

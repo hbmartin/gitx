@@ -228,6 +228,12 @@ final class RepositoryPullRequestUIController {
 
     func newPullRequest() {
         guard ownerIsCurrent() else { return }
+        guard pullRequestOperation?.flow.isActive != true, deferredPullRequestOperation == nil else {
+            sheetController?.window?.makeKeyAndOrderFront(nil)
+            showUnsentNotice("A Pull Request workflow is already pending. Finish or cancel it before starting another.")
+            logger.notice("Rejected repeated New Pull Request while its workflow is pending")
+            return
+        }
         cancelOrdinaryPushPreparation(clearCache: true)
         guard let branch = repository.headRef()?.ref(), branch.isBranch else {
             windowController?.showErrorSheet(RepositoryPullRequestServiceError.noLocalBranch)
@@ -587,7 +593,7 @@ final class RepositoryPullRequestUIController {
         let predecessors = editSubmissions.filter { $0.draftIdentity == identity }
         let request = UUID()
         preparingEditorID = request
-        presentActivity(identity: request, message: "Waiting for the preceding Pull Request edit…", busy: true)
+        presentActivity(identity: request, message: RepositoryEditRecoveryOrder.preparationMessage(for: predecessors), busy: true)
         preparationTask = Task { [weak self] in
             for submission in predecessors {
                 await submission.task?.value
@@ -678,24 +684,35 @@ final class RepositoryPullRequestUIController {
         let admission = RepositoryPullRequestMutationAdmission()
         activeMutation = admission
         let executor = RepositoryPullRequestCheckoutExecutor(repository: repository)
+        let logger = logger
         let authority = authority
-        mutationTask = Task { [weak self] in
+        mutationTask = Task { [weak self, weak repository] in
             defer { admission.finish() }
             do {
                 guard authority.isCurrent, admission.admit() else { return }
                 let receipt = try await Task.detached(priority: .userInitiated) {
                     try executor.execute(plan)
                 }.value
+                repository?.reloadRefs()
+                repository?.hasChanged = true
+                repository?.lazyReload()
                 guard let self, self.ownerIsCurrent(), !admission.superseded, !Task.isCancelled else { return }
                 self.windowController?.showMessageSheet(
                     "Pull Request Checked Out",
                     infoText: "Checked out \(receipt.localBranch.value) from \(receipt.remoteName)."
                 )
                 self.logger.notice("Completed explicit Pull Request checkout")
-            } catch is CancellationError {
-                return
             } catch {
-                guard let self, self.ownerIsCurrent(), !admission.superseded else { return }
+                logger.error("Pull Request checkout failed; diagnostic=\(error.localizedDescription, privacy: .private)")
+                repository?.reloadRefs()
+                repository?.hasChanged = true
+                repository?.lazyReload()
+                guard let self else { return }
+                if admission.superseded || !self.ownerIsCurrent() || error is CancellationError {
+                    self.reportSupersededFailure(RepositoryOperationFailure(operation: "Pull Request checkout", disposition: .uncertain,
+                                                                            details: "The checkout did not finish safely. The repository may contain a fetched reference or a newly created branch. Review its current state before trying again.\n\n" + error.localizedDescription))
+                    return
+                }
                 self.windowController?.showErrorSheet(error)
             }
         }
@@ -735,26 +752,33 @@ final class RepositoryPullRequestUIController {
         supersedeMutation()
         let runner = RepositoryPullRequestObjectiveGitRunner(repository: repository)
         let coordinator = RepositorySyncForkCoordinator(service: service, runner: runner)
+        let logger = logger
         let authority = authority
+        let presentation = authority.beginMutation()
         let admission = RepositoryPullRequestMutationAdmission()
         activeMutation = admission
-        mutationTask = Task { [weak self] in
+        mutationTask = Task { [weak self, weak repository] in
             defer { admission.finish() }
             do {
                 guard authority.isCurrent, admission.admit() else { return }
                 let receipt = try await coordinator.sync(accountID: accountID, plan: plan)
+                repository?.reloadRefs()
                 guard let self, self.ownerIsCurrent(), !admission.superseded, !Task.isCancelled else { return }
                 self.windowController?.showMessageSheet(
                     "Fork Synchronized",
                     infoText: "\(receipt.serverSummary) Fetched \(receipt.fetchedRemote)/\(receipt.fetchedBranch.value)."
                 )
-            } catch is CancellationError {
-                return
             } catch {
-                guard let self, self.ownerIsCurrent(), !admission.superseded else { return }
+                logger.error("Fork synchronization failed; diagnostic=\(error.localizedDescription, privacy: .private)")
+                repository?.reloadRefs()
+                guard let self else { return }
+                guard self.ownerIsCurrent(), !admission.superseded, !(error is CancellationError) else {
+                    self.reportSupersededFailure(RepositoryOperationFailure(operation: "Fork synchronization", disposition: RepositoryOperationFailure.disposition(for: error), details: error.localizedDescription))
+                    return
+                }
                 let offeredRecovery = self.presentAuthorizationRecovery(
                     error,
-                    retry: { [weak self] in
+                    retry: authority.retry(for: presentation) { [weak self] in
                         self?.syncFork(accountID: accountID, plan: plan)
                     }
                 )
@@ -1184,6 +1208,7 @@ final class RepositoryPullRequestUIController {
         activeMutation = admission
         saveDraft(preparation: preparation, content: ForgeDraftContent(title: form.title, body: form.bodyMarkdown))
         let pendingDraftSave = draftQueue.tail
+        let logger = logger
         let authority = authority
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
         let task = Task { [weak self] in
@@ -1212,10 +1237,16 @@ final class RepositoryPullRequestUIController {
                 guard self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
                 self.onCreationDestinationOpened?(destination, opened)
             } catch {
+                logger.error("Pull Request creation failed; diagnostic=\(error.localizedDescription, privacy: .private)")
                 // Completion belongs to the captured operation even after UI supersession.
                 try? operation.flow.creationFailed()
-                guard let self, self.mayPresentMutation(identity), self.pullRequestOperation === operation else { return }
-                guard !(error is CancellationError) else { return }
+                guard let self else { return }
+                guard self.mayPresentMutation(identity), self.pullRequestOperation === operation, !(error is CancellationError) else {
+                    if admission.wasAdmitted {
+                        self.reportSupersededFailure(RepositoryOperationFailure(operation: "Pull Request creation", disposition: RepositoryOperationFailure.disposition(for: error), details: error.localizedDescription))
+                    }
+                    return
+                }
                 if self.presentAuthorizationRecovery(error, retry: self.authority.retry(for: identity) { [weak self] in
                     guard let self, self.pullRequestOperation === operation else { return }
                     do {
@@ -1247,6 +1278,7 @@ final class RepositoryPullRequestUIController {
         let admission = RepositoryPullRequestMutationAdmission()
         admission.editSubmission = submission
         activeMutation = admission
+        let logger = logger
         let authority = authority
         let completion = RepositoryPullRequestMutationCompletion(service: service, drafts: drafts)
         let date = now()
@@ -1282,7 +1314,9 @@ final class RepositoryPullRequestUIController {
                 _ = self.destinationOpening(outcome.destination)
                 self.logger.notice("Saved conflict-aware Pull Request edit with independent completion")
             } catch {
+                logger.error("Pull Request edit failed; diagnostic=\(error.localizedDescription, privacy: .private)")
                 submission.finish(error: error)
+                let failure = submission.failure
                 guard let self else { return }
                 if case ForgePullRequestWorkflowError.editConflict = error, let expected = submission.expectedUpdatedAt {
                     self.conflictFreshness.requireRefresh(identity: editor.identity, after: expected)
@@ -1290,8 +1324,10 @@ final class RepositoryPullRequestUIController {
                 self.retireCompletedSubmissions()
                 let diagnostic = error as NSError
                 self.logger.error("Pull Request edit failed; domain=\(diagnostic.domain, privacy: .public) code=\(diagnostic.code), unsaved=\(result.snapshot == nil, privacy: .public)")
-                guard self.ownerIsCurrent() else { return }
                 if submission.superseded || !self.mayPresentMutation(presentation) || error is CancellationError {
+                    if let failure {
+                        self.reportSupersededFailure(failure)
+                    }
                     self.queueAvailableRecoveries()
                     return
                 }
@@ -1322,6 +1358,17 @@ final class RepositoryPullRequestUIController {
         submission.task = task
         admission.task = task
         mutationTask = task
+    }
+
+    private func reportSupersededFailure(_ failure: RepositoryOperationFailure) {
+        guard ownerIsCurrent() else {
+            logger.error("Completed superseded operation without a current presentation owner; diagnostic=\(failure.details, privacy: .private)")
+            return
+        }
+        #if GITX_APP_TARGET
+            windowController?.recordOperationFailure(failure)
+        #endif
+        logger.notice("Queued a completed operation failure without interrupting the current editor")
     }
 
     private func mayPresentMutation(_ identity: UUID) -> Bool {
