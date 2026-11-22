@@ -9,6 +9,26 @@ nonisolated struct RepositoryReflogPage: Sendable {
     let fingerprint: WorktreeFileFingerprint?
 }
 
+nonisolated struct RepositoryReflogReference: Equatable, Sendable {
+    let rawName: Data
+    var name: String? {
+        String(data: rawName, encoding: .utf8)
+    }
+
+    var displayName: String {
+        let short = Data(rawName.dropFirst("refs/heads/".utf8.count))
+        let display = ReflogParser.displayText(short)
+        return name == nil ? display + " (unsupported encoding)" : display
+    }
+}
+
+nonisolated enum RepositoryReflogCommandExecution {
+    case read, mutation
+    var timeout: TimeInterval {
+        self == .read ? 60 : 0
+    }
+}
+
 nonisolated struct RepositoryRecoveryPreview: Equatable, Sendable {
     let target: String
     let previousHead: String
@@ -42,6 +62,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
     private let writer: IndexWriterCoordinator
     private let contentRead: @Sendable (String, Int) -> Void
     private let lock = NSRecursiveLock()
+    private var mutationDepth = 0
     private var cancelled = false
     private var activeTask: PBTask?
 
@@ -57,6 +78,11 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
 
     func cancel() {
         lock.lock()
+        guard mutationDepth == 0 else {
+            lock.unlock()
+            Self.logger.notice("Ignored read cancellation while an admitted mutation finishes")
+            return
+        }
         cancelled = true
         activeTask?.terminate()
         lock.unlock()
@@ -69,14 +95,23 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
         }
     }
 
-    private func data(_ arguments: [String], allowTruncation: Bool = false) throws -> Data {
+    private func withMutation<Value>(_ work: () throws -> Value) throws -> Value {
+        lock.lock()
+        guard !cancelled else { lock.unlock(); throw CancellationError() }
+        mutationDepth += 1
+        lock.unlock()
+        defer { lock.lock(); mutationDepth -= 1; lock.unlock() }
+        return try work()
+    }
+
+    private func data(_ arguments: [String], execution: RepositoryReflogCommandExecution = .read) throws -> Data {
         let task = PBTask(launchPath: context.launchPath, arguments: context.arguments + arguments, inDirectory: context.workingDirectory)
         task.additionalEnvironment = context.environment.merging([
             "GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": "/dev/null/gitx-recovery-grafts",
             "GIT_NO_LAZY_FETCH": "1", "GIT_OPTIONAL_LOCKS": "0",
         ]) { _, value in value }
         task.separatesStandardError = true
-        task.timeout = 60
+        task.timeout = execution.timeout
         lock.lock()
         if cancelled {
             lock.unlock(); throw CancellationError()
@@ -92,7 +127,6 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
         }
         try task.launch()
         try checkCancellation()
-        guard allowTruncation || !task.standardOutputTruncated else { throw ReflogReadError.incompleteOutput }
         return task.standardOutputData
     }
 
@@ -102,15 +136,21 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
         return value.trimmingCharacters(in: .newlines)
     }
 
+    func referenceChoices() throws -> [RepositoryReflogReference] {
+        try data(["for-each-ref", "--format=%(refname)", "refs/heads/"])
+            .split(separator: 10).map { RepositoryReflogReference(rawName: Data($0)) }
+    }
+
     func branches() throws -> [String] {
-        try text(["for-each-ref", "--format=%(refname)", "refs/heads/"])
-            .components(separatedBy: "\n").filter { !$0.isEmpty }
+        try referenceChoices().compactMap(\.name)
     }
 
     func page(reference: String = "HEAD", offset: Int = 0,
-              expectedFingerprint: WorktreeFileFingerprint? = nil) throws -> RepositoryReflogPage
+              expectedFingerprint: WorktreeFileFingerprint? = nil,
+              references: [RepositoryReflogReference]? = nil) throws -> RepositoryReflogPage
     {
-        guard offset >= 0, try reference == "HEAD" || branches().contains(reference) else {
+        let validReference = try reference == "HEAD" || (references ?? referenceChoices()).contains { $0.name == reference }
+        guard offset >= 0, validReference else {
             throw RepositoryReflogError.unavailable("Choose a current local branch or this checkout’s HEAD reflog.")
         }
         let logPath = try text(["rev-parse", "--path-format=absolute", "--git-path", "logs/" + reference])
@@ -166,13 +206,13 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
     }
 
     func createRecoveryBranch(objectID: String, name: String) throws {
-        try writer.perform("create-recovery-branch") {
+        try withMutation { try writer.perform("create-recovery-branch") {
             try validateCommit(objectID)
             guard !name.hasPrefix("-"), !name.isEmpty else { throw RepositoryReflogError.unavailable("Enter a valid branch name.") }
-            _ = try data(["check-ref-format", "--branch", name])
-            _ = try data(["branch", "--", name, objectID])
+            _ = try data(["check-ref-format", "refs/heads/" + name])
+            _ = try data(["branch", "--", name, objectID], execution: .mutation)
             Self.logger.info("Created recovery branch \(name, privacy: .private) at \(objectID, privacy: .public)")
-        }
+        } }
     }
 
     func preview(target: String, mode: ReflogResetMode) throws -> RepositoryRecoveryPreview {
@@ -220,7 +260,14 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
             record(Data(directory.utf8))
             try record(Data(String(describing: WorktreeFileIdentity.capture(path: directory)).utf8))
         }
-        var visited = Set<String>()
+        // Classify against every target path before the first visit. A current-only
+        // child may sort before the target child which exposes its ancestor obstruction.
+        let targetHierarchy = Set(destination.keys.flatMap { path -> [String] in
+            let components = path.split(separator: "/")
+            return components.indices.map { components[...$0].joined(separator: "/") }
+        })
+        var captured: [String: Set<String>] = [:]
+        var kinds: [String: FileAttributeType] = [:]
         for path in Set(current.keys).union(destination.keys).sorted() {
             try checkCancellation()
             if current[path] == "160000" || destination[path] == "160000" {
@@ -241,29 +288,26 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
                 let candidate = components[...index].joined(separator: "/")
                 let url = URL(fileURLWithPath: root).appendingPathComponent(candidate)
                 let isTarget = destination[candidate] != nil
-                var capturedPaths = Set<String>()
-                if visited.insert(candidate).inserted {
+                if captured[candidate] == nil {
                     let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-                    let obstruction = destination[path] != nil && attributes != nil &&
-                        (current[candidate] == nil || (isTarget && attributes?[.type] as? FileAttributeType == .typeDirectory)) &&
-                        (isTarget || attributes?[.type] as? FileAttributeType != .typeDirectory)
+                    let kind = attributes?[.type] as? FileAttributeType
+                    let obstruction = targetHierarchy.contains(candidate) && attributes != nil &&
+                        (current[candidate] == nil || (isTarget && kind == .typeDirectory)) &&
+                        (isTarget || kind != .typeDirectory)
                     let fullContent = mode == .hard && (affected.contains(candidate) || obstruction)
-                    try capture(url: url, relative: candidate, descend: isTarget, fullContent: fullContent,
-                                capturedPaths: &capturedPaths, record: record)
+                    var capturedPaths = Set<String>()
+                    let observedKind = try capture(url: url, relative: candidate, descend: isTarget, fullContent: fullContent,
+                                                   capturedPaths: &capturedPaths, record: record)
+                    guard observedKind == kind else { throw RepositoryReflogError.changed }
+                    captured[candidate] = capturedPaths
+                    kinds[candidate] = kind
+                    if obstruction {
+                        affected.insert(candidate); discarded.insert(candidate)
+                        affected.formUnion(capturedPaths); discarded.formUnion(capturedPaths)
+                    }
                 }
-                if destination[path] != nil,
-                   let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-                   current[candidate] == nil || (isTarget && attrs[.type] as? FileAttributeType == .typeDirectory),
-                   isTarget || attrs[.type] as? FileAttributeType != .typeDirectory
-                {
-                    affected.insert(candidate); discarded.insert(candidate)
-                    affected.formUnion(capturedPaths); discarded.formUnion(capturedPaths)
-                }
-                // A symlink or regular ancestor can obstruct a target directory; do not follow it.
-                if index != components.indices.last,
-                   let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-                   attrs[.type] as? FileAttributeType != .typeDirectory
-                {
+                // Never follow a regular file or symlink ancestor through its obstruction.
+                if index != components.indices.last, kinds[candidate] != nil, kinds[candidate] != .typeDirectory {
                     break
                 }
             }
@@ -367,8 +411,8 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
     }
 
     func reset(confirmed preview: RepositoryRecoveryPreview, discardConfirmed: Bool) throws -> String {
-        try writer.perform("reflog-reset") {
-            guard preview.mode != .hard || discardConfirmed else {
+        try withMutation { try writer.perform("reflog-reset") {
+            guard !preview.mode.requiresDiscardConfirmation || discardConfirmed else {
                 throw RepositoryReflogError.unavailable("Confirm discarding local changes before a hard reset.")
             }
             guard try self.preview(target: preview.target, mode: preview.mode) == preview else { throw RepositoryReflogError.changed }
@@ -377,7 +421,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
             do {
                 try checkCancellation()
                 guard try self.preview(target: preview.target, mode: preview.mode) == preview else { throw RepositoryReflogError.changed }
-                _ = try data(["reset", "--" + preview.mode.rawValue, "--no-recurse-submodules", preview.target])
+                _ = try data(["reset", "--" + preview.mode.rawValue, "--no-recurse-submodules", preview.target], execution: .mutation)
                 guard try text(["rev-parse", "--verify", "HEAD"]) == preview.target else { throw RepositoryReflogError.changed }
                 let branch = try text(["rev-parse", "--abbrev-ref", "HEAD"])
                 guard branch == preview.branch else {
@@ -394,7 +438,7 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
             }
             Self.logger.info("Recovery reset completed mode=\(preview.mode.rawValue, privacy: .public) backup=\(backup, privacy: .public)")
             return backup
-        }
+        } }
     }
 }
 

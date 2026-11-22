@@ -4,6 +4,76 @@ import Synchronization
 import XCTest
 
 final class ReflogServiceTests: XCTestCase {
+    func testHardPreviewCapturesAnObstructionFirstVisitedThroughACurrentOnlyPath() throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        try fixture.write("obstruction/zzz", "target\n")
+        try fixture.git(["add", "."])
+        try fixture.git(["commit", "-m", "target child"])
+        let target = try fixture.git(["rev-parse", "HEAD"])
+        try fixture.git(["rm", "obstruction/zzz"])
+        try fixture.write("obstruction/aaa", "current\n")
+        try fixture.git(["add", "."])
+        try fixture.git(["commit", "-m", "current child sorts first"])
+        try FileManager.default.removeItem(at: fixture.url.appendingPathComponent("obstruction"))
+        let payload = "Never omit this overwrite evidence\n"
+        try fixture.write("obstruction", payload)
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let reads = Mutex<[String: Int]>([:])
+        let service = try RepositoryReflogService(repository: repository, contentRead: { path, count in
+            reads.withLock { $0[path, default: 0] += count }
+        })
+        let preview = try service.preview(target: target, mode: .hard)
+        XCTAssertTrue(preview.discardedPaths.contains("obstruction"))
+        XCTAssertEqual(reads.withLock { $0["obstruction"] }, payload.utf8.count)
+        XCTAssertNil(reads.withLock { $0["tracked.txt"] })
+    }
+
+    func testRecoveryBranchNameRejectsPreviousCheckoutExpansion() throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        try fixture.git(["checkout", "-b", "previous"])
+        try fixture.git(["checkout", "main"])
+        try fixture.git(["branch", "-D", "previous"])
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let service = try RepositoryReflogService(repository: repository)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        XCTAssertThrowsError(try service.createRecoveryBranch(objectID: head, name: "@{-1}"))
+        XCTAssertEqual(try fixture.git(["for-each-ref", "--format=%(refname)", "refs/heads/"]), "refs/heads/main")
+    }
+
+    func testUnsupportedPackedBranchDoesNotPreventEnumeratingValidBranches() throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let bytes = Data(("# pack-refs with: sorted\n" + head + " refs/heads/invalid-").utf8) + Data([0xFF, 10])
+        try bytes.write(to: fixture.url.appendingPathComponent(".git/packed-refs"))
+        let service = try RepositoryReflogService(repository: repository)
+        XCTAssertEqual(try service.branches(), ["refs/heads/main"])
+        XCTAssertFalse(try service.page().entries.isEmpty)
+    }
+
+    @MainActor
+    func testReadCancellationCannotTerminateAnAdmittedRecoveryBranch() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture, command: "branch")
+        defer { try? gate.open() }
+        let service = try RepositoryReflogService(repository: repository, context: gate.context)
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let mutation = Task.detached { try service.createRecoveryBranch(objectID: head, name: "recovery/cancellation") }
+        let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            FileManager.default.fileExists(atPath: gate.started.path)
+        }, object: nil)
+        await fulfillment(of: [started], timeout: 10)
+        service.cancel()
+        try gate.open()
+        try await mutation.value
+        XCTAssertEqual(try fixture.git(["rev-parse", "recovery/cancellation"]), head)
+    }
+
     func testEveryResetModePreservesDetachedAndLinkedWorktreeIdentities() throws {
         for linked in [false, true] {
             for mode in ReflogResetMode.allCases {
