@@ -49,6 +49,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     private var replacementCompletion: ((Bool) -> Void)?
     private var replacementAlert: NSAlert?
     private var presentationEnded = false
+    private var standaloneRecovery = false
     private var recoverySavedContent: ForgeDraftContent?
     private let recoveryNotice = NSTextField(wrappingLabelWithString: "This recovered edit text has not been saved as a draft.")
     private var isRecovery: Bool {
@@ -82,6 +83,22 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("ForgePullRequestSheetController is built in code")
+    }
+
+    var recoveryContentSnapshot: ForgeDraftContent? {
+        isRecovery && !hasFinished ? currentDraftContent() : nil
+    }
+
+    func showStandaloneRecovery() {
+        guard isRecovery, !hasFinished, let window else { return }
+        standaloneRecovery = true
+        onDraftChanged?(currentDraftContent())
+        window.sheetParent?.endSheet(window)
+        window.setAccessibilityIdentifier("GitX.PullRequest.DetachedRecovery")
+        window.title = "Recovered Pull Request Edit"
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
     }
 
     func beginSheet(for parent: NSWindow) {
@@ -465,7 +482,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     }
 
     func acceptsRecoverySave(_ id: UUID) -> Bool {
-        !hasFinished && recoverySaveIdentity == id && window?.sheetParent != nil
+        !hasFinished && recoverySaveIdentity == id && (standaloneRecovery || window?.sheetParent != nil)
     }
 
     func finishRecoverySave(_ id: UUID) {

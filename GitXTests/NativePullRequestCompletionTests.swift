@@ -305,7 +305,42 @@ final class NativePullRequestCompletionTests: XCTestCase {
     }
 }
 
-private actor NativePullRequestMutationService: GitX.RepositoryPullRequestMutationServing {
+nonisolated struct NativePullRequestMutationService: GitX.RepositoryPullRequestMutationServing {
+    private let storage: NativePullRequestMutationStorage
+    init(started: XCTestExpectation?) {
+        storage = NativePullRequestMutationStorage(started: started)
+    }
+
+    var editCount: Int {
+        get async { await storage.editCount }
+    }
+
+    func capabilities(accountID: ForgeAccountID, repository: ForgeRepositoryIdentity, operations: Set<ForgeOperation>) async throws -> [ForgeOperation: ForgeOperationCapability] {
+        try await storage.capabilities(accountID: accountID, repository: repository, operations: operations)
+    }
+
+    func prepareCreation(repository: ForgeRepositoryIdentity, localBranch: ForgeRefName, localHead: ForgeCommitID) async throws -> GitX.RepositoryPullRequestCreationPreparation {
+        try await storage.prepareCreation(repository: repository, localBranch: localBranch, localHead: localHead)
+    }
+
+    func createPullRequest(accountID: ForgeAccountID, form: ForgePullRequestCreationForm) async throws -> GitX.RepositoryPullRequestCreationOutcome {
+        try await storage.createPullRequest(accountID: accountID, form: form)
+    }
+
+    func editPullRequest(accountID: ForgeAccountID, edit: ForgePullRequestEdit) async throws -> GitX.RepositoryPullRequestEditOutcome {
+        try await storage.editPullRequest(accountID: accountID, edit: edit)
+    }
+
+    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) async throws -> GitX.RepositorySyncForkOutcome {
+        try await storage.syncFork(accountID: accountID, plan: plan)
+    }
+
+    func releaseEdit(_ outcome: GitX.RepositoryPullRequestEditOutcome) async {
+        await storage.releaseEdit(outcome)
+    }
+}
+
+private actor NativePullRequestMutationStorage {
     let started: XCTestExpectation?
     private(set) var editCount = 0
     private var released = false

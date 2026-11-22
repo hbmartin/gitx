@@ -7,7 +7,7 @@
   "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
   "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
   "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
-  "status": "Pre-extraction preparation passed. Remaining implementation and complete final verification are pending.",
+  "status": "Shared recovery sessions, repository move transfer and post-write verification regressions pass. Native Quit implementation and complete final verification remain pending.",
   "runIds": [
     "pr128-next-data-green",
     "pr128-next-browser-green-v3",
@@ -16,7 +16,11 @@
     "pr128-next-lifecycle-characterization",
     "pr128-next-pre-extraction-correctness",
     "pr128-next-post-browser-correctness",
-    "pr128-next-post-pr-correctness"
+    "pr128-next-post-pr-correctness",
+    "pr128-next-recovery-move-reset-red-v2",
+    "pr128-next-recovery-session-green-v3",
+    "pr128-next-reset-diagnostics-green-v2",
+    "pr128-next-recovery-session-admission"
   ],
   "preparationVerification": {
     "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
@@ -70,7 +74,11 @@
     },
     {
       "runId": "pr128-next-post-pr-correctness",
-      "result": "All 2417 tests passed; the workflow stopped because RepositoryPullRequestWorkflow.swift measured97.62% below97.74%. Native production-policy characterization filled the missed paths; the later complete run passed the unchanged floor."
+      "result": "All 2417 tests passed; the workflow stopped because RepositoryPullRequestWorkflow.swift measured 97.62% below 97.74%. Native production-policy characterization filled the missed paths; the later complete run passed the unchanged floor."
+    },
+    {
+      "runId": "pr128-next-recovery-session-green-v3",
+      "result": "All native move/session, document, PR completion and retirement cases passed. One reset evidence case failed two assertions because the unsafe diagnostic omitted Git stderr; the subsequent fix preserves the redacted cause."
     }
   ],
   "characterization": [
@@ -83,7 +91,10 @@
   "diagnostics": {
     "nativePullRequestFailureImages": "/private/tmp/pr128-pr-feedback-images",
     "sourceRunId": "pr128-next-pr-feedback-green-v2",
-    "description": "Current failure row screenshot was visually inspected. Move/Quit/stale-result screenshots will be added with their implementation evidence."
+    "description": "Current failure row screenshot was visually inspected. Move/Quit/stale-result screenshots will be added with their implementation evidence.",
+    "recoverySessionImages": "/private/tmp/pr128-recovery-session-images",
+    "recoverySessionSourceRunId": "pr128-next-recovery-session-green-v3",
+    "recoverySessionInspection": "Standalone exact-text editor and pending detached close warning inspected. Screenshots remain diagnostic, with no pixel assertions."
   },
   "stableApp": {
     "path": "/Volumes/Pro2T/gitx/build/GitX.app",
@@ -91,10 +102,48 @@
     "reason": "Wait for complete final verification."
   },
   "remaining": [
-    "detached recovery and repository moves",
     "native Quit and local mutation admission",
-    "post-write branch/reset evidence failures",
     "remaining fixture/performance/contract cleanups",
     "complete final canonical profile and verified stable Debug app"
-  ]
+  ],
+  "recoverySessionImplementation": {
+    "changes": [
+      "Exact recovered content, original draft identity, conditional save attempts and submission completion outlive an obsolete repository document.",
+      "Ready, loading, consent, admitted write, final persistence, remote completion and accepted queued recovery survive real filesystem moves.",
+      "Thin Objective-C move callback delegates decisions to Swift; old callbacks cannot close a replacement.",
+      "Branch write/verification uncertainty retains its exact branch identity and prevents a subsequent reset. Present-but-unreadable reset evidence is not treated as absent. Expected/observed commits and redacted Git diagnostics remain in the unsafe outcome."
+    ],
+    "regressionRedRun": "pr128-next-recovery-move-reset-red-v2",
+    "affectedRun": "pr128-next-recovery-session-green-v3",
+    "affectedRunResult": "257 cases, 255 passed; one reset test had two diagnostic-reason assertion failures. The missing underlying Git reason was then retained and verified separately.",
+    "greenRuns": [
+      "pr128-next-reset-diagnostics-green-v2",
+      "pr128-next-recovery-session-admission"
+    ],
+    "consumerChecks": [
+      "Debug build-tests passed",
+      "Release build-tests passed",
+      "interop passed"
+    ],
+    "afterMoveGeneratedInterfaces": [
+      {
+        "configuration": "Debug",
+        "path": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Debug/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Debug/GitX.build/DerivedSources/GitX-Swift.h",
+        "sha256": "bb1fdedee7cc18fa0894228ecb560685e075067478dad23d118f54683bec88fa",
+        "interface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)handleMoveForDocument:(NSDocument * _Nonnull)document toURL:(NSURL * _Nonnull)_ performClose:(SWIFT_NOESCAPE void (^ _Nonnull)(void))performClose;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end"
+      },
+      {
+        "configuration": "Release",
+        "path": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Release/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Release/GitX.build/DerivedSources/GitX-Swift.h",
+        "sha256": "b37d82c80aa4a8543e09d042cc2d9f1c35119225878aa490e88624ecf365f07b",
+        "interface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)handleMoveForDocument:(NSDocument * _Nonnull)document toURL:(NSURL * _Nonnull)_ performClose:(SWIFT_NOESCAPE void (^ _Nonnull)(void))performClose;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end"
+      }
+    ],
+    "coverageAdmission": {
+      "path": "Classes/Controllers/RepositoryPullRequestRecoverySession.swift",
+      "floor": 0.9852,
+      "kind": "Explicit initial policy admission from passing focused tests; existing floors unchanged. Complete post-commit correctness still required."
+    },
+    "notFinalDeliveryEvidence": true
+  }
 }

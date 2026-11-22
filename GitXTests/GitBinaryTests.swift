@@ -866,6 +866,38 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
     }
 
+    func testRepositoryMoveRejectsAnOldCloseCallbackAndTearsDownTheOriginalDocumentOnce() async throws {
+        let ready = gitReadinessExpectation()
+        await fulfillment(of: [ready], timeout: 10)
+        try createRepositoryFixture()
+        let original = try XCTUnwrap(document)
+        let originalWindow = try XCTUnwrap(window)
+        let moved = directory.appendingPathExtension("moved")
+        let token = NSObject()
+        var answer: ((Bool) -> Void)?
+        defer {
+            originalWindow.unregisterPullRequestCloseGuard(owner: token)
+            try? removeFixture()
+            try? FileManager.default.removeItem(at: moved)
+        }
+        NSDocumentController.shared.addDocument(original)
+        originalWindow.registerPullRequestCloseGuard(owner: token, protection: { _ in true }, revoke: {}, decision: { answer = $0; return true })
+        let reply = DocumentCloseReply()
+        original.canClose(withDelegate: reply, shouldClose: #selector(DocumentCloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+        let oldReply = try XCTUnwrap(answer)
+        XCTAssertEqual(reply.decisions, [])
+        try FileManager.default.moveItem(at: directory, to: moved)
+        original.presentedItemDidMove(to: moved)
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !NSDocumentController.shared.documents.contains { $0 === original } }, object: nil)
+        await fulfillment(of: [closed], timeout: 5)
+        XCTAssertEqual(reply.decisions, [false])
+        XCTAssertFalse(NSFileCoordinator.filePresenters.contains { $0 === original })
+        XCTAssertFalse(originalWindow.window?.isVisible == true)
+        oldReply(true)
+        XCTAssertEqual(reply.decisions, [false], "An old preflight response cannot authorize a different closure")
+        XCTAssertFalse(NSDocumentController.shared.documents.contains { $0 === original })
+    }
+
     func testUnprotectedRepositoryMoveClosesTheOriginalDocumentAndFilePresenter() async throws {
         let ready = gitReadinessExpectation()
         await fulfillment(of: [ready], timeout: 10)

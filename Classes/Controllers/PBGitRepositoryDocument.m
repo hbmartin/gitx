@@ -272,11 +272,16 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 
 - (void)presentedItemDidMoveToURL:(NSURL *)newURL
 {
-	// Close the document if the repository gets moved
-	// It would be better to automatically update the document, but that's a bit tricky with the current architecture
-	// If PBGitRepositoryDocument and PBGitRepository get unified then it would make this much easier
 	dispatch_async(dispatch_get_main_queue(), ^{
+#ifdef CLI
 		[self close];
+#else
+		[self.repositoryCloseCoordinator handleMoveForDocument:self
+														 toURL:newURL
+												  performClose:^{
+													  [self completeRepositoryClose];
+												  }];
+#endif
 	});
 }
 

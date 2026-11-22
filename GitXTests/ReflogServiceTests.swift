@@ -4,6 +4,139 @@ import Synchronization
 import XCTest
 
 final class ReflogServiceTests: XCTestCase {
+    func testBranchWriteAndVerificationFailuresRetainIdentityWithoutStartingReset() throws {
+        for failure in ["write-exit", "verify-unavailable", "verify-mismatch"] {
+            for isReset in [false, true] {
+                let fixture = try ReflogGitFixture()
+                defer { fixture.remove() }
+                let target = try fixture.git(["rev-parse", "HEAD"])
+                try fixture.git(["commit", "--allow-empty", "-m", "validated preview commit"])
+                let previous = try fixture.git(["rev-parse", "HEAD"])
+                let repository = try GitXTestGitRepository(url: fixture.url)
+                let original = try repository.task(withArguments: []).executionContext()
+                let wrapper = fixture.url.appendingPathComponent(".git/branch-outcome-wrapper")
+                let attempted = fixture.url.appendingPathComponent(".git/branch-attempts")
+                let resetAttempted = fixture.url.appendingPathComponent(".git/reset-attempts")
+                let script = #"""
+                #!/bin/sh
+                for argument in "$@"; do
+                    if [ "$argument" = branch ]; then
+                        printf 'attempt\n' >> "$GITX_BRANCH_ATTEMPTS"
+                        "$GITX_REAL_GIT" "$@" || exit $?
+                        if [ "$GITX_BRANCH_FAILURE" = write-exit ]; then
+                            printf 'injected failure after write\n' >&2
+                            exit 1
+                        fi
+                        exit 0
+                    fi
+                    if [ "$argument" = reset ]; then printf 'attempt\n' >> "$GITX_RESET_ATTEMPTS"; fi
+                    case "$argument" in
+                        refs/heads/recovery/*^{commit})
+                            if [ "$GITX_BRANCH_FAILURE" = verify-unavailable ]; then exit 1; fi
+                            if [ "$GITX_BRANCH_FAILURE" = verify-mismatch ]; then printf '%s\n' "$GITX_OBSERVED_COMMIT"; exit 0; fi
+                            ;;
+                    esac
+                done
+                exec "$GITX_REAL_GIT" "$@"
+                """#
+                try script.write(to: wrapper, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+                var environment = original.environment
+                environment["GITX_REAL_GIT"] = original.launchPath
+                environment["GITX_BRANCH_ATTEMPTS"] = attempted.path
+                environment["GITX_RESET_ATTEMPTS"] = resetAttempted.path
+                environment["GITX_BRANCH_FAILURE"] = failure
+                environment["GITX_OBSERVED_COMMIT"] = target
+                let context = PBTaskExecutionContext(launchPath: wrapper.path, arguments: original.arguments, environment: environment, workingDirectory: original.workingDirectory)
+                let service = try RepositoryReflogService(repository: repository, context: context)
+                do {
+                    if isReset {
+                        _ = try service.reset(confirmed: service.preview(target: target, mode: .soft), discardConfirmed: false)
+                    } else {
+                        try service.createRecoveryBranch(objectID: previous, name: "recovery/requested")
+                    }
+                    XCTFail("An unverifiable write cannot report success: \(failure)")
+                } catch {
+                    let names = try fixture.git(["for-each-ref", "--format=%(refname:short)", "refs/heads/recovery/"]).split(separator: "\n").map(String.init)
+                    let backup = try XCTUnwrap(names.first)
+                    XCTAssertEqual(names.count, 1)
+                    XCTAssertTrue(error.localizedDescription.contains(backup), error.localizedDescription)
+                    XCTAssertTrue(error.localizedDescription.contains(previous), error.localizedDescription)
+                    XCTAssertTrue(error.localizedDescription.contains("unverified"), error.localizedDescription)
+                    if failure == "verify-mismatch" {
+                        XCTAssertTrue(error.localizedDescription.contains(target), error.localizedDescription)
+                    }
+                    XCTAssertEqual(try fixture.git(["rev-parse", backup]), previous)
+                }
+                XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), previous)
+                XCTAssertEqual(try String(contentsOf: attempted, encoding: .utf8), "attempt\n")
+                XCTAssertFalse(FileManager.default.fileExists(atPath: resetAttempted.path), "Do not reset, retry or roll back after uncertain branch creation")
+            }
+        }
+    }
+
+    func testPostResetReadFailuresCannotMasqueradeAsMissingPredecessorEvidence() throws {
+        for failure in ["original", "reflog", "wrong-target"] {
+            let fixture = try ReflogGitFixture()
+            defer { fixture.remove() }
+            let target = try fixture.git(["rev-parse", "HEAD"])
+            try fixture.git(["commit", "--allow-empty", "-m", "validated"])
+            let previous = try fixture.git(["rev-parse", "HEAD"])
+            let repository = try GitXTestGitRepository(url: fixture.url)
+            let original = try repository.task(withArguments: []).executionContext()
+            let wrapper = fixture.url.appendingPathComponent(".git/reset-read-wrapper")
+            let marker = fixture.url.appendingPathComponent(".git/reset-wrote")
+            let script = #"""
+            #!/bin/sh
+            is_reset=0
+            for argument in "$@"; do
+                if [ "$argument" = reset ]; then is_reset=1; fi
+                if [ -f "$GITX_RESET_WROTE" ]; then
+                    if [ "$GITX_READ_FAILURE" = original ] && [ "$argument" = 'ORIG_HEAD^{commit}' ]; then
+                        printf 'injected predecessor read failure\n' >&2; exit 128
+                    fi
+                    if [ "$GITX_READ_FAILURE" = reflog ]; then
+                        case "$argument" in 'HEAD@{1}^{commit}'|--max-count=2)
+                            printf 'injected predecessor read failure\n' >&2; exit 128;;
+                        esac
+                    fi
+                fi
+            done
+            if [ "$GITX_READ_FAILURE" = wrong-target ] && [ "$is_reset" = 1 ]; then
+                "$GITX_REAL_GIT" reset --soft --no-recurse-submodules "$GITX_PREVIOUS_HEAD"
+            else
+                "$GITX_REAL_GIT" "$@"
+            fi
+            status=$?
+            if [ "$is_reset" = 1 ] && [ "$status" = 0 ]; then /usr/bin/touch "$GITX_RESET_WROTE"; fi
+            exit "$status"
+            """#
+            try script.write(to: wrapper, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+            var environment = original.environment
+            environment["GITX_REAL_GIT"] = original.launchPath
+            environment["GITX_RESET_WROTE"] = marker.path
+            environment["GITX_READ_FAILURE"] = failure
+            environment["GITX_PREVIOUS_HEAD"] = previous
+            let context = PBTaskExecutionContext(launchPath: wrapper.path, arguments: original.arguments, environment: environment, workingDirectory: original.workingDirectory)
+            let service = try RepositoryReflogService(repository: repository, context: context)
+            let preview = try service.preview(target: target, mode: .soft)
+            do { _ = try service.reset(confirmed: preview, discardConfirmed: false); XCTFail("A failed read is not evidence of absence") }
+            catch {
+                guard case let RepositoryReflogError.resetFailed(backup, reason) = error else { return XCTFail("Expected an unverified reset result: \(error)") }
+                if failure != "wrong-target" {
+                    XCTAssertTrue(reason.contains("injected predecessor read failure"), reason)
+                }
+                XCTAssertTrue(reason.contains(previous), reason)
+                XCTAssertTrue(reason.contains(target), reason)
+                XCTAssertTrue(reason.contains("Observed HEAD"), reason)
+                XCTAssertEqual(try fixture.git(["rev-parse", backup]), previous)
+            }
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), failure == "wrong-target" ? previous : target)
+            XCTAssertEqual(try fixture.git(["rev-parse", "ORIG_HEAD"]), previous)
+        }
+    }
+
     func testResetAfterExpiringEarlierEntriesAcceptsTheValidOriginalHead() throws {
         for retainsEmptyLog in [false, true] {
             let fixture = try ReflogGitFixture()

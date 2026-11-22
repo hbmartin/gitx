@@ -145,6 +145,16 @@ final class RepositoryDocumentCloseCoordinator: NSObject {
         action()
     }
 
+    @objc(handleMoveForDocument:toURL:performClose:)
+    func handleMove(for document: NSDocument, to _: URL, performClose: () -> Void) {
+        if pending {
+            finish(false)
+        }
+        document.windowControllers.compactMap { $0 as? PBGitWindowController }.forEach { $0.detachRecoveryForRepositoryMove() }
+        NSLog("[GitX] Repository moved; detached recovery before obsolete document teardown")
+        withApprovedClose(for: document, perform: performClose)
+    }
+
     @objc(requestCloseForDocument:completion:)
     func requestClose(for document: NSDocument, completion: @escaping (Bool) -> Void) {
         if pending {

@@ -1128,6 +1128,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var pullRequestCloseProtection: ((@escaping () -> Void) -> Bool)?
     private var pullRequestCloseDecision: ((@escaping (Bool) -> Void) -> Bool)?
     private var pullRequestOwnerRevocation: (() -> Void)?
+    private var pullRequestRecoveryDetachment: (() -> Void)?
     private var closingAfterDraftConfirmation = false
     private var documentCloseConsent = RepositoryDocumentCloseConsent()
 
@@ -1146,7 +1147,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     final func registerPullRequestCloseGuard(owner: NSObject, protection: @escaping (@escaping () -> Void) -> Bool, revoke: @escaping () -> Void,
-                                             decision: ((@escaping (Bool) -> Void) -> Bool)? = nil)
+                                             decision: ((@escaping (Bool) -> Void) -> Bool)? = nil, repositoryMoved: (() -> Void)? = nil)
     {
         if pullRequestCloseGuardOwner !== owner {
             documentCloseConsent.revoke()
@@ -1158,6 +1159,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         pullRequestCloseProtection = protection
         pullRequestCloseDecision = decision
         pullRequestOwnerRevocation = revoke
+        pullRequestRecoveryDetachment = repositoryMoved
     }
 
     final func unregisterPullRequestCloseGuard(owner: NSObject) {
@@ -1167,7 +1169,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             pullRequestCloseProtection = nil
             pullRequestCloseDecision = nil
             pullRequestOwnerRevocation = nil
+            pullRequestRecoveryDetachment = nil
         }
+    }
+
+    final func detachRecoveryForRepositoryMove() {
+        pullRequestRecoveryDetachment?()
     }
 
     final func requestPullRequestCloseDecision(_ completion: @escaping (Bool) -> Void) -> Bool {

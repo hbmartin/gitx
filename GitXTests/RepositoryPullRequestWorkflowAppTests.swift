@@ -2222,8 +2222,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             await fulfillment(of: [ordered], timeout: 5)
             await savingMutation.value
             XCTAssertTrue(controller?.activity?.message.contains("saved as a draft") == true)
-            let retained = try Mirror(reflecting: XCTUnwrap(controller)).children.first { $0.label == "editSubmissions" }?.value as? [RepositoryEditSubmissionLifetime]
-            XCTAssertEqual(retained?.count, 0, "Durable unsent submissions must retire after settlement")
+            XCTAssertEqual(controller?.retainedSubmissionCount, 0, "Durable unsent submissions must retire after settlement")
             let saved = await drafts.savedContents
             XCTAssertEqual(Array(saved.suffix(2)), try [XCTUnwrap(finalContent), XCTUnwrap(finalContent)])
             let calls = await service.editCount
@@ -2324,8 +2323,7 @@ final class RepositoryMutationCompletionTests: XCTestCase {
             let message = try XCTUnwrap(window.attachedSheet?.contentView)
             XCTAssertTrue(strings(in: message).contains("Pull Request Changed"))
             XCTAssertTrue(strings(in: message).joined(separator: " ").contains("Refresh the Pull Request"))
-            let retained = try Mirror(reflecting: XCTUnwrap(controller)).children.first { $0.label == "editSubmissions" }?.value as? [RepositoryEditSubmissionLifetime]
-            XCTAssertEqual(retained?.count, 0)
+            XCTAssertEqual(controller?.retainedSubmissionCount, 0)
             try attachScreenshot(of: XCTUnwrap(window.attachedSheet), named: "Saved edit conflict requires refreshing server data")
             try XCTUnwrap(self.button(titled: "OK", in: message)).performClick(nil)
             await waitForNoSheet(on: window)
@@ -2908,7 +2906,79 @@ private struct DirectMutationFixture {
     }
 }
 
-private actor CompletionDraftStore: RepositoryPullRequestDraftPersisting {
+/// Shared fixtures expose a Sendable value facade; the mutable store remains actor-owned.
+nonisolated struct CompletionDraftStore: RepositoryPullRequestDraftPersisting {
+    private let storage: CompletionDraftStorage
+    init() {
+        storage = CompletionDraftStorage()
+    }
+
+    var conditionalDeletes: Int {
+        get async { await storage.conditionalDeletes }
+    }
+
+    var conditionalSaves: Int {
+        get async { await storage.conditionalSaves }
+    }
+
+    var savedContents: [ForgeDraftContent] {
+        get async { await storage.savedContents }
+    }
+
+    func holdNextLoad(_ gate: IgnoringCancellationGate<Bool>, started: XCTestExpectation) async {
+        await storage.holdNextLoad(gate, started: started)
+    }
+
+    func holdNextConditionalSave(_ gate: IgnoringCancellationGate<Bool>, started: XCTestExpectation) async {
+        await storage.holdNextConditionalSave(gate, started: started)
+    }
+
+    func waitForSaves(_ count: Int) async {
+        await storage.waitForSaves(count)
+    }
+
+    func releaseSaveWaiters() async {
+        await storage.releaseSaveWaiters()
+    }
+
+    func failLoads(_ value: Bool) async {
+        await storage.failLoads(value)
+    }
+
+    func failDeletion(_ value: Bool) async {
+        await storage.failDeletion(value)
+    }
+
+    func failSaves(_ value: Bool) async {
+        await storage.failSaves(value)
+    }
+
+    func load(identity: ForgeDraftIdentity) async throws -> ForgeDraft? {
+        try await storage.load(identity: identity)
+    }
+
+    func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws {
+        try await storage.save(identity: identity, content: content, at: date)
+    }
+
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date) async throws -> ForgeDraft? {
+        try await storage.saveSnapshot(identity: identity, content: content, at: date)
+    }
+
+    func saveSnapshot(identity: ForgeDraftIdentity, content: ForgeDraftContent, at date: Date, matching snapshot: ForgeDraft?) async throws -> ForgeDraft? {
+        try await storage.saveSnapshot(identity: identity, content: content, at: date, matching: snapshot)
+    }
+
+    func delete(identity: ForgeDraftIdentity, matching snapshot: ForgeDraft) async throws -> Bool {
+        try await storage.delete(identity: identity, matching: snapshot)
+    }
+
+    func delete(identity: ForgeDraftIdentity) async throws {
+        try await storage.delete(identity: identity)
+    }
+}
+
+private actor CompletionDraftStorage {
     init() {}
     private var values: [ForgeDraftIdentity: ForgeDraft] = [:]
     private var loadsFail = false
@@ -3962,7 +4032,7 @@ private actor PullRequestPreparationCancellationProbe {
     }
 }
 
-private actor IgnoringCancellationGate<Value: Sendable> {
+actor IgnoringCancellationGate<Value: Sendable> {
     private enum ReleaseState {
         case pending
         case released(Value)
