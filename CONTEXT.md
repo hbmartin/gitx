@@ -137,3 +137,33 @@ _Avoid_: GitHub watched repository, subscribed repository
 **Forge Draft**:
 Unpublished Forge-authored text that GitX autosaves for one exact Forge Account and destination until it is published, discarded, expired, or removed with the account.
 _Avoid_: Draft Pull Request, exported draft
+
+## Checkout Recovery
+
+**Reflog Event**:
+A retained Git record of a reference movement, identified by its event time and associated Commit.
+_Avoid_: Commit, permanent history
+
+**Reset Preview**:
+The proposed checkout destination and its expected effects on Working State, presented for confirmation before recovery.
+_Avoid_: Completed reset, backup
+
+**Recovery Branch**:
+A local branch preserving the committed history validated for a recovery operation. It does not preserve Uncommitted Changes or an unexpected intervening Commit.
+_Avoid_: Working-copy backup, complete backup
+
+**Admitted Local Mutation**:
+A confirmed local Git change that has entered execution and must reach an outcome independently of its initiating view.
+_Avoid_: Background read, cancellable preview
+
+**Recovered Edit**:
+Exact Pull Request edit text retained when publication is unsuccessful or unverified and its latest content is not durably saved as a Forge Draft.
+_Avoid_: Saved draft, confirmed remote edit
+
+**Detached Recovery**:
+A Recovered Edit retained independently after its repository document is no longer available. Its original Forge Account and destination still identify the Forge Draft it may save.
+_Avoid_: Reopened repository, rebound editor
+
+**Unverified Reset Outcome**:
+A recovery outcome in which Git may have changed the checkout but GitX cannot establish that the confirmed destination and replaced Commit match the Reset Preview.
+_Avoid_: No changes made, safely rolled back

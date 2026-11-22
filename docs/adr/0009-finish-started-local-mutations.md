@@ -1,0 +1,3 @@
+# Finish started local mutations without forced deadlines
+
+Started branch creation and checkout reset operations run to completion independently of their initiating views. Killing Git at a deadline can leave a partially changed checkout, and automatic rollback cannot safely account for concurrent external changes; read-only requests retain deadlines instead. A stalled local mutation may therefore retain writer ownership and delay normal Quit, while Cancel Quit leaves the operation running. Retained recovery branches preserve validated committed history, not uncommitted or unexpected intervening changes.

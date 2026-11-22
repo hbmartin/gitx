@@ -1,0 +1,3 @@
+# Let recovery sessions outlive repository documents
+
+Recovered Pull Request text and its conditional draft-save work belong to a recovery session rather than the repository document that first presented them. An external repository move closes the obsolete document and transfers unresolved sessions to standalone native recovery windows, preserving exact text, original draft identity and admitted saves without rebinding repository services. This adds explicit ownership and quit protection in exchange for avoiding either lost text or an apparently usable document at an obsolete location; ordinary confirmed closure keeps its existing discard semantics.
