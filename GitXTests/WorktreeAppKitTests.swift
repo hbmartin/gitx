@@ -3349,12 +3349,17 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertTrue(condition(), file: file, line: line)
     }
 
-    private func waitForSheet(in window: NSWindow, containing title: String? = nil) async throws -> NSWindow {
-        await waitUntil {
+    private func waitForSheet(in window: NSWindow, containing title: String? = nil, file: StaticString = #filePath, line: UInt = #line) async throws -> NSWindow {
+        let expected: @MainActor () -> Bool = {
             guard let sheet = window.attachedSheet else { return false }
             return title.map { title in self.descendants(sheet.contentView).contains { ($0 as? NSButton)?.title == title || ($0 as? NSTextField)?.stringValue == title } } ?? true
         }
-        return try XCTUnwrap(window.attachedSheet)
+        await waitUntil(expected, file: file, line: line)
+        if !expected() {
+            let current = window.attachedSheet.map(sheetText) ?? "No attached sheet"
+            attachDiagnosticText("Expected sheet containing: \(title ?? "any sheet")\nWindow visible: \(window.isVisible)\nCurrent sheet:\n\(current)", named: "Worktree consent wait state")
+        }
+        return try XCTUnwrap(expected() ? window.attachedSheet : nil, file: file, line: line)
     }
 
     private func ready(_ service: PBRepositoryWorktreeService) async {

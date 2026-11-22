@@ -108,6 +108,89 @@ final class ReflogBrowserTests: XCTestCase {
         XCTAssertGreaterThan(try control("Events", in: controller, as: NSTableView.self).numberOfRows, 0)
     }
 
+    func testReferencePaginationDiscardsAnInvalidatedPageAndPreservesTheSelection() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        for index in 0 ..< 225 {
+            try fixture.git(["commit", "--allow-empty", "-m", "event \(index)"])
+        }
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture, command: "reflog")
+        defer { try? gate.open() }
+        var held = false
+        let pasteboard = NSPasteboard(name: .init("GitX.Reflog.Paging." + UUID().uuidString))
+        let controller = try XCTUnwrap(ReflogBrowserController.make(repository: repository, serviceFactory: {
+            try RepositoryReflogService(repository: $0, context: held ? gate.context : nil)
+        }, pasteboard: pasteboard))
+        defer { controller.closeView() }
+        _ = controller.view
+        controller.refresh(nil)
+        await waitUntilIdle(controller)
+        let table = try control("Events", in: controller, as: NSTableView.self)
+        let popup = try control("Reference", in: controller, as: NSPopUpButton.self)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await waitUntilIdle(controller)
+        let selected = try fixture.git(["rev-parse", "HEAD"])
+        popup.selectItem(withTitle: "main")
+        XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(popup.action), to: popup.target, from: popup))
+        await waitUntilIdle(controller)
+        XCTAssertEqual(table.numberOfRows, 200)
+        held = true
+        let more = try control("LoadMore", in: controller, as: NSButton.self)
+        more.performClick(nil)
+        await waitUntil { FileManager.default.fileExists(atPath: gate.started.path) }
+        let loading = try XCTUnwrap(controller.operation)
+        XCTAssertFalse(table.isEnabled)
+        try fixture.git(["commit", "--allow-empty", "-m", "external event"])
+        try fixture.git(["branch", "external-change"])
+        controller.repositoryDidChange()
+        XCTAssertEqual(table.numberOfRows, 200)
+        try gate.open()
+        await loading.value
+        await waitUntil { popup.itemTitles.contains("external-change") && !controller.isBusy }
+        XCTAssertEqual(table.numberOfRows, 200, "The stale append cannot publish rows before the replacement first page")
+        XCTAssertEqual(popup.titleOfSelectedItem, "main")
+        try control("Copy", in: controller, as: NSButton.self).performClick(nil)
+        XCTAssertEqual(pasteboard.string(forType: .string), selected)
+        more.performClick(nil)
+        await waitUntilIdle(controller)
+        XCTAssertEqual(table.numberOfRows, 227)
+        XCTAssertFalse(more.isEnabled)
+    }
+
+    func testCancellingAReadKeepsOldRowsAndAllowsFreshRecoveryEvidence() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture, command: "reflog")
+        defer { try? gate.open() }
+        var held = false
+        let controller = try XCTUnwrap(ReflogBrowserController.make(repository: repository, serviceFactory: {
+            try RepositoryReflogService(repository: $0, context: held ? gate.context : nil)
+        }))
+        defer { controller.closeView() }
+        _ = controller.view
+        controller.refresh(nil)
+        await waitUntilIdle(controller)
+        let table = try control("Events", in: controller, as: NSTableView.self)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await waitUntilIdle(controller)
+        held = true
+        controller.refresh(nil)
+        await waitUntil { FileManager.default.fileExists(atPath: gate.started.path) }
+        let loading = try XCTUnwrap(controller.operation)
+        try control("Cancel", in: controller, as: NSButton.self).performClick(nil)
+        await loading.value
+        XCTAssertFalse(controller.isBusy)
+        XCTAssertEqual(table.numberOfRows, 1)
+        XCTAssertTrue(try control("Refresh", in: controller, as: NSButton.self).isEnabled)
+        XCTAssertFalse(try control("Reset", in: controller, as: NSButton.self).isEnabled)
+        try gate.open()
+        controller.refresh(nil)
+        await waitUntilIdle(controller)
+        XCTAssertTrue(try control("Reset", in: controller, as: NSButton.self).isEnabled)
+    }
+
     func testRequestPolicyProtectsPagesAndPreviewsButAllowsDetailReplacement() {
         var policy = ReflogBrowserRequestPolicy()
         policy.stale = false
