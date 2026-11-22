@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "reviewedPullRequest": "https://github.com/hbmartin/gitx/pull/128",
+  "publication": "Local commits only. Do not push or open a pull request.",
+  "branch": "codex/pr128-review-followup",
+  "forkDefaultBranch": "hbmartin/gitx:master",
+  "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
+  "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
+  "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
+  "status": "Pre-extraction preparation passed. Remaining implementation and complete final verification are pending.",
+  "runIds": [
+    "pr128-next-data-green",
+    "pr128-next-browser-green-v3",
+    "pr128-next-pagination-green-v2",
+    "pr128-next-pr-feedback-green-v2",
+    "pr128-next-lifecycle-characterization",
+    "pr128-next-pre-extraction-correctness",
+    "pr128-next-post-browser-correctness",
+    "pr128-next-post-pr-correctness"
+  ],
+  "preparationVerification": {
+    "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
+    "checks": [
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "correctness"
+    ],
+    "correctnessTests": 2421,
+    "failures": 0,
+    "coverageReceipt": "artifacts/verification/pr128-next-pre-extraction-correctness-correctness-38e6af0a/receipt.json",
+    "coverageBundle": "artifacts/verification/pr128-next-pre-extraction-correctness-correctness-38e6af0a/Results/GitX.xcresult",
+    "coveragePolicy": "Ratchet applied from this complete passing receipt; plain checker passed afterward. No floor was lowered.",
+    "notFinalDeliveryEvidence": true
+  },
+  "objectiveCPreparation": {
+    "path": "Classes/Controllers/PBGitRepositoryDocument.m",
+    "coveredLines": 210,
+    "executableLines": 212,
+    "lineCoverage": 0.9905660377358491,
+    "requiredMinimum": 0.9,
+    "normalFailureBoundaryTests": "Complete RepositoryDocumentScriptingCharacterizationTests, WindowControllerTests, plus NativeLocalMutationLifetimeTests/testClosingTheOriginalDocumentLetsAnAdmittedHardResetFinish.",
+    "interop": "Debug and Release consumers passed; generated interfaces inspected before changing the move hook.",
+    "generatedInterfaces": [
+      {
+        "configuration": "Debug",
+        "path": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Debug/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Debug/GitX.build/DerivedSources/GitX-Swift.h",
+        "sha256": "aeab5c1963dc0b0eadb1d8c85c443435c59689949d09b35189430e10d4a1389c",
+        "closeCoordinatorInterface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end"
+      },
+      {
+        "configuration": "Release",
+        "path": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Release/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Release/GitX.build/DerivedSources/GitX-Swift.h",
+        "sha256": "699d6d1a7e95b7db2fd2d785e4c89126fdc52551665008b1e55d55984229bcb2",
+        "closeCoordinatorInterface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end"
+      }
+    ]
+  },
+  "raisedFloors": {
+    "Classes/Controllers/ReflogBrowserController.swift": 0.9944,
+    "Classes/Controllers/RepositoryPullRequestUIController.swift": 0.89,
+    "Classes/Controllers/RepositoryPullRequestWorkflow.swift": 0.9798,
+    "Classes/Controllers/RepositoryStatusBarController.swift": 0.9861,
+    "Classes/git/RepositoryReflogService.swift": 0.9804
+  },
+  "historicalFailures": [
+    {
+      "runId": "pr128-next-post-browser-correctness",
+      "result": "One WorktreeAppKit consent case failed. The unchanged isolated case, complete class and subsequent complete correctness runs passed. Original failed evidence remains retained."
+    },
+    {
+      "runId": "pr128-next-post-pr-correctness",
+      "result": "All 2417 tests passed; the workflow stopped because RepositoryPullRequestWorkflow.swift measured97.62% below97.74%. Native production-policy characterization filled the missed paths; the later complete run passed the unchanged floor."
+    }
+  ],
+  "characterization": [
+    "Native document closure does not interrupt an admitted real-Git hard reset.",
+    "Native menu Quit closes an unprotected repository.",
+    "Create failure leaves the create sheet state and preserves its exact draft intent.",
+    "Failure records preserve unsent, rejected and uncertain dispositions after retirement.",
+    "Git preserves predecessor evidence in a single retained reflog entry, including with automatic reflog creation disabled."
+  ],
+  "diagnostics": {
+    "nativePullRequestFailureImages": "/private/tmp/pr128-pr-feedback-images",
+    "sourceRunId": "pr128-next-pr-feedback-green-v2",
+    "description": "Current failure row screenshot was visually inspected. Move/Quit/stale-result screenshots will be added with their implementation evidence."
+  },
+  "stableApp": {
+    "path": "/Volumes/Pro2T/gitx/build/GitX.app",
+    "refreshed": false,
+    "reason": "Wait for complete final verification."
+  },
+  "remaining": [
+    "detached recovery and repository moves",
+    "native Quit and local mutation admission",
+    "post-write branch/reset evidence failures",
+    "remaining fixture/performance/contract cleanups",
+    "complete final canonical profile and verified stable Debug app"
+  ]
+}
