@@ -134,6 +134,16 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(app.staticTexts["Pull Request Created"].exists)
     }
 
+    func testNativeMenuQuitClosesAnUnprotectedRepository() throws {
+        let repository = try makeWorkingRepository(name: "quit-unprotected")
+        let app = try launch(repository: repository, scenario: "partial-patch-copy")
+        try click(app.buttons["OK"], timeout: 10)
+        app.menuBars.menuBarItems["Half Dark"].click()
+        app.menuBars.menuItems["Quit Half Dark"].click()
+        let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .notRunning }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 10), .completed)
+    }
+
     func testPartialPatchCopyWarningCanBeDismissed() throws {
         let repository = try makeWorkingRepository(name: "partial-copy")
         let app = try launch(repository: repository, scenario: "partial-patch-copy")

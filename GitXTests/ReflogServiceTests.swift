@@ -4,6 +4,29 @@ import Synchronization
 import XCTest
 
 final class ReflogServiceTests: XCTestCase {
+    func testResetAfterExpiringEarlierEntriesAcceptsTheValidOriginalHead() throws {
+        for retainsEmptyLog in [false, true] {
+            let fixture = try ReflogGitFixture()
+            defer { fixture.remove() }
+            let target = try fixture.git(["rev-parse", "HEAD"])
+            try fixture.git(["commit", "--allow-empty", "-m", "validated"])
+            let previous = try fixture.git(["rev-parse", "HEAD"])
+            try fixture.git(["reflog", "expire", "--expire=all", "--all"])
+            if retainsEmptyLog {
+                try fixture.git(["config", "core.logAllRefUpdates", "false"])
+            }
+            let repository = try GitXTestGitRepository(url: fixture.url)
+            let service = try RepositoryReflogService(repository: repository)
+            let preview = try service.preview(target: target, mode: .soft)
+            let backup = try service.reset(confirmed: preview, discardConfirmed: false)
+            XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), target)
+            XCTAssertEqual(try fixture.git(["rev-parse", "ORIG_HEAD"]), previous)
+            XCTAssertEqual(try fixture.git(["rev-parse", "--verify", "HEAD@{1}^{commit}"]), previous)
+            XCTAssertEqual(try fixture.git(["rev-parse", backup]), previous)
+            XCTAssertEqual(try fixture.git(["reflog", "show", "--format=%H", "HEAD"]), target)
+        }
+    }
+
     func testHardPreviewCapturesAnObstructionFirstVisitedThroughACurrentOnlyPath() throws {
         let fixture = try ReflogGitFixture()
         defer { fixture.remove() }

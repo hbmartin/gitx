@@ -5,6 +5,53 @@ import XCTest
 
 @MainActor
 final class NativePullRequestCompletionTests: XCTestCase {
+    func testCreateFailureLeavesTheSheetAndPreservesItsExactDraftIntent() throws {
+        let fixture = try PullRequestAppFixture()
+        let preparation = try fixture.preparation()
+        let form = try XCTUnwrap(preparation.initialForms().forms.first)
+        let identity = try ForgeDraftIdentity(accountID: fixture.accountID, destination: .createPullRequest(repository: preparation.repository, base: preparation.base.name, head: preparation.head.name))
+        let intent = try ForgePushPullRequestIntent(form: form, draftIdentity: identity)
+        var flow = GitX.RepositoryPullRequestPushFlow()
+        try flow.beginNewPullRequest(branchAlreadyPushed: true, intent: intent)
+        XCTAssertEqual(flow.createSheetIntent, intent)
+        XCTAssertTrue(flow.isActive)
+        try flow.creationFailed()
+        XCTAssertNil(flow.createSheetIntent)
+        XCTAssertEqual(flow.preservedIntent, intent)
+        XCTAssertFalse(flow.isActive)
+        try flow.beginNewPullRequest(branchAlreadyPushed: true, intent: intent)
+        XCTAssertEqual(flow.createSheetIntent, intent)
+        try flow.creationSucceeded(.pullRequest(fixture.repository, ForgeItemNumber(42)))
+        XCTAssertFalse(flow.isActive)
+        XCTAssertNil(flow.preservedIntent)
+    }
+
+    func testNativeSubmissionFailureSnapshotsKeepTheirDispositionAfterRetirement() throws {
+        let fixture = try PullRequestAppFixture()
+        let identity = try ForgeDraftIdentity(accountID: fixture.accountID, destination: .pullRequest(repository: fixture.repository, number: ForgeItemNumber(42)))
+        let content = ForgeDraftContent(title: "Exact title", body: "Exact failed edit")
+        for disposition in [GitX.RepositoryOperationFailure.Disposition.notSent, .rejected, .uncertain] {
+            let submission = GitX.RepositoryEditSubmissionLifetime(identity: identity, destination: .repository(fixture.repository), content: content)
+            submission.persisted(.unavailable)
+            if disposition == .notSent {
+                submission.supersede()
+                XCTAssertTrue(submission.finish())
+            } else {
+                XCTAssertTrue(submission.admit())
+                let error: Error = disposition == .rejected ? ForgePullRequestWorkflowError.editConflict : CancellationError()
+                XCTAssertTrue(submission.finish(error: error))
+            }
+            let failure = try XCTUnwrap(submission.failure)
+            XCTAssertEqual(failure.disposition, disposition)
+            XCTAssertTrue(submission.needsRecovery)
+            submission.resolveRecovery()
+            XCTAssertTrue(submission.canRetire)
+            XCTAssertFalse(submission.finish(error: CancellationError()))
+            XCTAssertEqual(submission.failure, failure)
+            XCTAssertEqual(submission.recoveryContent, content)
+        }
+    }
+
     private func waitForEditor(on window: NSWindow) async {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet != nil }, object: nil)
         await fulfillment(of: [ready], timeout: 5)
