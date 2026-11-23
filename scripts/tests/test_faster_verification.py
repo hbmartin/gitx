@@ -181,6 +181,47 @@ class VerificationSchedulingTests(unittest.TestCase):
             self.assertEqual(blocker["category"], "resource-busy")
             self.assertEqual(blocker["owner"]["runId"], "holding")
 
+    def test_interruption_during_last_admission_stops_parallel_scheduler(self):
+        current = {"head": "test"}
+        root = pathlib.Path("/tmp")
+        def prepare(*_):
+            signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+            return ["true"], "child", None
+        with mock.patch.object(session, "inputs", return_value=current), \
+                mock.patch.object(workflow, "prepare_check", side_effect=prepare), \
+                mock.patch.object(workflow.subprocess, "Popen") as launch:
+            status, _ = workflow.execute_parallel(root, root / "workflow.json",
+                {"runId": "test", "inputsBefore": current}, SimpleNamespace(timeout=1, resume=None),
+                [("static", ["true"])], {"toolchain": "test"}, {}, {}, None)
+        self.assertEqual(status, 130)
+        launch.assert_not_called()
+
+    def test_interruption_during_output_close_is_recorded_before_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            capture = mock.Mock(path=root / "command.log")
+            def close():
+                signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+                return {"flushError": False, "closeError": False}
+            capture.close.side_effect = close
+            with mock.patch.object(session, "CapturedConsole", return_value=capture), \
+                    mock.patch.object(session, "producer_identity", return_value={}):
+                self.assertEqual(session.supervise([sys.executable, "-c", "pass"],
+                    directory=root, output_log=capture.path), 130)
+            self.assertEqual(json.loads((root / "diagnostic-owner.json").read_text())["category"], "interrupted")
+
+    def test_shared_lease_still_reports_busy_when_diagnostics_cannot_be_written(self):
+        with tempfile.TemporaryDirectory() as directory:
+            argv = ["workflow_session", "run", "--diagnostics", directory, "--timeout", "0", "--xcode-build",
+                    "--", "/usr/bin/true"]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(session, "supervise") as launch, \
+                    mock.patch.object(session, "producer_identity", return_value={}), \
+                    mock.patch.object(session.Leases, "__enter__",
+                                      side_effect=session.ResourceBusy("/fixture", {"runId": "holder"})), \
+                    mock.patch.object(session, "atomic_json", side_effect=OSError("unwritable")):
+                self.assertEqual(session.main(), 75)
+                launch.assert_not_called()
+
     def test_failure_stops_admission_and_settles_running_peer(self):
         def job(exit_code, waits):
             child = mock.Mock()
@@ -318,12 +359,13 @@ class FeedbackAndFixtureSelectionTests(unittest.TestCase):
                 runs.append({"runId": run_id, "preset": preset, "selectors": [selector],
                              "receiptIdentity": session.file_identity(path)})
             session.atomic_json(manifest, {"runId": "fixtures", "status": "passed", "entry": str(root / "scripts/check_fixture_stability.py"),
-                                "selectedFixtures": {preset: [selector]}, "fixtureRuns": runs,
+                                "selectedFixtures": {preset: [selector]}, "fixtureRuns": runs, "fixtureOutcome": "passed",
                                 "evidence": {"status": "valid", "inputsAfter": current}})
             workflow_receipt = {"artifactProofVersion": session.ARTIFACT_PROOF_VERSION, "steps": [
                 {"name": preset, "status": "passed", "receipt": str(original), "toolchain": "fixture"},
                 {"name": "fixture-stability", "status": "passed", "receipt": str(manifest), "toolchain": "fixture",
-                 "fixtureReceiptIdentity": session.file_identity(manifest)},
+                 "fixtureReceiptIdentity": session.file_identity(manifest), "evidenceStatus": "valid",
+                 "inputsAfter": current, "command": ["fixture"]},
             ]}
             with mock.patch.object(session, "verification_artifact_root", return_value=artifacts), \
                     mock.patch.object(session, "cache_paths", return_value=inputs_for_cache):
@@ -335,7 +377,13 @@ class FeedbackAndFixtureSelectionTests(unittest.TestCase):
                 self.assertEqual(session.receipt_artifact_problems(original_child, root, caches), [])
                 (original_result / "result").write_text("unverified")
                 self.assertTrue(session.receipt_artifact_problems(original_child, root, caches))
-                (artifacts / "fixtures-correctness-3/receipt.json").write_text("{}")
+                fixture = workflow_receipt["steps"][1]
+                with mock.patch.object(session, "ROOT", root):
+                    self.assertIsNone(workflow.check_reuse_reason("fixture-stability", fixture, current,
+                                                                 ["fixture"], caches, "fixture", {}))
+                    (artifacts / "fixtures-correctness-3/receipt.json").unlink()
+                    self.assertIsNotNone(workflow.check_reuse_reason("fixture-stability", fixture, current,
+                                                                    ["fixture"], None, "fixture", {}))
                 with self.assertRaisesRegex(ValueError, "Fixture child receipt changed"):
                     session.workflow_cache_snapshots(workflow_receipt, root)
 
@@ -355,6 +403,65 @@ class FeedbackAndFixtureSelectionTests(unittest.TestCase):
                         child["steps"][0]["xcresult"] = str(root / "SwiftPM" / filename)
                         with self.assertRaises(ValueError):
                             session.validate_evidence_paths(root, receipt, child, "fixture")
+
+    def test_nested_swift_comments_keep_the_full_test_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            path = root / "GitXTests/Nested.swift"
+            path.parent.mkdir()
+            path.write_text('final class A: XCTestCase {}\n/* outer /* inner */ "\n*/\n'
+                            'final class B: XCTestCase { func testB() { XCTAssertEqual("b", "b") } }\n')
+            self.assertEqual(feedback.test_file_selectors(root, ["GitXTests/Nested.swift"]), [])
+
+    def test_empty_selection_publishes_an_explicit_manifest_without_running_xcode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            artifacts = root / "artifacts"
+            entry = str(root / "scripts/check_fixture_stability.py")
+            environment = {"GITX_GUARDED_ENTRY": entry, "GITX_SESSION_ID": "empty"}
+            with mock.patch.object(session, "ROOT", root), \
+                    mock.patch.object(session, "verification_artifact_root", return_value=artifacts), \
+                    mock.patch.object(session, "inputs", return_value={}), \
+                    mock.patch.object(session, "producer_identity", return_value={}), \
+                    mock.patch.object(fixtures, "__file__", entry), \
+                    mock.patch.object(sys, "argv", [entry]), \
+                    mock.patch.dict(fixtures.os.environ, environment), \
+                    mock.patch.object(feedback, "changed_paths", return_value=("master", [])), \
+                    mock.patch.object(fixtures.subprocess, "run") as run:
+                self.assertEqual(fixtures.main(), 0)
+                run.assert_not_called()
+                path = artifacts / "empty/receipt.json"
+                receipt = json.loads(path.read_text())
+                self.assertEqual(receipt["fixtureOutcome"], "no-fixtures-selected")
+                self.assertEqual(list(session.fixture_receipt_paths(root, path, receipt)), [])
+                with self.assertRaisesRegex(ValueError, "outcome"):
+                    list(session.fixture_receipt_paths(root, path, receipt | {"fixtureOutcome": "passed"}))
+
+    def test_fixture_proof_requires_a_manifest_even_without_a_receipt_reference(self):
+        step = {"name": "fixture-stability", "status": "passed", "evidenceStatus": "valid", "toolchain": "fixture",
+                "command": ["fixture"], "inputsAfter": {}, "fixtureReceiptIdentity": {"sha256": "former"}}
+        payload = {"artifactProofVersion": session.ARTIFACT_PROOF_VERSION, "steps": [step]}
+        with self.assertRaisesRegex(ValueError, "Fixture manifest"):
+            list(session.workflow_child_receipts(payload, pathlib.Path("/tmp")))
+        self.assertIsNotNone(workflow.check_reuse_reason("fixture-stability", step, {}, ["fixture"], None, "fixture", {}))
+
+    def test_resume_rejects_malformed_result_and_coordination_artifact_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            artifacts = root / "artifacts"
+            run = artifacts / "result/receipt.json"
+            coord = artifacts / "Coordination/result.json"
+            evidence = {"status": "valid"}
+            session.atomic_json(run, {"status": "passed", "runId": "result", "invocation": {"preset": "test:correctness"},
+                                     "steps": [{"xcresult": ["invalid"]}], "evidence": evidence})
+            session.atomic_json(coord, {"status": "passed", "evidence": evidence | {"results": {"invalid": {}}}})
+            with mock.patch.object(session, "ROOT", root), \
+                    mock.patch.object(session, "verification_artifact_root", return_value=artifacts):
+                for path in (run, coord):
+                    with self.subTest(path=path):
+                        step = {"receipt": str(path), "status": "passed", "evidenceStatus": "valid", "toolchain": "fixture",
+                                "inputsAfter": {}, "command": ["check"]}
+                        self.assertIsNotNone(workflow.reuse_problem(step, {}, ["check"], toolchain="fixture"))
 
     def test_receipts_and_results_are_fenced_before_content_is_accessed(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1542,9 +1542,21 @@ else:
                   'inputsAfter': current, 'toolchain': 'fixture', 'outputs': {}} for name, command in self.commands]
         steps[-1]['outputs'][str(app)] = session.tree_identity(app)
         path = self.artifact / 'current/workflow.json'
-        self.write(path, {'schemaVersion': 2, 'status': 'passed', 'profile': 'full', 'scope': 'full',
+        self.write(path, {'schemaVersion': 2, 'artifactProofVersion': session.ARTIFACT_PROOF_VERSION, 'runId': 'current',
+                        'status': 'passed', 'profile': 'full', 'scope': 'full',
                         'deliveryEligible': True, 'evidenceStatus': 'valid', 'inputsBefore': current,
                         'inputsAfter': current, 'selectedChecks': [n for n, _ in self.commands], 'steps': steps})
+        return path
+
+    def stage_receipt(self, step, current, *, build_paths=None, evidence=None):
+        path = self.artifact / "stage-build/receipt.json"
+        self.write(path, {"schemaVersion": 2, "runId": path.parent.name, "status": "passed",
+                          "finishedAt": "2026-10-09T12:00:09Z", "buildPaths": build_paths or {},
+                          "invocation": {"preset": "build", "configuration": "Debug"},
+                          "evidence": {"status": "valid", "inputsBefore": current, "inputsAfter": current,
+                                       "dependencyProducts": {}, "stagedApp": next(iter(step["outputs"].values())),
+                                       **(evidence or {})}})
+        step["receipt"] = str(path)
         return path
 
     def test_gate_accepts_reordered_resumed_checks_by_name(self):
@@ -1645,12 +1657,13 @@ else:
         (result / 'data').write_text('original')
         identity = session.tree_identity(result)
         child = result.parents[1] / 'receipt.json'
-        self.write(child, {'schemaVersion': 2, 'status': 'passed',
+        self.write(child, {'schemaVersion': 2, 'runId': child.parent.name, 'status': 'passed',
+                           'invocation': {'preset': 'build-tests', 'configuration': 'Debug'},
+                           'steps': [{'xcresult': str(result)}],
                            'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
                                         'dependencyProducts': {}, 'results': {str(result): identity}}})
-        for step in value['steps']:
-            step['receipt'] = str(child)
-        value['steps'][0]['outputs'][str(result)] = identity
+        value['steps'][0]['receipt'] = str(child)
+        self.stage_receipt(value['steps'][1], current)
         self.write(receipt, value)
         with mock.patch.object(cleanup, 'read_json', wraps=cleanup.read_json) as reads, \
                 mock.patch.object(session, 'tree_identity', wraps=session.tree_identity) as hashes:
@@ -1663,6 +1676,34 @@ else:
             self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'child-artifacts-changed')
             self.assertEqual(sum(pathlib.Path(call.args[0]) == child for call in reads.call_args_list), 2)
             self.assertEqual(sum(pathlib.Path(call.args[0]) == result for call in hashes.call_args_list), 2)
+
+    def test_managed_cleanup_uses_normalized_stage_and_ignores_inactive_paths(self):
+        command = str(self.root / "scripts/xcodebuild.sh")
+        self.commands[:] = [("check", ["fixture-check"]), ("stage-debug", [command, "build", "--stage-app"])]
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        child = self.stage_receipt(value["steps"][1], session.inputs(self.root))
+        value["steps"][1]["receipt"] = str(child.relative_to(self.root))
+        inactive = self.base / "historical.json"
+        value["steps"].append({"name": "historical", "receipt": str(inactive)})
+        self.write(receipt, value)
+        with mock.patch.object(cleanup, "read_json", wraps=cleanup.read_json) as reads:
+            self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
+            self.assertEqual(sum(pathlib.Path(call.args[0]) == child for call in reads.call_args_list), 1)
+        self.assertIn(str(child.parent), cleanup.proof_resources(self.root, receipt))
+        self.assertIn(inactive, cleanup.reference_paths(value, self.root))
+
+    def test_managed_cleanup_rejects_unexpected_output_before_hashing_it(self):
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        unknown = self.base / "unexpected"
+        value["steps"][0]["outputs"][str(unknown)] = {"sha256": "prior"}
+        self.write(receipt, value)
+        with mock.patch.object(session, "tree_identity", wraps=session.tree_identity) as hashes:
+            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], "workflow-output-changed")
+        self.assertFalse(any(pathlib.Path(call.args[0]) == unknown for call in hashes.call_args_list))
 
     def test_untracked_fingerprinted_inputs_cannot_authorize_cleanup(self):
         (self.root / 'Classes').mkdir()
@@ -2621,20 +2662,21 @@ else:
         receipt = self.valid_receipt()
         value = cleanup.read_json(receipt)
         current = session.inputs(self.root)
-        cache = self.legacy_cache('shared')
-        result = self.artifact / 'first/Results/test.xcresult'
+        cache = self.cache_paths()['derivedData']
+        first = self.artifact / 'child-0/receipt.json'
+        result = first.parent / 'Results/test.xcresult'
         result.mkdir(parents=True)
         (result / 'test-data').write_text('original result')
-        for i, step in enumerate(value['steps']):
-            child_path = self.artifact / f'child-{i}/receipt.json'
-            evidence = {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
-                        'dependencyProducts': {}, 'products': {'snapshot': i}, 'results': {}}
-            if i == 0:
-                evidence['dependencyProducts'] = {'earlier-build': 'superseded'}
-                evidence['results'][str(result.relative_to(self.root))] = session.tree_identity(result)
-            self.write(child_path, {'schemaVersion': 2, 'status': 'passed', 'evidence': evidence,
-                                  'finishedAt': f'2026-10-09T12:00:0{i}Z', 'buildPaths': {'derivedData': str(cache)}})
-            step['receipt'] = str(child_path)
+        self.write(first, {'schemaVersion': 2, 'runId': first.parent.name, 'status': 'passed',
+                           'invocation': {'preset': 'build-tests', 'configuration': 'Debug'},
+                           'finishedAt': '2026-10-09T12:00:00Z', 'buildPaths': {'derivedData': cache},
+                           'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
+                                        'dependencyProducts': {'earlier-build': 'superseded'},
+                                        'products': {'snapshot': 0},
+                                        'results': {str(result.relative_to(self.root)): session.tree_identity(result)}}})
+        value['steps'][0]['receipt'] = str(first)
+        self.stage_receipt(value['steps'][1], current, build_paths={'derivedData': cache},
+                           evidence={'products': {'snapshot': 1}})
         self.write(receipt, value)
         with mock.patch.object(session, 'product_identity', return_value={'snapshot': 1}):
             self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
@@ -2673,18 +2715,22 @@ else:
 
     def test_final_package_products_are_validated_after_all_package_checks(self):
         command = str(self.root / 'scripts/xcodebuild.sh')
-        self.commands[:] = [('check', [command, 'test', 'core']), ('stage-debug', [command, 'build', '--stage-app'])]
+        self.commands[:] = [('core', [command, 'test', 'core']), ('forgekit', [command, 'test', 'forgekit']),
+                            ('stage-debug', [command, 'build', '--stage-app'])]
         cleanup.queue_commit(self.root)
         receipt = self.valid_receipt()
         value = cleanup.read_json(receipt)
         current = session.inputs(self.root)
-        scratch = self.base / 'scratch'
-        for i, step in enumerate(value['steps']):
-            child_path = self.artifact / f'child-{i}/receipt.json'
-            self.write(child_path, {'schemaVersion': 2, 'status': 'passed', 'finishedAt': f'2026-10-09T12:00:0{i}Z', 'buildPaths': {'swiftPM': str(scratch)},
-                       'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
-                                    'dependencyProducts': {}, 'packageProducts': {'snapshot': i}, 'results': {}}})
-            step['receipt'] = str(child_path)
+        scratch = self.cache_paths()['swiftPM']
+        for i, step in enumerate(value['steps'][:2]):
+            child = self.artifact / f'child-{i}/receipt.json'
+            self.write(child, {'schemaVersion': 2, 'runId': child.parent.name, 'status': 'passed',
+                               'invocation': {'preset': 'test:' + step['name'], 'configuration': 'Debug'},
+                               'finishedAt': f'2026-10-09T12:00:0{i}Z', 'buildPaths': {'swiftPM': scratch},
+                               'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
+                                            'dependencyProducts': {}, 'packageProducts': {'snapshot': i}, 'results': {}}})
+            step['receipt'] = str(child)
+        self.stage_receipt(value['steps'][2], current)
         self.write(receipt, value)
         with mock.patch.object(session, 'package_products', return_value={'snapshot': 1}):
             self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
@@ -2718,14 +2764,15 @@ else:
         logs = []
         artifacts = {}
         for name in ('analyze', 'analyzer-policy', 'swiftlint-analyze'):
-            log = child.parent / (name + '.log')
+            log = child.parent / 'Logs' / (name + '.log')
             log.parent.mkdir(parents=True, exist_ok=True)
             log.write_text('passed diagnostic')
             logs.append({'name': name, 'status': 'passed', 'exitCode': 0, 'log': str(log)})
             artifacts[str(log)] = session.tree_identity(log)
-        self.write(child, {'schemaVersion': 2, 'status': 'passed', 'invocation': {'preset': 'analyze'},
+        self.write(child, {'schemaVersion': 2, 'runId': child.parent.name, 'status': 'passed',
+                          'invocation': {'preset': 'analyze', 'configuration': 'Debug'},
                           'steps': logs,
-                          'buildPaths': {'derivedData': str(self.base / 'AnalyzerDerivedData.deleted')},
+                          'buildPaths': {'derivedData': str(pathlib.Path(self.cache_paths()['derivedData']).with_name('AnalyzerDerivedData.deleted'))},
                           'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
                                        'dependencyProducts': {}, 'products': {'temporary.app': 'removed'},
                                        'results': {}, 'analysisArtifacts': artifacts}})

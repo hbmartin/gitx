@@ -238,7 +238,7 @@ def active_workflow_steps(payload, *, require_selected_checks=False):
 
 FIXTURE_PRESETS = ("correctness", "address-undefined", "thread-sanitizer", "ui")
 FIXTURE_REPETITIONS = range(1, 4)
-ARTIFACT_PROOF_VERSION = 1
+ARTIFACT_PROOF_VERSION = 2
 
 
 def managed_path(root, value, *, exact=None, within=None):
@@ -275,6 +275,25 @@ def workflow_receipt_path(root, value, *, workflow=False):
     return managed_path(root, path, within=artifact_root)
 
 
+def require_current_workflow(root, path, payload):
+    path = workflow_receipt_path(root, path, workflow=True)
+    if (not isinstance(payload, dict) or payload.get("schemaVersion") != 2
+            or payload.get("artifactProofVersion") != ARTIFACT_PROOF_VERSION):
+        raise ValueError("Historical workflow receipt is for audit only")
+    if payload.get("runId") != path.parent.name:
+        raise ValueError("Workflow receipt does not own its run")
+    return path
+
+
+def workflow_outputs(root, step):
+    outputs = step.get("outputs", {})
+    expected = pathlib.Path(root).resolve() / "build/GitX.app"
+    if not isinstance(outputs, dict) or (outputs and
+            (step.get("name") != "stage-debug" or set(outputs) != {str(expected)})):
+        raise ValueError("Unexpected verification output path")
+    return [(managed_path(root, path, exact=expected), identity) for path, identity in outputs.items()]
+
+
 def owned_result_path(root, receipt, value):
     receipt = workflow_receipt_path(root, receipt)
     if receipt.name != "receipt.json":
@@ -290,19 +309,35 @@ def validate_evidence_paths(root, path, child, toolchain):
     if not isinstance(child, dict):
         raise ValueError("Child receipt must be an object")
     path = workflow_receipt_path(root, path)
-    if "invocation" not in child:
-        return
-    if child.get("runId") != path.parent.name or path.name != "receipt.json":
-        raise ValueError("Child receipt does not own its run")
     evidence = child.get("evidence", {})
+    build = child.get("buildPaths", {})
+    steps = child.get("steps", [])
+    if (not isinstance(evidence, dict) or not isinstance(build, dict) or not isinstance(steps, list)
+            or any(not isinstance(step, dict) for step in steps)
+            or any(not isinstance(evidence.get(field, {}), dict) for field in ("results", "analysisArtifacts"))):
+        raise ValueError("Malformed child evidence")
+    result_paths = [step["xcresult"] for step in steps if step.get("xcresult") is not None]
+    if any(not isinstance(value, str) or not value for value in result_paths):
+        raise ValueError("Malformed result path")
+    if "invocation" not in child:
+        if (build or result_paths or any(field in evidence for field in
+                ("results", "analysisArtifacts", "products", "packageProducts", "dependencyProducts", "stagedApp", "analyzerScratch"))):
+            raise ValueError("Coordination receipt cannot own Xcode artifacts")
+        return
+    invocation = child["invocation"]
+    if not isinstance(invocation, dict) or child.get("runId") != path.parent.name or path.name != "receipt.json":
+        raise ValueError("Child receipt does not own its run")
     package_report = {"test:core": "GitXCoreCoverage.json",
-                      "test:forgekit": "ForgeKitCombinedCoverage.json"}.get(child["invocation"].get("preset"))
-    for value in set(evidence.get("results", {})) | {step["xcresult"] for step in child.get("steps", []) if step.get("xcresult")}:
+                      "test:forgekit": "ForgeKitCombinedCoverage.json"}.get(invocation.get("preset"))
+    for value in set(evidence.get("results", {})) | set(result_paths):
         if package_report:
             managed_path(root, value, exact=path.parent / "Results" / package_report)
         else:
             owned_result_path(root, path, value)
-    for value in evidence.get("analysisArtifacts", {}):
+    analysis_paths = list(evidence.get("analysisArtifacts", {}))
+    if invocation.get("preset") == "analyze":
+        analysis_paths.extend(step["log"] for step in steps if step.get("log"))
+    for value in set(analysis_paths):
         item = pathlib.Path(value)
         item = item if item.is_absolute() else pathlib.Path(root) / item
         location = next((location for location in (path.parent / "Logs", path.parent / "Results")
@@ -310,7 +345,6 @@ def validate_evidence_paths(root, path, child, toolchain):
         if location is None:
             raise ValueError("Analysis evidence is outside its owning run")
         managed_path(root, item, within=location)
-    build = child.get("buildPaths", {})
     if not build:
         return
     allowed = {field: set() for field in ("derivedData", "swiftPM", "sourcePackages")}
@@ -345,6 +379,8 @@ def fixture_receipt_paths(root, manifest_path, manifest):
                    any(not isinstance(value, str) or not re.fullmatch(r"GitX(?:UI)?Tests/\w+(?:/\w+)?", value)
                        for value in values) or values != sorted(set(values)) for values in selected.values())):
         raise ValueError("Malformed fixture receipt manifest")
+    if manifest.get("fixtureOutcome") != ("passed" if selected else "no-fixtures-selected"):
+        raise ValueError("Fixture manifest outcome does not match its selection")
     expected = [(preset, sequence) for preset in FIXTURE_PRESETS if preset in selected for sequence in FIXTURE_REPETITIONS]
     if len(runs) != len(expected):
         raise ValueError("Fixture repetitions are incomplete")
@@ -358,25 +394,28 @@ def fixture_receipt_paths(root, manifest_path, manifest):
 
 
 def workflow_child_receipts(payload, root, receipt_reader=None):
-    managed = payload.get("artifactProofVersion") == ARTIFACT_PROOF_VERSION
+    if payload.get("artifactProofVersion") != ARTIFACT_PROOF_VERSION:
+        raise ValueError("Historical workflow receipt is for audit only")
 
     def read(path):
         return receipt_reader(path) if receipt_reader else json.loads(path.read_text())
 
     for step in active_workflow_steps(payload):
+        fixture_pass = step.get("name") == "fixture-stability" and step.get("status") == "passed"
         if not step.get("receipt"):
+            if fixture_pass:
+                raise ValueError("Fixture manifest is missing")
+            command = step.get("command", [])
+            if step.get("status") == "passed" and command and pathlib.Path(command[0]).name == "xcodebuild.sh":
+                raise ValueError("Passed Xcode check lacks a child receipt")
             continue
-        path = pathlib.Path(step["receipt"])
-        path = path if path.is_absolute() else pathlib.Path(root) / path
-        if managed:
-            path = workflow_receipt_path(root, path)
+        path = workflow_receipt_path(root, step["receipt"])
         child = read(path)
-        if managed:
-            validate_evidence_paths(root, path, child, step.get("toolchain"))
-            if step.get("status") == "passed" and (child.get("status") != "passed" or child.get("evidence", {}).get("status") != "valid"):
-                raise ValueError("Child receipt does not prove a passed check")
+        validate_evidence_paths(root, path, child, step.get("toolchain"))
+        if step.get("status") == "passed" and (child.get("status") != "passed" or child.get("evidence", {}).get("status") != "valid"):
+            raise ValueError("Child receipt does not prove a passed check")
         yield step, path, child
-        if step.get("name") != "fixture-stability" or not managed or step.get("status") != "passed":
+        if not fixture_pass:
             continue
         if (path.name != "receipt.json" or not step.get("fixtureReceiptIdentity")
                 or file_identity(path) != step["fixtureReceiptIdentity"]):
@@ -3256,6 +3295,9 @@ def supervise_command(command, timeout, startup_timeout, desktop, directory, env
                         status = 74
                 ownership['outputCapture'] = metrics
         finally:
+            if interruption[0] and status == 0 and not category:
+                category = "interrupted"
+                status = 130
             ownership['childExitCode'] = child.returncode
             if category:
                 ownership['category'] = category
@@ -3395,7 +3437,8 @@ def guard(entry, arguments):
     receipt = verification_artifact_root(root) / "Coordination" / f"{run_id}.json"
     if receipt.exists():
         receipt = receipt.with_name(f"{run_id}-{uuid.uuid4().hex[:8]}.json")
-    owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(receipt), "entry": str(entry), "schemaVersion": 2, "producer": producer_identity(), "startedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
+    owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(receipt), "entry": str(entry), "schemaVersion": 2, "artifactProofVersion": ARTIFACT_PROOF_VERSION,
+             "producer": producer_identity(), "startedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
     try:
         wait = float(os.environ.get("GITX_RESOURCE_WAIT_SECONDS", "0"))
         if not math.isfinite(wait) or wait < 0:
@@ -3505,9 +3548,12 @@ def main():
                                          env=leases.environment(), pass_fds=leases.descriptors(), output_log=args.output_log)
                 except ResourceBusy as error:
                     fields = resource_failure_fields(error)
-                    if args.diagnostics is not None:
-                        atomic_json(args.diagnostics / "blocker.json", fields)
                     print(f"Verification blocker: {fields['category']}. {error}", file=sys.stderr)
+                    if args.diagnostics is not None:
+                        try:
+                            atomic_json(args.diagnostics / "blocker.json", fields)
+                        except (OSError, ValueError) as diagnostic_error:
+                            print(f"Cannot write blocker diagnostics: {diagnostic_error}", file=sys.stderr)
                     return fields["exitCode"]
             inherited = Leases([], owner)
             return supervise(command, args.timeout, args.startup_timeout, args.desktop, args.diagnostics,

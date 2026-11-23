@@ -387,6 +387,7 @@ def doctor_payload(
     warnings = sum(check["status"] == "warning" for check in checks)
     return {
         "schemaVersion": 2,
+        "artifactProofVersion": session.ARTIFACT_PROOF_VERSION,
         "mode": mode,
         "scope": scope,
         "status": "failed" if failed else "passed",

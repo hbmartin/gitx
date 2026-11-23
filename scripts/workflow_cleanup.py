@@ -945,13 +945,17 @@ def eligibility(root, receipt):
     pending = read_json(pending_path(root))
     if not pending:
         return None, "no-pending-commit"
-    path = pathlib.Path(receipt).resolve()
-    artifact = root / configuration(root)[0]["artifactRoot"]
-    if not path.is_relative_to(artifact.resolve()) or path.name != "workflow.json":
+    try:
+        path = session.workflow_receipt_path(root, receipt, workflow=True)
+    except (OSError, ValueError, TypeError, RuntimeError):
         return None, "receipt-is-not-a-local-workflow"
     value = read_json(path)
     if not value or value.get("schemaVersion") != 2 or value.get("status") != "passed" or value.get("evidenceStatus") != "valid" or not value.get("deliveryEligible") or value.get("scope") != "full" or value.get("profile") != "full":
         return None, "full-successful-verification-required"
+    try:
+        session.require_current_workflow(root, path, value)
+    except ValueError:
+        return None, "current-managed-verification-required"
     current = session.inputs(root)
     if pending.get("checkout") != str(root) or pending.get("head") != current["head"] or value.get("inputsAfter", {}).get("root") != str(root) or any(
             session.changed_inputs(value.get(key, {}), current) for key in ("inputsBefore", "inputsAfter")):
@@ -987,31 +991,25 @@ def eligibility(root, receipt):
             identities[key] = readers[kind](path)
         return identities[key]
     def child_receipt(path):
-        key = str(pathlib.Path(path).resolve())
-        if key not in children:
-            children[key] = read_json(path, {})
-        return children[key]
+        path = session.workflow_receipt_path(root, path)
+        if path not in children:
+            children[path] = read_json(path, {})
+        return children[path]
     for step in steps:
         command = expected[step["name"]]
         if pathlib.Path(command[0]).name == "xcodebuild.sh" and not step.get("receipt"):
             return None, "missing-child-receipt"
         if step.get("receipt"):
-            child_path = pathlib.Path(step["receipt"])
-            child_path = child_path if child_path.is_absolute() else root / child_path
-            if not child_path.resolve().is_relative_to(artifact.resolve()):
+            try:
+                child = child_receipt(step["receipt"])
+            except (OSError, ValueError, TypeError, RuntimeError):
                 return None, "child-receipt-outside-checkout"
-            if value.get("artifactProofVersion") == session.ARTIFACT_PROOF_VERSION:
-                try:
-                    child_path = session.workflow_receipt_path(root, child_path)
-                except (OSError, ValueError, TypeError, RuntimeError):
-                    return None, "child-receipt-outside-checkout"
-            child = child_receipt(child_path)
             if not isinstance(child, dict) or child.get("status") != "passed" or child.get("evidence", {}).get("status") != "valid":
                 return None, "invalid-child-evidence"
     try:
         caches = session.workflow_cache_snapshots(value, root, receipt_reader=child_receipt)
         for step, path, child in session.workflow_child_receipts(value, root, child_receipt):
-            if step.get("name") == "fixture-stability" and str(path) != step.get("receipt"):
+            if step.get("name") == "fixture-stability" and path != session.workflow_receipt_path(root, step["receipt"]):
                 if session.receipt_artifact_problems(child, root, caches, identity=artifact_identity):
                     return None, "fixture-artifacts-changed"
     except (OSError, ValueError, TypeError, KeyError):
@@ -1026,24 +1024,24 @@ def eligibility(root, receipt):
         if pathlib.Path(command[0]).name == "xcodebuild.sh" and not step.get("receipt"):
             return None, "missing-child-receipt"
         if step.get("receipt"):
-            child_path = pathlib.Path(step["receipt"])
-            if not child_path.is_absolute():
-                child_path = root / child_path
-            if not child_path.resolve().is_relative_to(artifact.resolve()):
-                return None, "child-receipt-outside-checkout"
-            child = child_receipt(child_path)
+            child = child_receipt(step["receipt"])
             evidence = child.get("evidence", {})
             if child.get("schemaVersion") != 2 or child.get("status") != "passed" or evidence.get("status") != "valid" or any(
                     session.changed_inputs(evidence.get(key, {}), step_inputs) for key in ("inputsBefore", "inputsAfter")):
                 return None, "invalid-child-evidence"
             if session.receipt_artifact_problems(child, root, caches, identity=artifact_identity):
                 return None, "child-artifacts-changed"
-        if any(identity is None or artifact_identity("results", path) != identity for path, identity in step.get("outputs", {}).items()):
+        try:
+            if any(identity is None or artifact_identity("results", path) != identity
+                   for path, identity in session.workflow_outputs(root, step)):
+                return None, "workflow-output-changed"
+        except (OSError, ValueError, TypeError, RuntimeError):
             return None, "workflow-output-changed"
     stage = next(step for step in steps if step["name"] == "stage-debug")
-    if pathlib.Path(expected["stage-debug"][0]).name == "xcodebuild.sh" and not workflow.staged_debug_matches(
-            stage, child_receipt(stage["receipt"]), stage["receipt"]):
-        return None, "staged-app-does-not-match-debug-build"
+    if pathlib.Path(expected["stage-debug"][0]).name == "xcodebuild.sh":
+        stage_path = session.workflow_receipt_path(root, stage["receipt"])
+        if not workflow.staged_debug_matches(stage, child_receipt(stage_path), stage_path):
+            return None, "staged-app-does-not-match-debug-build"
     app = root / "build/GitX.app"
     if not app.is_dir() or app.is_symlink() or stage.get("outputs", {}).get(str(app)) != artifact_identity("results", app):
         return None, "staged-app-does-not-match"
@@ -1052,24 +1050,23 @@ def eligibility(root, receipt):
 
 def proof_resources(root, receipt):
     import dev_workflow as workflow
-    resources = {str(pathlib.Path(receipt).resolve().parent), str(root / "build/GitX.app"),
+    path = session.workflow_receipt_path(root, receipt, workflow=True)
+    value = read_json(path, {})
+    session.require_current_workflow(root, path, value)
+    resources = {str(path.parent), str(root / "build/GitX.app"),
                  str(records.common_directory(root) / "ledger.json"), str(pending_path(root))}
-    value = read_json(receipt, {})
     source = value.get("evidenceReuse", {}).get("sourceReceipt")
-    managed = value.get("artifactProofVersion") == session.ARTIFACT_PROOF_VERSION
     if source:
-        path = session.workflow_receipt_path(root, source, workflow=True)
-        resources.add(str(path.parent))
-    for step in value.get("steps", []):
+        source_path = session.workflow_receipt_path(root, source, workflow=True)
+        resources.add(str(source_path.parent))
+    steps = session.active_workflow_steps(value)
+    for step in steps:
         if step.get("receipt"):
-            path = pathlib.Path(step["receipt"])
-            path = path if path.is_absolute() else root / path
-            if managed:
-                path = session.workflow_receipt_path(root, path)
-            resources.add(str(path.resolve().parent))
-            if managed and step.get("name") == "fixture-stability" and step.get("status") == "passed":
-                manifest = read_json(path, {})
-                resources.update(str(child.parent) for child, _ in session.fixture_receipt_paths(root, path, manifest))
+            child_path = session.workflow_receipt_path(root, step["receipt"])
+            resources.add(str(child_path.parent))
+            if step.get("name") == "fixture-stability" and step.get("status") == "passed":
+                manifest = read_json(child_path, {})
+                resources.update(str(child.parent) for child, _ in session.fixture_receipt_paths(root, child_path, manifest))
     toolchain = session.cache_paths(root)["toolchain"]
     for _, command in workflow.full_profile(root):
         if pathlib.Path(command[0]).suffix == ".sh":
@@ -1077,7 +1074,7 @@ def proof_resources(root, receipt):
             resources.update(r for r in session.entry_resources(pathlib.Path(command[0]).name, command[1:], root, toolchain=toolchain)[0]
                              if not r.startswith("desktop:"))
     if value.get("selection", {}).get("jobs") == 2:
-        for name in workflow.OFFSCREEN_BUILDS & {step.get("name") for step in value.get("steps", ())}:
+        for name in workflow.OFFSCREEN_BUILDS & {step.get("name") for step in steps}:
             resources.update(workflow.offscreen_environment(root, name, toolchain).values())
     return resources
 

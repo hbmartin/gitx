@@ -164,10 +164,12 @@ def main():
         after = session.inputs(root)
         if session.changed_inputs(before, after):
             raise ValueError("Inputs changed during fixture stability checks")
-        session.atomic_json(receipt, {"schemaVersion": 2, "runId": parent, "entry": entry,
+        session.atomic_json(receipt, {"schemaVersion": 2, "artifactProofVersion": session.ARTIFACT_PROOF_VERSION,
+                            "runId": parent, "entry": entry,
                             "producer": session.producer_identity(), "receipt": str(receipt),
                             "startedAt": began, "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
                             "status": "passed", "exitCode": 0, "selectedFixtures": selected, "fixtureRuns": runs,
+                            "fixtureOutcome": "passed" if selected else "no-fixtures-selected",
                             "verificationReceipts": [str(receipt.parent.parent / run["runId"] / "receipt.json") for run in runs],
                             "evidence": {"status": "valid", "inputsBefore": before, "inputsAfter": after}})
         return 0

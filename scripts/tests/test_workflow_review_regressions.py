@@ -86,7 +86,8 @@ class WorkflowAttemptRegressionTests(unittest.TestCase):
         path = self.root / 'artifacts/verification/fixture/workflow.json'
         for steps in (None, [None], [{'status': 'passed'}], [{'name': []}]):
             with self.subTest(steps=steps):
-                session.atomic_json(path, {'schemaVersion': 2, 'runId': 'fixture', 'status': 'failed', 'steps': steps})
+                session.atomic_json(path, {'schemaVersion': 2, 'artifactProofVersion': session.ARTIFACT_PROOF_VERSION,
+                                           'runId': 'fixture', 'status': 'failed', 'steps': steps})
                 args = workflow.parser().parse_args(['verify', '--resume', 'fixture', '--check', 'correctness'])
                 with mock.patch.object(session, 'supervise') as execute:
                     self.assertEqual(workflow.verify(args), 76)
@@ -129,7 +130,7 @@ class WorkflowAttemptRegressionTests(unittest.TestCase):
         for prior_status, contents in [(status, value) for status in ("failed", "passed") for value in malformed]:
             with self.subTest(contents=contents, prior_status=prior_status):
                 receipt.write_text(contents)
-                session.atomic_json(workflow_path, {"schemaVersion": 2, "runId": "fixture", "status": prior_status,
+                session.atomic_json(workflow_path, {"schemaVersion": 2, "artifactProofVersion": session.ARTIFACT_PROOF_VERSION, "runId": "fixture", "status": prior_status,
                     "steps": [prior], "inputsBefore": self.current})
                 args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "analyze"])
                 def execute_fresh(actual, **_kwargs):
@@ -538,8 +539,12 @@ class WorkflowResourceRegressionTests(unittest.TestCase):
             self.assertEqual(session.producer_state({"pid": 123, "started": "legacy"}), "abandoned")
 
     def test_receipt_cache_derivation_accepts_a_shared_reader_and_identity(self):
-        child = {"buildPaths": {"derivedData": "/cache"}, "evidence": {"products": {"bundle": True}}}
-        value = {"steps": [{"name": "build", "receipt": "child.json"}], "selectedChecks": ["build"]}
+        paths = session.cache_paths(ROOT, toolchain="fixture")
+        path = session.verification_artifact_root(ROOT) / "child/receipt.json"
+        child = {"runId": "child", "invocation": {"preset": "build"},
+                 "buildPaths": {"derivedData": paths["derivedData"]}, "evidence": {"products": {"bundle": True}}}
+        value = {"artifactProofVersion": session.ARTIFACT_PROOF_VERSION,
+                 "steps": [{"name": "build", "receipt": str(path), "toolchain": "fixture"}], "selectedChecks": ["build"]}
         reader = mock.Mock(return_value=child)
         snapshots = session.workflow_cache_snapshots(value, ROOT, receipt_reader=reader)
         identity = mock.Mock(return_value={"bundle": True})
@@ -547,8 +552,8 @@ class WorkflowResourceRegressionTests(unittest.TestCase):
         with mock.patch.object(session, "workflow_cache_snapshots") as reread:
             self.assertEqual(session.final_cache_problems(value, ROOT, derived=snapshots, identity=identity), [])
         reread.assert_not_called()
-        reader.assert_called_once_with(ROOT / "child.json")
-        identity.assert_called_once_with("products", "/cache")
+        reader.assert_called_once_with(path)
+        identity.assert_called_once_with("products", paths["derivedData"])
 
 
 class WorkflowOwnershipRegressionTests(unittest.TestCase):

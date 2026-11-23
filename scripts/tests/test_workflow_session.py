@@ -1898,15 +1898,19 @@ os.read(int(sys.argv[1]), 1)
 
     def test_final_cache_ownership_compares_instants_with_timezone_offsets(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = pathlib.Path(temporary)
+            root = pathlib.Path(temporary).resolve()
+            artifacts = root / "artifacts"
+            cache = session.cache_paths(root, toolchain="fixture")["derivedData"]
             steps = []
             for index, (stamp, products) in enumerate([('2026-10-09T10:00:00+00:00', {'latest': True}),
                                                       ('2026-10-09T11:00:00+02:00', {'earlier': True})]):
-                path = root / f'{index}.json'
-                path.write_text(json.dumps({'finishedAt': stamp, 'buildPaths': {'derivedData': '/cache'},
-                                            'evidence': {'products': products}}))
-                steps.append({'receipt': str(path)})
-            self.assertEqual(session.workflow_cache_snapshots({'steps': steps}, root)['products']['/cache'], {'latest': True})
+                path = artifacts / str(index) / 'receipt.json'
+                session.atomic_json(path, {'finishedAt': stamp, 'runId': str(index), 'invocation': {'preset': 'build'},
+                                           'buildPaths': {'derivedData': cache}, 'evidence': {'products': products}})
+                steps.append({'receipt': str(path), 'toolchain': 'fixture'})
+            with mock.patch.object(session, "verification_artifact_root", return_value=artifacts):
+                workflow = {'artifactProofVersion': session.ARTIFACT_PROOF_VERSION, 'steps': steps}
+                self.assertEqual(session.workflow_cache_snapshots(workflow, root)['products'][cache], {'latest': True})
 
     def test_lease_releases_descriptors_when_broker_cleanup_fails(self):
         with tempfile.TemporaryDirectory() as directory:

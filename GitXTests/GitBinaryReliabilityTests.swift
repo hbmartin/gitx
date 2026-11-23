@@ -664,6 +664,10 @@ final class GitBinaryReliabilityTests: XCTestCase {
         XCTAssertNil(discovery.currentSelection)
     }
 
+    private final nonisolated class CompletionOrder: Sendable {
+        let values = Mutex<[Int]>([])
+    }
+
     func testColdAvailabilityCallbacksKeepTheirRequestOrder() {
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
@@ -671,7 +675,7 @@ final class GitBinaryReliabilityTests: XCTestCase {
             _ = release.wait(timeout: .now() + 10)
             return "git version 2.50.1"
         })
-        let order = Mutex<[Int]>([])
+        let order = CompletionOrder()
         let completed = expectation(description: "Each request finishes in registration order")
         completed.expectedFulfillmentCount = 3
         completed.assertForOverFulfill = true
@@ -679,13 +683,13 @@ final class GitBinaryReliabilityTests: XCTestCase {
             discovery.whenAvailable { path, error in
                 XCTAssertEqual(path, "/validated")
                 XCTAssertNil(error)
-                order.withLock { $0.append(index) }
+                order.values.withLock { $0.append(index) }
                 completed.fulfill()
             }
         }
         release.signal()
         wait(for: [completed], timeout: 3)
-        XCTAssertEqual(order.withLock { $0 }, [0, 1, 2])
+        XCTAssertEqual(order.values.withLock { $0 }, [0, 1, 2])
     }
 
     func testFailedReplacementRetainsTheActiveSelectionWithoutSearchingForAnotherFallback() {

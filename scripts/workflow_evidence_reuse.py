@@ -112,8 +112,8 @@ def lineage(root, original, current):
 def read_source(root, path, current):
     path = session.workflow_receipt_path(root, path, workflow=True)
     receipt = json.loads(path.read_text())
-    if (receipt.get("schemaVersion") != 2 or receipt.get("artifactProofVersion") != session.ARTIFACT_PROOF_VERSION
-            or receipt.get("runId") != path.parent.name or receipt.get("status") != "passed" or receipt.get("profile") != "full"
+    session.require_current_workflow(root, path, receipt)
+    if (receipt.get("status") != "passed" or receipt.get("profile") != "full"
             or receipt.get("scope") != "full" or receipt.get("evidenceStatus") != "valid" or not receipt.get("deliveryEligible")
             or receipt.get("evidenceReuse") or session.changed_inputs(receipt["inputsBefore"], receipt["inputsAfter"])):
         raise ValueError("Evidence reuse requires an original passing full workflow")
