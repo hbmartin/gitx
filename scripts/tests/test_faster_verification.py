@@ -290,7 +290,7 @@ class FeedbackAndFixtureSelectionTests(unittest.TestCase):
             inputs_for_cache = {"derivedData": str(cache), "swiftPM": str(root / "SwiftPM"),
                                 "sourcePackages": str(root / "SourcePackages")}
             selector = "GitXTests/Fixtures/testWorktree"
-            preset = "thread-sanitizer"
+            preset = "correctness"
 
             def leaf(run_id, stamp, inputs, arguments, products):
                 path = artifacts / run_id / "receipt.json"
@@ -311,7 +311,9 @@ class FeedbackAndFixtureSelectionTests(unittest.TestCase):
             runs = []
             for i in session.FIXTURE_REPETITIONS:
                 run_id = f"fixtures-{preset}-{i}"
-                path, _ = leaf(run_id, f"2026-11-19T00:00:0{i}Z", current, [preset, "-only-testing:" + selector],
+                path, _ = leaf(run_id, f"2026-11-19T00:00:0{i}Z", current, [preset, "-only-testing:" + selector,
+                    "OTHER_SWIFT_FLAGS=$(inherited) -Xllvm -instrprof-atomic-counter-update-all",
+                    "OTHER_CFLAGS=$(inherited) -fprofile-update=atomic"],
                                {"descendant": i})
                 runs.append({"runId": run_id, "preset": preset, "selectors": [selector],
                              "receiptIdentity": session.file_identity(path)})
@@ -333,9 +335,26 @@ class FeedbackAndFixtureSelectionTests(unittest.TestCase):
                 self.assertEqual(session.receipt_artifact_problems(original_child, root, caches), [])
                 (original_result / "result").write_text("unverified")
                 self.assertTrue(session.receipt_artifact_problems(original_child, root, caches))
-                (artifacts / "fixtures-thread-sanitizer-3/receipt.json").write_text("{}")
+                (artifacts / "fixtures-correctness-3/receipt.json").write_text("{}")
                 with self.assertRaisesRegex(ValueError, "Fixture child receipt changed"):
                     session.workflow_cache_snapshots(workflow_receipt, root)
+
+    def test_managed_package_coverage_is_durable_run_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            artifacts = root / "artifacts"
+            with mock.patch.object(session, "verification_artifact_root", return_value=artifacts):
+                for package, filename in (("core", "GitXCoreCoverage.json"), ("forgekit", "ForgeKitCombinedCoverage.json")):
+                    with self.subTest(package=package):
+                        receipt = artifacts / package / "receipt.json"
+                        result = receipt.parent / "Results" / filename
+                        child = {"runId": package, "invocation": {"preset": f"test:{package}"}, "steps": [
+                            {"name": f"coverage:{package}", "xcresult": str(result)}],
+                            "evidence": {"results": {str(result): {}}}}
+                        session.validate_evidence_paths(root, receipt, child, "fixture")
+                        child["steps"][0]["xcresult"] = str(root / "SwiftPM" / filename)
+                        with self.assertRaises(ValueError):
+                            session.validate_evidence_paths(root, receipt, child, "fixture")
 
     def test_receipts_and_results_are_fenced_before_content_is_accessed(self):
         with tempfile.TemporaryDirectory() as directory:

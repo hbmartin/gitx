@@ -398,7 +398,8 @@ finish_receipt() {
 	fi
 	finish_arguments=()
 	if (( staged_product )); then finish_arguments+=(--record-staged-app); fi
-	python3 "$support" receipt-finish "$receipt" --status "$overall_status" --exit-code "$exit_code" 		${finish_arguments[@]+"${finish_arguments[@]}"}
+	python3 "$support" receipt-finish "$receipt" --status "$overall_status" --exit-code "$exit_code" \
+		${finish_arguments[@]+"${finish_arguments[@]}"}
 	evidence_status=$?
 	if (( exit_code == 0 && evidence_status != 0 )); then exit_code=$evidence_status; fi
 	if [[ -n "$analyzer_derived_data" && -d "$analyzer_derived_data" ]]; then
@@ -846,7 +847,9 @@ case "$command" in
 				scratch="$swiftpm_build_root/GitXCore"
 				run_step test:core "$logs/core.log" "" "$xcrun" swift test --only-use-versions-from-resolved-file --package-path "$package" --scratch-path "$scratch" --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
 				codecov=$("$xcrun" swift test --only-use-versions-from-resolved-file --package-path "$package" --scratch-path "$scratch" --show-codecov-path) || exit $?
-				run_step coverage:core "$logs/core-coverage.log" "$codecov" python3 scripts/check_core_coverage.py "$codecov" || exit $?
+				coverage_report="$results/GitXCoreCoverage.json"
+				cp -- "$codecov" "$coverage_report" || exit $?
+				run_step coverage:core "$logs/core-coverage.log" "$coverage_report" python3 scripts/check_core_coverage.py "$coverage_report" || exit $?
 				;;
 			forgekit)
 				package=$(config packages.forgekit)

@@ -295,8 +295,13 @@ def validate_evidence_paths(root, path, child, toolchain):
     if child.get("runId") != path.parent.name or path.name != "receipt.json":
         raise ValueError("Child receipt does not own its run")
     evidence = child.get("evidence", {})
+    package_report = {"test:core": "GitXCoreCoverage.json",
+                      "test:forgekit": "ForgeKitCombinedCoverage.json"}.get(child["invocation"].get("preset"))
     for value in set(evidence.get("results", {})) | {step["xcresult"] for step in child.get("steps", []) if step.get("xcresult")}:
-        owned_result_path(root, path, value)
+        if package_report:
+            managed_path(root, value, exact=path.parent / "Results" / package_report)
+        else:
+            owned_result_path(root, path, value)
     for value in evidence.get("analysisArtifacts", {}):
         item = pathlib.Path(value)
         item = item if item.is_absolute() else pathlib.Path(root) / item
@@ -385,6 +390,9 @@ def workflow_child_receipts(payload, root, receipt_reader=None):
             evidence, invocation = leaf["evidence"], leaf["invocation"]
             preset = "test:" + run["preset"]
             arguments = [run["preset"], *["-only-testing:" + selector for selector in run["selectors"]]]
+            if run["preset"] == "correctness":
+                arguments += ["OTHER_SWIFT_FLAGS=$(inherited) -Xllvm -instrprof-atomic-counter-update-all",
+                              "OTHER_CFLAGS=$(inherited) -fprofile-update=atomic"]
             tests = [test for test in leaf["steps"] if test["name"] == preset]
             if (leaf.get("status") != "passed" or leaf.get("exitCode") != 0 or evidence.get("status") != "valid"
                     or invocation.get("preset") != preset or invocation.get("configuration") != "Debug"
