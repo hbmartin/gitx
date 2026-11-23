@@ -8,25 +8,6 @@ private nonisolated struct ReflogBrowserLoad: Sendable {
     let page: RepositoryReflogPage
 }
 
-nonisolated enum ReflogBrowserRequestKind { case page, details, preview, mutation }
-
-nonisolated struct ReflogBrowserRequestPolicy {
-    var active: ReflogBrowserRequestKind?
-    var stale = true
-    var permitsSelection: Bool {
-        active == nil || active == .details
-    }
-
-    var permitsRecovery: Bool {
-        active == nil && !stale
-    }
-
-    func permits(_ request: ReflogBrowserRequestKind) -> Bool {
-        guard active != .mutation else { return false }
-        return request != .details || active == nil || active == .details
-    }
-}
-
 /// Repository reconciliation belongs to the operation, even after its browser closes.
 @MainActor
 private enum ReflogBrowserMutation {

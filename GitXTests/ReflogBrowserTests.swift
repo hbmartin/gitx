@@ -191,24 +191,6 @@ final class ReflogBrowserTests: XCTestCase {
         XCTAssertTrue(try control("Reset", in: controller, as: NSButton.self).isEnabled)
     }
 
-    func testRequestPolicyProtectsPagesAndPreviewsButAllowsDetailReplacement() {
-        var policy = ReflogBrowserRequestPolicy()
-        policy.stale = false
-        XCTAssertTrue(policy.permitsRecovery)
-        for kind in [ReflogBrowserRequestKind.page, .preview, .mutation] {
-            policy.active = kind
-            XCTAssertFalse(policy.permitsSelection)
-            XCTAssertFalse(policy.permits(.details))
-            XCTAssertFalse(policy.permitsRecovery)
-        }
-        policy.active = .details
-        XCTAssertTrue(policy.permitsSelection)
-        XCTAssertTrue(policy.permits(.details))
-        policy.active = nil
-        policy.stale = true
-        XCTAssertFalse(policy.permitsRecovery)
-    }
-
     private actor DelayGate {
         private var waiters: [CheckedContinuation<Void, Never>] = []
         private var released = false
@@ -242,6 +224,9 @@ final class ReflogBrowserTests: XCTestCase {
         let baseline = constructions
         let table = try control("Events", in: browser.controller, as: NSTableView.self)
         let count = table.numberOfRows
+        let subject = try XCTUnwrap(browser.controller.tableView(table, viewFor: nil, row: 0) as? NSTextField)
+        XCTAssertEqual(subject.identifier?.rawValue, "subject")
+        XCTAssertFalse(subject.stringValue.isEmpty)
         for _ in 0 ..< 3 {
             browser.controller.repositoryDidChange()
             await Task.yield()

@@ -4913,7 +4913,8 @@
       "sourcePaths": [
         "Classes/Controllers/ReflogBrowserController.swift",
         "Classes/git/RepositoryReflogService.swift",
-        "GitXCore/Sources/GitXCore/ReflogPolicy.swift"
+        "GitXCore/Sources/GitXCore/ReflogPolicy.swift",
+        "GitXCore/Sources/GitXCore/ReflogBrowserRequestPolicy.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -5064,11 +5065,11 @@
           "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
         },
         {
-          "source": "GitXTests/ReflogBrowserTests.swift",
-          "identifier": "GitXTests/ReflogBrowserTests/testRequestPolicyProtectsPagesAndPreviewsButAllowsDetailReplacement",
+          "source": "GitXCore/Tests/GitXCoreTests/ReflogBrowserRequestPolicyTests.swift",
+          "identifier": "GitXCoreTests/ReflogBrowserRequestPolicyTests/testRequestPolicyProtectsPagesAndPreviewsButAllowsDetailReplacement",
           "role": "boundary",
-          "check": "correctness",
-          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+          "check": "core",
+          "oracle": "Exercise each active request and stale rows against the pure request policy without starting the application."
         },
         {
           "source": "GitXTests/ReflogBrowserTests.swift",
