@@ -1677,6 +1677,34 @@ else:
             self.assertEqual(sum(pathlib.Path(call.args[0]) == child for call in reads.call_args_list), 2)
             self.assertEqual(sum(pathlib.Path(call.args[0]) == result for call in hashes.call_args_list), 2)
 
+    def test_managed_cleanup_uses_normalized_stage_and_ignores_inactive_paths(self):
+        command = str(self.root / "scripts/xcodebuild.sh")
+        self.commands[:] = [("check", ["fixture-check"]), ("stage-debug", [command, "build", "--stage-app"])]
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        child = self.stage_receipt(value["steps"][1], session.inputs(self.root))
+        value["steps"][1]["receipt"] = str(child.relative_to(self.root))
+        inactive = self.base / "historical.json"
+        value["steps"].append({"name": "historical", "receipt": str(inactive)})
+        self.write(receipt, value)
+        with mock.patch.object(cleanup, "read_json", wraps=cleanup.read_json) as reads:
+            self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
+            self.assertEqual(sum(pathlib.Path(call.args[0]) == child for call in reads.call_args_list), 1)
+        self.assertIn(str(child.parent), cleanup.proof_resources(self.root, receipt))
+        self.assertIn(inactive, cleanup.reference_paths(value, self.root))
+
+    def test_managed_cleanup_rejects_unexpected_output_before_hashing_it(self):
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        unknown = self.base / "unexpected"
+        value["steps"][0]["outputs"][str(unknown)] = {"sha256": "prior"}
+        self.write(receipt, value)
+        with mock.patch.object(session, "tree_identity", wraps=session.tree_identity) as hashes:
+            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], "workflow-output-changed")
+        self.assertFalse(any(pathlib.Path(call.args[0]) == unknown for call in hashes.call_args_list))
+
     def test_untracked_fingerprinted_inputs_cannot_authorize_cleanup(self):
         (self.root / 'Classes').mkdir()
         (self.root / 'Classes/New.swift').write_text('struct New {}')

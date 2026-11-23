@@ -17,7 +17,7 @@ class WorkflowCompletionTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = pathlib.Path(self.temporary.name)
+        self.root = pathlib.Path(self.temporary.name).resolve()
         (self.root / "scripts").mkdir()
         (self.root / "scripts/verification-config.json").write_text('{"artifactRoot": "artifacts/verification"}')
         self.current = {"root": str(self.root), "head": "commit", "source": "source",

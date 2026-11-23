@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -50,6 +51,11 @@ class RegressionGuardrailTests(unittest.TestCase):
         (self.root / "GitXTests").mkdir()
         (self.root / "GitXTests/ContractTests.swift").write_text(
             "class ContractTests { func testNormal() {} func testBoundary() {} }\n")
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts/verification-config.json").write_text('{"artifactRoot":"artifacts/verification"}')
+        cache = mock.patch.dict(guard.os.environ, {"GITX_VERIFICATION_CACHE_ROOT": str(self.root / "cache")})
+        cache.start()
+        self.addCleanup(cache.stop)
         self.git("add", ".")
         self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "base")
         self.base = self.git("rev-parse", "HEAD").strip()
@@ -59,6 +65,29 @@ class RegressionGuardrailTests(unittest.TestCase):
             "requiredChecks": ["correctness"], "tests": [{"source": "GitXTests/ContractTests.swift",
             "identifier": "GitXTests/ContractTests/testNormal", "role": "valid", "oracle": "Observe publication"}]}]}
         self.context = Context(self.root)
+
+    def inspect_current(self, workflow):
+        path = self.root / "artifacts/verification/fixture/workflow.json"
+        return guard.inspect_workflow(path, {"runId": "fixture",
+            "artifactProofVersion": session.ARTIFACT_PROOF_VERSION, **workflow}, self.context)
+
+    def managed_child(self, name, payload):
+        child = self.root / "artifacts/verification" / name / "receipt.json"
+        derived = pathlib.Path(session.cache_paths(self.root, toolchain=self.context.toolchain)["derivedData"])
+        prior = pathlib.Path(payload["buildPaths"]["derivedData"])
+        shutil.copytree(prior, derived, dirs_exist_ok=True)
+        payload["runId"] = name
+        payload["buildPaths"]["derivedData"] = str(derived)
+        payload["evidence"]["products"] = session.product_identity(derived)
+        payload["evidence"]["results"] = {}
+        for step in payload["steps"]:
+            if step.get("xcresult"):
+                old = pathlib.Path(step["xcresult"])
+                result = child.parent / "Results" / old.name
+                shutil.copytree(old, result)
+                step["xcresult"] = str(result)
+                payload["evidence"]["results"][str(result)] = session.tree_identity(result)
+        return self.save(str(child.relative_to(self.root / "artifacts/verification")), payload)
 
     def test_task_changes_do_not_inherit_inspector_ui_requirements(self):
         catalogue = json.loads((ROOT / 'scripts/regression-contracts.json').read_text())['contracts']
@@ -245,44 +274,38 @@ class RegressionGuardrailTests(unittest.TestCase):
         first["invocation"]["preset"] = "build-tests"
         first["steps"] = []
         first["finishedAt"] = "2026-10-09T11:00:00Z"
-        self.save("build.json", first)
+        initial = self.managed_child("first", first)
         (path.parent / "products/Build/Products/GitX.app/binary").write_bytes(b"newest compilation")
-        payload["evidence"]["products"] = session.product_identity(path.parent / "products")
-        self.save(path.name, payload)
+        path = self.managed_child("correctness", payload)
         commands = dict(guard.dev_workflow.full_profile(self.root))
         steps = [{"name": name, "command": commands[name], "receipt": str(child), "status": "passed", "exitCode": 0,
                   "evidenceStatus": "valid", "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
-                  "toolchain": self.context.toolchain} for name, child in [("debug-test-build", path.parent / "build.json"), ("correctness", path)]]
-        workflow = {"schemaVersion": 2, "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
+                  "toolchain": self.context.toolchain} for name, child in [("debug-test-build", initial), ("correctness", path)]]
+        workflow = {"schemaVersion": 2, "artifactProofVersion": session.ARTIFACT_PROOF_VERSION, "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
                     "evidenceStatus": "valid", "steps": steps}
         workflow["finalCacheProducts"] = session.workflow_cache_snapshots(workflow, self.root)
-        records = guard.inspect_workflow(path.parent / "workflow.json", workflow, self.context)
+        records = self.inspect_current(workflow)
         self.assertTrue(all(r["validity"] == "valid" for r in records), records)
         workflow["steps"].reverse()
-        records = guard.inspect_workflow(path.parent / "workflow.json", workflow, self.context)
+        records = self.inspect_current(workflow)
         self.assertTrue(all(r["validity"] == "valid" for r in records), records)
-        (path.parent / "result.xcresult/tests.json").write_text("changed result")
-        records = guard.inspect_workflow(path.parent / "workflow.json", workflow, self.context)
+        (path.parent / "Results/result.xcresult/tests.json").write_text("changed result")
+        records = self.inspect_current(workflow)
         self.assertEqual(next(r for r in records if r["check"] == "correctness")["validity"], "invalid")
 
-    def test_legacy_cache_ownership_requires_unambiguous_provenance(self):
-        path, payload = self.receipt()
-        first = copy.deepcopy(payload)
-        first.pop("finishedAt")
-        first["evidence"]["products"] = {"different": "compilation"}
-        other = self.save("legacy.json", first)
-        workflow = {"steps": [{"receipt": str(path)}, {"receipt": str(other)}]}
-        self.assertTrue(session.final_cache_problems(workflow, self.root))
-        first["evidence"]["products"] = payload["evidence"]["products"]
-        self.save(other.name, first)
-        self.assertEqual(session.final_cache_problems(workflow, self.root), [])
+    def test_historical_workflow_does_not_read_child_proof(self):
+        child = mock.Mock(side_effect=AssertionError("Audit must not read child evidence"))
+        workflow = {"steps": [{"receipt": "historic.json"}]}
+        with self.assertRaisesRegex(ValueError, "audit only"):
+            session.workflow_cache_snapshots(workflow, self.root, receipt_reader=child)
+        child.assert_not_called()
 
     def test_missing_child_evidence_preserves_the_failed_observation(self):
         commands = dict(guard.dev_workflow.full_profile(self.root))
         workflow = {"schemaVersion": 2, "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
                     "evidenceStatus": "valid", "steps": [{"name": "correctness", "command": commands["correctness"],
                     "receipt": str(self.root / "missing.json"), "status": "failed", "exitCode": 65}]}
-        records = guard.inspect_workflow(self.root / "workflow.json", workflow, self.context)
+        records = self.inspect_current(workflow)
         self.assertEqual(records[0]["status"], "failed")
         self.assertEqual(records[0]["validity"], "invalid")
 
@@ -307,7 +330,7 @@ class RegressionGuardrailTests(unittest.TestCase):
                          "inputsAfter": self.context.inputs, "toolchain": "not-required"}]}
         with mock.patch.object(session, "final_cache_problems", return_value=[]), mock.patch.object(
                 session, "workflow_cache_snapshots", side_effect=ValueError("ambiguous")) as fallback:
-            records = guard.inspect_workflow(self.root / "workflow.json", workflow, self.context)
+            records = self.inspect_current(workflow)
         fallback.assert_not_called()
         self.assertEqual(records[0]["reasons"], [])
 
@@ -318,7 +341,7 @@ class RegressionGuardrailTests(unittest.TestCase):
                         {"name": name, "command": commands[name], "status": "failed", "exitCode": 2}
                         for name in ("static", "interop", "correctness")]}
         with mock.patch.object(session, "final_cache_problems", side_effect=OSError("unreadable cache")):
-            records = guard.inspect_workflow(self.root / "workflow.json", workflow, self.context)
+            records = self.inspect_current(workflow)
         self.assertEqual([record["check"] for record in records], ["static", "interop"])
         for record in records:
             self.assertEqual(record["status"], "failed")
@@ -366,7 +389,7 @@ class RegressionGuardrailTests(unittest.TestCase):
                    "inputsAfter": self.context.inputs, "steps": [{"name": "static", "status": "failed", "exitCode": 75,
                    "command": dict(guard.dev_workflow.full_profile(self.root))["static"], "evidenceStatus": "valid",
                    "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs, "toolchain": self.context.toolchain}]}
-        record = guard.inspect_workflow(self.root / "workflow.json", payload, self.context)[0]
+        record = self.inspect_current(payload)[0]
         self.assertEqual(record["reasons"], [])
         self.assertEqual(guard.assess_checks(["static"], [], [record])[0], "blocked")
 
@@ -378,7 +401,7 @@ class RegressionGuardrailTests(unittest.TestCase):
                               "status": "passed", "exitCode": 0, "evidenceStatus": "valid",
                               "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
                               "toolchain": "not-required"}]}
-        record = guard.inspect_workflow(self.root / "workflow.json", payload, self.context)[0]
+        record = self.inspect_current(payload)[0]
         self.assertEqual(record["status"], "blocked")
         self.assertEqual(record["finishedAt"], guard.timestamp(payload))
         self.assertEqual(guard.assess_checks(["static"], [], [record])[0], "blocked")
@@ -387,7 +410,8 @@ class RegressionGuardrailTests(unittest.TestCase):
         config = self.root / "scripts/verification-config.json"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text('{"artifactRoot":"artifacts/verification"}')
-        workflow = {"schemaVersion": 2, "runId": "fixture", "profile": "full", "status": "passed", "exitCode": 0,
+        workflow = {"schemaVersion": 2, "artifactProofVersion": session.ARTIFACT_PROOF_VERSION,
+                    "runId": "fixture", "profile": "full", "status": "passed", "exitCode": 0,
                     "finishedAt": "2026-10-11T12:00:00Z", "inputsBefore": self.context.inputs,
                     "inputsAfter": self.context.inputs, "evidenceStatus": "valid", "selectedChecks": ["static"],
                     "steps": [{"name": "static", "command": dict(guard.dev_workflow.full_profile(self.root))["static"],
@@ -467,7 +491,7 @@ class RegressionGuardrailTests(unittest.TestCase):
                               "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
                               "toolchain": "not-required"},
                              {"name": "ui", "status": "blocked", "failureCategory": "resource-busy"}]}
-        records = guard.inspect_workflow(self.root / "workflow.json", payload, self.context)
+        records = self.inspect_current(payload)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["check"], "static")
         self.assertEqual(records[0]["status"], "passed")
@@ -526,7 +550,7 @@ class RegressionGuardrailTests(unittest.TestCase):
                    "steps": [{"name": "static", "status": "failed", "exitCode": 1,
                    "command": dict(guard.dev_workflow.full_profile(self.root))["static"], "evidenceStatus": "valid",
                    "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs, "toolchain": self.context.toolchain}]}
-        failed = guard.inspect_workflow(self.root / "resumed.json", payload, self.context)[0]
+        failed = self.inspect_current(payload)[0]
         passed = {"check": "static", "validity": "valid", "status": "passed", "finishedAt": "2026-10-09T13:00:00+00:00", "receipt": "earlier", "tests": []}
         self.assertEqual(guard.assess_checks(["static"], [], [failed, passed])[0], "failed")
 
@@ -572,15 +596,30 @@ class RegressionGuardrailTests(unittest.TestCase):
         self.assertEqual(guard.inspect_receipt(path, self.context)["status"], "blocked")
 
     def test_workflow_cannot_relabel_a_wrong_child_receipt_as_a_pass(self):
-        path, payload = self.receipt()
+        _, payload = self.receipt()
+        path = self.managed_child("current-test", payload)
         workflow = {"schemaVersion": 2, "profile": "full", "status": "passed", "evidenceStatus": "valid",
                     "finishedAt": payload["finishedAt"], "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
                     "steps": [{"name": "release-test-build", "command": dict(guard.dev_workflow.full_profile(self.root))["release-test-build"],
                                "status": "passed", "exitCode": 0, "evidenceStatus": "valid", "inputsBefore": self.context.inputs,
                                "inputsAfter": self.context.inputs, "toolchain": self.context.toolchain, "receipt": str(path)}]}
-        record = guard.inspect_workflow(path, workflow, self.context)[0]
+        record = self.inspect_current(workflow)[0]
         self.assertIn("Child receipt does not match its workflow check", record["reasons"])
         self.assertEqual(record["validity"], "invalid")
+
+    def test_workflow_inspection_rejects_copies_and_symlinks_before_reading_children(self):
+        original, workflow, _, _ = self.workflow_admission_blocker()
+        copied = self.save("copied/workflow.json", workflow)
+        alias = copied.parent.parent / "alias/workflow.json"
+        alias.parent.mkdir()
+        alias.symlink_to(original)
+        historical = self.save("historical/workflow.json", workflow | {"runId": "historical", "artifactProofVersion": 1})
+        with mock.patch.object(session, "workflow_cache_snapshots", side_effect=AssertionError("Do not read child proof")):
+            records = guard.inspect_evidence([copied, alias, historical], self.context)
+        self.assertEqual([record["validity"] for record in records], ["invalid"] * 3)
+        self.assertIn("does not own its run", records[0]["reasons"][0])
+        self.assertIn("redirected", records[1]["reasons"][0])
+        self.assertIn("audit only", records[2]["reasons"][0])
 
     def test_malformed_receipt_is_visible_and_does_not_crash_batch(self):
         path = self.save("broken.json", ["not an object"])

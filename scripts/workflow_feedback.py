@@ -172,6 +172,11 @@ def test_file_selectors(root, paths):
         if not source.is_file():
             return []
         contents = source.read_text(errors="replace")
+        # The masker does not understand nested Swift block comments or raw
+        # string delimiters. A conservative full plan is safe even when these
+        # characters appear as ordinary text.
+        if path.endswith(".swift") and (re.search(r"/\*(?:(?!\*/).)*?/\*", contents, re.S) or '#"' in contents):
+            return []
         # Mask ordinary comments and strings. For unsupported declaration
         # forms, keep the plan broad instead of trusting a partial match.
         masked = re.sub(r'/\*.*?\*/|//[^\n]*|""".*?"""|"(?:\\.|[^"\\])*"',

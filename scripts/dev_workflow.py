@@ -62,6 +62,8 @@ def reuse_problem(step, current, command, mutable_caches=None, toolchain=None):
     if step.get("toolchain") != (toolchain if toolchain is not None else session.cache_paths()["toolchain"]):
         return "toolchain-changed"
     receipt_path = step.get("receipt")
+    if not receipt_path and pathlib.Path(command[0]).name == "xcodebuild.sh":
+        return "receipt-missing"
     if receipt_path:
         try:
             path = session.workflow_receipt_path(session.ROOT, receipt_path)
@@ -69,14 +71,21 @@ def reuse_problem(step, current, command, mutable_caches=None, toolchain=None):
                 return "receipt-missing"
             receipt = read_child_receipt(path)
             session.validate_evidence_paths(session.ROOT, path, receipt, step.get("toolchain"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError, RuntimeError):
             return "receipt-unreadable"
         evidence = receipt.get("evidence", {})
         if receipt.get("status") != "passed" or evidence.get("status") != "valid":
             return "child-check-or-evidence-not-passed"
         try:
-            problems = session.receipt_artifact_problems(receipt, session.ROOT, mutable_caches)
-        except (OSError, ValueError, TypeError, KeyError) as error:
+            if step.get("name") == "fixture-stability":
+                proof = {"artifactProofVersion": session.ARTIFACT_PROOF_VERSION, "steps": [step]}
+                children = (child for _, _, child in session.workflow_child_receipts(
+                    proof, session.ROOT, lambda child_path: receipt if path == child_path else read_child_receipt(child_path)))
+            else:
+                children = (receipt,)
+            problems = [problem for child in children
+                        for problem in session.receipt_artifact_problems(child, session.ROOT, mutable_caches)]
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError) as error:
             return "artifacts-unreadable:" + str(error)
         if problems:
             return "artifacts-changed:" + "; ".join(problems)
@@ -84,10 +93,7 @@ def reuse_problem(step, current, command, mutable_caches=None, toolchain=None):
         if not receipt_path or not staged_debug_matches(step, receipt, path):
             return "debug-staging-evidence-missing-or-changed"
     try:
-        outputs = step.get("outputs", {})
-        if outputs and (step.get("name") != "stage-debug" or set(outputs) != {str(session.ROOT / "build/GitX.app")}):
-            return "output-unreadable: unexpected staged output"
-        if any(session.tree_identity(path) != identity for path, identity in outputs.items()):
+        if any(session.tree_identity(path) != identity for path, identity in session.workflow_outputs(session.ROOT, step)):
             return "workflow-output-changed"
     except (OSError, ValueError, TypeError) as error:
         return "workflow-output-unreadable:" + str(error)
@@ -242,7 +248,7 @@ def check_reuse_reason(name, prior, current, command, caches, toolchain, history
         return "check-fixtures-after-native-failure"
     if prior is None:
         return "no-prior-evidence"
-    if name == "fixture-stability" and not prior.get("fixtureReceiptIdentity"):
+    if name == "fixture-stability" and not (prior.get("receipt") and prior.get("fixtureReceiptIdentity")):
         return "fixture-manifest-missing"
     return reuse_problem(prior, current, command, caches, toolchain)
 
@@ -305,8 +311,9 @@ def record_check(root, path, payload, name, command, current, toolchain, reason,
     if child_path.is_file():
         step["receipt"] = str(child_path)
         try:
+            child_path = session.workflow_receipt_path(root, child_path)
             child_receipt = read_child_receipt(child_path)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RuntimeError):
             child_receipt = {}
         if child_receipt.get("evidence", {}).get("status") != "valid":
             step["evidenceStatus"] = "invalid"
@@ -319,6 +326,7 @@ def record_check(root, path, payload, name, command, current, toolchain, reason,
             step["evidenceProblems"] = ["Fixture manifest is missing"]
         else:
             step["fixtureReceiptIdentity"] = session.file_identity(child_path)
+            step["fixtureOutcome"] = child_receipt.get("fixtureOutcome")
     if name == "stage-debug" and status == 0:
         try:
             step["outputs"][str(root / "build/GitX.app")] = session.tree_identity(root / "build/GitX.app")
@@ -402,7 +410,7 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
                 if status and not stopped:
                     stopped, last_failure = status, step
             if cancelled and not sent_interrupt:
-                stopped = 128 + cancelled
+                stopped = stopped or 128 + cancelled
                 sent_interrupt = True
                 for process, _ in running.values():
                     if process.poll() is None:
@@ -443,7 +451,7 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
                     running[name] = (process, (command, current, selection["toolchain"], reason, child_id, started))
             if running:
                 time.sleep(.15)
-        return stopped, last_failure
+        return stopped or (128 + cancelled if cancelled else 0), last_failure
     finally:
         for process, _ in running.values():
             if process.poll() is None:
@@ -493,8 +501,7 @@ def verify(args):
         if not path.is_file():
             raise ValueError("Resume requires a workflow receipt; historical receipts cannot be reused")
         payload = json.loads(path.read_text())
-        if payload.get("schemaVersion") != 2:
-            raise ValueError("Historical workflow receipts lack reuse evidence")
+        session.require_current_workflow(root, path, payload)
     else:
         if path.exists():
             raise ValueError("Run already exists; use --resume or a fresh run ID")
@@ -511,8 +518,7 @@ def verify(args):
                 # A previous producer may have finished while this attempt
                 # waited. Read and mutate its receipt only after ownership.
                 payload = json.loads(path.read_text())
-                if payload.get("schemaVersion") != 2:
-                    raise ValueError("Historical workflow receipts lack reuse evidence")
+                session.require_current_workflow(root, path, payload)
                 if payload.get("evidenceReuse"):
                     raise ValueError("Retry a cross-commit attempt with a fresh run ID")
                 previous_payload = dict(payload)
@@ -620,18 +626,14 @@ def verify(args):
                 except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
                     problems.append("Child receipt cannot be validated: " + str(error))
                 for step in active:
-                    for output, identity in step.get("outputs", {}).items():
-                        if step.get("name") != "stage-debug" or output != str(root / "build/GitX.app"):
-                            problems.append("Unexpected verification output path")
-                            continue
-                        try:
+                    try:
+                        for output, identity in session.workflow_outputs(root, step):
                             if identity is None or session.tree_identity(output) != identity:
-                                problems.append("Workflow output missing or changed: " + output)
-                        except (OSError, ValueError, TypeError) as error:
-                            problems.append("Workflow output cannot be validated: " + output + ": " + str(error))
+                                problems.append("Workflow output missing or changed: " + str(output))
+                    except (OSError, ValueError, TypeError, RuntimeError) as error:
+                        problems.append("Workflow output cannot be validated: " + str(error))
                 if problems:
                     return finish_invalid(path, payload, problems, attempt_started)
-                session.atomic_json(path, payload)
                 payload["attemptDurationSeconds"] = round(time.monotonic() - attempt_started, 3)
                 session.atomic_json(path, payload)
                 print(f"Checks: {len(payload['executedChecks'])} executed, {len(payload['reusedChecks'])} reused; "

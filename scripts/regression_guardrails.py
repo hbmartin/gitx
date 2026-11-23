@@ -399,6 +399,8 @@ def inspect_receipt(path, context, expected_check=None, mutable_caches=None, exp
                     record["reasons"].append("Package coverage gate did not pass")
         else:
             record["reasons"] = input_problems(payload.get("evidence"), context, expected_inputs)
+            if actual_check == "fixture-stability" and payload.get("fixtureOutcome"):
+                record["fixtureOutcome"] = payload["fixtureOutcome"]
             if actual_check not in {"static", "whitespace", "fixture-stability"} and payload.get("paths", {}).get("toolchain") != context.toolchain:
                 record["reasons"].append("Coordination receipt lacks matching toolchain provenance")
         if not record["finishedAt"] and not payload.get("entry"):
@@ -423,6 +425,7 @@ def inspect_receipt(path, context, expected_check=None, mutable_caches=None, exp
 
 
 def inspect_workflow(path, payload, context):
+    path = session.require_current_workflow(context.root, path, payload)
     records = []
     commands = dict(dev_workflow.full_profile(context.root))
     global_problems = input_problems({"status": "invalid" if payload.get("evidenceStatus") == "invalid" else "valid",
@@ -448,21 +451,19 @@ def inspect_workflow(path, payload, context):
         global_problems.append(str(error))
     active_steps = session.active_workflow_steps(payload)
     current_status = observed_status(dict(payload, steps=active_steps))
-    managed = payload.get("artifactProofVersion") == session.ARTIFACT_PROOF_VERSION
-    if managed:
-        try:
-            for step, child_path, child in session.workflow_child_receipts(payload, context.root):
-                if step.get("name") == "fixture-stability" and str(child_path) != step.get("receipt"):
-                    global_problems.extend(session.receipt_artifact_problems(child, context.root, mutable_caches, context.identity))
-                if step.get("name") == "stage-debug" and not dev_workflow.staged_debug_matches(step, child, child_path):
-                    global_problems.append("Staged app does not match the Debug build receipt")
-        except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
-            global_problems.append("Child evidence unavailable: " + str(error))
+    try:
+        for step, child_path, child in session.workflow_child_receipts(payload, context.root):
+            if step.get("name") == "fixture-stability" and child_path != session.workflow_receipt_path(context.root, step["receipt"]):
+                global_problems.extend(session.receipt_artifact_problems(child, context.root, mutable_caches, context.identity))
+            if step.get("name") == "stage-debug" and not dev_workflow.staged_debug_matches(step, child, child_path):
+                global_problems.append("Staged app does not match the Debug build receipt")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError) as error:
+        global_problems.append("Child evidence unavailable: " + str(error))
     for step in active_steps:
         name = step.get("name")
         if step.get("receipt"):
             child = inspect_receipt(result_path(context, step["receipt"]), context, name, mutable_caches, carried.get(name),
-                                    managed=managed)
+                                    managed=True)
         else:
             child = {"receipt": str(path), "check": name, "status": observed_status(step),
                      "validity": "invalid", "tests": [], "reasons": [], "finishedAt": timestamp(payload)}
@@ -474,12 +475,12 @@ def inspect_workflow(path, payload, context):
             problems.append("Workflow toolchain changed")
         if step.get("status") == "passed" and step.get("exitCode") != 0:
             problems.append("Passed workflow step disagrees with command exit")
-        for output, expected in step.get("outputs", {}).items():
-            if managed and (name != "stage-debug" or output != str(context.root / "build/GitX.app")):
-                problems.append("Unexpected verification output path")
-                continue
-            if expected is None or context.identity("results", result_path(context, output)) != expected:
-                problems.append("Workflow output missing or changed: " + output)
+        try:
+            for output, expected in session.workflow_outputs(context.root, step):
+                if expected is None or context.identity("results", output) != expected:
+                    problems.append("Workflow output missing or changed: " + str(output))
+        except (OSError, ValueError, TypeError, RuntimeError) as error:
+            problems.append(str(error))
         if name == "stage-debug" and str(context.root / "build/GitX.app") not in step.get("outputs", {}):
             problems.append("Staged Debug app identity is missing")
         child["reasons"].extend(problems)
@@ -512,14 +513,11 @@ def inspect_workflow_blocker(path, payload, context):
             any(not isinstance(check, str) or check not in canonical_checks for check in checks) or
             len(set(checks)) != len(checks)):
         raise ValueError("Unrecognized workflow admission blocker")
-    workflow_path = artifact / run_id / "workflow.json"
-    if (payload.get("workflowReceipt") != str(workflow_path) or workflow_path.is_symlink() or
-            workflow_path.parent.is_symlink()):
+    workflow_path = session.workflow_receipt_path(context.root, artifact / run_id / "workflow.json", workflow=True)
+    if payload.get("workflowReceipt") != str(workflow_path):
         raise ValueError("Workflow blocker does not name its owned receipt")
     workflow = json.loads(workflow_path.read_text())
-    if (not isinstance(workflow, dict) or type(workflow.get("schemaVersion")) is not int or
-            workflow["schemaVersion"] != 2 or workflow.get("runId") != run_id):
-        raise ValueError("Workflow blocker reference is not an owned workflow")
+    session.require_current_workflow(context.root, workflow_path, workflow)
     if not payload.get("startedAt") or not payload.get("finishedAt"):
         raise ValueError("Workflow admission blocker must have attempt timestamps")
     started = timestamp({"finishedAt": payload["startedAt"]})
@@ -546,16 +544,19 @@ def inspect_evidence(paths, context):
     records = []
     for value in dict.fromkeys(str(pathlib.Path(p).absolute()) for p in paths):
         original = pathlib.Path(value)
-        path = original.resolve()
         try:
+            workflow = original.name == "workflow.json"
+            path = session.workflow_receipt_path(context.root, original, workflow=workflow)
             payload = json.loads(path.read_text())
-            if isinstance(payload, dict) and "workflowReceipt" in payload:
+            if workflow:
+                records.extend(inspect_workflow(original, payload, context))
+            elif isinstance(payload, dict) and "workflowReceipt" in payload:
                 records.extend(inspect_workflow_blocker(original, payload, context))
-            elif isinstance(payload, dict) and "profile" in payload and "invocation" not in payload:
-                records.extend(inspect_workflow(path, payload, context))
             else:
-                records.append(inspect_receipt(path, context))
-        except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as error:
+                if not isinstance(payload, dict) or payload.get("artifactProofVersion") != session.ARTIFACT_PROOF_VERSION:
+                    raise ValueError("Historical receipt is for audit only")
+                records.append(inspect_receipt(path, context, managed=True))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError, subprocess.SubprocessError) as error:
             records.append({"receipt": value, "check": None, "validity": "invalid", "status": "unknown",
                             "reasons": [str(error)], "tests": [], "finishedAt": ""})
     return records
@@ -574,6 +575,8 @@ def assess_checks(checks, contracts, records):
             chosen[name] = latest
             status = latest["status"] if latest["status"] in {"passed", "failed", "blocked"} else "incomplete"
             assessed.append({"check": name, "status": status, "receipt": latest["receipt"]})
+            if latest.get("fixtureOutcome"):
+                assessed[-1]["fixtureOutcome"] = latest["fixtureOutcome"]
         else:
             assessed.append({"check": name, "status": "incomplete", "receipt": None})
     for contract in contracts:
