@@ -134,7 +134,9 @@ class FeedbackTests(unittest.TestCase):
         with mock.patch.object(workflow.feedback, "changed_paths", return_value=("HEAD", ["AGENTS.md"])):
             commands, selection = workflow.selected_commands(args, self.root)
         self.assertEqual([(name, command) for name, command in commands if name != "static"],
-                         [(name, command) for name, command in workflow.full_profile(self.root) if name != "static"])
+                         [(name, command) for name, command in workflow.full_profile(self.root)
+                          if name != "static" and name not in workflow.feedback.INTEGRATION_ONLY])
+        self.assertIn("analyze", selection["deferredToIntegration"])
         self.assertEqual(dict(commands)["static"], [str(self.root / "scripts/verify_static.sh"), "HEAD"])
         self.assertFalse(selection["deliveryEligible"])
         self.assertNotIn("--feedback", dict(commands)["static"])

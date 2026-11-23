@@ -454,8 +454,18 @@ run_supervised_step() {
 	result_path=$3
 	shift 3
 	started=$(python3 -c 'import time; print(time.time())')
+	local original_supervisor_argument_count=${#supervisor_arguments[@]}
+	# Xcode can regenerate checked-in scripting headers and ObjectiveGit libraries
+	# during builds. Release this lease before tests or semantic analysis run.
+	if [[ "$1" == "$xcodebuild" ]]; then
+		local build_phase=1 argument
+		for argument in "$@"; do
+			if [[ "$argument" == test-without-building ]]; then build_phase=0; break; fi
+		done
+		if (( build_phase )); then supervisor_arguments+=(--xcode-build); fi
+	fi
 	local supervisor_command=(python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" --output-log "$log_path" ${supervisor_arguments[@]+"${supervisor_arguments[@]}"} -- "$@")
-	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" && ${#supervisor_arguments[@]} -eq 0 ]]; then
+	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" && $original_supervisor_argument_count -eq 0 ]]; then
 		"${supervisor_command[@]}" 2>&1 | xcbeautify --disable-logging
 		step_status=${PIPESTATUS[0]}
 	else

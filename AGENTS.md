@@ -15,7 +15,7 @@
 - Use the repo-local `$gitx-testing` skill whenever changing GitX behavior, fixing a bug, adding or reviewing tests, diagnosing test, coverage, analyzer, sanitizer, or performance failures, changing verification CI or shared test plans, or preparing an Objective-C-to-Swift conversion.
 - Track test coverage and ensure it remains high
 - If asked to change behavior that lacks meaningful coverage, first add and commit passing characterization tests for the current behavior. Then confirm the new or regression expectation fails locally, implement until it passes, and commit the expectation with the implementation. Never commit an intentionally failing test.
-- After committing a feature, run the test suite and ensure all tests pass, and that test coverage has increased.
+- Run focused regression checks for each feature commit. Run complete correctness and coverage on the committed integration candidate before verified app delivery. Enforce every coverage floor and ratchet from genuine measured improvements.
 - Enforce coverage with `scripts/check_coverage.py <result.xcresult>` and the checked-in `scripts/coverage-baseline.json`; after an increase, use `--record-improvements` to raise floors, which must never be lowered without explicit approval.
 - Before converting an Objective-C implementation to Swift, require at least 90% line coverage for that implementation and explicit XCTest coverage of normal behavior, failures, and boundary cases. For ordinary feature work, cover the affected behavior completely and ratchet the baseline without requiring unrelated legacy files to reach 90%.
 - Keep correctness, UI, performance, and sanitizer execution in explicit shared test plans. XCTest remains the repository's test framework.
@@ -25,6 +25,8 @@
 - Do not introduce a new testing or analysis dependency without explicit approval.
 
 ### Verification
+- Use `python3 scripts/dev_workflow.py verify --profile feedback` during iteration. Run the complete local profile for integration. Keep GitHub’s required merge checks, including full semantic analysis.
+- For independent read-heavy tasks, the lead may delegate to up to three agents. Assign bounded read-only work and request concise findings with file or receipt references. The lead owns edits, native test execution, coverage decisions, and delivery.
 - Add log statements (more is better) so you can easily inspect real app runtime behavior.
 - Run SwiftLint and SwiftFormat at the exact versions in `Mintfile` through `scripts/run_pinned_tool.sh`.
 - Treat the Objective-C header baseline, SwiftLint baseline, and exact analyzer-warning baseline as shrinking debt: remove stale entries in the same change that fixes them.

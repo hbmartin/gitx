@@ -167,3 +167,14 @@ _Avoid_: Reopened repository, rebound editor
 **Unverified Reset Outcome**:
 A recovery outcome in which Git may have changed the checkout but GitX cannot establish that the confirmed destination and replaced Commit match the Reset Preview.
 _Avoid_: No changes made, safely rolled back
+
+## Verification
+
+**Integration Candidate**:
+A committed set of changes being evaluated for merge or verified local delivery.
+
+**Fixture Stability Check**:
+Repeated verification of the native test setup, execution, and teardown implicated by a change or failure.
+
+**Verification Evidence**:
+Recorded results and provenance that establish which checks passed for an integration candidate.

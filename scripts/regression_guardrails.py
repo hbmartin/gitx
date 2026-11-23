@@ -21,6 +21,7 @@ import dev_workflow
 import report_xcresult
 import verification_support as verification
 import workflow_session as session
+import workflow_evidence_reuse as evidence_reuse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CATALOGUE = ROOT / "scripts/regression-contracts.json"
@@ -258,14 +259,14 @@ class EvidenceContext:
         return self.memo[key]
 
 
-def input_problems(evidence, context):
+def input_problems(evidence, context, expected_inputs=None):
     if not isinstance(evidence, dict) or evidence.get("status") != "valid":
         return ["Evidence is not recorded as valid"]
     before, after = evidence.get("inputsBefore"), evidence.get("inputsAfter")
     required = {"root", "head", "source", "dependencies", "plans"}
     if not isinstance(before, dict) or not isinstance(after, dict) or not required <= before.keys() or not required <= after.keys():
         return ["Historical or incomplete input provenance"]
-    changed = session.changed_inputs(before, after) + session.changed_inputs(after, context.inputs)
+    changed = session.changed_inputs(before, after) + session.changed_inputs(after, expected_inputs if expected_inputs is not None else context.inputs)
     if evidence.get("changedInputs"):
         changed.append("recorded inputs during verification")
     if before["root"] != str(context.root) or after["root"] != str(context.root):
@@ -278,9 +279,9 @@ def result_path(context, value):
     return path if path.is_absolute() else context.root / path
 
 
-def xcode_problems(payload, context, mutable_caches=None):
+def xcode_problems(payload, context, mutable_caches=None, expected_inputs=None):
     evidence = payload.get("evidence", {})
-    problems = input_problems(evidence, context)
+    problems = input_problems(evidence, context, expected_inputs)
     if payload.get("schemaVersion") != 2:
         problems.append("Historical receipt schema")
     toolchain = payload.get("toolchain", {})
@@ -317,9 +318,13 @@ def receipt_check(payload):
         name = preset[5:]
         if name == "correctness" and configuration == "Release":
             return "release-contracts"
+        if name == "correctness" and configuration == "Debug" and any(
+                arg == "-only-testing:GitXTests/GitBinaryTests/testEmbeddedToolReportsTheOwningApplicationVersion"
+                for arg in invocation.get("arguments", ())):
+            return "version-contract"
         return name
     entry = pathlib.Path(payload.get("entry", "")).name
-    return {"verify_static.sh": "static", "check_test_build_contracts.py": "interop"}.get(entry)
+    return {"verify_static.sh": "static", "check_test_build_contracts.py": "interop", "check_fixture_stability.py": "fixture-stability"}.get(entry)
 
 
 def timestamp(payload):
@@ -349,7 +354,7 @@ def observed_status(payload):
     return payload.get("status", "unknown")
 
 
-def inspect_receipt(path, context, expected_check=None, mutable_caches=None):
+def inspect_receipt(path, context, expected_check=None, mutable_caches=None, expected_inputs=None):
     path = pathlib.Path(path)
     record = {"receipt": str(path), "check": expected_check, "validity": "invalid",
               "status": "unknown", "reasons": [], "tests": [], "finishedAt": ""}
@@ -366,7 +371,7 @@ def inspect_receipt(path, context, expected_check=None, mutable_caches=None):
         record.update(check=actual_check, status=observed_status(payload),
                       finishedAt=timestamp(payload))
         if "invocation" in payload:
-            record["reasons"] = xcode_problems(payload, context, mutable_caches)
+            record["reasons"] = xcode_problems(payload, context, mutable_caches, expected_inputs)
             for step in payload.get("steps", []):
                 if step.get("xcresult") and step["xcresult"].endswith(".xcresult"):
                     try:
@@ -389,8 +394,8 @@ def inspect_receipt(path, context, expected_check=None, mutable_caches=None):
                 if not any(s.get("name") == "coverage:" + record["check"] and s.get("status") == "passed" for s in payload.get("steps", [])):
                     record["reasons"].append("Package coverage gate did not pass")
         else:
-            record["reasons"] = input_problems(payload.get("evidence"), context)
-            if actual_check not in {"static", "whitespace"} and payload.get("paths", {}).get("toolchain") != context.toolchain:
+            record["reasons"] = input_problems(payload.get("evidence"), context, expected_inputs)
+            if actual_check not in {"static", "whitespace", "fixture-stability"} and payload.get("paths", {}).get("toolchain") != context.toolchain:
                 record["reasons"].append("Coordination receipt lacks matching toolchain provenance")
         if not record["finishedAt"] and not payload.get("entry"):
             record["reasons"].append("Receipt did not finish")
@@ -430,17 +435,24 @@ def inspect_workflow(path, payload, context):
                 mutable_caches = session.workflow_cache_snapshots(payload, context.root)
     except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as error:
         global_problems.append("Final cache evidence unavailable: " + str(error))
+    carried = {}
+    try:
+        carried = evidence_reuse.validation_inputs(context.root, payload, context.inputs)
+        if carried and payload.get("status") == "passed":
+            evidence_reuse.verify_staged_version(context.root, context.inputs["head"])
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        global_problems.append(str(error))
     active_steps = session.active_workflow_steps(payload)
     current_status = observed_status(dict(payload, steps=active_steps))
     for step in active_steps:
         name = step.get("name")
         if step.get("receipt"):
-            child = inspect_receipt(result_path(context, step["receipt"]), context, name, mutable_caches)
+            child = inspect_receipt(result_path(context, step["receipt"]), context, name, mutable_caches, carried.get(name))
         else:
             child = {"receipt": str(path), "check": name, "status": observed_status(step),
                      "validity": "invalid", "tests": [], "reasons": [], "finishedAt": timestamp(payload)}
         problems = global_problems + input_problems({"status": step.get("evidenceStatus"),
-            "inputsBefore": step.get("inputsBefore"), "inputsAfter": step.get("inputsAfter")}, context)
+            "inputsBefore": step.get("inputsBefore"), "inputsAfter": step.get("inputsAfter")}, context, carried.get(name))
         if name not in commands or not session.command_matches(step, commands.get(name, [])):
             problems.append("Workflow command does not match its canonical check")
         if name not in {"static", "whitespace"} and step.get("toolchain") != context.toolchain:

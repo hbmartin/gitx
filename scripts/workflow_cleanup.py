@@ -961,6 +961,12 @@ def eligibility(root, receipt):
     tracked = set(session.git(root, "ls-files", "-z").split("\0"))
     if set(current["files"]) - tracked:
         return None, "uncommitted-build-inputs"
+    try:
+        carried = workflow.evidence_reuse.validation_inputs(root, value, current)
+        if carried:
+            workflow.evidence_reuse.verify_staged_version(root, current["head"])
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return None, "cross-commit-evidence-changed"
     expected = dict(workflow.full_profile(root))
     try:
         steps = session.active_workflow_steps(value, require_selected_checks=True)
@@ -1004,7 +1010,8 @@ def eligibility(root, receipt):
         return None, "final-cache-products-changed"
     for step in steps:
         command = expected[step["name"]]
-        if not session.command_matches(step, command) or step.get("status") != "passed" or step.get("evidenceStatus") != "valid" or step.get("toolchain") != toolchain or session.changed_inputs(step.get("inputsAfter", {}), current):
+        step_inputs = carried.get(step["name"], current)
+        if not session.command_matches(step, command) or step.get("status") != "passed" or step.get("evidenceStatus") != "valid" or step.get("toolchain") != toolchain or session.changed_inputs(step.get("inputsAfter", {}), step_inputs):
             return None, "verification-evidence-no-longer-reusable"
         if pathlib.Path(command[0]).name == "xcodebuild.sh" and not step.get("receipt"):
             return None, "missing-child-receipt"
@@ -1017,7 +1024,7 @@ def eligibility(root, receipt):
             child = child_receipt(child_path)
             evidence = child.get("evidence", {})
             if child.get("schemaVersion") != 2 or child.get("status") != "passed" or evidence.get("status") != "valid" or any(
-                    session.changed_inputs(evidence.get(key, {}), current) for key in ("inputsBefore", "inputsAfter")):
+                    session.changed_inputs(evidence.get(key, {}), step_inputs) for key in ("inputsBefore", "inputsAfter")):
                 return None, "invalid-child-evidence"
             if session.receipt_artifact_problems(child, root, caches, identity=artifact_identity):
                 return None, "child-artifacts-changed"
@@ -1035,6 +1042,9 @@ def proof_resources(root, receipt):
     resources = {str(pathlib.Path(receipt).resolve().parent), str(root / "build/GitX.app"),
                  str(records.common_directory(root) / "ledger.json"), str(pending_path(root))}
     value = read_json(receipt, {})
+    source = value.get("evidenceReuse", {}).get("sourceReceipt")
+    if source:
+        resources.add(str(pathlib.Path(source).resolve().parent))
     for step in value.get("steps", []):
         if step.get("receipt"):
             path = pathlib.Path(step["receipt"])
@@ -1045,6 +1055,9 @@ def proof_resources(root, receipt):
             # Cleanup validates products; it never needs the console session.
             resources.update(r for r in session.entry_resources(pathlib.Path(command[0]).name, command[1:], root, toolchain=toolchain)[0]
                              if not r.startswith("desktop:"))
+    if value.get("selection", {}).get("jobs") == 2:
+        for name in workflow.OFFSCREEN_BUILDS & {step.get("name") for step in value.get("steps", ())}:
+            resources.update(workflow.offscreen_environment(root, name, toolchain).values())
     return resources
 
 

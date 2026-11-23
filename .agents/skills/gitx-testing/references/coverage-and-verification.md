@@ -73,7 +73,7 @@ Inspect the scheme and every shared `.xctestplan` before use. The current intend
 
 | Risk or change | Required verification |
 | --- | --- |
-| Any feature or bug fix | Focused XCTest during development; full correctness plan with coverage after the feature commit |
+| Any feature or bug fix | Focused XCTest during development; full correctness plan with coverage on the committed integration candidate |
 | Controller, view, binding, responder-chain, accessibility, or end-to-end workflow | Relevant app-hosted XCTest and UI plan; diagnostic screenshot attachment for new feature or visible UI change |
 | Performance-sensitive algorithm or operation | Correctness plan plus the performance plan |
 | Pointer, C, Core Foundation, ownership, buffer, or unsafe-memory behavior | Correctness plan plus Address/Undefined Behavior Sanitizers |
