@@ -5,7 +5,7 @@ description: Plan, add, run, and review XCTest-based verification for GitX. Use 
 
 For resource coordination, evidence reuse, work ownership and review targets, use the repo-local [development-workflow skill](../development-workflow/SKILL.md). Compile Debug and Release test consumers before long suites. Coverage ratchets require one complete passed local correctness receipt with valid provenance; rerun the plain checker after the atomic ratchet.
 
-Use the coordinator's `feedback` profile and target-specific `--only-testing` selectors during iteration. Feedback and profiling receipts remain partial, including feedback that expands to every check. Final delivery keeps the full canonical profile, post-commit correctness and coverage, and all task-specific plans. Native compilation-cache experiments must qualify against the existing build ceilings and verification equivalence before an exact context is enabled automatically.
+Use the coordinator's `feedback` profile and target-specific `--only-testing` selectors during iteration. Feedback and profiling receipts remain partial, including feedback that expands to every check. Final delivery keeps the full canonical profile, correctness and coverage on the committed integration candidate, and all task-specific plans. Native compilation-cache experiments must qualify against the existing build ceilings and verification equivalence before an exact context is enabled automatically.
 
 # GitX Testing
 
@@ -74,9 +74,9 @@ Run correctness tests with coverage into a fresh result bundle, then execute the
 - Track every conversion candidate in the checked-in baseline before conversion. If it is not listed, confirm its coverage in the raw `xccov` report, add it at the measured floor using the current checker's precision policy, and prove the plain checker passes.
 - When a conversion changes a covered path from `.m` to `.swift`, deliberately replace the key while preserving the exact old floor, prove the plain checker passes, and only then use `--record-improvements`. The checker cannot infer a rename.
 
-## Verify after the feature commit
+## Verify the integration candidate
 
-After committing production behavior, rerun the full correctness plan with coverage, enforce and record coverage improvements, run static verification, and select every relevant additional plan or check:
+Use focused regression checks for each feature commit. On the committed integration candidate, run full correctness with coverage, enforce and record genuine coverage improvements, run static verification, and select every relevant additional plan or check:
 
 - UI plan for controllers, views, bindings, responder behavior, accessibility, or user workflows;
 - performance plan for performance-sensitive work;
