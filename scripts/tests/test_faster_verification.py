@@ -107,16 +107,20 @@ class EvidenceLineageTests(unittest.TestCase):
 
 class VerificationSchedulingTests(unittest.TestCase):
     def test_independent_checks_overlap_while_native_check_owns_its_lane(self):
-        self.assertTrue(workflow.permitted_check("analyze", {"correctness"}, {"analyze", "ui"}))
-        self.assertFalse(workflow.permitted_check("ui", {"correctness"}, {"ui"}))
-        self.assertFalse(workflow.permitted_check("analyze", {"debug-test-build"}, {"analyze"}))
-        self.assertFalse(workflow.permitted_check("performance", {"analyze"}, {"performance", "stage-debug"}))
-        self.assertFalse(workflow.permitted_check("stage-debug", set(), {"performance", "stage-debug"}))
-        self.assertTrue(workflow.permitted_check("stage-debug", set(), {"stage-debug"}))
-        with mock.patch.dict(workflow.os.environ, {"GITX_SOURCE_PACKAGE_CACHE": "/a/shared/path"}):
-            self.assertFalse(workflow.permitted_check("analyze", {"correctness"}, {"analyze"}))
-            self.assertFalse(workflow.permitted_check("analyze", set(), {"analyze", "correctness"}))
-            self.assertTrue(workflow.permitted_check("analyze", set(), {"analyze"}))
+        overrides = ("GITX_DERIVED_DATA", "GITX_SWIFTPM_BUILD_ROOT", "GITX_SOURCE_PACKAGE_CACHE")
+        clean_environment = {key: value for key, value in workflow.os.environ.items() if key not in overrides}
+        with mock.patch.dict(workflow.os.environ, clean_environment, clear=True):
+            self.assertTrue(workflow.permitted_check("analyze", {"correctness"}, {"analyze", "ui"}))
+            self.assertFalse(workflow.permitted_check("ui", {"correctness"}, {"ui"}))
+            self.assertFalse(workflow.permitted_check("analyze", {"debug-test-build"}, {"analyze"}))
+            self.assertFalse(workflow.permitted_check("performance", {"analyze"}, {"performance", "stage-debug"}))
+            self.assertFalse(workflow.permitted_check("stage-debug", set(), {"performance", "stage-debug"}))
+            self.assertTrue(workflow.permitted_check("stage-debug", set(), {"stage-debug"}))
+            for key in overrides:
+                with self.subTest(override=key), mock.patch.dict(workflow.os.environ, {key: "/a/shared/path"}):
+                    self.assertFalse(workflow.permitted_check("analyze", {"correctness"}, {"analyze"}))
+                    self.assertFalse(workflow.permitted_check("analyze", set(), {"analyze", "correctness"}))
+                    self.assertTrue(workflow.permitted_check("analyze", set(), {"analyze"}))
 
     def test_failure_stops_admission_and_settles_running_peer(self):
         def job(exit_code, waits):
@@ -151,6 +155,33 @@ class FeedbackAndFixtureSelectionTests(unittest.TestCase):
             path.write_text("@MainActor\nfinal class FixtureTests: XCTestCase {}\n")
             self.assertEqual(feedback.test_file_selectors(root, ["GitXTests/Fixture.swift"]), ["GitXTests/FixtureTests"])
             self.assertEqual(feedback.test_file_selectors(root, ["GitXTests/Fixture.swift", "GitXTests/Removed.swift"]), [])
+
+    def test_focused_feedback_discovers_same_line_actor_attributes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            path = root / "GitXTests/Mixed.swift"
+            path.parent.mkdir()
+            path.write_text("final class A: XCTestCase {}\n@MainActor final class B: XCTestCase {}\n")
+            self.assertEqual(feedback.test_file_selectors(root, ["GitXTests/Mixed.swift"]),
+                             ["GitXTests/A", "GitXTests/B"])
+            path.write_text("final class A: XCTestCase {}\nfinal class B: SharedTestCase {}\n")
+            args = workflow.parser().parse_args(["verify", "--profile", "feedback"])
+            with mock.patch.object(feedback, "changed_paths", return_value=("base", ["GitXTests/Mixed.swift"])), \
+                    mock.patch.object(feedback, "contract_selectors", return_value=["GitXTests/A"]):
+                commands, selection = workflow.selected_commands(args, root)
+            self.assertIn("correctness", dict(commands))
+            self.assertEqual(selection["testSelectors"], [])
+
+    def test_deleted_script_test_uses_broad_discovery_even_after_rename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            path = root / "scripts/tests/test_destination.py"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            self.assertEqual(feedback.script_test_patterns(["scripts/tests/test_destination.py"], root),
+                             ["test_destination.py"])
+            self.assertEqual(feedback.script_test_patterns(
+                ["scripts/tests/test_original.py", "scripts/tests/test_destination.py"], root), ["test*.py"])
 
     def test_shared_fixture_changes_cover_every_relevant_plan_but_ordinary_changes_do_not(self):
         self.assertEqual(fixtures.select(["Classes/Unrelated.swift"]), {})

@@ -123,7 +123,7 @@ def selected_commands(args, root):
             commands = [(name, command) for name, command in commands if name == "static"] + [
                 (name, command) for name, command in full_profile(root) if name in groups]
             selection["testSelectionReason"] = "changed-test-classes"
-        else:
+        elif not any(path.startswith(("GitXTests/", "GitXUITests/")) for path in paths):
             names_in_feedback = {name for name, _ in commands}
             discovered = feedback.contract_selectors(root, paths) if names_in_feedback & {"correctness", "ui"} else []
             by_target = {"GitXTests": "correctness", "GitXUITests": "ui"}
