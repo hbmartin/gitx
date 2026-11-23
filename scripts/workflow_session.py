@@ -3103,7 +3103,7 @@ def uses_atomic_coverage(arguments):
 def entry_resources(entry, arguments, root=ROOT, toolchain=None):
     if arguments in (["--help"], ["-h"], ["--version"]):
         return [], {}
-    if entry == "verify_static.sh" and toolchain is None:
+    if entry in {"verify_static.sh", "check_fixture_stability.py"} and toolchain is None:
         return [], {}
     if entry == "observe_app.sh" or (entry == "run_app.sh" and any(value in arguments for value in ("--no-build", "--stop"))):
         return [str(pathlib.Path(root) / "build/GitX.app"), f"desktop:{os.getuid()}"], {}
@@ -3265,6 +3265,7 @@ def main():
     bounded.add_argument("--timeout", type=float, default=float(os.environ.get("GITX_COMMAND_TIMEOUT", "7200")))
     bounded.add_argument("--startup-timeout", type=float)
     bounded.add_argument("--desktop", action="store_true")
+    bounded.add_argument("--xcode-build", action="store_true")
     bounded.add_argument("--diagnostics", type=pathlib.Path)
     bounded.add_argument("--output-log", type=pathlib.Path)
     bounded.add_argument("--native-test-root", type=pathlib.Path)
@@ -3295,7 +3296,14 @@ def main():
             print("atomic" if uses_atomic_coverage(args.arguments) else "unchanged")
         if args.command == "run":
             command = args.arguments[1:] if args.arguments[:1] == ["--"] else args.arguments
-            inherited = Leases([], {"runId": os.environ.get("GITX_SESSION_ID", "command")})
+            lock = [str(ROOT / "build/.shared-xcode-build")] if args.xcode_build else []
+            owner = {"runId": os.environ.get("GITX_SESSION_ID", "command"), "pid": os.getpid(),
+                     "producer": producer_identity()}
+            if args.xcode_build:
+                with Leases(lock, owner, wait_seconds=args.timeout) as leases:
+                    return supervise(command, args.timeout, args.startup_timeout, args.desktop, args.diagnostics,
+                                     env=leases.environment(), pass_fds=leases.descriptors(), output_log=args.output_log)
+            inherited = Leases([], owner)
             return supervise(command, args.timeout, args.startup_timeout, args.desktop, args.diagnostics,
                              pass_fds=inherited.descriptors(), output_log=args.output_log,
                              native_test_root=args.native_test_root, native_artifact_directory=args.native_artifact_directory,

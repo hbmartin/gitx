@@ -132,9 +132,14 @@ class WorkflowAttemptRegressionTests(unittest.TestCase):
                 session.atomic_json(workflow_path, {"schemaVersion": 2, "runId": "fixture", "status": prior_status,
                     "steps": [prior], "inputsBefore": self.current})
                 args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "analyze"])
+                def execute_fresh(actual, **_kwargs):
+                    run_id = actual[actual.index("--run-id") + 1]
+                    child = self.root / "artifacts/verification" / run_id / "receipt.json"
+                    session.atomic_json(child, {"status": "passed", "steps": [], "evidence": {"status": "valid"}})
+                    return 0
                 with mock.patch.object(workflow, "full_profile", return_value=[("analyze", command)]), \
                         mock.patch.object(session, "entry_resources", return_value=([], {"toolchain": "fixture"})), \
-                        mock.patch.object(session, "supervise", return_value=0) as execute:
+                        mock.patch.object(session, "supervise", side_effect=execute_fresh) as execute:
                     self.assertEqual(workflow.verify(args), 0)
                 actual = execute.call_args.args[0]
                 self.assertNotIn("--resume-analysis", actual)

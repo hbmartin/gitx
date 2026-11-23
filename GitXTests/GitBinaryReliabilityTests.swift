@@ -509,9 +509,17 @@ final class GitBinaryReliabilityTests: XCTestCase {
         returned.assertForOverFulfill = true
         let starts = Mutex<[String]>([])
         let release = DispatchSemaphore(value: 0)
+        let results = Mutex<[String]>([])
         defer {
             release.signal(); release.signal()
-            wait(for: [returned], timeout: 3)
+            let outcome = XCTWaiter.wait(for: [returned], timeout: 3)
+            if outcome != .completed {
+                let attachment = XCTAttachment(string: "Drain: \(outcome); starts: \(starts.withLock { $0 }); callbacks: \(results.withLock { $0 })")
+                attachment.name = "Discovery worker teardown"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertEqual(outcome, .completed)
         }
         let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
             starts.withLock { $0.append(path) }
@@ -526,7 +534,6 @@ final class GitBinaryReliabilityTests: XCTestCase {
             runner.run(path: "/occupied\(index)", arguments: [], timeout: 100) { _ in }
         }
         wait(for: [entered], timeout: 3)
-        let results = Mutex<[String]>([])
         let queued = (0 ..< 16).map { index in
             runner.run(path: "/queued\(index)", arguments: [], timeout: index == 1 ? 1 : 100) { result in
                 results.withLock { $0.append(String(describing: result)) }

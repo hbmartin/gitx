@@ -19,6 +19,20 @@ FILE_LOCAL_RULES = {
     "unowned_variable_capture", "unused_closure_parameter", "unused_control_flow_label",
     "unused_enumerated", "unused_optional_binding", "unused_setter_value", "weak_delegate", "yoda_condition",
 }
+FEEDBACK_RULES = (
+    "identical_operands", "overridden_super_call", "prohibited_super_call",
+    "unowned_variable_capture", "weak_delegate",
+)
+INTEGRATION_ONLY = {
+    "fixture-stability", "address-undefined", "thread-sanitizer", "performance", "analyze", "version-contract", "stage-debug",
+}
+SCRIPT_TESTS = {
+    "dev_workflow.py": ("test_workflow_completion.py", "test_workflow_review_regressions.py",
+                        "test_workflow_feedback.py", "test_faster_verification.py"),
+    "workflow_feedback.py": ("test_workflow_feedback.py", "test_faster_verification.py"),
+    "workflow_evidence_reuse.py": ("test_faster_verification.py", "test_regression_guardrails.py", "test_workflow_cleanup.py"),
+    "check_fixture_stability.py": ("test_faster_verification.py", "test_workflow_completion.py"),
+}
 BOUNDARIES = (
     "check_gitxcore_boundary.py", "check_flowdelta_boundary.py", "check_forgekit_boundary.py",
     "check_forgekit_exports.py", "check_forge_codegen_drift.py", "check_avatar_boundary.py",
@@ -113,13 +127,75 @@ def execute(command, root, env=None):
     subprocess.run(command, cwd=root, env=env, check=True)
 
 
-def lint_rules_are_file_local(root):
+def configured_lint_rules(root):
     path = root / ".swiftlint.yml"
     if not path.is_file():
-        return False
+        return set()
     match = re.search(r"(?m)^only_rules:\s*\n((?:[ \t]+[^\n]*\n)*)", path.read_text())
     rules = set(re.findall(r"(?m)^\s*-\s*([a-z_]+)\s*$", match[1])) if match else set()
+    return rules
+
+
+def lint_rules_are_file_local(root):
+    rules = configured_lint_rules(root)
     return bool(rules) and rules <= FILE_LOCAL_RULES
+
+
+def script_test_patterns(paths, root):
+    """A direct match is useful for feedback. Shared modules still need broad checks."""
+    patterns = set()
+    for path in paths:
+        if not path.startswith("scripts/"):
+            continue
+        name = pathlib.PurePosixPath(path).name
+        if path.startswith("scripts/tests/") and name.startswith("test_") and name.endswith(".py"):
+            patterns.add(name)
+        elif path.count("/") == 1 and name in SCRIPT_TESTS:
+            patterns.update(SCRIPT_TESTS[name])
+        elif path.count("/") == 1 and name.endswith(".py") and name != "workflow_session.py" and (root / "scripts/tests" / ("test_" + name)).is_file():
+            patterns.add("test_" + name)
+        else:
+            return ["test*.py"]
+    return sorted(patterns)
+
+
+def test_file_selectors(root, paths):
+    """Class selectors for test-only changes, with no narrowing on unknown files."""
+    selectors = []
+    for path in paths:
+        group = pathlib.PurePosixPath(path).parts[0]
+        if group not in {"GitXTests", "GitXUITests"} or not path.endswith((".swift", ".m")):
+            return []
+        source = root / path
+        if not source.is_file():
+            return []
+        contents = source.read_text(errors="replace")
+        classes = re.findall(r"(?m)^\s*(?:final\s+)?class\s+(\w+)\s*:\s*XCTestCase\b", contents)
+        classes += re.findall(r"(?m)^\s*@interface\s+(\w+)\s*:\s*XCTestCase\b", contents)
+        if not classes:
+            return []
+        selectors.extend(f"{group}/{name}" for name in classes)
+    return sorted(set(selectors))
+
+
+def contract_selectors(root, paths):
+    """Use the same catalogue and lexical discovery as the advisory verifier."""
+    import regression_guardrails as guardrails
+
+    try:
+        catalogue = json.loads((root / "scripts/regression-contracts.json").read_text())
+        contracts, findings = guardrails.validate_catalogue(catalogue, root)
+        if any(item["affectsReadiness"] for item in findings):
+            return []
+        selected = guardrails.select_contracts(contracts, paths)
+    except (OSError, ValueError, TypeError, KeyError):
+        return []
+    # A matched catalogue entry is insufficient when a second changed file is unmapped.
+    if set(paths) - {path for item in selected for path in item["changedPaths"]}:
+        return []
+    return sorted({test["identifier"] for item in selected for test in item["tests"]
+                   if test.get("check", "correctness") in {"correctness", "ui"}
+                   and test["identifier"].split("/")[0] in {"GitXTests", "GitXUITests"}})
 
 
 def static_feedback(root, reference=None):
@@ -141,7 +217,9 @@ def static_feedback(root, reference=None):
         if swift:
             env = os.environ | {"SCRIPT_INPUT_FILE_COUNT": str(len(swift))}
             env.update({f"SCRIPT_INPUT_FILE_{index}": str(root / path) for index, path in enumerate(swift)})
-            execute([*lint, "--use-script-input-files", "--force-exclude"], root, env)
+            rules = [part for rule in FEEDBACK_RULES if rule in configured_lint_rules(root)
+                     for part in ("--only-rule", rule)]
+            execute([*lint, *rules, "--use-script-input-files", "--force-exclude"], root, env)
     else:
         execute(lint, root)
     for script in BOUNDARIES:
@@ -158,7 +236,10 @@ def static_feedback(root, reference=None):
         script_environment = os.environ | {"PYTHONPYCACHEPREFIX": str(pathlib.Path(os.environ.get("TMPDIR", "/tmp")) / "gitx-pycache")}
         execute([sys.executable, "-m", "py_compile", *[str(path) for path in sorted((root / "scripts").glob("*.py"))], *[str(path) for path in sorted((root / "scripts/tests").glob("*.py"))]], root,
                 script_environment)
-        execute([sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-v"], root, script_environment)
+        patterns = script_test_patterns(paths, root)
+        for pattern in patterns:
+            execute([sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-v", "-p", pattern],
+                    root, script_environment)
         for path in sorted((root / "scripts").glob("*.sh")):
             execute(["bash", "-n", str(path)], root)
         if shutil.which("shellcheck"):

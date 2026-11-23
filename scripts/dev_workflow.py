@@ -8,6 +8,8 @@ import json
 import math
 import os
 import pathlib
+import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -20,6 +22,7 @@ import workflow_records as records
 import workflow_session as session
 import workflow_cleanup as cleanup
 import workflow_feedback as feedback
+import workflow_evidence_reuse as evidence_reuse
 
 
 def full_profile(root):
@@ -29,10 +32,12 @@ def full_profile(root):
             ("interop", [sys.executable, str(scripts / "check_test_build_contracts.py")]),
             ("debug-test-build", [xcode, "--configuration", "Debug", "build-tests"]),
             ("release-test-build", [xcode, "--configuration", "Release", "build-tests"]),
+            ("fixture-stability", [sys.executable, str(scripts / "check_fixture_stability.py")]),
             ("release-contracts", [xcode, "--configuration", "Release", "test", "correctness", "-only-testing:GitXTests/GitXInteropContractTests"]),
             *[(name, [xcode, "test", name]) for name in ("correctness", "core", "forgekit", "address-undefined", "thread-sanitizer", "ui")],
             ("performance", [xcode, "--configuration", "Release", "test", "performance"]),
             ("analyze", [xcode, "analyze"]),
+            ("version-contract", [xcode, "test", "correctness", "-only-testing:GitXTests/GitBinaryTests/testEmbeddedToolReportsTheOwningApplicationVersion"]),
             ("stage-debug", [xcode, "--configuration", "Debug", "--stage-app", "build"])]
 
 
@@ -93,7 +98,11 @@ def selected_commands(args, root):
         base, paths = feedback.changed_paths(root, getattr(args, "base_ref", None))
         names, reasons = feedback.select_checks(paths, [name for name, _ in commands])
         full_selection = names == [name for name, _ in commands]
-        selection.update(base=base, changedPaths=paths, reasons=reasons)
+        deferred = [name for name in names if name in feedback.INTEGRATION_ONLY]
+        names = [name for name in names if name not in feedback.INTEGRATION_ONLY]
+        selection.update(base=base, changedPaths=paths, reasons=reasons, deferredToIntegration=deferred)
+        if not full_selection and any(path.startswith("scripts/") for path in paths):
+            selection["scriptTestPatterns"] = feedback.script_test_patterns(paths, root)
         commands = [(name, command) for name, command in commands if name in names]
         commands = [(name, ([command[0], base] if full_selection else
                             [str(root / "scripts/verify_static.sh"), "--feedback", "--base-ref", base]) if name == "static" else command)
@@ -107,10 +116,26 @@ def selected_commands(args, root):
         commands = [(name, command) for name, command in full_profile(root) if name in args.check]
         selection.update(manualChecks=list(args.check), deliveryEligible=False)
     selectors = getattr(args, "only_testing", None)
+    if args.profile == "feedback" and not args.check and not selectors and not full_selection:
+        selectors = feedback.test_file_selectors(root, paths)
+        if selectors:
+            groups = {"correctness" if value.startswith("GitXTests/") else "ui" for value in selectors}
+            commands = [(name, command) for name, command in commands if name == "static"] + [
+                (name, command) for name, command in full_profile(root) if name in groups]
+            selection["testSelectionReason"] = "changed-test-classes"
+        else:
+            names_in_feedback = {name for name, _ in commands}
+            discovered = feedback.contract_selectors(root, paths) if names_in_feedback & {"correctness", "ui"} else []
+            by_target = {"GitXTests": "correctness", "GitXUITests": "ui"}
+            covered_checks = {by_target[value.split("/")[0]] for value in discovered}
+            if names_in_feedback & {"correctness", "ui"} <= covered_checks:
+                selectors = [value for value in discovered if by_target[value.split("/")[0]] in names_in_feedback]
+                if selectors:
+                    selection["testSelectionReason"] = "affected-regression-contracts"
     if selectors and selection["deliveryEligible"]:
         raise ValueError("Focused tests require --profile feedback or an explicit partial --check")
     commands = feedback.focus_commands(commands, selectors)
-    selection.update(selectedChecks=[name for name, _ in commands], testSelectors=selectors or [])
+    selection.update(selectedChecks=[name for name, _ in commands], testSelectors=selectors or [], jobs=getattr(args, "jobs", 1))
     return commands, selection
 
 
@@ -143,7 +168,12 @@ def selected_leases(args, root, directory, owner):
         commands, selection = selected_commands(args, root)
         details = {}
         resources = resources_for(commands, directory, root, details)
-        with session.Leases(resources, owner, wait_seconds=max(0, deadline - time.monotonic())) as leases:
+        parallel = getattr(args, "jobs", 1) == 2
+        selected_resources = [str(directory)] if parallel else resources
+        origin = getattr(args, "reuse_evidence", None)
+        if origin:
+            selected_resources = [*selected_resources, str(directory.parent / origin)]
+        with session.Leases(selected_resources, owner, wait_seconds=max(0, deadline - time.monotonic())) as leases:
             refreshed, refreshed_selection = selected_commands(args, root)
             refreshed_details = {}
             if set(resources_for(refreshed, directory, root, refreshed_details)) != set(resources) or details != refreshed_details:
@@ -198,9 +228,205 @@ def admitted_failure_receipt(path, payload_getter, producer, attempt_started):
         raise
 
 
+def check_reuse_reason(name, prior, current, command, caches, toolchain, history):
+    if name == "fixture-stability" and any(
+            history.get(check, {}).get("status") == "failed"
+            for check in ("correctness", "address-undefined", "thread-sanitizer", "ui")):
+        return "check-fixtures-after-native-failure"
+    if prior is None:
+        return "no-prior-evidence"
+    return reuse_problem(prior, current, command, caches, toolchain)
+
+
+def prepare_check(root, path, run_id, name, command, current, reason, prior, resume):
+    print(f"Verify {name}; owning run {run_id}; receipt {path}", flush=True)
+    attempt = uuid.uuid4().hex[:8]
+    child_id = f"{run_id}-{name}-{attempt}"
+    actual = command + (["--run-id", child_id] if pathlib.Path(command[0]).name == "xcodebuild.sh" else [])
+    if resume and name == "fixture-stability":
+        actual += ["--after", str(session.verification_artifact_root(root) / run_id / "workflow.json")]
+    if resume and name == "analyze" and prior and prior.get("receipt"):
+        prior_receipt = pathlib.Path(prior["receipt"])
+        try:
+            evidence = read_child_receipt(prior_receipt)
+            inner = evidence.get("evidence", {})
+            if session.valid_run_id(evidence.get("runId")) and inner.get("status") == "valid" and isinstance(inner.get("analyzerScratch"), dict) and inner["analyzerScratch"].get("path") and isinstance(inner.get("inputsAfter"), dict) and not session.changed_inputs(inner["inputsAfter"], current) and \
+                    any(step.get("name") == "analyze" and step.get("status") == "passed" for step in evidence.get("steps", [])):
+                actual += ["--resume-analysis", evidence["runId"], "--fresh-on-stale-analysis"]
+            else:
+                reason = "analyzer-recovery-unavailable"
+        except (OSError, ValueError, TypeError):
+            reason = "analyzer-recovery-receipt-unreadable"
+    return actual, child_id, reason
+
+
+def record_check(root, path, payload, name, command, current, toolchain, reason, child_id, step_started, status):
+    after = session.inputs(root)
+    step = {"name": name, "command": command, "commandIdentity": session.command_identity(command), "status": "passed" if status == 0 else "failed", "exitCode": status,
+            "inputsBefore": current, "inputsAfter": after, "toolchain": toolchain, "finishedAt": records.now(),
+            "evidenceStatus": "invalid" if session.changed_inputs(current, after) else "valid", "outputs": {},
+            "durationSeconds": round(time.monotonic() - step_started, 3),
+            "executionReason": reason or "requested-fresh-check",
+            "lastAttempt": {"action": "executed", "reason": reason or "requested-fresh-check"}}
+    payload["executedChecks"].append(name)
+    child_path = session.verification_artifact_root(root) / child_id / "receipt.json"
+    if not child_path.is_file():
+        child_path = session.verification_artifact_root(root) / "Coordination" / (child_id + ".json")
+    coordination = session.verification_artifact_root(root) / "Coordination" / (child_id + ".json")
+    if coordination.is_file():
+        try:
+            coordination_receipt = json.loads(coordination.read_text())
+            step["resourceWaitSeconds"] = coordination_receipt.get("resourceWaitSeconds", 0)
+            step["startedAt"] = coordination_receipt.get("startedAt")
+        except (OSError, ValueError, AttributeError):
+            pass
+    if child_path.is_file():
+        step["receipt"] = str(child_path)
+        try:
+            child_receipt = read_child_receipt(child_path)
+        except (OSError, ValueError):
+            child_receipt = {}
+        if child_receipt.get("evidence", {}).get("status") != "valid":
+            step["evidenceStatus"] = "invalid"
+    if status == 0 and pathlib.Path(command[0]).name == "xcodebuild.sh" and not child_path.is_file():
+        step["evidenceStatus"] = "invalid"
+        step["evidenceProblems"] = ["Missing Xcode receipt for " + name]
+    if name == "stage-debug" and status == 0:
+        try:
+            step["outputs"][str(root / "build/GitX.app")] = session.tree_identity(root / "build/GitX.app")
+        except (OSError, ValueError, TypeError) as error:
+            step["outputs"][str(root / "build/GitX.app")] = None
+            step["evidenceStatus"] = "invalid"
+            step["evidenceProblems"] = ["Workflow output cannot be captured: " + str(error)]
+    payload["steps"] = [s for s in payload["steps"] if s["name"] != name] + [step]
+    if step["evidenceStatus"] == "invalid" and status == 0:
+        status = 76
+    if status:
+        payload.setdefault("firstFailureAt", step["finishedAt"])
+    payload.update(status="failed" if status or payload.get("firstFailureAt") else "running",
+                   inputsAfter=after, updatedAt=records.now())
+    session.atomic_json(path, payload)
+    return status, step
+
+
+def offscreen_environment(root, name, toolchain):
+    partition = "analysis" if name == "analyze" else "packages"
+    paths = session.cache_paths(root, instrumentation=partition, toolchain=toolchain)
+    packages = pathlib.Path(paths["sourcePackages"])
+    return {
+        "GITX_DERIVED_DATA": paths["derivedData"],
+        "GITX_SWIFTPM_BUILD_ROOT": paths["swiftPM"],
+        "GITX_SOURCE_PACKAGE_CACHE": os.environ.get("GITX_SOURCE_PACKAGE_CACHE", str(packages.with_name(packages.name + "-" + partition))),
+    }
+
+
+OFFSCREEN_CHECKS = {"static", "whitespace", "core", "forgekit", "analyze"}
+OFFSCREEN_BUILDS = {"core", "forgekit", "analyze"}
+EXCLUSIVE_CHECKS = {"performance", "stage-debug"}
+EARLY_CHECKS = {"interop", "debug-test-build", "release-test-build"}
+
+
+def permitted_check(name, running, pending):
+    if name in EXCLUSIVE_CHECKS:
+        return not running and not (set(pending) - EXCLUSIVE_CHECKS) and (name != "stage-debug" or "performance" not in pending)
+    if set(running) & EXCLUSIVE_CHECKS:
+        return False
+    if name in OFFSCREEN_CHECKS:
+        if name == "analyze" and (set(running) | set(pending)) & EARLY_CHECKS:
+            return False
+        if name in OFFSCREEN_BUILDS and any(key in os.environ for key in ("GITX_DERIVED_DATA", "GITX_SWIFTPM_BUILD_ROOT", "GITX_SOURCE_PACKAGE_CACHE")):
+            return not running and not (set(pending) - OFFSCREEN_CHECKS - EXCLUSIVE_CHECKS)
+        return not set(running) & OFFSCREEN_CHECKS
+    return not (set(running) - OFFSCREEN_CHECKS)
+
+
+def execute_parallel(root, path, payload, args, commands, selection, env, prior_steps, previous_caches):
+    """Each supervisor owns its process tree. Only the coordinator writes the workflow receipt."""
+    directory = path.parent
+    pending = dict(commands)
+    running = {}
+    stopped = 0
+    last_failure = None
+    cancelled = None
+    sent_interrupt = False
+    originals = {}
+
+    def interrupt(signum, _frame):
+        nonlocal cancelled
+        cancelled = signum
+
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        originals[signum] = signal.signal(signum, interrupt)
+    try:
+        while pending or running:
+            for name, (process, prepared) in list(running.items()):
+                status = process.poll()
+                if status is None:
+                    continue
+                del running[name]
+                status = 128 - status if status < 0 else status
+                status, step = record_check(root, path, payload, name, *prepared, status)
+                if status and not stopped:
+                    stopped, last_failure = status, step
+            if cancelled and not sent_interrupt:
+                stopped = 128 + cancelled
+                sent_interrupt = True
+                for process, _ in running.values():
+                    if process.poll() is None:
+                        process.terminate()
+            if stopped and not running:
+                return stopped, last_failure
+            if not stopped:
+                # Start analysis before offscreen packages once the compiler prerequisites settle.
+                priority = sorted(pending, key=lambda name: name != "analyze")
+                for name in priority:
+                    if len(running) == 2:
+                        break
+                    if not permitted_check(name, running, pending):
+                        continue
+                    command = pending.pop(name)
+                    current = session.inputs(root)
+                    if session.changed_inputs(payload["inputsBefore"], current):
+                        stopped = 76
+                        last_failure = {"evidenceStatus": "invalid", "evidenceProblems": ["Verification inputs changed before " + name]}
+                        break
+                    prior = prior_steps.get(name)
+                    reason = check_reuse_reason(name, prior, current, command, previous_caches, selection["toolchain"], prior_steps)
+                    if args.resume and prior and reason is None:
+                        payload["reusedChecks"].append(name)
+                        prior["lastAttempt"] = {"action": "reused", "reason": "matching-passed-evidence"}
+                        continue
+                    previous_caches = None
+                    actual, child_id, reason = prepare_check(root, path, payload["runId"], name, command, current, reason, prior, args.resume)
+                    child_env = env | {"GITX_SESSION_ID": child_id}
+                    if name in OFFSCREEN_BUILDS:
+                        child_env.update(offscreen_environment(root, name, selection["toolchain"]))
+                    supervisor = [sys.executable, str(root / "scripts/workflow_session.py"), "run", "--timeout", str(args.timeout),
+                                  "--diagnostics", str(directory / "Diagnostics" / name), "--", *actual]
+                    started = time.monotonic()
+                    process = subprocess.Popen(supervisor, env=os.environ | child_env, cwd=root, start_new_session=True)
+                    running[name] = (process, (command, current, selection["toolchain"], reason, child_id, started))
+            if running:
+                time.sleep(.15)
+        return stopped, last_failure
+    finally:
+        for process, _ in running.values():
+            if process.poll() is None:
+                process.terminate()
+        for process, _ in running.values():
+            process.wait()
+        for signum, handler in originals.items():
+            signal.signal(signum, handler)
+
+
 def verify(args):
     root = session.ROOT
     commands, selection = selected_commands(args, root)
+    origin = getattr(args, "reuse_evidence", None)
+    if origin and (args.resume or not selection["deliveryEligible"] or not session.valid_run_id(origin)):
+        raise ValueError("--reuse-evidence requires a separate full workflow and a valid source run ID")
+    if origin:
+        selection["reuseEvidence"] = origin
     if getattr(args, "dry_run", False):
         print(json.dumps(selection, indent=2, sort_keys=True))
         return 0
@@ -210,6 +436,8 @@ def verify(args):
         raise ValueError("Invalid run ID")
     directory = session.verification_artifact_root(root) / run_id
     path = directory / "workflow.json"
+    if origin == run_id:
+        raise ValueError("Evidence reuse requires a new run ID")
     if args.resume:
         if not path.is_file():
             raise ValueError("Resume requires a workflow receipt; historical receipts cannot be reused")
@@ -234,19 +462,34 @@ def verify(args):
                 payload = json.loads(path.read_text())
                 if payload.get("schemaVersion") != 2:
                     raise ValueError("Historical workflow receipts lack reuse evidence")
+                if payload.get("evidenceReuse"):
+                    raise ValueError("Retry a cross-commit attempt with a fresh run ID")
                 previous_payload = dict(payload)
                 payload["resumeHistory"] = payload.get("resumeHistory", []) + [{"resumedAt": records.now(), "previousInputs": payload.get("inputsBefore")}]
             elif path.exists():
                 raise ValueError("Run already exists; use --resume or a fresh run ID")
             env = leases.environment() | {"GITX_SESSION_ID": run_id, "GITX_COMMAND_TIMEOUT": str(args.timeout),
                                           "GITX_RESOURCE_WAIT_SECONDS": str(getattr(args, "wait_for_resources", 0))}
-            for key in ("category", "problem", "owner", "resource", "exitCode", "finishedAt", "evidenceProblems"):
+            for key in ("category", "problem", "owner", "resource", "exitCode", "finishedAt", "evidenceProblems", "firstFailureAt"):
                 payload.pop(key, None)
             payload.update(status="running", deliveryEligible=False, profile=args.profile, producer=owner["producer"], resources=sorted(leases.held),
                            scope="full" if selection["deliveryEligible"] else "partial", selection=selection,
                            selectedChecks=selection["selectedChecks"], inputsBefore=session.inputs(root),
                            resourceWaitSeconds=round(leases.wait_seconds, 3), executedChecks=[], reusedChecks=[])
             session.atomic_json(path, payload)
+            if origin:
+                origin_path = directory.parent / origin / "workflow.json"
+                try:
+                    source_workflow, _ = evidence_reuse.read_source(root, origin_path, payload["inputsBefore"])
+                    with session.Leases(cleanup.proof_resources(root, origin_path), owner, inherited=leases.held,
+                                        wait_seconds=getattr(args, "wait_for_resources", 0)):
+                        caches = previous_cache_snapshots(source_workflow, root)
+                        carried, relation = evidence_reuse.prepare(root, origin_path, payload["inputsBefore"], directory,
+                                                                   dict(commands), selection["toolchain"], caches)
+                    payload.update(steps=carried, evidenceReuse=relation, reusedChecks=[step["name"] for step in carried])
+                    session.atomic_json(path, payload)
+                except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+                    return finish_invalid(path, payload, [str(error)], attempt_started)
             if args.resume and previous_payload.get("status") == "passed":
                 try:
                     previous_caches = previous_cache_snapshots(previous_payload, root)
@@ -258,111 +501,89 @@ def verify(args):
             except ValueError as error:
                 return finish_invalid(path, payload, [str(error)], attempt_started)
             previous = {step["name"]: step for step in payload["steps"]}
-            for name, command in commands:
-                current = session.inputs(root)
-                prior = previous.get(name)
-                reason = "no-prior-evidence" if prior is None else reuse_problem(prior, current, command, previous_caches, selection["toolchain"])
-                if args.resume and prior and reason is None:
-                    print(f"Reuse {name}: passed evidence and inputs still match.", flush=True)
-                    payload["reusedChecks"].append(name)
-                    prior["lastAttempt"] = {"action": "reused", "reason": "matching-passed-evidence"}
-                    continue
-                previous_caches = None
-                print(f"Verify {name}; owning run {run_id}; receipt {path}", flush=True)
-                attempt = uuid.uuid4().hex[:8]
-                child_id = f"{run_id}-{name}-{attempt}"
-                actual = command + (["--run-id", child_id] if pathlib.Path(command[0]).name == "xcodebuild.sh" else [])
-                if args.resume and name == "analyze" and prior and prior.get("receipt"):
-                    prior_receipt = pathlib.Path(prior["receipt"])
-                    try:
-                        evidence = read_child_receipt(prior_receipt)
-                        inner = evidence.get("evidence", {})
-                        if session.valid_run_id(evidence.get("runId")) and inner.get("status") == "valid" and isinstance(inner.get("analyzerScratch"), dict) and inner["analyzerScratch"].get("path") and isinstance(inner.get("inputsAfter"), dict) and not session.changed_inputs(inner["inputsAfter"], current) and \
-                                any(step.get("name") == "analyze" and step.get("status") == "passed" for step in evidence.get("steps", [])):
-                            actual += ["--resume-analysis", evidence["runId"], "--fresh-on-stale-analysis"]
-                        else:
-                            reason = "analyzer-recovery-unavailable"
-                    except (OSError, ValueError, TypeError):
-                        reason = "analyzer-recovery-receipt-unreadable"
-                step_started = time.monotonic()
-                status = session.supervise(actual, timeout=args.timeout, directory=directory / "Diagnostics" / name,
-                                           env=env | {"GITX_SESSION_ID": child_id}, pass_fds=leases.descriptors())
-                after = session.inputs(root)
-                step = {"name": name, "command": command, "commandIdentity": session.command_identity(command), "status": "passed" if status == 0 else "failed", "exitCode": status,
-                        "inputsBefore": current, "inputsAfter": after, "toolchain": selection["toolchain"], "finishedAt": records.now(),
-                        "evidenceStatus": "invalid" if session.changed_inputs(current, after) else "valid", "outputs": {},
-                        "durationSeconds": round(time.monotonic() - step_started, 3),
-                        "executionReason": reason or "requested-fresh-check",
-                        "lastAttempt": {"action": "executed", "reason": reason or "requested-fresh-check"}}
-                payload["executedChecks"].append(name)
-                child_path = session.verification_artifact_root(root) / child_id / "receipt.json"
-                if not child_path.is_file():
-                    child_path = session.verification_artifact_root(root) / "Coordination" / (child_id + ".json")
-                if child_path.is_file():
-                    step["receipt"] = str(child_path)
-                    try:
-                        child_receipt = read_child_receipt(child_path)
-                    except (OSError, ValueError):
-                        child_receipt = {}
-                    if child_receipt.get("evidence", {}).get("status") != "valid":
-                        step["evidenceStatus"] = "invalid"
-                if name == "stage-debug" and status == 0:
-                    try:
-                        step["outputs"][str(root / "build/GitX.app")] = session.tree_identity(root / "build/GitX.app")
-                    except (OSError, ValueError, TypeError) as error:
-                        step["outputs"][str(root / "build/GitX.app")] = None
-                        step["evidenceStatus"] = "invalid"
-                        step["evidenceProblems"] = ["Workflow output cannot be captured: " + str(error)]
-                payload["steps"] = [s for s in payload["steps"] if s["name"] != name] + [step]
-                if step["evidenceStatus"] == "invalid" and status == 0:
-                    status = 76
-                payload.update(status="failed" if status else "running", inputsAfter=after, updatedAt=records.now())
-                session.atomic_json(path, payload)
+            parallel = getattr(args, "jobs", 1) == 2
+            to_execute = [(name, command) for name, command in commands if name not in payload["reusedChecks"]]
+            if parallel:
+                status, step = execute_parallel(root, path, payload, args, to_execute, selection, env, previous, previous_caches)
                 if status:
-                    if status == 76 and step["evidenceStatus"] == "invalid":
-                        return finish_invalid(path, payload, step.get("evidenceProblems", ["Check evidence is invalid: " + name]), attempt_started)
-                    payload["attemptDurationSeconds"] = round(time.monotonic() - attempt_started, 3)
+                    if status == 76 and step and step.get("evidenceStatus") == "invalid":
+                        return finish_invalid(path, payload, step.get("evidenceProblems", ["Check evidence is invalid"]), attempt_started)
+                    payload.update(status="interrupted" if status in {129, 130, 143} else "failed", exitCode=status,
+                                   attemptDurationSeconds=round(time.monotonic() - attempt_started, 3))
                     session.atomic_json(path, payload)
-                    print(f"Verification stopped at {name} (exit {status}). Receipt: {path}")
                     return status
-            payload.update(status="passed", finishedAt=records.now(), inputsAfter=session.inputs(root))
-            if session.changed_inputs(payload["inputsBefore"], payload["inputsAfter"]):
-                return finish_invalid(path, payload, ["Verification inputs changed during the attempt"], attempt_started)
-            payload["evidenceStatus"] = "valid"
-            payload["deliveryEligible"] = selection["deliveryEligible"]
-            active = session.active_workflow_steps(payload)
-            names = [step["name"] for step in active]
-            expected = [name for name, _ in commands]
-            if set(names) != set(expected) or len(names) != len(expected) or any(
-                    step.get("status") != "passed" or step.get("evidenceStatus") != "valid" for step in active):
-                return finish_invalid(path, payload, ["Active verification profile is incomplete, duplicated, or invalid"], attempt_started)
-            try:
-                payload["finalCacheProducts"] = session.workflow_cache_snapshots(payload, root)
-                problems = session.final_cache_problems(payload, root, derived=payload["finalCacheProducts"])
-            except (OSError, ValueError, TypeError, KeyError) as error:
-                payload["finalCacheProducts"] = {}
-                problems = ["Final cache ownership cannot be validated: " + str(error)]
-            for step in session.active_workflow_steps(payload):
-                if step.get("receipt"):
-                    try:
-                        child = read_child_receipt(step["receipt"])
-                        problems.extend(session.receipt_artifact_problems(child, root, payload["finalCacheProducts"]))
-                    except (OSError, ValueError, TypeError, KeyError) as error:
-                        problems.append("Child receipt cannot be validated: " + str(error))
-                for output, identity in step.get("outputs", {}).items():
-                    try:
-                        if identity is None or session.tree_identity(output) != identity:
-                            problems.append("Workflow output missing or changed: " + output)
-                    except (OSError, ValueError, TypeError) as error:
-                        problems.append("Workflow output cannot be validated: " + output + ": " + str(error))
-            if problems:
-                return finish_invalid(path, payload, problems, attempt_started)
-            session.atomic_json(path, payload)
-            payload["attemptDurationSeconds"] = round(time.monotonic() - attempt_started, 3)
-            session.atomic_json(path, payload)
-            print(f"Checks: {len(payload['executedChecks'])} executed, {len(payload['reusedChecks'])} reused; "
-                  f"{payload['attemptDurationSeconds']:.1f}s; delivery eligible: {payload['deliveryEligible']}")
-            print(f"Local verification passed. Receipt: {path}")
+            else:
+                for name, command in to_execute:
+                    current = session.inputs(root)
+                    prior = previous.get(name)
+                    reason = check_reuse_reason(name, prior, current, command, previous_caches, selection["toolchain"], previous)
+                    if args.resume and prior and reason is None:
+                        print(f"Reuse {name}: passed evidence and inputs still match.", flush=True)
+                        payload["reusedChecks"].append(name)
+                        prior["lastAttempt"] = {"action": "reused", "reason": "matching-passed-evidence"}
+                        continue
+                    previous_caches = None
+                    actual, child_id, reason = prepare_check(root, path, run_id, name, command, current, reason, prior, args.resume)
+                    step_started = time.monotonic()
+                    status = session.supervise(actual, timeout=args.timeout, directory=directory / "Diagnostics" / name,
+                                               env=env | {"GITX_SESSION_ID": child_id}, pass_fds=leases.descriptors())
+                    status, step = record_check(root, path, payload, name, command, current, selection["toolchain"],
+                                                reason, child_id, step_started, status)
+                    if status:
+                        if status == 76 and step["evidenceStatus"] == "invalid":
+                            return finish_invalid(path, payload, step.get("evidenceProblems", ["Check evidence is invalid: " + name]), attempt_started)
+                        payload["attemptDurationSeconds"] = round(time.monotonic() - attempt_started, 3)
+                        session.atomic_json(path, payload)
+                        print(f"Verification stopped at {name} (exit {status}). Receipt: {path}")
+                        return status
+            proof_paths = resources_for(commands, directory, root) if parallel else []
+            if parallel:
+                for name in OFFSCREEN_BUILDS & dict(commands).keys():
+                    proof_paths += list(offscreen_environment(root, name, selection["toolchain"]).values())
+            proof_lease = session.Leases(proof_paths, owner, inherited=leases.held,
+                                         wait_seconds=getattr(args, "wait_for_resources", 0)) if parallel else contextlib.nullcontext()
+            with proof_lease:
+                payload.update(status="passed", finishedAt=records.now(), inputsAfter=session.inputs(root))
+                if session.changed_inputs(payload["inputsBefore"], payload["inputsAfter"]):
+                    return finish_invalid(path, payload, ["Verification inputs changed during the attempt"], attempt_started)
+                payload["evidenceStatus"] = "valid"
+                payload["deliveryEligible"] = selection["deliveryEligible"]
+                active = session.active_workflow_steps(payload)
+                names = [step["name"] for step in active]
+                expected = [name for name, _ in commands]
+                if set(names) != set(expected) or len(names) != len(expected) or any(
+                        step.get("status") != "passed" or step.get("evidenceStatus") != "valid" for step in active):
+                    return finish_invalid(path, payload, ["Active verification profile is incomplete, duplicated, or invalid"], attempt_started)
+                try:
+                    payload["finalCacheProducts"] = session.workflow_cache_snapshots(payload, root)
+                    problems = session.final_cache_problems(payload, root, derived=payload["finalCacheProducts"])
+                    if origin:
+                        evidence_reuse.validation_inputs(root, payload, payload["inputsAfter"])
+                        evidence_reuse.verify_staged_version(root, payload["inputsAfter"]["head"])
+                except (OSError, ValueError, TypeError, KeyError) as error:
+                    payload["finalCacheProducts"] = {}
+                    problems = ["Final cache ownership cannot be validated: " + str(error)]
+                for step in session.active_workflow_steps(payload):
+                    if step.get("receipt"):
+                        try:
+                            child = read_child_receipt(step["receipt"])
+                            problems.extend(session.receipt_artifact_problems(child, root, payload["finalCacheProducts"]))
+                        except (OSError, ValueError, TypeError, KeyError) as error:
+                            problems.append("Child receipt cannot be validated: " + str(error))
+                    for output, identity in step.get("outputs", {}).items():
+                        try:
+                            if identity is None or session.tree_identity(output) != identity:
+                                problems.append("Workflow output missing or changed: " + output)
+                        except (OSError, ValueError, TypeError) as error:
+                            problems.append("Workflow output cannot be validated: " + output + ": " + str(error))
+                if problems:
+                    return finish_invalid(path, payload, problems, attempt_started)
+                session.atomic_json(path, payload)
+                payload["attemptDurationSeconds"] = round(time.monotonic() - attempt_started, 3)
+                session.atomic_json(path, payload)
+                print(f"Checks: {len(payload['executedChecks'])} executed, {len(payload['reusedChecks'])} reused; "
+                      f"{payload['attemptDurationSeconds']:.1f}s; delivery eligible: {payload['deliveryEligible']}")
+                print(f"Local verification passed. Receipt: {path}")
     except (session.ResourceBusy, session.ResourceDefinitionError) as error:
         failure = session.resource_failure_fields(error)
         status = failure["exitCode"]
@@ -441,12 +662,14 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     groups = result.add_subparsers(dest="group", required=True)
     verification = groups.add_parser("verify")
+    verification.add_argument("--jobs", type=int, choices=(1, 2), default=1)
     verification.add_argument("--profile", choices=["full", "feedback"], default="full")
     verification.add_argument("--base-ref")
     verification.add_argument("--only-testing", action="append")
     verification.add_argument("--dry-run", action="store_true")
     verification.add_argument("--wait-for-resources", type=float, default=0)
     verification.add_argument("--resume")
+    verification.add_argument("--reuse-evidence", metavar="RUN-ID")
     verification.add_argument("--run-id")
     verification.add_argument("--timeout", type=float, default=7200)
     verification.add_argument("--cleanup-mode", choices=["auto", "preview"], default="auto")

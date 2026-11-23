@@ -3399,10 +3399,11 @@ final class WorktreeAppKitTests: XCTestCase {
     }
 
     private func presentationWaitState(_ window: NSWindow) -> String {
+        let frontmost = NSWorkspace.shared.frontmostApplication
         let visible = NSApp.orderedWindows.filter(\.isVisible).map {
             "\(type(of: $0)): title=\($0.title), key=\($0.isKeyWindow), main=\($0.isMainWindow), sheet=\($0.sheetParent != nil)"
         }.joined(separator: "\n")
-        return "Active: \(NSApp.isActive), hidden: \(NSApp.isHidden), XCTest configuration: \(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil)\nOwner visible: \(window.isVisible), key: \(window.isKeyWindow), main: \(window.isMainWindow), miniaturized: \(window.isMiniaturized)\nVisible ordered windows:\n\(visible)"
+        return "Active: \(NSApp.isActive), hidden: \(NSApp.isHidden), XCTest configuration: \(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil)\nFrontmost: \(frontmost?.bundleIdentifier ?? "unknown") pid=\(frontmost?.processIdentifier ?? 0)\nOwner attached sheet: \(window.attachedSheet != nil), visible: \(window.isVisible), key: \(window.isKeyWindow), main: \(window.isMainWindow), miniaturized: \(window.isMiniaturized)\nVisible ordered windows:\n\(visible)"
     }
 
     private func waitForSheet(in window: NSWindow, containing title: String? = nil, file: StaticString = #filePath, line: UInt = #line) async throws -> NSWindow {

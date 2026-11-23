@@ -310,7 +310,7 @@ jobs:
           cd External/objective-git
           script/bootstrap
           script/update_libgit2
-      - name: Run Clang static analyzer
+      - name: Run required Clang and SwiftLint semantic analysis
         run: scripts/xcodebuild.sh --run-id "verify-analyze-${{ github.run_id }}-${{ github.run_attempt }}" analyze
       - name: Upload analyzer results
         if: always()
