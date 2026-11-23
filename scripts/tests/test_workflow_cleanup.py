@@ -2764,14 +2764,15 @@ else:
         logs = []
         artifacts = {}
         for name in ('analyze', 'analyzer-policy', 'swiftlint-analyze'):
-            log = child.parent / (name + '.log')
+            log = child.parent / 'Logs' / (name + '.log')
             log.parent.mkdir(parents=True, exist_ok=True)
             log.write_text('passed diagnostic')
             logs.append({'name': name, 'status': 'passed', 'exitCode': 0, 'log': str(log)})
             artifacts[str(log)] = session.tree_identity(log)
-        self.write(child, {'schemaVersion': 2, 'status': 'passed', 'invocation': {'preset': 'analyze'},
+        self.write(child, {'schemaVersion': 2, 'runId': child.parent.name, 'status': 'passed',
+                          'invocation': {'preset': 'analyze', 'configuration': 'Debug'},
                           'steps': logs,
-                          'buildPaths': {'derivedData': str(self.base / 'AnalyzerDerivedData.deleted')},
+                          'buildPaths': {'derivedData': str(pathlib.Path(self.cache_paths()['derivedData']).with_name('AnalyzerDerivedData.deleted'))},
                           'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
                                        'dependencyProducts': {}, 'products': {'temporary.app': 'removed'},
                                        'results': {}, 'analysisArtifacts': artifacts}})
