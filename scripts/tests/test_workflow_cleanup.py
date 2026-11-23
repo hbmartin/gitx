@@ -1472,7 +1472,8 @@ else:
         (self.root / '.gitignore').write_text('artifacts/\nbuild/\n__pycache__/\n')
         (self.root / 'source.txt').write_text('source')
         (self.root / 'scripts').mkdir()
-        for name in ('dev_workflow.py', 'workflow_session.py', 'workflow_records.py', 'workflow_feedback.py', 'workflow_cleanup.py', 'verification-config.json'):
+        for name in ('dev_workflow.py', 'workflow_session.py', 'workflow_records.py', 'workflow_feedback.py', 'workflow_cleanup.py', 'workflow_evidence_reuse.py',
+                     'verification-config.json'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         self.git('add', '.')
         self.git('commit', '-qm', 'fixture')
