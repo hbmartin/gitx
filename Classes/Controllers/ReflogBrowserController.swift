@@ -3,8 +3,42 @@ import GitXCore
 import OSLog // swiftlint:disable:this unused_import -- Logger requires OSLog; removing it fails Debug compilation.
 
 private nonisolated struct ReflogBrowserLoad: Sendable {
-    let branches: [String]
+    let branches: [RepositoryReflogReference]
+    let reference: String
     let page: RepositoryReflogPage
+}
+
+nonisolated enum ReflogBrowserRequestKind { case page, details, preview, mutation }
+
+nonisolated struct ReflogBrowserRequestPolicy {
+    var active: ReflogBrowserRequestKind?
+    var stale = true
+    var permitsSelection: Bool {
+        active == nil || active == .details
+    }
+
+    var permitsRecovery: Bool {
+        active == nil && !stale
+    }
+
+    func permits(_ request: ReflogBrowserRequestKind) -> Bool {
+        guard active != .mutation else { return false }
+        return request != .details || active == nil || active == .details
+    }
+}
+
+/// Repository reconciliation belongs to the operation, even after its browser closes.
+@MainActor
+private enum ReflogBrowserMutation {
+    case branch, reset
+
+    func reconcile(_ repository: PBGitRepository) {
+        repository.reloadRefs()
+        if self == .reset {
+            repository.hasChanged = true
+            repository.lazyReload()
+        }
+    }
 }
 
 /// Owns presentation and request lifetimes; Git and recovery decisions live in
@@ -22,7 +56,16 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
     private var selectionButtons: [NSButton] = []
     private var entries: [ReflogEntry] = []
-    private var references = ["HEAD"]
+    private var references: [RepositoryReflogReference] = []
+    private var requests = ReflogBrowserRequestPolicy()
+    private var repositoryRevision: UInt64 = 0
+    private var needsRefresh = false
+    private var refreshTask: Task<Void, Never>?
+    private var slowMutationTask: Task<Void, Never>?
+    private var delay: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    private var pasteboard = NSPasteboard.general
+    private let resultSummary = NSTextField(wrappingLabelWithString: "")
+    private var emptyResultHeight: NSLayoutConstraint?
     private var fingerprint: WorktreeFileFingerprint?
     private var hasMore = false
     private var closed = false
@@ -34,10 +77,14 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     private var serviceFactory: (PBGitRepository) throws -> RepositoryReflogService = { try RepositoryReflogService(repository: $0) }
 
     static func make(repository: PBGitRepository, windowController: PBGitWindowController? = nil,
-                     serviceFactory: @escaping (PBGitRepository) throws -> RepositoryReflogService = { try RepositoryReflogService(repository: $0) }) -> ReflogBrowserController?
+                     serviceFactory: @escaping (PBGitRepository) throws -> RepositoryReflogService = { try RepositoryReflogService(repository: $0) },
+                     pasteboard: NSPasteboard = .general,
+                     delay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) -> ReflogBrowserController?
     {
         let controller = ReflogBrowserController(repository: repository, superController: windowController)
         controller?.serviceFactory = serviceFactory
+        controller?.pasteboard = pasteboard
+        controller?.delay = delay
         return controller
     }
 
@@ -56,6 +103,8 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     isolated deinit {
+        refreshTask?.cancel()
+        slowMutationTask?.cancel()
         if !mutating {
             service?.cancel()
             operation?.cancel()
@@ -70,6 +119,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         referencePopup.setAccessibilityIdentifier("GitX.Reflog.Reference")
         referencePopup.setAccessibilityLabel("Reflog reference")
         referencePopup.addItem(withTitle: "Current checkout’s HEAD")
+        referencePopup.menu?.autoenablesItems = false
         configure(refreshButton, action: #selector(refresh(_:)), identifier: "Refresh")
         configure(moreButton, action: #selector(loadMore), identifier: "LoadMore")
         configure(cancelButton, action: #selector(cancelActivity), identifier: "Cancel")
@@ -132,7 +182,13 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         message.textColor = .secondaryLabelColor
         message.lineBreakMode = .byTruncatingTail
         message.setAccessibilityIdentifier("GitX.Reflog.Status")
-        for child in [header, split, footer, message] {
+        resultSummary.isSelectable = true
+        resultSummary.maximumNumberOfLines = 2
+        resultSummary.setAccessibilityIdentifier("GitX.Reflog.LastResult")
+        resultSummary.textColor = .secondaryLabelColor
+        emptyResultHeight = resultSummary.heightAnchor.constraint(equalToConstant: 0)
+        emptyResultHeight?.isActive = true
+        for child in [header, split, footer, resultSummary, message] {
             child.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(child)
         }
@@ -146,7 +202,10 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
             footer.topAnchor.constraint(equalTo: split.bottomAnchor, constant: 8),
             footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             footer.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -10),
-            message.topAnchor.constraint(equalTo: footer.bottomAnchor, constant: 6),
+            resultSummary.topAnchor.constraint(equalTo: footer.bottomAnchor, constant: 6),
+            resultSummary.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
+            resultSummary.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
+            message.topAnchor.constraint(equalTo: resultSummary.bottomAnchor, constant: 6),
             message.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             message.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
             message.heightAnchor.constraint(equalToConstant: 18),
@@ -175,23 +234,47 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     func repositoryDidChange() {
-        guard !closed, !mutating, service != nil else { return }
-        generation &+= 1
-        service?.cancel()
-        operation?.cancel()
-        service = nil
-        operation = nil
-        isBusy = false
-        message.stringValue = "The repository changed. Refresh the reflog before continuing."
-        status = message.stringValue
-        detailText.string = message.stringValue
+        guard !closed else { return }
+        repositoryRevision &+= 1
+        requests.stale = true
+        fingerprint = nil
+        hasMore = false
+        needsRefresh = true
+        if !isBusy {
+            message.stringValue = "The repository changed. Refreshing the reflog…"
+            status = message.stringValue
+            scheduleRefresh()
+        }
         updateControls()
-        Self.logger.debug("Discarded stale reflog request after repository change")
+        let revision = repositoryRevision
+        Self.logger.debug("Coalesced reflog invalidation revision=\(revision)")
+    }
+
+    private func scheduleRefresh() {
+        guard !closed, !isBusy, needsRefresh else { return }
+        refreshTask?.cancel()
+        let delay = delay
+        refreshTask = Task { [weak self] in
+            do { try await delay(.milliseconds(150)) } catch { return }
+            guard !Task.isCancelled, let self, !self.closed, !self.isBusy, self.needsRefresh else { return }
+            self.refreshTask = nil
+            self.loadPage(append: false)
+        }
+    }
+
+    private func publishResult(_ text: String) {
+        resultSummary.stringValue = text
+        resultSummary.toolTip = text
+        resultSummary.setAccessibilityHelp(text)
+        emptyResultHeight?.isActive = false
+        detailText.string = text
     }
 
     override func closeView() {
         guard !closed else { return }
         closed = true
+        refreshTask?.cancel()
+        slowMutationTask?.cancel()
         generation &+= 1
         if !mutating {
             service?.cancel()
@@ -214,7 +297,8 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     private var selectedReference: String {
-        references.indices.contains(referencePopup.indexOfSelectedItem) ? references[referencePopup.indexOfSelectedItem] : "HEAD"
+        let index = referencePopup.indexOfSelectedItem - 1
+        return references.indices.contains(index) ? references[index].name ?? "HEAD" : "HEAD"
     }
 
     private func updateControls() {
@@ -222,45 +306,95 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         refreshButton.isEnabled = !mutating
         moreButton.isEnabled = hasMore && !isBusy
         cancelButton.isEnabled = isBusy && !mutating
-        table.isEnabled = !mutating
-        for button in selectionButtons {
-            button.isEnabled = selectedEntry != nil && !isBusy
+        table.isEnabled = !closed && requests.permitsSelection
+        for (index, button) in selectionButtons.enumerated() {
+            button.isEnabled = selectedEntry != nil && !isBusy && (index < 2 || requests.permitsRecovery)
         }
     }
 
+    @discardableResult
     private func run<Value: Sendable>(
-        _ title: String, mutation: Bool = false,
+        _ title: String, kind: ReflogBrowserRequestKind = .details, mutation: ReflogBrowserMutation? = nil,
         work: @escaping @Sendable (RepositoryReflogService) throws -> Value,
         completion: @escaping (ReflogBrowserController, Result<Value, Error>) -> Void
-    ) {
-        guard !closed, !mutating, let repository else { return }
-        service?.cancel()
+    ) -> Bool {
+        let kind = mutation == nil ? kind : .mutation
+        guard !closed, requests.permits(kind), let repository else { return false }
+        let service: RepositoryReflogService
+        let activity: RepositoryLocalMutationRegistry.Ticket?
+        do {
+            service = try serviceFactory(repository)
+            activity = mutation == nil ? nil : try RepositoryLocalMutationRegistry.shared.admitContinuation()
+        } catch {
+            if self.service == nil {
+                isBusy = false; requests.active = nil; updateControls()
+            }
+            show(error)
+            return false
+        }
+        self.service?.cancel()
         operation?.cancel()
+        slowMutationTask?.cancel()
         generation &+= 1
         let request = generation
+        let revision = repositoryRevision
         let repositoryIdentity = ObjectIdentifier(repository)
         let started = ContinuousClock.now
         do {
-            let service = try serviceFactory(repository)
             self.service = service
-            mutating = mutation
+            requests.active = kind
+            mutating = mutation != nil
             isBusy = true
             message.stringValue = title
             status = title
             updateControls()
-            operation = Task { [weak self] in
-                let result = await Task.detached(priority: .userInitiated) { try work(service) }.result
+            if mutation != nil {
+                let delay = delay
+                slowMutationTask = Task { [weak self] in
+                    do { try await delay(.seconds(60)) } catch { return }
+                    guard !Task.isCancelled, let self, !self.closed, self.generation == request, self.mutating else { return }
+                    self.message.stringValue = "The Git operation is still running. It will finish without being interrupted."
+                    self.status = self.message.stringValue
+                    Self.logger.notice("Admitted reflog mutation remains active after sixty seconds")
+                }
+            }
+            operation = Task { [weak self, weak repository] in
+                defer {
+                    if let activity {
+                        RepositoryLocalMutationRegistry.shared.finish(activity)
+                    }
+                }
+                let result = await Task.detached(priority: .userInitiated) {
+                    if let activity {
+                        return try RepositoryLocalMutationRegistry.shared.withStartedActivity(activity) { try work(service) }
+                    }
+                    return try work(service)
+                }.result
+                if let mutation, let repository {
+                    mutation.reconcile(repository)
+                    Self.logger.debug("Reconciled completed reflog mutation independently of browser presentation")
+                }
                 guard let self, !self.closed, self.generation == request,
                       self.repository.map(ObjectIdentifier.init) == repositoryIdentity else { return }
+                self.slowMutationTask?.cancel()
+                self.slowMutationTask = nil
                 self.service = nil
                 self.operation = nil
+                self.requests.active = nil
                 self.mutating = false
                 self.isBusy = false
                 self.updateControls()
                 Self.logger.debug("Reflog request finished duration=\(String(describing: started.duration(to: .now)), privacy: .public)")
+                if mutation == nil, self.repositoryRevision != revision {
+                    self.needsRefresh = true
+                    self.scheduleRefresh()
+                    return
+                }
                 completion(self, result)
+                self.scheduleRefresh()
             }
-        } catch { show(error) }
+        }
+        return true
     }
 
     private func show(_ error: Error) {
@@ -287,36 +421,40 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     private func loadPage(append: Bool, successMessage: String? = nil) {
-        guard !closed, !mutating else { return }
+        guard !closed, !mutating, !append || (!requests.stale && !isBusy) else { return }
         let reference = selectedReference
-        let selectedObject = successMessage == nil ? nil : selectedEntry?.objectID
+        let selectedObject = selectedEntry?.objectID
         let offset = append ? entries.count : 0
         let expected = append ? fingerprint : nil
-        if !append {
-            fingerprint = nil
-            entries = []
-            table.reloadData()
-            detailText.string = successMessage ?? ""
-            hasMore = false
-        }
-        run(successMessage ?? "Loading reflog…", work: { service in
-            try ReflogBrowserLoad(branches: service.branches(), page: service.page(reference: reference, offset: offset, expectedFingerprint: expected))
+        let accepted = run(successMessage ?? "Loading reflog…", kind: .page, work: { service in
+            let branches = try service.referenceChoices()
+            let actualReference = reference == "HEAD" || branches.contains(where: { $0.name == reference }) ? reference : "HEAD"
+            let actualOffset = actualReference == reference ? offset : 0
+            return try ReflogBrowserLoad(branches: branches, reference: actualReference,
+                                         page: service.page(reference: actualReference, offset: actualOffset,
+                                                            expectedFingerprint: actualOffset == 0 ? nil : expected, references: branches))
         }) { owner, result in
             switch result {
             case let .success(load):
-                owner.references = ["HEAD"] + load.branches
+                owner.references = load.branches
                 owner.referencePopup.removeAllItems()
-                owner.referencePopup.addItems(withTitles: ["Current checkout’s HEAD"] + load.branches.map { String($0.dropFirst("refs/heads/".count)) })
-                owner.referencePopup.selectItem(at: owner.references.firstIndex(of: reference) ?? 0)
-                owner.entries += load.page.entries
+                owner.referencePopup.addItem(withTitle: "Current checkout’s HEAD")
+                for branch in load.branches {
+                    owner.referencePopup.addItem(withTitle: branch.displayName)
+                    owner.referencePopup.itemArray.last?.isEnabled = branch.name != nil
+                }
+                let selection = load.branches.firstIndex { $0.name == load.reference }.map { $0 + 1 } ?? 0
+                owner.referencePopup.selectItem(at: selection)
+                owner.entries = append && reference == load.reference ? owner.entries + load.page.entries : load.page.entries
                 owner.fingerprint = load.page.fingerprint
                 owner.hasMore = load.page.hasMore
+                owner.requests.stale = false
+                owner.restoringSelection = true
                 owner.table.reloadData()
                 if let selectedObject, let row = owner.entries.firstIndex(where: { $0.objectID == selectedObject }) {
-                    owner.restoringSelection = true
                     owner.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-                    owner.restoringSelection = false
                 }
+                owner.restoringSelection = false
                 owner.message.stringValue = owner.entries.isEmpty
                     ? "This reflog has no retained events. Git may have expired older history."
                     : "\(owner.entries.count) events. Recovery is available only while Git retains the selected commit."
@@ -325,13 +463,22 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
             case let .failure(error): owner.show(error)
             }
         }
+        if accepted {
+            refreshTask?.cancel()
+            refreshTask = nil
+            needsRefresh = false
+            if !append {
+                requests.stale = true; fingerprint = nil; hasMore = false
+            }
+            updateControls()
+        }
     }
 
     func numberOfRows(in _: NSTableView) -> Int {
         entries.count
     }
 
-    func tableView(_: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard entries.indices.contains(row) else { return nil }
         let entry = entries[row]
         let value: String
@@ -342,7 +489,10 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         case "commit": value = String(entry.objectID.prefix(12))
         default: value = entry.subject
         }
-        let label = NSTextField(labelWithString: value)
+        let identifier = tableColumn?.identifier ?? NSUserInterfaceItemIdentifier("subject")
+        let label = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField ?? NSTextField(labelWithString: "")
+        label.identifier = identifier
+        label.stringValue = value
         label.lineBreakMode = .byTruncatingTail
         label.toolTip = value
         return label
@@ -350,7 +500,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
 
     func tableViewSelectionDidChange(_: Notification) {
         updateControls()
-        guard !restoringSelection else { return }
+        guard !restoringSelection, requests.permitsSelection else { return }
         showDetails(compare: false)
     }
 
@@ -374,8 +524,8 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
 
     @objc private func copyCommitID() {
         guard let entry = selectedEntry, !closed else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(entry.objectID, forType: .string)
+        pasteboard.clearContents()
+        pasteboard.setString(entry.objectID, forType: .string)
     }
 
     @objc private func createBranch() {
@@ -392,15 +542,13 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self, !self.closed else { return }
             let branchName = name.stringValue
-            self.run("Creating recovery branch…", mutation: true, work: { try $0.createRecoveryBranch(objectID: entry.objectID, name: branchName) }) { owner, result in
+            self.run("Creating recovery branch…", mutation: .branch, work: { try $0.createRecoveryBranch(objectID: entry.objectID, name: branchName) }) { owner, result in
                 switch result {
                 case .success:
-                    owner.repository?.reloadRefs()
-                    owner.message.stringValue = "Created \(branchName)."
-                    owner.status = owner.message.stringValue
-                    owner.loadPage(append: false, successMessage: owner.message.stringValue)
-                case let .failure(error): owner.show(error)
+                    owner.publishResult("Created \(branchName).")
+                case let .failure(error): owner.publishResult(error.localizedDescription)
                 }
+                owner.loadPage(append: false)
             }
         }
     }
@@ -419,7 +567,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self, !self.closed else { return }
             let mode = ReflogResetMode.allCases[modes.indexOfSelectedItem]
-            self.run("Preparing reset preview…", work: { try $0.preview(target: entry.objectID, mode: mode) }) { owner, result in
+            self.run("Preparing reset preview…", kind: .preview, work: { try $0.preview(target: entry.objectID, mode: mode) }) { owner, result in
                 switch result {
                 case let .success(preview): owner.confirmReset(preview)
                 case let .failure(error): owner.show(error)
@@ -447,11 +595,11 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         scroll.hasVerticalScroller = true
         scroll.documentView = paths
         alert.accessoryView = scroll
-        alert.addButton(withTitle: preview.mode == .hard ? "Continue…" : "Create Backup and Reset")
+        alert.addButton(withTitle: preview.mode.requiresDiscardConfirmation ? "Continue…" : "Create Backup and Reset")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self, !self.closed else { return }
-            if preview.mode == .hard {
+            if preview.mode.requiresDiscardConfirmation {
                 self.confirmDiscard(preview)
             } else {
                 self.performReset(preview, discard: false)
@@ -474,17 +622,13 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     private func performReset(_ preview: RepositoryRecoveryPreview, discard: Bool) {
-        run("Creating backup and resetting checkout…", mutation: true, work: { try $0.reset(confirmed: preview, discardConfirmed: discard) }) { owner, result in
-            owner.repository?.reloadRefs()
-            owner.repository?.lazyReload()
+        run("Creating backup and resetting checkout…", mutation: .reset, work: { try $0.reset(confirmed: preview, discardConfirmed: discard) }) { owner, result in
             switch result {
             case let .success(backup):
-                owner.message.stringValue = "Reset complete. Previous committed history: \(backup)."
-                owner.status = owner.message.stringValue
-                owner.detailText.string = owner.message.stringValue
-                owner.loadPage(append: false, successMessage: owner.message.stringValue)
-            case let .failure(error): owner.show(error)
+                owner.publishResult("Reset complete. Previous committed history: \(backup).")
+            case let .failure(error): owner.publishResult(error.localizedDescription)
             }
+            owner.loadPage(append: false)
         }
     }
 }

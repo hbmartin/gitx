@@ -503,10 +503,23 @@ final class GitBinaryReliabilityTests: XCTestCase {
         let clock = Clock()
         let entered = expectation(description: "Two blocked factories retain both workers")
         entered.expectedFulfillmentCount = 2
+        entered.assertForOverFulfill = true
+        let returned = expectation(description: "Both occupied factories return before fixture teardown")
+        returned.expectedFulfillmentCount = 2
+        returned.assertForOverFulfill = true
+        let starts = Mutex<[String]>([])
         let release = DispatchSemaphore(value: 0)
-        defer { release.signal(); release.signal() }
-        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { _, _, _ in
-            entered.fulfill(); _ = release.wait(timeout: .now() + 10)
+        defer {
+            release.signal(); release.signal()
+            wait(for: [returned], timeout: 3)
+        }
+        let runner = GitDiscoveryProbeRunner(timing: clock.timing, factory: { path, _, _ in
+            starts.withLock { $0.append(path) }
+            if path.hasPrefix("/occupied") {
+                defer { returned.fulfill() }
+                entered.fulfill()
+                release.wait()
+            }
             return .init(output: { nil }, cancel: {})
         })
         for index in 0 ..< 2 {
@@ -529,6 +542,7 @@ final class GitBinaryReliabilityTests: XCTestCase {
         XCTAssertEqual(results.withLock { $0 }, ["cancelled(started: false)", "timedOut(started: false)"])
         clock.advance(100)
         XCTAssertEqual(results.withLock { $0.count }, 18)
+        XCTAssertEqual(starts.withLock { $0.sorted() }, ["/occupied0", "/occupied1"], "Expired queued probes cannot enter a factory while both original workers remain owned")
     }
 
     func testBusyDiscoveryPreservesPreferenceAndAllowsALaterDemandWithoutAnAutomaticLoop() {

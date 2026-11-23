@@ -110,6 +110,20 @@ final class RepositoryStatusBarView: NSView {
     let forgeDiagnosticLabel = NSTextField(labelWithString: "")
     let forgeRefreshButton = NSButton()
     let detailsButton = NSButton(title: "Details", target: nil, action: nil)
+    let failureLabel = NSTextField(labelWithString: "")
+    let failureDetailsButton = NSButton(title: "Details", target: nil, action: nil)
+    let failureDismissButton = NSButton(title: "Dismiss", target: nil, action: nil)
+    private let failureRow = NSStackView()
+    private var ordinaryRow: NSStackView?
+    private var failureBottom: NSLayoutConstraint?
+
+    func apply(failure: RepositoryOperationFailure?, ordinaryVisible: Bool) {
+        failureLabel.stringValue = failure?.message ?? ""
+        failureLabel.toolTip = failure?.details
+        failureRow.isHidden = failure == nil
+        ordinaryRow?.isHidden = !ordinaryVisible
+        failureBottom?.constant = ordinaryVisible ? -43.5 : -14.5
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -280,10 +294,34 @@ final class RepositoryStatusBarView: NSView {
         row.alignment = .centerY
         row.spacing = 9
         addSubview(row)
+        ordinaryRow = row
+        failureRow.orientation = .horizontal
+        failureRow.spacing = 8
+        failureRow.alignment = .centerY
+        failureRow.translatesAutoresizingMaskIntoConstraints = false
+        failureRow.isHidden = true
+        failureLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        failureLabel.textColor = .systemOrange
+        failureLabel.lineBreakMode = .byTruncatingTail
+        failureLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        failureLabel.setAccessibilityIdentifier("GitX.RepositoryFailure.Message")
+        failureRow.addArrangedSubview(failureLabel)
+        failureRow.addArrangedSubview(NSView())
+        for (button, identifier) in [(failureDetailsButton, "Details"), (failureDismissButton, "Dismiss")] {
+            button.bezelStyle = .inline
+            button.controlSize = .small
+            button.setAccessibilityIdentifier("GitX.RepositoryFailure." + identifier)
+            failureRow.addArrangedSubview(button)
+        }
+        addSubview(failureRow)
+        failureBottom = failureRow.centerYAnchor.constraint(equalTo: bottomAnchor, constant: -43.5)
+        failureBottom?.isActive = true
         NSLayoutConstraint.activate([
+            failureRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            failureRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            row.centerYAnchor.constraint(equalTo: centerYAnchor),
+            row.centerYAnchor.constraint(equalTo: bottomAnchor, constant: -14.5),
         ])
     }
 
@@ -314,6 +352,11 @@ final class RepositoryStatusBarController: NSObject {
     private weak var contentView: NSView?
     private var shownConstraint: NSLayoutConstraint?
     private var hiddenConstraint: NSLayoutConstraint?
+    private var heightConstraint: NSLayoutConstraint?
+    private var ordinaryVisible = true
+    private var operationFailure: RepositoryOperationFailure?
+    var failureDetails: ((RepositoryOperationFailure) -> Void)?
+    var failureDismissed: ((UUID) -> Void)?
     private var originalBottomConstraints: [NSLayoutConstraint] = []
     private var attachmentConstraints: [NSLayoutConstraint] = []
     // MainActor owns all scheduling and ordinary access. Foundation documents
@@ -340,6 +383,10 @@ final class RepositoryStatusBarController: NSObject {
         view.forgeRefreshButton.action = #selector(refreshForgeOverlay(_:))
         view.detailsButton.target = self
         view.detailsButton.action = #selector(showDetails(_:))
+        view.failureDetailsButton.target = self
+        view.failureDetailsButton.action = #selector(showOperationFailure(_:))
+        view.failureDismissButton.target = self
+        view.failureDismissButton.action = #selector(dismissOperationFailure(_:))
     }
 
     deinit {
@@ -362,11 +409,13 @@ final class RepositoryStatusBarController: NSObject {
         contentView.addSubview(view)
         shownConstraint = splitView.bottomAnchor.constraint(equalTo: view.topAnchor)
         hiddenConstraint = splitView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        let height = view.heightAnchor.constraint(equalToConstant: 29)
+        heightConstraint = height
         attachmentConstraints = [
             view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            view.heightAnchor.constraint(equalToConstant: 29),
+            height,
         ]
         NSLayoutConstraint.activate(attachmentConstraints)
         setVisible(visible)
@@ -375,6 +424,19 @@ final class RepositoryStatusBarController: NSObject {
     }
 
     func setVisible(_ visible: Bool) {
+        ordinaryVisible = visible
+        updateVisibility()
+    }
+
+    func updateFailure(_ failure: RepositoryOperationFailure?) {
+        operationFailure = failure
+        updateVisibility()
+    }
+
+    private func updateVisibility() {
+        let visible = ordinaryVisible || operationFailure != nil
+        view.apply(failure: operationFailure, ordinaryVisible: ordinaryVisible)
+        heightConstraint?.constant = (ordinaryVisible ? 29 : 0) + (operationFailure == nil ? 0 : 29)
         guard view.superview != nil else { return }
         if visible {
             hiddenConstraint?.isActive = false
@@ -428,6 +490,18 @@ final class RepositoryStatusBarController: NSObject {
         NSLayoutConstraint.activate(originalBottomConstraints)
         originalBottomConstraints.removeAll()
         logger.debug("Detached repository status bar and restored window constraints")
+    }
+
+    @objc private func showOperationFailure(_ sender: Any?) {
+        if let operationFailure {
+            failureDetails?(operationFailure)
+        }
+    }
+
+    @objc private func dismissOperationFailure(_ sender: Any?) {
+        if let operationFailure {
+            failureDismissed?(operationFailure.id)
+        }
     }
 
     @objc private func refreshForgeOverlay(_ sender: Any?) {

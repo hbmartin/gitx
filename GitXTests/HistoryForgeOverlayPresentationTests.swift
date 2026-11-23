@@ -60,6 +60,31 @@ final class HistoryForgeOverlayPresentationTests: XCTestCase {
         )
     }
 
+    func testSinglePullRequestBadgeUsesASingularAccessibleDescription() throws {
+        for totalCount: Int? in [nil, 1] {
+            let page = try ForgePage(items: [pullRequest(number: 7)], totalCount: totalCount)
+            let presentation = HistoryForgeBadgePresenter.present(.value(snapshot(
+                checkRollup: .available(.succeeded),
+                pullRequests: .available(page)
+            )))
+
+            XCTAssertEqual(presentation.pullRequestText, "#7")
+            XCTAssertEqual(presentation.pullRequestAccessibilityLabel, "Associated Pull Request number 7")
+            XCTAssertFalse(presentation.isLoading)
+        }
+    }
+
+    func testUnavailablePullRequestBadgeDescribesMissingProviderData() {
+        let presentation = HistoryForgeBadgePresenter.present(.value(snapshot(
+            checkRollup: .available(.succeeded),
+            pullRequests: .unavailable(.permissionDenied)
+        )))
+
+        XCTAssertEqual(presentation.pullRequestText, "—")
+        XCTAssertEqual(presentation.pullRequestAccessibilityLabel, "Pull Request badges unavailable")
+        XCTAssertFalse(presentation.isLoading)
+    }
+
     func testRepositoryFactsPresentCompletePartialStaleAndUnavailableSections() throws {
         let facts = try ForgeRepositoryFacts(
             repository: repository,

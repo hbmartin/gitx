@@ -29,6 +29,29 @@ nonisolated struct RepositoryWindowOwnership {
     }
 }
 
+/// A token borrows consent only for the document and owner that issued it.
+nonisolated struct RepositoryDocumentCloseConsent {
+    private var approvals: [UUID: (document: ObjectIdentifier, generation: UInt64)] = [:]
+
+    mutating func begin(document: ObjectIdentifier, generation: UInt64) -> UUID {
+        let token = UUID()
+        approvals[token] = (document, generation)
+        return token
+    }
+
+    mutating func end(_ token: UUID) {
+        approvals[token] = nil
+    }
+
+    mutating func revoke() {
+        approvals.removeAll()
+    }
+
+    func permits(document: ObjectIdentifier, generation: UInt64) -> Bool {
+        approvals.values.contains { $0.document == document && $0.generation == generation }
+    }
+}
+
 /// Global presentation intent survives repository replacement; closure discards it.
 nonisolated struct RepositoryWindowRefreshIntents {
     private(set) var activated = false
@@ -653,8 +676,16 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private final func revokeOwner(closing: Bool = false) {
         // Revocation precedes cancellation, KVO removal and potentially reentrant UI work.
         ownership.revoke(closing: closing)
-        approvedDocumentClose = nil
+        documentCloseConsent.revoke()
         pullRequestActivity = nil
+        operationFailures.removeAll()
+        operationFailureDetails = nil
+        if let alert = operationFailureAlert, let parent = alert.window.sheetParent {
+            parent.endSheet(alert.window, returnCode: .abort)
+            alert.window.orderOut(nil)
+        }
+        operationFailureAlert = nil
+        repositoryStatusBarController?.updateFailure(nil)
         if closing {
             pendingRefreshIntents.discard()
             globalOwnerNotifications.forEach(ownerNotifications.removeObserver)
@@ -1097,17 +1128,30 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var pullRequestCloseProtection: ((@escaping () -> Void) -> Bool)?
     private var pullRequestCloseDecision: ((@escaping (Bool) -> Void) -> Bool)?
     private var pullRequestOwnerRevocation: (() -> Void)?
+    private var pullRequestRecoveryDetachment: (() -> Void)?
     private var closingAfterDraftConfirmation = false
-    private var approvedDocumentClose: ObjectIdentifier?
+    private var documentCloseConsent = RepositoryDocumentCloseConsent()
 
-    final func approveDocumentClose(for document: NSDocument) {
-        guard self.document === document else { return }
-        approvedDocumentClose = ObjectIdentifier(document)
+    private var hasApprovedDocumentClose: Bool {
+        guard let document else { return false }
+        return documentCloseConsent.permits(document: ObjectIdentifier(document), generation: ownership.generation)
+    }
+
+    final func beginApprovedDocumentClose(for document: NSDocument) -> UUID? {
+        guard self.document === document, !ownership.closed else { return nil }
+        return documentCloseConsent.begin(document: ObjectIdentifier(document), generation: ownership.generation)
+    }
+
+    final func endApprovedDocumentClose(_ token: UUID) {
+        documentCloseConsent.end(token)
     }
 
     final func registerPullRequestCloseGuard(owner: NSObject, protection: @escaping (@escaping () -> Void) -> Bool, revoke: @escaping () -> Void,
-                                             decision: ((@escaping (Bool) -> Void) -> Bool)? = nil)
+                                             decision: ((@escaping (Bool) -> Void) -> Bool)? = nil, repositoryMoved: (() -> Void)? = nil)
     {
+        if pullRequestCloseGuardOwner !== owner {
+            documentCloseConsent.revoke()
+        }
         if pullRequestCloseGuardOwner != nil, pullRequestCloseGuardOwner !== owner {
             pullRequestOwnerRevocation?()
         }
@@ -1115,19 +1159,26 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         pullRequestCloseProtection = protection
         pullRequestCloseDecision = decision
         pullRequestOwnerRevocation = revoke
+        pullRequestRecoveryDetachment = repositoryMoved
     }
 
     final func unregisterPullRequestCloseGuard(owner: NSObject) {
         if pullRequestCloseGuardOwner === owner {
+            documentCloseConsent.revoke()
             pullRequestCloseGuardOwner = nil
             pullRequestCloseProtection = nil
             pullRequestCloseDecision = nil
             pullRequestOwnerRevocation = nil
+            pullRequestRecoveryDetachment = nil
         }
     }
 
+    final func detachRecoveryForRepositoryMove() {
+        pullRequestRecoveryDetachment?()
+    }
+
     final func requestPullRequestCloseDecision(_ completion: @escaping (Bool) -> Void) -> Bool {
-        if let approvedDocumentClose, let document, approvedDocumentClose == ObjectIdentifier(document) {
+        if hasApprovedDocumentClose {
             return false
         }
         guard !closingAfterDraftConfirmation, !ownership.closed, pullRequestCloseGuardOwner != nil,
@@ -1141,7 +1192,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private func deferCloseForRecoveredText() -> Bool {
         guard !closingAfterDraftConfirmation, !ownership.closed else { return false }
         if pullRequestCloseGuardOwner != nil, let document = document as? PBGitRepositoryDocument,
-           approvedDocumentClose != ObjectIdentifier(document)
+           !hasApprovedDocumentClose
         {
             document.requestRepositoryClose { _ in }
             return true
@@ -1605,6 +1656,41 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private final var pullRequestActivity: RepositoryPullRequestActivity?
+    private var operationFailures = RepositoryOperationFailureQueue()
+    private var operationFailureDetails: UUID?
+    private var operationFailureAlert: NSAlert?
+
+    final func recordOperationFailure(_ failure: RepositoryOperationFailure) {
+        guard !ownership.closed else { return }
+        operationFailures.append(failure)
+        repositoryStatusBarController?.updateFailure(operationFailures.first)
+    }
+
+    private func dismissOperationFailure(_ identity: UUID) {
+        guard operationFailures.dismiss(identity) else { return }
+        repositoryStatusBarController?.updateFailure(operationFailures.first)
+    }
+
+    private func showOperationFailure(_ failure: RepositoryOperationFailure) {
+        guard !ownership.closed, operationFailureDetails == nil, let window else { return }
+        let identity = UUID()
+        operationFailureDetails = identity
+        let alert = NSAlert()
+        operationFailureAlert = alert
+        alert.window.setAccessibilityIdentifier("GitX.RepositoryFailure.Details")
+        alert.messageText = failure.message
+        alert.informativeText = failure.details
+        alert.addButton(withTitle: "OK")
+        var parent = window
+        while let attached = parent.attachedSheet {
+            parent = attached
+        }
+        alert.beginSheetModal(for: parent) { [weak self] _ in
+            guard self?.operationFailureDetails == identity else { return }
+            self?.operationFailureDetails = nil
+            self?.operationFailureAlert = nil
+        }
+    }
 
     final func setPullRequestActivity(_ activity: RepositoryPullRequestActivity) {
         guard !ownership.closed else { return }
@@ -2102,6 +2188,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             )
         }
         repositoryStatusBarController = controller
+        controller.failureDetails = { [weak self] in self?.showOperationFailure($0) }
+        controller.failureDismissed = { [weak self] in self?.dismissOperationFailure($0) }
+        controller.updateFailure(operationFailures.first)
         controller.install(visible: ApplicationSettings.repositoryStatusBarVisible)
         updateStatus()
         if let repositoryForgeOverlaySession {

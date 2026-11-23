@@ -2097,7 +2097,7 @@ private actor PreferencesFailureClientDouble: ForgeAccountsClient {
 }
 
 @MainActor
-private final class ScopedAlertRunModalDriver {
+final class ScopedAlertRunModalDriver {
     typealias Handler = @MainActor (NSAlert) -> NSApplication.ModalResponse
 
     private weak static var active: ScopedAlertRunModalDriver?

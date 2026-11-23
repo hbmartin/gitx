@@ -1,0 +1,1049 @@
+{
+  "schemaVersion": 1,
+  "reviewedPullRequest": "https://github.com/hbmartin/gitx/pull/128",
+  "publication": "Local commits only. Do not push or open a pull request.",
+  "branch": "codex/pr128-review-followup",
+  "forkDefaultBranch": "hbmartin/gitx:master",
+  "integrationSHA": "12a23d71bc26fb7a209cc13b1341c140a12fcad2",
+  "preservedFollowupHead": "b3d00d06d1ab9ff80e44de3a4572e5cd90a933c2",
+  "preparationCommit": "210ed1b903f25c139699813ed21c42bf2d6a4936",
+  "status": "Pre-commit evidence: production changes and complete correctness/coverage passed. A later complete sanitizer run failed three native readiness/consent tests with unconfirmed foreground-loss attribution. Diagnostic-only changes pass focused correctness and Address/Undefined plus pinned/static and Debug/Release/interoperability checks. The canonical final workflow receipt remains the authority for delivery.",
+  "runIds": [
+    "pr128-next-data-green",
+    "pr128-next-browser-green-v3",
+    "pr128-next-pagination-green-v2",
+    "pr128-next-pr-feedback-green-v2",
+    "pr128-next-lifecycle-characterization",
+    "pr128-next-pre-extraction-correctness",
+    "pr128-next-post-browser-correctness",
+    "pr128-next-post-pr-correctness",
+    "pr128-next-recovery-move-reset-red-v2",
+    "pr128-next-recovery-session-green-v3",
+    "pr128-next-reset-diagnostics-green-v2",
+    "pr128-next-recovery-session-admission",
+    "pr128-next-post-session-correctness",
+    "pr128-next-native-close-characterization",
+    "pr128-next-post-native-close-correctness",
+    "pr128-next-native-quit-red-v2",
+    "pr128-next-native-quit-fixtures-red-v3",
+    "pr128-next-termination-native-red-v5",
+    "pr128-next-termination-boundary-red",
+    "pr128-next-termination-green",
+    "pr128-next-termination-static",
+    "pr128-next-native-quit-selector-green",
+    "pr128-next-native-quit-bridge-coverage",
+    "pr128-next-native-quit-forwarder-green",
+    "pr128-next-offscreen-verification",
+    "pr128-next-post-termination-correctness",
+    "pr128-next-post-termination-static",
+    "pr128-next-final-full",
+    "pr128-saved-sheet-quit-red",
+    "pr128-unchanged-editor-quit-ui-red",
+    "pr128-saved-sheet-characterization",
+    "pr128-saved-sheet-quit-characterized-red",
+    "pr128-all-presentations-quit-green",
+    "pr128-mixed-quit-boundary-green",
+    "pr128-post-all-presentations-correctness",
+    "pr128-post-all-presentations-static",
+    "pr128-probe-fixture-drain-green",
+    "pr128-native-fixtures-address",
+    "pr128-native-fixtures-thread",
+    "pr128-native-fixtures-green",
+    "pr128-native-fixtures-address-diagnostic",
+    "pr128-native-fixtures-thread-diagnostic",
+    "pr128-prune-repair-context-green",
+    "pr128-prune-repair-context-address",
+    "pr128-prune-repair-context-thread",
+    "pr128-prune-context-activation-address",
+    "pr128-prune-context-activation-thread",
+    "pr128-document-worktree-foreground-diagnostic-address",
+    "pr128-native-foreground-diagnostics-green",
+    "pr128-native-foreground-diagnostics-formatted-address"
+  ],
+  "preparationVerification": {
+    "workflow": "artifacts/verification/pr128-next-pre-extraction-correctness/workflow.json",
+    "checks": [
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "correctness"
+    ],
+    "correctnessTests": 2421,
+    "failures": 0,
+    "coverageReceipt": "artifacts/verification/pr128-next-pre-extraction-correctness-correctness-38e6af0a/receipt.json",
+    "coverageBundle": "artifacts/verification/pr128-next-pre-extraction-correctness-correctness-38e6af0a/Results/GitX.xcresult",
+    "coveragePolicy": "Ratchet applied from this complete passing receipt; plain checker passed afterward. No floor was lowered.",
+    "notFinalDeliveryEvidence": true
+  },
+  "objectiveCPreparation": {
+    "path": "Classes/Controllers/PBGitRepositoryDocument.m",
+    "coveredLines": 210,
+    "executableLines": 212,
+    "lineCoverage": 0.9905660377358491,
+    "requiredMinimum": 0.9,
+    "normalFailureBoundaryTests": "Complete RepositoryDocumentScriptingCharacterizationTests, WindowControllerTests, plus NativeLocalMutationLifetimeTests/testClosingTheOriginalDocumentLetsAnAdmittedHardResetFinish.",
+    "interop": "Debug and Release consumers passed; generated interfaces inspected before changing the move hook.",
+    "generatedInterfaces": [
+      {
+        "configuration": "Debug",
+        "path": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Debug/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Debug/GitX.build/DerivedSources/GitX-Swift.h",
+        "sha256": "aeab5c1963dc0b0eadb1d8c85c443435c59689949d09b35189430e10d4a1389c",
+        "closeCoordinatorInterface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end"
+      },
+      {
+        "configuration": "Release",
+        "path": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Release/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Release/GitX.build/DerivedSources/GitX-Swift.h",
+        "sha256": "699d6d1a7e95b7db2fd2d785e4c89126fdc52551665008b1e55d55984229bcb2",
+        "closeCoordinatorInterface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end"
+      }
+    ]
+  },
+  "raisedFloors": {
+    "Classes/Controllers/ReflogBrowserController.swift": 0.9944,
+    "Classes/Controllers/RepositoryPullRequestUIController.swift": 0.89,
+    "Classes/Controllers/RepositoryPullRequestWorkflow.swift": 0.9798,
+    "Classes/Controllers/RepositoryStatusBarController.swift": 0.9861,
+    "Classes/git/RepositoryReflogService.swift": 0.9804
+  },
+  "historicalFailures": [
+    {
+      "runId": "pr128-next-post-browser-correctness",
+      "result": "One WorktreeAppKit consent case failed. The unchanged isolated case, complete class and subsequent complete correctness runs passed. Original failed evidence remains retained."
+    },
+    {
+      "runId": "pr128-next-post-pr-correctness",
+      "result": "All 2417 tests passed; the workflow stopped because RepositoryPullRequestWorkflow.swift measured 97.62% below 97.74%. Native production-policy characterization filled the missed paths; the later complete run passed the unchanged floor."
+    },
+    {
+      "runId": "pr128-next-recovery-session-green-v3",
+      "result": "All native move/session, document, PR completion and retirement cases passed. One reset evidence case failed two assertions because the unsafe diagnostic omitted Git stderr; the subsequent fix preserves the redacted cause."
+    },
+    {
+      "runId": "pr128-next-post-session-correctness",
+      "result": "All 2440 tests passed. UI controller coverage was 1813/2053 (88.31%) below the unchanged 89.00% floor. Session coverage was 334/339 (98.53%), app coverage 93.99% and reflog service 98.38%. No ratchet was taken from the failed gate."
+    },
+    {
+      "runId": "pr128-next-native-quit-red-v2",
+      "result": "Attached recovery and a held real Git mutation reached menu Quit and reproduced the bypass. Detached/multiple-document setup queries were corrected before their separate red run."
+    },
+    {
+      "runId": "pr128-next-native-quit-fixtures-red-v3",
+      "result": "Actual coordinated move and two-document fixtures reached menu Quit and reproduced the missing protection."
+    },
+    {
+      "runId": "pr128-next-termination-native-red-v5",
+      "result": "Known pre-send admission refusals were classified uncertain, and completion left old detached-placeholder consent pending. Separate fixture errors were corrected before accepting their results."
+    },
+    {
+      "runId": "pr128-next-termination-boundary-red",
+      "result": "Actual tag creation bypassed sealed admission; checkout and detached reflog completion released local activity before original-repository reconciliation. Session and termination decision regressions passed."
+    },
+    {
+      "runId": "pr128-next-termination-green",
+      "result": "All 206 selected native cases and Debug/Release consumers passed. Four protected native-menu Quit cases still failed because AppKit did not reach the Swift-only delegate extension. The unprotected Quit characterization passed."
+    },
+    {
+      "runId": "pr128-next-native-quit-forwarder-green",
+      "receipt": "artifacts/verification/pr128-next-native-quit-forwarder-green-ui-a541b646/receipt.json",
+      "result": "With the delegate hook present, detached recovery and held local mutation Quit passed, while attached recovery and multiple documents exposed AppKit waiting for attached sheets before consulting the delegate. Menu routing now performs Swift consent before calling AppKit. A subsequent test-only build failure used a helper private to another fixture; corrected to observable XCTest expectations."
+    },
+    {
+      "runId": "pr128-next-offscreen-verification",
+      "result": "Compiler/Clang analysis, static checks, Core and ForgeKit passed; whole-scope semantic analysis rejected two Objective-C-only entrypoints. Both now have narrow caller-explained annotations, with no relaxed baseline."
+    },
+    {
+      "runId": "pr128-next-native-quit-selector-green",
+      "result": "Explicit Objective-C export on the imported delegate extension failed compilation with a selector conflict. A thin Objective-C forwarding hook provides the required runtime entry point."
+    },
+    {
+      "runId": "pr128-next-final-full",
+      "commit": "8ae9244314ba639b130adb2fe1a3c8ae03550137",
+      "receipt": "artifacts/verification/pr128-next-final-full-address-undefined-eebae68b/receipt.json",
+      "result": "The first eight checks passed, including all 2473 correctness cases and raised coverage floors. Interrupted only the owned sanitizer compiler before sanitizer testing to investigate saved/unchanged editor Quit. No sanitizer outcome is claimed. The final full workflow must rerun at the correction commit."
+    },
+    {
+      "runId": "pr128-saved-sheet-quit-red",
+      "result": "Two native regressions failed with three assertions: accepted Quit forwarded while saved recovery and unchanged editor sheets stayed open, and the unchanged editor retained presentation authority."
+    },
+    {
+      "runId": "pr128-unchanged-editor-quit-ui-red",
+      "result": "Actual menu Quit was accepted by the coordinator, then the process stayed open because AppKit waited for its unchanged editor sheet."
+    },
+    {
+      "runId": "pr128-saved-sheet-quit-characterized-red",
+      "commit": "a8e6e9bd717f69f535297270f60a34a618d9405a",
+      "result": "After the separate passing saved-recovery characterization commit, both native regressions again failed with the same three assertions. No failing test was committed."
+    },
+    {
+      "runId": "pr128-next-final-full",
+      "commit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-address-undefined-9acf3700/receipt.json",
+      "result": "Eight canonical checks passed, including all 2476 correctness tests and coverage. The complete Address/Undefined Behavior plan reported 2474 passes and two failures after a held discovery-factory fixture outlived its ten-second semaphore timeout. A stale XCTest callback overfulfilled an expectation in following tests and aborted the host. Retain this failed receipt; no sanitizer pass is claimed."
+    },
+    {
+      "runId": "pr128-probe-fixture-drain-green",
+      "commit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-probe-fixture-drain-green-thread-sanitizer-6689a7ae/receipt.json",
+      "result": "With the discovery fixture correction, its 36 correctness cases and all 2476 Address/Undefined Behavior tests passed. The complete Thread Sanitizer plan reported 2474 passes and two AppKit fixture failures: the foreground owner never became key before synchronization, and a chained Remove Anyway sheet stayed queued after programmatic sheet dismissal. Keep the failed receipt; no Thread Sanitizer pass is claimed."
+    },
+    {
+      "runId": "pr128-native-fixtures-thread",
+      "receipt": "artifacts/verification/pr128-native-fixtures-thread/receipt.json",
+      "result": "The focused Thread Sanitizer run reported 92 passes and four owner-readiness/queued-consent failures. Preserve this receipt; the following diagnostic reproduction records the exact current source and failure snapshots rather than relaxing assertions."
+    },
+    {
+      "runId": "pr128-next-final-full",
+      "commit": "a03e3eec5fe7b610713294273cfefb069cccf01f",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-correctness-819811b2/receipt.json",
+      "result": "Five final canonical checks passed. Complete correctness reported 2475 passes and one failure in the hidden-window prune fixture. Its diagnostic snapshot confirms an active app, a present XCTest marker and an already-attached automatic broken-link repair-choice sheet. The fixture expected no sheet and then Prune consent; the two legitimate presentations were competing. Preserve this failed receipt."
+    },
+    {
+      "runId": "pr128-prune-repair-context-thread",
+      "receipt": "artifacts/verification/pr128-prune-repair-context-thread/receipt.json",
+      "result": "All sixty correctness and Address/Undefined Behavior cases passed with the explicit repair-history fixture. Thread Sanitizer reported 59 passes and one failure after the host remained inactive despite requested self-activation. The snapshot has no attached repair sheet; keep this separate activation failure and the strict foreground oracle."
+    },
+    {
+      "runId": "pr128-next-final-full",
+      "commit": "f7f26874114f6b365aa9be48266e85cf4716482c",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-address-undefined-31e0a14a/receipt.json",
+      "result": "Eight final checks passed, including complete correctness (2476 passed) and coverage. Complete Address/Undefined then reported 2473 passes and three native failures. The document-replacement fixture timed out waiting for foreground/key readiness before replacement. The two worktree consent waits began with an active/key/main owner and ended with the app inactive, owner non-key/non-main and no attached sheet. Keep this failed receipt; the cause of foreground loss is unconfirmed."
+    }
+  ],
+  "characterization": [
+    "Native document closure does not interrupt an admitted real-Git hard reset.",
+    "Native menu Quit closes an unprotected repository.",
+    "Create failure leaves the create sheet state and preserves its exact draft intent.",
+    "Failure records preserve unsent, rejected and uncertain dispositions after retirement.",
+    "Git preserves predecessor evidence in a single retained reflog entry, including with automatic reflog creation disabled."
+  ],
+  "diagnostics": {
+    "nativePullRequestFailureImages": "/private/tmp/pr128-pr-feedback-images",
+    "sourceRunId": "pr128-next-pr-feedback-green-v2",
+    "description": "Current failure row screenshot was visually inspected. Move/Quit/stale-result screenshots will be added with their implementation evidence.",
+    "recoverySessionImages": "/private/tmp/pr128-recovery-session-images",
+    "recoverySessionSourceRunId": "pr128-next-recovery-session-green-v3",
+    "recoverySessionInspection": "Standalone exact-text editor and pending detached close warning inspected. Screenshots remain diagnostic, with no pixel assertions."
+  },
+  "stableApp": {
+    "path": "/Volumes/Pro2T/gitx/build/GitX.app",
+    "verificationRecord": "artifacts/verification/pr128-next-final-full/stable-app.json",
+    "refreshPolicy": "Refresh only after every required final check passes; record the installed commit, signature verification and source bundle identity separately."
+  },
+  "recoverySessionImplementation": {
+    "changes": [
+      "Exact recovered content, original draft identity, conditional save attempts and submission completion outlive an obsolete repository document.",
+      "Ready, loading, consent, admitted write, final persistence, remote completion and accepted queued recovery survive real filesystem moves.",
+      "Thin Objective-C move callback delegates decisions to Swift; old callbacks cannot close a replacement.",
+      "Branch write/verification uncertainty retains its exact branch identity and prevents a subsequent reset. Present-but-unreadable reset evidence is not treated as absent. Expected/observed commits and redacted Git diagnostics remain in the unsafe outcome."
+    ],
+    "regressionRedRun": "pr128-next-recovery-move-reset-red-v2",
+    "affectedRun": "pr128-next-recovery-session-green-v3",
+    "affectedRunResult": "257 cases, 255 passed; one reset test had two diagnostic-reason assertion failures. The missing underlying Git reason was then retained and verified separately.",
+    "greenRuns": [
+      "pr128-next-reset-diagnostics-green-v2",
+      "pr128-next-recovery-session-admission"
+    ],
+    "consumerChecks": [
+      "Debug build-tests passed",
+      "Release build-tests passed",
+      "interop passed"
+    ],
+    "afterMoveGeneratedInterfaces": [
+      {
+        "configuration": "Debug",
+        "path": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Debug/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Debug/GitX.build/DerivedSources/GitX-Swift.h",
+        "sha256": "bb1fdedee7cc18fa0894228ecb560685e075067478dad23d118f54683bec88fa",
+        "interface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)handleMoveForDocument:(NSDocument * _Nonnull)document toURL:(NSURL * _Nonnull)_ performClose:(SWIFT_NOESCAPE void (^ _Nonnull)(void))performClose;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end"
+      },
+      {
+        "configuration": "Release",
+        "path": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Release/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Release/GitX.build/DerivedSources/GitX-Swift.h",
+        "sha256": "b37d82c80aa4a8543e09d042cc2d9f1c35119225878aa490e88624ecf365f07b",
+        "interface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)handleMoveForDocument:(NSDocument * _Nonnull)document toURL:(NSURL * _Nonnull)_ performClose:(SWIFT_NOESCAPE void (^ _Nonnull)(void))performClose;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end"
+      }
+    ],
+    "coverageAdmission": {
+      "path": "Classes/Controllers/RepositoryPullRequestRecoverySession.swift",
+      "floor": 0.9852,
+      "kind": "Explicit initial policy admission from passing focused tests; existing floors unchanged. Complete post-commit correctness still required."
+    },
+    "notFinalDeliveryEvidence": true
+  },
+  "nativeCloseCharacterization": {
+    "runId": "pr128-next-native-close-characterization",
+    "tests": 3,
+    "failures": 0,
+    "behavior": [
+      "Session and document consent callbacks preserve exact recovery text, the index owner and file-presenter registration; accepting preflight without closure requires fresh consent.",
+      "Owner revocation clears an informational pending-create notice without further preparation.",
+      "A persisted failed edit retains durable text, retires its record and presents the failure."
+    ],
+    "newlyExercisedControllerLines": 16,
+    "combinedCoverageExpectationOnly": 0.8908913784705309,
+    "completePassingReceiptStillRequired": true
+  },
+  "postSessionVerification": {
+    "commit": "a0ea55c966fb4bbc5735768b95addd8a0b59decd",
+    "runId": "pr128-next-post-native-close-correctness",
+    "workflow": "artifacts/verification/pr128-next-post-native-close-correctness/workflow.json",
+    "bundle": "artifacts/verification/pr128-next-post-native-close-correctness-correctness-77f8627d/Results/GitX.xcresult",
+    "receipt": "artifacts/verification/pr128-next-post-native-close-correctness-correctness-77f8627d/receipt.json",
+    "summary": {
+      "result": "Passed",
+      "totalTestCount": 2443,
+      "passedTests": 2443,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "expectedFailures": 0
+    },
+    "coveragePolicy": "Atomic improvements recorded from the complete passing receipt; plain checker passed; no floor lowered.",
+    "coverageImprovements": {
+      "Classes/Controllers/PBGitRepositoryDocument.m": {
+        "before": 0.9905,
+        "after": 0.9911
+      },
+      "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+        "before": 0.89,
+        "after": 0.8933
+      },
+      "Classes/Views/ForgePullRequestSheetController.swift": {
+        "before": 0.935,
+        "after": 0.9431
+      },
+      "Classes/git/RepositoryReflogService.swift": {
+        "before": 0.9804,
+        "after": 0.9838
+      }
+    },
+    "notFinalDeliveryEvidence": true
+  },
+  "terminationImplementation": {
+    "verifiedAtUTC": "2026-11-22T09:59:08.942136+00:00",
+    "parentCommit": "98e03ef28740446e4c4063e073108937a07763a3",
+    "verificationScope": "Partial pre-commit checks; final delivery requires complete post-commit evidence.",
+    "runIds": [
+      "pr128-next-native-quit-bridge-coverage",
+      "pr128-next-native-quit-forwarder-green",
+      "pr128-next-offscreen-verification"
+    ],
+    "earlierPartialEvidence": {
+      "runId": "pr128-next-offscreen-verification",
+      "status": "failed",
+      "passedChecks": [
+        "static",
+        "core",
+        "forgekit"
+      ],
+      "limitation": "Sources subsequently changed for the native delegate hook, scoped Objective-C entrypoint annotations, native-event test dispatch, and the unsupported-reference startup fixture; these children are earlier partial evidence only. Fresh full-profile checks remain required."
+    },
+    "newFileCoverageAdmission": {
+      "Classes/git/RepositoryLocalMutationRegistry.swift": {
+        "coveredLines": 113,
+        "executableLines": 114,
+        "lineCoverage": 0.9912280701754386,
+        "initialFloor": 0.9912
+      },
+      "Classes/Controllers/RepositoryTerminationCoordinator.swift": {
+        "coveredLines": 198,
+        "executableLines": 200,
+        "lineCoverage": 0.99,
+        "initialFloor": 0.99
+      }
+    },
+    "precedingProductionVerification": {
+      "runId": "pr128-next-native-quit-forwarder-green",
+      "checks": [
+        "ui",
+        "performance",
+        "analyze"
+      ],
+      "productionFilesMatched": 917,
+      "limitation": "Earlier partial evidence. One native XCTest fixture changed afterward to execute both thin Quit bridges under coverage; canonical final evidence must be rerun at the final commit."
+    },
+    "releasePreviewMeasurements": {
+      "scope": "Application fingerprint capture; existing Git subprocess I/O is not instrumented",
+      "unchangedBytes": 46661632,
+      "unchangedFiles": 101,
+      "modes": {
+        "soft": {
+          "samples": 5,
+          "medianSeconds": 0.24255820829421282,
+          "maxSeconds": 0.2496988750062883,
+          "contentBytes": [
+            0
+          ],
+          "contentFiles": [
+            0
+          ]
+        },
+        "mixed": {
+          "samples": 5,
+          "medianSeconds": 0.23991095833480358,
+          "maxSeconds": 0.25192316668108106,
+          "contentBytes": [
+            0
+          ],
+          "contentFiles": [
+            0
+          ]
+        },
+        "hard": {
+          "samples": 5,
+          "medianSeconds": 0.24716429179534316,
+          "maxSeconds": 0.25244941655546427,
+          "contentBytes": [
+            20
+          ],
+          "contentFiles": [
+            1
+          ]
+        }
+      },
+      "bundle": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-native-quit-forwarder-green-performance-3473601e/Results/GitXPerformance.xcresult",
+      "attachment": "/private/tmp/pr128-current-preview-measurements/F7135631-5688-4D5A-8B53-76F71C76A60C.json"
+    },
+    "diagnosticAttachments": {
+      "nativeWaiting": "/private/tmp/pr128-current-quit-waiting/manifest.json",
+      "nativeMenuQuit": "/private/tmp/pr128-native-menu-quit-images/manifest.json",
+      "inspection": "Visually inspected current attached and detached recovered-text consent plus the Cancel Quit waiting panel."
+    },
+    "coveragePolicy": "Only the new policy files receive measured initial floors here. Existing floors are unchanged until one complete passing correctness receipt permits the atomic ratchet.",
+    "applicationDelegatePreparation": {
+      "path": "Classes/Controllers/ApplicationController.m",
+      "runId": "pr128-next-post-native-close-correctness",
+      "commit": "a0ea55c966fb4bbc5735768b95addd8a0b59decd",
+      "coveredLines": 284,
+      "executableLines": 301,
+      "lineCoverage": 0.9435215946843853,
+      "requiredMinimum": 0.9,
+      "normalFailureBoundaryTests": [
+        "GitXFeatureTests/testApplicationDelegateCompatibilitySurface",
+        "GitXFeatureTests/testApplicationDelegateDebugRejectsPlainSharedDocumentController",
+        "GitXFeatureTests/testApplicationDelegateOpeningFilesRepliesForSuccessAndFailure",
+        "GitXFeatureTests/testApplicationDelegateUntitledAndWindowClosePolicies"
+      ],
+      "scope": "Objective-C forwards the AppKit selector to the Swift coordinator. Existing class names, selectors, scripting and command-line behavior remain intact. The header is already annotated and is unchanged."
+    },
+    "testDispatch": "The direct native Quit fixture uses a zero-delay Cocoa run-loop event so its suspended Swift test task does not occupy AppKit termination execution. The earlier synchronous task invocation was cancelled after sampling its nested AppKit loop.",
+    "nativeMenuRouting": "The terminate: selector and Command-Q are preserved. The menu explicitly targets the existing application delegate, whose thin Objective-C action requests Swift consent before AppKit waits for attached sheets. A direct AppKit request joining pending menu consent receives exactly one AppKit reply.",
+    "generatedInterfaces": [
+      {
+        "configuration": "Debug",
+        "headerPath": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Debug/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Debug/GitX.build/DerivedSources/GitX-Swift.h",
+        "headerSHA256": "465ce31ed57c4edc2a25c729f79cfe8f41e2101214c9770e36c18147b79aec7d",
+        "unchangedDocumentInterface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)handleMoveForDocument:(NSDocument * _Nonnull)document toURL:(NSURL * _Nonnull)_ performClose:(SWIFT_NOESCAPE void (^ _Nonnull)(void))performClose;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end",
+        "terminationInterface": "@interface RepositoryTerminationCoordinator : NSObject\n/// Thin Objective-C delegate hook; every lifecycle decision stays here.\n+ (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication * _Nonnull)application SWIFT_WARN_UNUSED_RESULT;\n+ (void)requestApplicationTermination:(id _Nullable)sender;\n- (void)cancelPendingQuit;\n- (nonnull instancetype)init SWIFT_UNAVAILABLE;\n+ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG(\"-init is unavailable\");\n@end"
+      },
+      {
+        "configuration": "Release",
+        "headerPath": "/Users/haroldmartin/Library/Caches/GitX/Verification/8a72f4f99cfc9c32/445a36a0d5e34036/Release/correctness-atomic/DerivedData/Build/Intermediates.noindex/GitX.build/Release/GitX.build/DerivedSources/GitX-Swift.h",
+        "headerSHA256": "3f32817334913cc9c61bf9e7f8516b49af832eab8a157c6cd3d0cbff1012b822",
+        "unchangedDocumentInterface": "@interface PBRepositoryDocumentCloseCoordinator : NSObject\n/// AppKit immediately forwards the reply for this unedited document. Borrow\n/// consent for that callback only; a deferred close is a separate attempt.\n- (void)withApprovedCloseForDocument:(NSDocument * _Nonnull)document perform:(SWIFT_NOESCAPE void (^ _Nonnull)(void))action;\n- (void)handleMoveForDocument:(NSDocument * _Nonnull)document toURL:(NSURL * _Nonnull)_ performClose:(SWIFT_NOESCAPE void (^ _Nonnull)(void))performClose;\n- (void)requestCloseForDocument:(NSDocument * _Nonnull)document completion:(void (^ _Nonnull)(BOOL))completion;\n- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;\n@end",
+        "terminationInterface": "@interface RepositoryTerminationCoordinator : NSObject\n/// Thin Objective-C delegate hook; every lifecycle decision stays here.\n+ (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication * _Nonnull)application SWIFT_WARN_UNUSED_RESULT;\n+ (void)requestApplicationTermination:(id _Nullable)sender;\n- (void)cancelPendingQuit;\n- (nonnull instancetype)init SWIFT_UNAVAILABLE;\n+ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG(\"-init is unavailable\");\n@end"
+      }
+    ],
+    "execution": "Local admission is sealed during Quit; started local writers and admitted durable draft work drain. Keep Editing and Cancel Quit reopen admission without cancelling started work. Every final reply revalidates current attached and detached recovery.",
+    "completion": "Checkout and reflog activity retain execution ownership through original-repository reconciliation. Tag creation uses the same admission guard. Known refused remote admission remains not sent.",
+    "cleanup": "Recovery Copy tests use an isolated pasteboard. Native move fixtures drain captured submissions before deletion. Release measurements include 101 unchanged payload files; content-read counts refer to application fingerprint capture, with Git subprocess I/O explicitly outside that instrumentation."
+  },
+  "postTerminationVerification": {
+    "verifiedAtUTC": "2026-11-22T10:31:10.407614+00:00",
+    "commit": "86bef169304c34b9734f63e6f1877889be6ca6f7",
+    "runIds": [
+      "pr128-next-post-termination-correctness",
+      "pr128-next-post-termination-static"
+    ],
+    "correctnessReceipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-post-termination-correctness-correctness-713a09a6/receipt.json",
+    "correctnessBundle": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-post-termination-correctness-correctness-713a09a6/Results/GitX.xcresult",
+    "tests": {
+      "totalTestCount": 2473,
+      "passedTests": 2473,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "result": "Passed"
+    },
+    "runtimeWarningCount": 16,
+    "coverage": {
+      "status": "passed; complete-run atomic ratchet and plain checker passed",
+      "proposal": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-post-termination-correctness/coverage-proposal.json",
+      "minimumBefore": 0.94,
+      "minimumAfter": 0.9405,
+      "raisedFiles": {
+        "Classes/Controllers/ApplicationController.m": {
+          "before": 0.9435,
+          "after": 0.9446
+        },
+        "Classes/Controllers/ForgeMutationQuitCoordinator.swift": {
+          "before": 0.9119,
+          "after": 0.9247
+        },
+        "Classes/Controllers/Milestone2UITestHarness.swift": {
+          "before": 0.9334,
+          "after": 0.9356
+        },
+        "Classes/Controllers/ReflogBrowserController.swift": {
+          "before": 0.9944,
+          "after": 0.9946
+        },
+        "Classes/Controllers/RepositoryPullRequestGitOperations.swift": {
+          "before": 0.9783,
+          "after": 0.9784
+        },
+        "Classes/Controllers/RepositoryPullRequestRecoverySession.swift": {
+          "before": 0.9852,
+          "after": 0.9915
+        },
+        "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+          "before": 0.8933,
+          "after": 0.8937
+        },
+        "Classes/Controllers/RepositoryPullRequestWorkflow.swift": {
+          "before": 0.9798,
+          "after": 0.9799
+        },
+        "Classes/Views/ForgePullRequestSheetController.swift": {
+          "before": 0.9431,
+          "after": 0.9432
+        },
+        "Classes/git/RepositoryMutationService.swift": {
+          "before": 0.9797,
+          "after": 0.9959
+        }
+      },
+      "groupsBefore": {
+        "Application Preferences surfaces": {
+          "files": [
+            "Classes/Controllers/ApplicationSettings.swift",
+            "Classes/Controllers/ApplicationPreferencesUI.swift",
+            "Classes/Controllers/TerminalIntegration.swift"
+          ],
+          "minimumLineCoverage": 0.9089
+        },
+        "Repository Configuration surfaces": {
+          "files": [
+            "Classes/Controllers/RepositorySettingsStore.swift",
+            "Classes/Controllers/RepositorySettingsController.swift",
+            "Classes/Controllers/RepositoryPresentationPolicies.swift"
+          ],
+          "minimumLineCoverage": 0.8714
+        }
+      },
+      "groupsAfter": {
+        "Application Preferences surfaces": {
+          "files": [
+            "Classes/Controllers/ApplicationSettings.swift",
+            "Classes/Controllers/ApplicationPreferencesUI.swift",
+            "Classes/Controllers/TerminalIntegration.swift"
+          ],
+          "minimumLineCoverage": 0.9089
+        },
+        "Repository Configuration surfaces": {
+          "files": [
+            "Classes/Controllers/RepositorySettingsStore.swift",
+            "Classes/Controllers/RepositorySettingsController.swift",
+            "Classes/Controllers/RepositoryPresentationPolicies.swift"
+          ],
+          "minimumLineCoverage": 0.8714
+        }
+      }
+    },
+    "static": "Passed all 876 script tests, pinned SwiftLint, pinned SwiftFormat and canonical static guards."
+  },
+  "finalVerification": {
+    "runId": "pr128-next-final-full",
+    "workflowReceipt": "artifacts/verification/pr128-next-final-full/workflow.json",
+    "profile": "full",
+    "testSelectors": [],
+    "expectedChecks": [
+      "static",
+      "interop",
+      "debug-test-build",
+      "release-test-build",
+      "release-contracts",
+      "correctness",
+      "core",
+      "forgekit",
+      "address-undefined",
+      "thread-sanitizer",
+      "ui",
+      "performance",
+      "analyze",
+      "stage-debug"
+    ],
+    "statusAuthority": "The canonical workflow receipt records final commit identity, every executed check, valid evidence and delivery eligibility. This declaration is not a passing receipt."
+  },
+  "deliveryGates": [
+    "All fourteen final checks pass at the evidence commit with no selectors.",
+    "Affected regression contracts are assessed using final receipts.",
+    "The installed Debug app matches the final verified commit and its code signature verifies.",
+    "All commits remain local; no push or pull request."
+  ],
+  "presentationClosureCorrection": {
+    "verifiedAtUTC": "2026-11-22T11:47:44.073117+00:00",
+    "parentCommit": "a8e6e9bd717f69f535297270f60a34a618d9405a",
+    "characterizationCommit": "a8e6e9bd717f69f535297270f60a34a618d9405a",
+    "runIds": [
+      "pr128-saved-sheet-quit-red",
+      "pr128-unchanged-editor-quit-ui-red",
+      "pr128-saved-sheet-characterization",
+      "pr128-saved-sheet-quit-characterized-red",
+      "pr128-all-presentations-quit-green",
+      "pr128-mixed-quit-boundary-green"
+    ],
+    "native": {
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-all-presentations-quit-green-correctness-c89355dd/receipt.json",
+      "bundle": "artifacts/verification/pr128-all-presentations-quit-green-correctness-c89355dd/Results/GitX.xcresult",
+      "totalTestCount": 56,
+      "passedTests": 56,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "nativeMenuUI": {
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-all-presentations-quit-green-ui-fd7bd034/receipt.json",
+      "bundle": "artifacts/verification/pr128-all-presentations-quit-green-ui-fd7bd034/Results/GitXUI.xcresult",
+      "totalTestCount": 6,
+      "passedTests": 6,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "mixedConsent": {
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-mixed-quit-boundary-green-correctness-23d4207b/receipt.json",
+      "bundle": "artifacts/verification/pr128-mixed-quit-boundary-green-correctness-23d4207b/Results/GitX.xcresult",
+      "totalTestCount": 19,
+      "passedTests": 19,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "scope": "Partial pre-commit evidence; complete post-commit verification and final canonical delivery remain required. Only the added mixed-consent test changed after the broader native/UI run; all recorded production input identities match.",
+    "implementation": "Keep all current sessions for final accepted teardown, while consent depends only on unsaved protection. End saved recovery sheets and revoke attached controller presentation authority before forwarding to AppKit. Keep Editing remains nondestructive. Clear the attached termination callback on owner revocation and repository-move detachment.",
+    "compatibility": "Three existing Swift files change; Objective-C hooks, generated interfaces, targets, dependencies and external APIs are unchanged.",
+    "coveragePolicy": "No existing floor is changed here. Ratchet only after complete passing post-commit correctness."
+  },
+  "postPresentationClosureVerification": {
+    "verifiedAtUTC": "2026-11-22T12:19:39.607150+00:00",
+    "commit": "b492c7ef654085bb3cb90afb1ad05e712b2a3933",
+    "runIds": [
+      "pr128-post-all-presentations-correctness",
+      "pr128-post-all-presentations-static"
+    ],
+    "correctnessReceipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-post-all-presentations-correctness-correctness-72a2fdc3/receipt.json",
+    "correctnessBundle": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-post-all-presentations-correctness-correctness-72a2fdc3/Results/GitX.xcresult",
+    "tests": {
+      "totalTestCount": 2476,
+      "passedTests": 2476,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "result": "Passed"
+    },
+    "runtimeWarningCount": 16,
+    "coverage": {
+      "status": "passed; complete-run atomic ratchet and plain checker passed",
+      "proposal": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-post-all-presentations-correctness/coverage-proposal.json",
+      "minimumBefore": 0.9405,
+      "minimumAfter": 0.9405,
+      "raisedFiles": {
+        "Classes/Controllers/RepositoryPullRequestRecoverySession.swift": {
+          "before": 0.9915,
+          "after": 0.9916
+        },
+        "Classes/Controllers/RepositoryPullRequestUIController.swift": {
+          "before": 0.8937,
+          "after": 0.8938
+        }
+      },
+      "groupsBefore": {
+        "Application Preferences surfaces": {
+          "files": [
+            "Classes/Controllers/ApplicationSettings.swift",
+            "Classes/Controllers/ApplicationPreferencesUI.swift",
+            "Classes/Controllers/TerminalIntegration.swift"
+          ],
+          "minimumLineCoverage": 0.9089
+        },
+        "Repository Configuration surfaces": {
+          "files": [
+            "Classes/Controllers/RepositorySettingsStore.swift",
+            "Classes/Controllers/RepositorySettingsController.swift",
+            "Classes/Controllers/RepositoryPresentationPolicies.swift"
+          ],
+          "minimumLineCoverage": 0.8714
+        }
+      },
+      "groupsAfter": {
+        "Application Preferences surfaces": {
+          "files": [
+            "Classes/Controllers/ApplicationSettings.swift",
+            "Classes/Controllers/ApplicationPreferencesUI.swift",
+            "Classes/Controllers/TerminalIntegration.swift"
+          ],
+          "minimumLineCoverage": 0.9089
+        },
+        "Repository Configuration surfaces": {
+          "files": [
+            "Classes/Controllers/RepositorySettingsStore.swift",
+            "Classes/Controllers/RepositorySettingsController.swift",
+            "Classes/Controllers/RepositoryPresentationPolicies.swift"
+          ],
+          "minimumLineCoverage": 0.8714
+        }
+      }
+    },
+    "static": "Passed all 876 script tests, pinned SwiftLint, pinned SwiftFormat and canonical static guards."
+  },
+  "sanitizerFixtureCorrections": {
+    "verifiedAtUTC": "2026-11-22T15:44:09.492765+00:00",
+    "parentCommit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+    "runIds": [
+      "pr128-native-fixtures-green",
+      "pr128-native-fixtures-address-diagnostic",
+      "pr128-native-fixtures-thread-diagnostic"
+    ],
+    "initialFailure": {
+      "commit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-address-undefined-9acf3700/receipt.json",
+      "bundle": "artifacts/verification/pr128-next-final-full-address-undefined-9acf3700/Results/GitXAddressUndefined.xcresult",
+      "summary": {
+        "totalTestCount": 2476,
+        "passedTests": 2474,
+        "failedTests": 2,
+        "skippedTests": 0,
+        "result": "Failed",
+        "testFailures": [
+          {
+            "failureText": "API violation - multiple calls made to -[XCTestExpectation fulfill] for Two blocked factories retain both workers. (NSInternalInconsistencyException)",
+            "targetName": "GitXTests",
+            "testIdentifier": 250,
+            "testIdentifierString": "GitBinaryReliabilityTests/testColdAvailabilityCallbacksKeepTheirRequestOrder()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/GitBinaryReliabilityTests/testColdAvailabilityCallbacksKeepTheirRequestOrder",
+            "testName": "testColdAvailabilityCallbacksKeepTheirRequestOrder()"
+          },
+          {
+            "failureText": "Crash: GitX at closure #1 in GitDiscoveryProbeRunner.run(path:arguments:timeout:deadline:completion:). libsystem_c.dylib: abort() called",
+            "targetName": "GitXTests",
+            "testIdentifier": 252,
+            "testIdentifierString": "GitBinaryReliabilityTests/testColdExhaustionCanBeRetriedExplicitlyWithoutBackgroundRetryLoops()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/GitBinaryReliabilityTests/testColdExhaustionCanBeRetriedExplicitlyWithoutBackgroundRetryLoops",
+            "testName": "testColdExhaustionCanBeRetriedExplicitlyWithoutBackgroundRetryLoops()"
+          }
+        ]
+      },
+      "priorPassedChecks": [
+        "static",
+        "interop",
+        "debug-test-build",
+        "release-test-build",
+        "release-contracts",
+        "correctness",
+        "core",
+        "forgekit"
+      ]
+    },
+    "intermediateCompleteSanitizers": {
+      "commit": "6b0a187fe23ba0eec95c64239b9f9eae8e8d9f32",
+      "runId": "pr128-probe-fixture-drain-green",
+      "results": {
+        "correctness": {
+          "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-probe-fixture-drain-green-correctness-e92653c0/receipt.json",
+          "bundle": "artifacts/verification/pr128-probe-fixture-drain-green-correctness-e92653c0/Results/GitX.xcresult",
+          "totalTestCount": 36,
+          "passedTests": 36,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "result": "Passed",
+          "testFailures": []
+        },
+        "address-undefined": {
+          "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-probe-fixture-drain-green-address-undefined-b73b6b4f/receipt.json",
+          "bundle": "artifacts/verification/pr128-probe-fixture-drain-green-address-undefined-b73b6b4f/Results/GitXAddressUndefined.xcresult",
+          "totalTestCount": 2476,
+          "passedTests": 2476,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "result": "Passed",
+          "testFailures": []
+        },
+        "thread-sanitizer": {
+          "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-probe-fixture-drain-green-thread-sanitizer-6689a7ae/receipt.json",
+          "bundle": "artifacts/verification/pr128-probe-fixture-drain-green-thread-sanitizer-6689a7ae/Results/GitXThreadSanitizer.xcresult",
+          "totalTestCount": 2476,
+          "passedTests": 2474,
+          "failedTests": 2,
+          "skippedTests": 0,
+          "result": "Failed",
+          "testFailures": [
+            {
+              "failureText": "XCTAssertTrue failed",
+              "targetName": "GitXTests",
+              "testIdentifier": 2256,
+              "testIdentifierString": "WorktreeAppKitTests/testCapturedWorktreeSynchronizationKeepsItsOriginAfterBothSameOIDRowsChange()",
+              "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testCapturedWorktreeSynchronizationKeepsItsOriginAfterBothSameOIDRowsChange",
+              "testName": "testCapturedWorktreeSynchronizationKeepsItsOriginAfterBothSameOIDRowsChange()"
+            },
+            {
+              "failureText": "XCTAssertTrue failed",
+              "targetName": "GitXTests",
+              "testIdentifier": 2284,
+              "testIdentifierString": "WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation()",
+              "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation",
+              "testName": "testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation()"
+            }
+          ]
+        }
+      }
+    },
+    "intermediateFocusedOutcomes": {
+      "pr128-native-fixtures-address": {
+        "receipt": "artifacts/verification/pr128-native-fixtures-address/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-address/Results/GitXAddressUndefined.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 96,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed",
+        "testFailures": []
+      },
+      "pr128-native-fixtures-thread": {
+        "receipt": "artifacts/verification/pr128-native-fixtures-thread/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-thread/Results/GitXThreadSanitizer.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 92,
+        "failedTests": 4,
+        "skippedTests": 0,
+        "result": "Failed",
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed",
+            "targetName": "GitXTests",
+            "testIdentifier": 59,
+            "testIdentifierString": "WorktreeAppKitTests/testGitCapabilityLossInvalidatesAnOpenPruneConfirmation()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testGitCapabilityLossInvalidatesAnOpenPruneConfirmation",
+            "testName": "testGitCapabilityLossInvalidatesAnOpenPruneConfirmation()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed",
+            "targetName": "GitXTests",
+            "testIdentifier": 69,
+            "testIdentifierString": "WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation",
+            "testName": "testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed",
+            "targetName": "GitXTests",
+            "testIdentifier": 71,
+            "testIdentifierString": "WorktreeAppKitTests/testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent",
+            "testName": "testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed",
+            "targetName": "GitXTests",
+            "testIdentifier": 73,
+            "testIdentifierString": "WorktreeAppKitTests/testMovedNestedRepairIsOfferedOnceAndBlocksPruneUntilVerified()",
+            "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testMovedNestedRepairIsOfferedOnceAndBlocksPruneUntilVerified",
+            "testName": "testMovedNestedRepairIsOfferedOnceAndBlocksPruneUntilVerified()"
+          }
+        ]
+      }
+    },
+    "currentResults": {
+      "correctness": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-fixtures-green-correctness-a41bd98b/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-green-correctness-a41bd98b/Results/GitX.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 96,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "address-undefined": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-fixtures-address-diagnostic/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-address-diagnostic/Results/GitXAddressUndefined.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 96,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "thread-sanitizer": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-fixtures-thread-diagnostic/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-fixtures-thread-diagnostic/Results/GitXThreadSanitizer.xcresult",
+        "totalTestCount": 96,
+        "passedTests": 96,
+        "failedTests": 0,
+        "skippedTests": 0
+      }
+    },
+    "scope": "Partial pre-commit evidence for both complete affected classes, using canonical Debug/Release consumers, correctness and explicit-selector sanitizer entrypoints. Complete final verification without selectors remains required after committing.",
+    "changes": [
+      "Hold occupied discovery factories until explicit release, observe that expired queued probes never enter a factory, and drain held factories before teardown. Preserve exact cancellation/expiry outcomes and all eighteen callbacks.",
+      "Activate the native app before requesting its key window. Use actual Lock, Cancel, Remove, Remove Anyway, OK and Prune buttons in the multi-stage confirmation test. Preserve foreground readiness, exact repository state and every cancellation/consent assertion."
+    ],
+    "readinessDiagnostics": "Keep the four additional focused Thread Sanitizer readiness failures. Failure-only snapshots record actual application activity, the XCTest marker and visible/key/main owner windows before and after a consent wait. No predicate or timeout is weakened. A later 96-case Thread Sanitizer reproduction passed; final full verification remains mandatory.",
+    "production": "No production file, dependency, target, test-plan selection or coverage floor changes.",
+    "styleVerification": "Pinned SwiftFormat and strict SwiftLint pass for both modified test files.",
+    "coveragePolicy": "Focused evidence cannot ratchet floors. Existing complete-run improvements remain enforced."
+  },
+  "pruneFixtureRepairContext": {
+    "verifiedAtUTC": "2026-11-22T17:15:50.888905+00:00",
+    "parentCommit": "a03e3eec5fe7b610713294273cfefb069cccf01f",
+    "runIds": [
+      "pr128-prune-repair-context-green",
+      "pr128-prune-context-activation-address",
+      "pr128-prune-context-activation-thread"
+    ],
+    "historicalFailure": {
+      "commit": "a03e3eec5fe7b610713294273cfefb069cccf01f",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-correctness-819811b2/receipt.json",
+      "bundle": "artifacts/verification/pr128-next-final-full-correctness-819811b2/Results/GitX.xcresult",
+      "totalTestCount": 2476,
+      "passedTests": 2475,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "testFailures": [
+        {
+          "failureText": "XCTAssertNil failed: \"<_NSAlertPanel: 0x784afd9e00>\"",
+          "targetName": "GitXTests",
+          "testIdentifier": 2277,
+          "testIdentifierString": "WorktreeAppKitTests/testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns",
+          "testName": "testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns()"
+        }
+      ],
+      "observedState": "The app is active and its XCTest configuration marker is present. A broken-link repair-choice sheet is already attached while the fixture expects no sheet and then a Prune sheet."
+    },
+    "historicalActivationFailure": {
+      "receipt": "artifacts/verification/pr128-prune-repair-context-thread/receipt.json",
+      "bundle": "artifacts/verification/pr128-prune-repair-context-thread/Results/GitXThreadSanitizer.xcresult",
+      "totalTestCount": 60,
+      "passedTests": 59,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "testFailures": [
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "GitXTests",
+          "testIdentifier": 13,
+          "testIdentifierString": "WorktreeAppKitTests/testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks()",
+          "testIdentifierURL": "test://com.apple.xcode/GitX/GitXTests/WorktreeAppKitTests/testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks",
+          "testName": "testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks()"
+        }
+      ],
+      "observedState": "The repair-history precondition is established and no sheet is attached. The test host remains inactive before and after the consent wait despite its requested self-activation."
+    },
+    "currentResults": {
+      "correctness": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-prune-repair-context-green-correctness-3c7a0e4e/receipt.json",
+        "bundle": "artifacts/verification/pr128-prune-repair-context-green-correctness-3c7a0e4e/Results/GitX.xcresult",
+        "totalTestCount": 60,
+        "passedTests": 60,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "address-undefined": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-prune-context-activation-address/receipt.json",
+        "bundle": "artifacts/verification/pr128-prune-context-activation-address/Results/GitXAddressUndefined.xcresult",
+        "totalTestCount": 60,
+        "passedTests": 60,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "thread-sanitizer": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-prune-context-activation-thread/receipt.json",
+        "bundle": "artifacts/verification/pr128-prune-context-activation-thread/Results/GitXThreadSanitizer.xcresult",
+        "totalTestCount": 60,
+        "passedTests": 60,
+        "failedTests": 0,
+        "skippedTests": 0
+      }
+    },
+    "explicitPruneScenarios": [
+      "testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation",
+      "testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks",
+      "testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns",
+      "testGitCapabilityLossInvalidatesAnOpenPruneConfirmation"
+    ],
+    "independentAutomaticRepairCoverage": [
+      "testMissingWorktreeGitFileOffersSameLocationRepairWithoutCheckout",
+      "testMovedNestedRepairIsOfferedOnceAndBlocksPruneUntilVerified",
+      "testPreferredRelativeRepairOffersItsStyleAndReclaimsOnlyAfterExplicitConsent"
+    ],
+    "precondition": "The four explicit-Prune fixtures start after the automatic repair offer was already handled. Reuse the existing controller recordWorktreeRepairOffer state transition and assert that the recorded state and initial sheet-free owner are established. Automatic-repair journeys retain the default behavior.",
+    "nativeActivation": "If NSWorkspace returns the existing test PID while the host remains inactive, request that same bundle through the built-in macOS open command. Require request success and retain the existing actual application-active/key-window checks; no timeout or predicate is relaxed.",
+    "interoperability": "A small helper in the existing Swift fixture file accepts NSWindowController and casts to its existing testable Swift controller type. The large AppKit fixture retains its Objective-C imported controller view. No unsafe cast, production API or dependency is added.",
+    "scope": "Partial pre-commit evidence for all sixty WorktreeAppKitTests under correctness and both sanitizer plans, with Debug/Release consumers and pinned style checks. No production source, test-plan selection, timeout, predicate, repository-state assertion or coverage floor changes. The final full profile must rerun at the local correction commit."
+  },
+  "nativeForegroundDiagnostics": {
+    "verifiedAtUTC": "2026-11-22T19:56:42.272508+00:00",
+    "parentCommit": "f7f26874114f6b365aa9be48266e85cf4716482c",
+    "scope": "Test-only diagnostic instrumentation. Production code, test plans, wait deadlines, readiness predicates, repository assertions and coverage floors are unchanged. Passing focused runs do not identify the earlier cause or demonstrate a production fix for foreground loss.",
+    "historicalFullRun": {
+      "commit": "f7f26874114f6b365aa9be48266e85cf4716482c",
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-next-final-full-address-undefined-31e0a14a/receipt.json",
+      "bundle": "artifacts/verification/pr128-next-final-full-address-undefined-31e0a14a/Results/GitXAddressUndefined.xcresult",
+      "tests": {
+        "totalTestCount": 2476,
+        "passedTests": 2473,
+        "failedTests": 3,
+        "skippedTests": 0
+      },
+      "failedCases": [
+        "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository",
+        "GitXTests/WorktreeAppKitTests/testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent",
+        "GitXTests/WorktreeAppKitTests/testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune"
+      ],
+      "assertions": [
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/GitBinaryTests.swift:4582: error: -[GitXTests.RepositoryDocumentScriptingCharacterizationTests testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository] : Asynchronous wait failed: Exceeded timeout of 5 seconds, with unfulfilled expectations: \"Expect predicate `BLOCKPREDICATE(0x6040035d5790)`\".",
+        "Test Case '-[GitXTests.RepositoryDocumentScriptingCharacterizationTests testRepairOfferAfterAnOverriddenRepositoryChangeBelongsToTheNewRepository]' failed (14.706 seconds).",
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/WorktreeAppKitTests.swift:930: error: -[GitXTests.WorktreeAppKitTests testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent] : XCTAssertTrue failed",
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/WorktreeAppKitTests.swift:930: error: -[GitXTests.WorktreeAppKitTests testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent] : XCTUnwrap failed: expected non-nil value of type \"NSWindow\"",
+        "Test Case '-[GitXTests.WorktreeAppKitTests testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent]' failed (18.786 seconds).",
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/WorktreeAppKitTests.swift:2839: error: -[GitXTests.WorktreeAppKitTests testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune] : XCTAssertTrue failed",
+        "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/GitXTests/WorktreeAppKitTests.swift:2839: error: -[GitXTests.WorktreeAppKitTests testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune] : XCTUnwrap failed: expected non-nil value of type \"NSWindow\"",
+        "Test Case '-[GitXTests.WorktreeAppKitTests testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune]' failed (18.243 seconds)."
+      ],
+      "foregroundEvidence": "Both worktree attachments show active/key/main=true before waiting, then active/key/main=false and no attached sheet. The first document foreground timeout lacked a window-state snapshot. Do not infer the foreground app or blame an automatic Welcome window from these observations.",
+      "excludedInspection": "A later live AX lookup returned a Welcome window after the test host exited. This is not evidence of the failure state. A narrow historical loginwindow query returned no events, which does not prove the desktop stayed unlocked."
+    },
+    "initialDiagnosticRun": {
+      "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-document-worktree-foreground-diagnostic-address/receipt.json",
+      "tests": {
+        "totalTestCount": 174,
+        "passedTests": 174,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "sourceState": "Diagnostic-only changes before pinned formatting; not exact current source inputs.",
+      "observation": "All three scoped focus logs begin with the intended test-host bundle and PID; no intervening activation/deactivation event was logged. The read-only lock sampler recorded only unlocked samples during this focused run."
+    },
+    "formattedResults": {
+      "correctness": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-foreground-diagnostics-green-correctness-c386d4bd/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-foreground-diagnostics-green-correctness-c386d4bd/Results/GitX.xcresult",
+        "totalTestCount": 174,
+        "passedTests": 174,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "address-undefined": {
+        "receipt": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-foreground-diagnostics-formatted-address/receipt.json",
+        "bundle": "artifacts/verification/pr128-native-foreground-diagnostics-formatted-address/Results/GitXAddressUndefined.xcresult",
+        "totalTestCount": 174,
+        "passedTests": 174,
+        "failedTests": 0,
+        "skippedTests": 0
+      }
+    },
+    "checks": {
+      "static": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/Coordination/pr128-native-foreground-diagnostics-green-static-496f121a.json",
+      "interop": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/Coordination/pr128-native-foreground-diagnostics-green-interop-2597b1a4.json",
+      "debug-test-build": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-foreground-diagnostics-green-debug-test-build-fb911983/receipt.json",
+      "release-test-build": "/Users/haroldmartin/.codex/worktrees/review-lifecycle-reflog-fixes/gitx/artifacts/verification/pr128-native-foreground-diagnostics-green-release-test-build-8513a3ec/receipt.json"
+    },
+    "changes": [
+      "Capture application/running-app activity and owner, attached sheet, key, main, modal and ordered windows before activation, after its callback, after the key request and after a failed wait. Attach only on failure and report the originating test line.",
+      "Observe application activate/deactivate notifications only during the three affected cases. Retain only test labels, application identifiers and PIDs; remove each observer at scope exit.",
+      "Keep the original five-second foreground condition and fifteen-second consent readiness checks. Do not retry, force an inactive owner to present, or relax visibility and identity guards."
+    ],
+    "coveragePolicy": "The complete correctness proposal exactly equals the committed baseline. No additional ratchet is available; displayed hundredth-percent differences are rounding.",
+    "finalRequirement": "Rerun the complete canonical fourteen-check profile without selectors at the local diagnostic commit before staging or refreshing the original Debug app."
+  }
+}

@@ -10,8 +10,39 @@ func activateWorktreeTestApplication(file: StaticString = #filePath, line: UInt 
     do {
         let application = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
         XCTAssertEqual(application.processIdentifier, ProcessInfo.processInfo.processIdentifier, "Activate the existing test host", file: file, line: line)
+        if !NSRunningApplication.current.isActive {
+            // The app cannot always grant itself foreground authority after its
+            // last fixture window closes. Let Launch Services handle an external
+            // request for this same bundle; the existing PID remains the oracle.
+            let opener = Process()
+            opener.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            opener.arguments = ["-a", Bundle.main.bundlePath]
+            let status: Int32 = try await withCheckedThrowingContinuation { continuation in
+                opener.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                do {
+                    try opener.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+            XCTAssertEqual(status, 0, "Request foreground return through Launch Services", file: file, line: line)
+            print("WORKTREE_ACTIVATION requested system open for existing PID \(ProcessInfo.processInfo.processIdentifier), status=\(status)")
+        }
     } catch {
         XCTFail("Could not activate the test host: \(error)", file: file, line: line)
+    }
+}
+
+@MainActor
+func observeWorktreeTestForeground(for testName: String) -> [NSObjectProtocol] {
+    let center = NSWorkspace.shared.notificationCenter
+    let frontmost = NSWorkspace.shared.frontmostApplication
+    print("NATIVE_FIXTURE_FOCUS \(testName): begin frontmost=\(frontmost?.bundleIdentifier ?? "none"), pid=\(frontmost?.processIdentifier ?? 0)")
+    return [NSWorkspace.didActivateApplicationNotification, NSWorkspace.didDeactivateApplicationNotification].map { name in
+        center.addObserver(forName: name, object: nil, queue: .main) { notification in
+            let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            print("NATIVE_FIXTURE_FOCUS \(testName): \(notification.name.rawValue), app=\(application?.bundleIdentifier ?? "none"), pid=\(application?.processIdentifier ?? 0)")
+        }
     }
 }
 
@@ -869,6 +900,8 @@ final class WorktreeAppKitTests: XCTestCase {
     }
 
     func testMissingGitfileRepairRequiresSeparateDefaultCancelReclaimConsent() async throws {
+        let foregroundObservers = observeWorktreeTestForeground(for: name)
+        defer { foregroundObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver) }
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         _ = try fixture.git(["worktree", "add", "-b", "topic", fixture.linked.path])
@@ -2137,7 +2170,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let repository = try RepositoryTestGitRepository(url: fixture.main)
         let service = try XCTUnwrap(repository.worktreeService)
         await ready(service)
-        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller)
+        let controller = PBGitWindowController(); controller.repository = repository; await showForegroundWindow(controller, repairOfferAlreadyHandled: true)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel() }
         let head = try fixture.git(["rev-parse", "HEAD"])
@@ -2146,14 +2179,14 @@ final class WorktreeAppKitTests: XCTestCase {
         controller.lockWorktree(item)
         var sheet = try await waitForSheet(in: window, containing: "Lock")
         try attachScreenshot(of: sheet, named: "Worktrees-Lock-Reason-Sheet")
-        window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+        try clickSheetButton("Cancel", in: sheet)
         await waitUntil { window.attachedSheet == nil }
         XCTAssertFalse(service.worktree(forBranch: "refs/heads/topic")?.isLocked ?? true)
         controller.lockWorktree(item)
         sheet = try await waitForSheet(in: window, containing: "Lock")
         let field = try XCTUnwrap(descendants(sheet.contentView).compactMap { $0 as? NSTextField }.first { $0.placeholderString == "Reason (optional)" })
         field.stringValue = "offline disk"
-        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try clickSheetButton("Lock", in: sheet)
         await waitUntil { service.worktree(forBranch: "refs/heads/topic")?.isLocked == true }
         let locked = try XCTUnwrap(service.worktree(forBranch: "refs/heads/topic"))
         XCTAssertEqual(locked.lockReason, "offline disk")
@@ -2167,28 +2200,28 @@ final class WorktreeAppKitTests: XCTestCase {
         controller.removeWorktree(item)
         sheet = try await waitForSheet(in: window)
         try attachScreenshot(of: sheet, named: "Worktrees-Remove-Confirmation-Sheet")
-        window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+        try clickSheetButton("Cancel", in: sheet)
         await waitUntil { window.attachedSheet == nil }
         XCTAssertTrue(FileManager.default.fileExists(atPath: tree.path))
         controller.removeWorktree(item)
         sheet = try await waitForSheet(in: window)
-        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try clickSheetButton("Remove", in: sheet)
         sheet = try await waitForSheet(in: window, containing: "Remove Anyway")
         try attachScreenshot(of: sheet, named: "Worktrees-Force-Confirmation-Sheet")
-        window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+        try clickSheetButton("Cancel", in: sheet)
         await waitUntil { window.attachedSheet == nil }
         XCTAssertTrue(FileManager.default.fileExists(atPath: tree.path))
         controller.removeWorktree(item)
         sheet = try await waitForSheet(in: window)
-        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try clickSheetButton("Remove", in: sheet)
         sheet = try await waitForSheet(in: window, containing: "Remove Anyway")
-        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try clickSheetButton("Remove Anyway", in: sheet)
         await waitUntil { service.worktree(forBranch: "refs/heads/topic") == nil }
         XCTAssertFalse(FileManager.default.fileExists(atPath: tree.path))
         XCTAssertFalse(try fixture.git(["rev-parse", "refs/heads/topic"]).isEmpty)
         controller.pruneWorktrees(nil)
         sheet = try await waitForSheet(in: window, containing: "Nothing to prune")
-        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try clickSheetButton("OK", in: sheet)
         await waitUntil { window.attachedSheet == nil }
         try await operation(.addExisting(path: fixture.linked.path, branch: "topic"), service: service)
         try FileManager.default.removeItem(at: fixture.linked)
@@ -2196,12 +2229,12 @@ final class WorktreeAppKitTests: XCTestCase {
         sheet = try await waitForSheet(in: window, containing: "Prune these worktrees?")
         XCTAssertTrue(descendants(sheet.contentView).compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("linked") })
         try attachScreenshot(of: sheet, named: "Worktrees-Prune-Dry-Run-Sheet")
-        window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+        try clickSheetButton("Cancel", in: sheet)
         await waitUntil { window.attachedSheet == nil }
         XCTAssertNotNil(service.worktree(forBranch: "refs/heads/topic"))
         controller.pruneWorktrees(nil)
         sheet = try await waitForSheet(in: window)
-        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try clickSheetButton("Prune", in: sheet)
         await waitUntil { service.worktree(forBranch: "refs/heads/topic") == nil }
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
         item.representedObject = try XCTUnwrap(service.worktrees.first(where: \.isMain))
@@ -2719,6 +2752,8 @@ final class WorktreeAppKitTests: XCTestCase {
     }
 
     func testMovedWorktreeWithManagedGitfileSymlinkRequiresManualRepairAndBlocksPrune() async throws {
+        let foregroundObservers = observeWorktreeTestForeground(for: name)
+        defer { foregroundObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver) }
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         let nested = fixture.main.appendingPathComponent("nested")
@@ -3145,7 +3180,7 @@ final class WorktreeAppKitTests: XCTestCase {
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
-            await showForegroundWindow(controller)
+            await showForegroundWindow(controller, repairOfferAlreadyHandled: true)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close(); service.cancel(); gate.report.finish(nil, error: CancellationError()) }
             try FileManager.default.removeItem(at: fixture.linked)
@@ -3206,7 +3241,7 @@ final class WorktreeAppKitTests: XCTestCase {
         let service = try await installPruneService(in: repository, gate: gate)
         let controller = PBGitWindowController()
         controller.repository = repository
-        await showForegroundWindow(controller)
+        await showForegroundWindow(controller, repairOfferAlreadyHandled: true)
         let window = try XCTUnwrap(controller.window)
         defer { controller.close(); service.cancel(); gate.report.finish(nil, error: CancellationError()) }
         try FileManager.default.removeItem(at: fixture.linked)
@@ -3262,7 +3297,7 @@ final class WorktreeAppKitTests: XCTestCase {
             let service = try await installPruneService(in: repository, gate: gate)
             let controller = PBGitWindowController()
             controller.repository = repository
-            await showForegroundWindow(controller)
+            await showForegroundWindow(controller, repairOfferAlreadyHandled: true)
             let window = try XCTUnwrap(controller.window)
             defer { controller.close(); service.cancel() }
             try FileManager.default.removeItem(at: fixture.linked)
@@ -3333,12 +3368,20 @@ final class WorktreeAppKitTests: XCTestCase {
         menu.items.filter { !$0.isSeparatorItem && !$0.title.isEmpty }
     }
 
-    private func showForegroundWindow(_ controller: PBGitWindowController, file: StaticString = #filePath, line: UInt = #line) async {
+    private func showForegroundWindow(_ controller: PBGitWindowController, repairOfferAlreadyHandled: Bool = false, file: StaticString = #filePath, line: UInt = #line) async {
         controller.showWindow(nil)
+        if repairOfferAlreadyHandled {
+            // Explicit Prune fixtures model a previously handled automatic offer.
+            // Automatic repair journeys keep the default and their own UI coverage.
+            XCTAssertTrue(establishHandledWorktreeRepairOffer(controller), file: file, line: line)
+        }
         guard let window = controller.window else { XCTFail("The test window did not load", file: file, line: line); return }
-        window.makeKeyAndOrderFront(nil)
         await activateWorktreeTestApplication(file: file, line: line)
+        window.makeKeyAndOrderFront(nil)
         await waitUntil({ NSApp.isActive && (window.isKeyWindow || window.attachedSheet?.isKeyWindow == true) }, file: file, line: line)
+        if repairOfferAlreadyHandled {
+            XCTAssertNil(window.attachedSheet, file: file, line: line)
+        }
     }
 
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
@@ -3349,12 +3392,33 @@ final class WorktreeAppKitTests: XCTestCase {
         XCTAssertTrue(condition(), file: file, line: line)
     }
 
-    private func waitForSheet(in window: NSWindow, containing title: String? = nil) async throws -> NSWindow {
-        await waitUntil {
+    private func clickSheetButton(_ title: String, in sheet: NSWindow, file: StaticString = #filePath, line: UInt = #line) throws {
+        let button = try XCTUnwrap(descendants(sheet.contentView).compactMap { $0 as? NSButton }.first { $0.title == title }, file: file, line: line)
+        XCTAssertTrue(button.isEnabled, file: file, line: line)
+        button.performClick(nil)
+    }
+
+    private func presentationWaitState(_ window: NSWindow) -> String {
+        let visible = NSApp.orderedWindows.filter(\.isVisible).map {
+            "\(type(of: $0)): title=\($0.title), key=\($0.isKeyWindow), main=\($0.isMainWindow), sheet=\($0.sheetParent != nil)"
+        }.joined(separator: "\n")
+        return "Active: \(NSApp.isActive), hidden: \(NSApp.isHidden), XCTest configuration: \(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil)\nOwner visible: \(window.isVisible), key: \(window.isKeyWindow), main: \(window.isMainWindow), miniaturized: \(window.isMiniaturized)\nVisible ordered windows:\n\(visible)"
+    }
+
+    private func waitForSheet(in window: NSWindow, containing title: String? = nil, file: StaticString = #filePath, line: UInt = #line) async throws -> NSWindow {
+        let initialState = presentationWaitState(window)
+        let expected: @MainActor () -> Bool = {
             guard let sheet = window.attachedSheet else { return false }
             return title.map { title in self.descendants(sheet.contentView).contains { ($0 as? NSButton)?.title == title || ($0 as? NSTextField)?.stringValue == title } } ?? true
         }
-        return try XCTUnwrap(window.attachedSheet)
+        await waitUntil(expected, file: file, line: line)
+        if !expected() {
+            let current = window.attachedSheet.map(sheetText) ?? "No attached sheet"
+            let evidence = "Expected sheet containing: \(title ?? "any sheet")\nBefore waiting:\n\(initialState)\nAfter waiting:\n\(presentationWaitState(window))\nCurrent sheet:\n\(current)"
+            attachDiagnosticText(evidence, named: "Worktree consent wait state")
+            print("WORKTREE_CONSENT_WAIT \(evidence)")
+        }
+        return try XCTUnwrap(expected() ? window.attachedSheet : nil, file: file, line: line)
     }
 
     private func ready(_ service: PBRepositoryWorktreeService) async {

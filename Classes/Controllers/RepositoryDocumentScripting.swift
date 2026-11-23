@@ -128,10 +128,36 @@ final class RepositoryDocumentCloseCoordinator: NSObject {
     private weak var pendingDocument: NSDocument?
     private var completions: [(Bool) -> Void] = []
 
-    @objc(prepareApprovedCloseForDocument:)
-    func prepareApprovedClose(for document: NSDocument) {
-        document.windowControllers.compactMap { $0 as? PBGitWindowController }.forEach { $0.approveDocumentClose(for: document) }
+    /// AppKit immediately forwards the reply for this unedited document. Borrow
+    /// consent for that callback only; a deferred close is a separate attempt.
+    @objc(withApprovedCloseForDocument:perform:)
+    func withApprovedClose(for document: NSDocument, perform action: () -> Void) {
+        let approvals = document.windowControllers.compactMap { controller -> (PBGitWindowController, UUID)? in
+            guard let controller = controller as? PBGitWindowController,
+                  let approval = controller.beginApprovedDocumentClose(for: document) else { return nil }
+            return (controller, approval)
+        }
+        NSLog("[GitX] Borrowed close consent for %ld windows", approvals.count)
+        defer {
+            approvals.forEach { $0.0.endApprovedDocumentClose($0.1) }
+            NSLog("[GitX] Released callback-scoped close consent")
+        }
+        action()
     }
+
+    // PBGitRepositoryDocument.m calls this lifecycle hook through GitX-Swift.h.
+    // swiftlint:disable unused_declaration
+    @objc(handleMoveForDocument:toURL:performClose:)
+    func handleMove(for document: NSDocument, to _: URL, performClose: () -> Void) {
+        if pending {
+            finish(false)
+        }
+        document.windowControllers.compactMap { $0 as? PBGitWindowController }.forEach { $0.detachRecoveryForRepositoryMove() }
+        NSLog("[GitX] Repository moved; detached recovery before obsolete document teardown")
+        withApprovedClose(for: document, perform: performClose)
+    }
+
+    // swiftlint:enable unused_declaration
 
     @objc(requestCloseForDocument:completion:)
     func requestClose(for document: NSDocument, completion: @escaping (Bool) -> Void) {

@@ -992,9 +992,9 @@ final class RepositoryEditSubmissionLifetime {
     let draftIdentity: ForgeDraftIdentity
     let destination: ForgeDestination
     let expectedUpdatedAt: Date?
-    private(set) var wasAdmitted = false
     private(set) var phase = Phase.persisting
     private(set) var disposition: Disposition?
+    private(set) var failure: RepositoryOperationFailure?
     private(set) var saveResult: RepositoryDraftSubmissionSave?
     private(set) var superseded = false
     private(set) var outcome: RepositoryPullRequestEditOutcome?
@@ -1047,7 +1047,6 @@ final class RepositoryEditSubmissionLifetime {
 
     func admit() -> Bool {
         guard phase == .persisting else { return false }
-        wasAdmitted = true
         phase = .admitted
         return true
     }
@@ -1055,11 +1054,12 @@ final class RepositoryEditSubmissionLifetime {
     @discardableResult
     func finish(_ outcome: RepositoryPullRequestEditOutcome? = nil, error: Error? = nil) -> Bool {
         guard phase != .finished else { return false }
+        let admitted = phase == .admitted
         self.outcome = outcome
         phase = .finished
         if outcome != nil {
             disposition = .succeeded
-        } else if !wasAdmitted {
+        } else if !admitted || error.map(RepositoryOperationFailure.wasNotSent) == true {
             disposition = .notSent(savedAsDraft: saveResult?.snapshot != nil)
         } else if let error, case ForgePullRequestWorkflowError.editConflict = error {
             disposition = .rejected
@@ -1075,6 +1075,13 @@ final class RepositoryEditSubmissionLifetime {
         }
         if outcome != nil {
             resolved = true
+        }
+        let diagnostic = error?.localizedDescription ?? recoveryMessage ?? "The remote outcome could not be confirmed."
+        switch disposition {
+        case .notSent: failure = RepositoryOperationFailure(operation: "Pull Request edit", disposition: .notSent, details: unsentNotice ?? "The edit was not sent.")
+        case .rejected: failure = RepositoryOperationFailure(operation: "Pull Request edit", disposition: .rejected, details: diagnostic)
+        case .uncertain: failure = RepositoryOperationFailure(operation: "Pull Request edit", disposition: .uncertain, details: diagnostic)
+        case .succeeded, nil: failure = nil
         }
         return true
     }
@@ -1125,7 +1132,6 @@ nonisolated struct RepositoryPullRequestEditorQueue {
 
 @MainActor
 final class RepositoryPullRequestMutationAdmission {
-    private(set) var admitted = false
     private(set) var wasAdmitted = false
     private(set) var finished = false
     var superseded = false
@@ -1141,7 +1147,6 @@ final class RepositoryPullRequestMutationAdmission {
     }
 
     func finish() {
-        admitted = false
         finished = true
         task = nil
         editSubmission = nil
@@ -1149,7 +1154,6 @@ final class RepositoryPullRequestMutationAdmission {
 
     func admit() -> Bool {
         guard !superseded, !finished else { return false }
-        admitted = true
         wasAdmitted = true
         return true
     }
@@ -1159,19 +1163,41 @@ final class RepositoryPullRequestMutationAdmission {
 /// Only durable operations occupy this chain; human consent never does.
 @MainActor
 final class RepositoryDraftOperationQueue {
+    private let mutations: RepositoryLocalMutationRegistry
+    init(mutations: RepositoryLocalMutationRegistry = .shared) {
+        self.mutations = mutations
+    }
+
     private(set) var tail: Task<Void, Never>?
 
     @discardableResult
     func enqueue<Value: Sendable>(_ work: @escaping @MainActor () async -> Value) -> Task<Value, Never> {
         let previous = tail
-        let task = Task { await previous?.value; return await work() }
+        let activity = mutations.trackContinuation()
+        let task = Task {
+            defer { mutations.finish(activity) }
+            await previous?.value
+            return await work()
+        }
         tail = Task { _ = await task.value }
         return task
     }
 
-    func enqueueThrowing<Value: Sendable>(_ work: @escaping @MainActor () async throws -> Value) -> Task<Value, Error> {
+    func enqueueThrowing<Value: Sendable>(writes: Bool = false, _ work: @escaping @MainActor () async throws -> Value) -> Task<Value, Error> {
         let previous = tail
-        let task = Task { await previous?.value; return try await work() }
+        let admission: Result<RepositoryLocalMutationRegistry.Ticket?, Error> = Result {
+            writes ? try mutations.admitContinuation() : nil
+        }
+        let task = Task {
+            await previous?.value
+            let activity = try admission.get()
+            defer {
+                if let activity {
+                    mutations.finish(activity)
+                }
+            }
+            return try await work()
+        }
         tail = Task { _ = try? await task.value }
         return task
     }
@@ -1217,6 +1243,10 @@ nonisolated enum RepositoryPullRequestRecoveryReason {
 
 @MainActor
 enum RepositoryEditRecoveryOrder {
+    static func preparationMessage(for submissions: [RepositoryEditSubmissionLifetime]) -> String {
+        submissions.contains { $0.phase != .finished } ? "Waiting for the preceding Pull Request edit…" : "Loading Pull Request draft…"
+    }
+
     static func ready(in submissions: [RepositoryEditSubmissionLifetime]) -> [RepositoryEditSubmissionLifetime] {
         var result: [RepositoryEditSubmissionLifetime] = []
         for submission in submissions {
@@ -1228,5 +1258,73 @@ enum RepositoryEditRecoveryOrder {
             }
         }
         return result
+    }
+}
+
+/// A completed operation leaves an immutable result after its task and submission retire.
+nonisolated struct RepositoryOperationFailure: Equatable, Identifiable {
+    enum Disposition: Equatable { case notSent, rejected, uncertain }
+    let id = UUID()
+    let operation: String
+    let disposition: Disposition
+    let details: String
+
+    var message: String {
+        switch disposition {
+        case .notSent: "\(operation) was not sent."
+        case .rejected: "\(operation) was rejected."
+        case .uncertain: "\(operation) could not be confirmed."
+        }
+    }
+
+    static func checkout(_ error: Error) -> Self {
+        let disposition = disposition(for: error)
+        let details = disposition == .notSent ? error.localizedDescription
+            : "The checkout did not finish safely. The repository may contain a fetched reference or a newly created branch. Review its current state before trying again.\n\n" + error.localizedDescription
+        return Self(operation: "Pull Request checkout", disposition: disposition, details: details)
+    }
+
+    static func wasNotSent(_ error: Error) -> Bool {
+        if let error = error as? RepositoryLocalMutationError, error == .terminationPending {
+            return true
+        }
+        if let error = error as? ForgeMutationQuitCoordinatorError, error == .terminationPending {
+            return true
+        }
+        return false
+    }
+
+    static func disposition(for error: Error) -> Disposition {
+        if wasNotSent(error) {
+            return .notSent
+        }
+        if case ForgePullRequestWorkflowError.editConflict = error {
+            return .rejected
+        }
+        if case ForgeGitHubPullRequestCompositionError.authoritative = error {
+            return .rejected
+        }
+        return .uncertain
+    }
+}
+
+nonisolated struct RepositoryOperationFailureQueue {
+    private(set) var waiting: [RepositoryOperationFailure] = []
+    var first: RepositoryOperationFailure? {
+        waiting.first
+    }
+
+    mutating func append(_ failure: RepositoryOperationFailure) {
+        waiting.append(failure)
+    }
+
+    @discardableResult mutating func dismiss(_ identity: UUID) -> Bool {
+        guard first?.id == identity else { return false }
+        waiting.removeFirst()
+        return true
+    }
+
+    mutating func removeAll() {
+        waiting.removeAll()
     }
 }

@@ -262,6 +262,16 @@
 	[[PBWelcomeWindowController shared] showIfNeeded];
 }
 
+- (IBAction)terminate:(id)sender
+{
+	[RepositoryTerminationCoordinator requestApplicationTermination:sender];
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
+{
+	return [RepositoryTerminationCoordinator applicationShouldTerminate:sender];
+}
+
 - (void)applicationWillTerminate:(NSNotification *)notification
 {
 	// Stop unattended fetching first: it outlives every window otherwise, and a

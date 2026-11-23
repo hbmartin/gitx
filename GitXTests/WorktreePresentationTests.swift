@@ -3,6 +3,15 @@ import AppKit
 import GitXCore
 import XCTest
 
+/// Keep the Objective-C bridge fixtures on their imported controller view.
+/// This existing Swift test boundary establishes the explicit-Prune precondition.
+@MainActor
+func establishHandledWorktreeRepairOffer(_ owner: NSWindowController) -> Bool {
+    guard let controller = owner as? PBGitWindowController, let repository = controller.repository else { return false }
+    controller.recordWorktreeRepairOffer(for: repository)
+    return controller.offeredWorktreeRepair
+}
+
 #if DEBUG
     @MainActor
     final class WorktreePresentationTests: XCTestCase {

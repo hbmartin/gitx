@@ -303,6 +303,7 @@ private final class WorktreeOperation {
     var ownedDiscoveryGeneration: UInt64?
     private var pendingResources: Set<UUID> = []
     private var didReleaseResources = false
+    private var localMutationActivity: RepositoryLocalMutationRegistry.Ticket?
 
     init(context: WorktreeOperationContext, repository: PBGitRepository, service: PBRepositoryWorktreeService, owner: NSObject?, acknowledged: @escaping @MainActor @Sendable () -> Void) {
         self.context = context
@@ -348,7 +349,10 @@ private final class WorktreeOperation {
         start?()
     }
 
-    func beginWriter() {
+    func beginWriter() throws {
+        if localMutationActivity == nil {
+            localMutationActivity = try RepositoryLocalMutationRegistry.shared.admitContinuation()
+        }
         phase = .writing
     }
 
@@ -395,6 +399,10 @@ private final class WorktreeOperation {
         release()
         afterRelease.forEach { $0() }
         acknowledged?()
+        if let activity = localMutationActivity {
+            localMutationActivity = nil
+            RepositoryLocalMutationRegistry.shared.finish(activity)
+        }
     }
 
     func markPreparationCancelled() {
@@ -1605,7 +1613,7 @@ final class PBRepositoryWorktreeService: NSObject {
         do { try validateCurrentContext(operation.context) } catch { completion(.failure(error)); return }
         let readOnly = command == .pruneReport
         if !readOnly {
-            operation.beginWriter()
+            do { try operation.beginWriter() } catch { completion(.failure(error)); return }
             operation.eventArguments = Array(command.arguments.prefix(2))
             operation.mutationArguments = operation.eventArguments
         }

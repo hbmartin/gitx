@@ -209,6 +209,8 @@ final nonisolated class RepositoryMutationService: NSObject {
         guard let tagName, let gitRepository = repository.gtRepo else { return false }
         logger.debug("Creating repository tag")
         do {
+            let activity = try RepositoryLocalMutationRegistry.shared.admit()
+            defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
             guard let object = try gitRepository.lookUpObject(byRevParse: target.refishName()) as? GTObject else {
                 return false
             }

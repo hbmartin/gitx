@@ -1553,6 +1553,34 @@
           "role": "valid",
           "oracle": "With explicit continuous watching, an external tracked edit inserts working state while preserving the older commit selection.",
           "check": "ui"
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testLockRemovalAndPruneSheetsRequireTheirOwnConfirmation",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Use the real native confirmation buttons after foreground readiness. Lock, removal and prune each require their own affirmative choice; cancellation preserves exact worktree and repository contents."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testClosingWindowDuringPruneRejectsLatePreviewResultsAndConfirmationClicks",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Close during held preview, confirmed preview and deferred click; reject late consent and preserve exact registrations and HEAD."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testHiddenWindowRetainsCompletedPrunePreviewUntilTheUserReturns",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Model handled automatic repair, hold the actual Prune report and hide its owner; retain the completed preview until explicit return without cancellation or background presentation."
+        },
+        {
+          "source": "GitXTests/WorktreeAppKitTests.swift",
+          "identifier": "GitXTests/WorktreeAppKitTests/testGitCapabilityLossInvalidatesAnOpenPruneConfirmation",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Lose and optionally restore capability during Prune consent; reject the obsolete token without pruning, while preserving exact administrative metadata."
         }
       ]
     },
@@ -2981,7 +3009,7 @@
           "identifier": "GitXTests/GitBinaryReliabilityTests/testCancelledAndExpiredQueueEntriesImmediatelyReleaseAdmissionCapacity",
           "role": "boundary",
           "check": "correctness",
-          "oracle": "Cancel and expire accepted queue entries, refill both freed slots without busy rejection, and require each outcome exactly once."
+          "oracle": "Cancel and expire accepted queue entries, refill both freed slots without busy rejection, and require each outcome exactly once. Hold occupied factories until explicit release, prove expired queued probes never enter a factory, and drain both held factories before teardown."
         },
         {
           "source": "GitXTests/GitBinaryReliabilityTests.swift",
@@ -3771,7 +3799,7 @@
     {
       "id": "DRAFT-001",
       "family": "Mutation completion and conditional draft retirement",
-      "invariant": "Verified admitted create and edit outcomes retire only the exact submitted draft snapshot, independently of presentation ownership and post-success cancellation. Missing, unreadable or changed drafts survive. Cleanup failures never resubmit or change a successful remote result; revoked capabilities cannot present. Final edit submission serializes its exact title and body before capturing cleanup evidence; a failed local save does not block publication or retire an unverified snapshot. Harness activity timestamps never move backward and creation time is preserved. Each editor retains its observed or own saved snapshot; submission conditionally saves against that evidence atomically. A conflict or unavailable save never overwrites or adopts another editor's draft, never blocks remote submission, and never authorizes cleanup. Ordinary autosaves remain last-writer-wins. Save failure preserves the editor's last verified expectation; final persistence drains in the serialized chain independently of mutation cancellation. An unsaved failed submission reopens exact text in a current-owner memory-only recovery editor. Explicit replacement confirms and atomically compares the captured stored snapshot; concurrent changes preserve both texts. Owner teardown aborts recovery prompts without writing. Submission lifetime is independent of presentation: supersession cancels pre-admission only; admitted requests drain. Reopening waits for preceding persistence and same-PR remote completion, never restoring and autosaving older text. Unsaved terminal results retain operation-bound memory-only recovery; sheet presentation is serialized without replacing active ownership. Human replacement confirmation never occupies the persistence queue. Duplicate saves refuse admission, closure invalidates pending loads/confirmation, and explicit window closure protects deferred recovery. Authoritative server rejection remains visible. Replacement is accepted only after validation or confirmation, including ordinary push admission. Repeated supersession cannot cancel admitted work. Create-flow settlement and conditional cleanup precede presentation checks. Terminal records retire independently of persistent conflict freshness. Ready editors retain FIFO order while remote waiters remain outside the sheet queue. Enqueue acceptance owns the recovery flag. A stale authorization retry settles once and preserves required recovery. Keep Editing preserves recovery loading, consent and admitted writes. Window activity is owner-scoped and older completions cannot clear newer feedback.",
+      "invariant": "Verified admitted create and edit outcomes retire only the exact submitted draft snapshot, independently of presentation ownership and post-success cancellation. Missing, unreadable or changed drafts survive. Cleanup failures never resubmit or change a successful remote result; revoked capabilities cannot present. Final edit submission serializes its exact title and body before capturing cleanup evidence; a failed local save does not block publication or retire an unverified snapshot. Harness activity timestamps never move backward and creation time is preserved. Each editor retains its observed or own saved snapshot; submission conditionally saves against that evidence atomically. A conflict or unavailable save never overwrites or adopts another editor's draft, never blocks remote submission, and never authorizes cleanup. Ordinary autosaves remain last-writer-wins. Save failure preserves the editor's last verified expectation; final persistence drains in the serialized chain independently of mutation cancellation. An unsaved failed submission reopens exact text in a current-owner memory-only recovery editor. Explicit replacement confirms and atomically compares the captured stored snapshot; concurrent changes preserve both texts. Owner teardown aborts recovery prompts without writing. Submission lifetime is independent of presentation: supersession cancels pre-admission only; admitted requests drain. Reopening waits for preceding persistence and same-PR remote completion, never restoring and autosaving older text. Unsaved terminal results retain operation-bound memory-only recovery; sheet presentation is serialized without replacing active ownership. Human replacement confirmation never occupies the persistence queue. Duplicate saves refuse admission, closure invalidates pending loads/confirmation, and explicit window closure protects deferred recovery. Authoritative server rejection remains visible. Replacement is accepted only after validation or confirmation, including ordinary push admission. Repeated supersession cannot cancel admitted work. Create-flow settlement and conditional cleanup precede presentation checks. Terminal records retire independently of persistent conflict freshness. Ready editors retain FIFO order while remote waiters remain outside the sheet queue. Enqueue acceptance owns the recovery flag. A stale authorization retry settles once and preserves required recovery. Keep Editing preserves recovery loading, consent and admitted writes. Window activity is owner-scoped and older completions cannot clear newer feedback. Saved-unsent feedback expires after eight seconds of actual display; old expiry cannot clear newer activity or retain a revoked owner. Superseded failures are immutable and queued in original-window completion order outside sheet/status presentation. Details and Dismiss do not interrupt a newer editor. Pending New Pull Request actions are rejected before additional preparation. Sync authorization Retry is current-owner, current-operation and one-shot. Detached recovery shares its original persistence session and exact content.",
       "rootCause": "Controller-bound cleanup loses drafts after owner teardown; unconditional deletion removes newer edits and raw ownership closures outlive revocation.",
       "sourcePaths": [
         "GitXTests/Milestone2CompositionCoverageHarness.swift",
@@ -3779,7 +3807,8 @@
         "Classes/Controllers/RepositoryPullRequestUIController.swift",
         "Classes/Controllers/GitHubPullRequestComposition.swift",
         "ForgeKit/Sources/ForgeKit/ForgeSQLitePersistence.swift",
-        "Classes/Views/ForgePullRequestSheetController.swift"
+        "Classes/Views/ForgePullRequestSheetController.swift",
+        "Classes/Controllers/RepositoryPullRequestRecoverySession.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -4192,6 +4221,83 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Exercise the app-module recovery sheet with live replacement consent, attempt closure, keep editing, and require the same save identity, original consent result, saved-text callback and one terminal dismissal."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testUnsentNoticeExpiresAfterEightSeconds",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testOldNoticeExpiryCannotClearNewBusyActivity",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testOwnerRevocationCancelsNoticeExpiry",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testDeferredUnsentNoticeStartsExpiryOnlyWhenDisplayed",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testNoticeTimerDoesNotRetainTheController",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Advance a controlled eight-second delay; expire only the displayed notice, preserve newer activity and release revoked owners."
+        },
+        {
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testSupersededEditFailureAppearsWithoutInterruptingTheNewEditor",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold real checkout/remote completion while presentation changes; require original-repository reconciliation, immutable nonmodal failure delivery, preserved newer editor and no stale navigation."
+        },
+        {
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testCheckoutReconcilesItsOriginalRepositoryAfterSupersessionOrOwnerRevocation",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold real checkout/remote completion while presentation changes; require original-repository reconciliation, immutable nonmodal failure delivery, preserved newer editor and no stale navigation."
+        },
+        {
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testFailureRowKeepsHiddenStatusPreferenceAndRevokesOldDetailsOnReplacement",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold real checkout/remote completion while presentation changes; require original-repository reconciliation, immutable nonmodal failure delivery, preserved newer editor and no stale navigation."
+        },
+        {
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testSavedEditFailureRetiresItsRecordAndShowsTheActualError",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold real checkout/remote completion while presentation changes; require original-repository reconciliation, immutable nonmodal failure delivery, preserved newer editor and no stale navigation."
+        },
+        {
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testPendingNativeCreateNoticeClearsWhenItsControllerIsRevoked",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold real checkout/remote completion while presentation changes; require original-repository reconciliation, immutable nonmodal failure delivery, preserved newer editor and no stale navigation."
+        },
+        {
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testQuitAdmissionRefusalsRemainNotSentAfterLogicalSubmissionAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold real checkout/remote completion while presentation changes; require original-repository reconciliation, immutable nonmodal failure delivery, preserved newer editor and no stale navigation."
         }
       ]
     },
@@ -4251,13 +4357,24 @@
     {
       "id": "CLOSE-001",
       "family": "Repository close consent before teardown",
-      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes.",
+      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes. Preflight consent is borrowed only during synchronous callback forwarding and actual teardown; abandoned preflight preserves recovery and cannot authorize later closure. Repository moves transfer exact recovered content, original draft identity and admitted persistence to standalone recovery before obsolete-document teardown. Native Quit waits for started local mutations, seals new admission, composes existing remote choices and revalidates every attached or detached recovery before its one final reply. Cancel Quit and Keep Editing preserve work and text; preflight never discards text. Final accepted Quit ends every current Pull Request presentation, including saved recovery and unchanged editors, before forwarding to AppKit; declining consent ends none.",
       "rootCause": "A window-only close guard runs after NSDocument has already torn down its document, while independent entry points duplicate consent and repeated window close can release AppKit state twice.",
       "sourcePaths": [
         "Classes/Controllers/PBGitRepositoryDocument.h",
         "Classes/Controllers/PBGitRepositoryDocument.m",
         "Classes/Controllers/PBGitWindowController.swift",
-        "Classes/Controllers/RepositoryDocumentScripting.swift"
+        "Classes/Controllers/RepositoryDocumentScripting.swift",
+        "Classes/Controllers/RepositoryPullRequestUIController.swift",
+        "Classes/Controllers/RepositoryPullRequestRecoverySession.swift",
+        "Classes/Controllers/RepositoryTerminationCoordinator.swift",
+        "Classes/git/RepositoryLocalMutationRegistry.swift",
+        "Classes/Controllers/ForgeMutationQuitCoordinator.swift",
+        "Classes/git/IndexCommandRunning.swift",
+        "Classes/git/RepositoryWorktreeService.swift",
+        "Classes/git/RepositoryMutationService.swift",
+        "Classes/Controllers/ApplicationController.m",
+        "Resources/en.lproj/MainMenu.xib",
+        "Classes/Controllers/RepositoryPullRequestGitOperations.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -4309,17 +4426,494 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Render waiting and saved-unsent activity through the real status bar, reject stale clearing, and repeat closure without resurrecting the owner."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testCloseCoordinatorCoalescesDecisionsAndRejectsStaleOrForeignConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Coalesce pending requests; reject stale or foreign consent; balance nested callback-scoped approvals."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testActualWindowCloseProtectionKeepsOwnershipUntilConfirmationAndRevokesOnce",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Confirm real protected window closure, repeat close, and require exactly one owner revocation."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAcceptedPreflightReportsConsentWithoutDocumentTeardown",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accepted preflight reports true while registration, presenter and window ownership remain intact."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAcceptedPreflightCanCloseSynchronouslyWithOneConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Close inside the real AppKit delegate callback and require one prompt and one teardown."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testAbandonedPreflightRequiresFreshConsentForTheSameOrNewGuard",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Return from accepted preflight without closing; a later close requires fresh consent for unchanged and replaced guards."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testStaleCloseConsentCannotCloseAReplacementDocument",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move a controller to another document while consent is pending; the old callback must close neither document."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testCloseConsentPolicyRequiresMatchingDocumentAndOwnerAndBalancesTokens",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Permit only matching document/generation; nested tokens balance and revocation removes all authority."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testScopedConsentSkipsForeignControllersAndCannotApproveAReplacementGuard",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Ignore unrelated controllers and invalidate borrowed approval when the close guard owner changes."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testAcceptedPreflightPreservesRecoveryAndRequiresConsentAgain",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accept consent without closing; retain exact recovery text, loading/consent/write results and later close protection."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testAcceptedPreflightPreservesAnAdmittedRecoverySave",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accept consent without closing; retain exact recovery text, loading/consent/write results and later close protection."
+        },
+        {
+          "source": "GitXTests/RepositoryPullRequestWorkflowAppTests.swift",
+          "identifier": "GitXTests/RepositoryMutationCompletionTests/testAcceptedPreflightPreservesRecoveryLoadingAndReplacementConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accept consent without closing; retain exact recovery text, loading/consent/write results and later close protection."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testScopedConsentCannotFollowAReplacementWindow",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Replace the native window during borrowed consent; the replacement must require a fresh decision."
+        },
+        {
+          "source": "GitXTests/NativeRecoveryMoveTests.swift",
+          "identifier": "GitXTests/NativeRecoveryMoveTests/testMoveDetachesExactRecoveredTextAndCanSaveToOriginalDraftIdentity",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the actual repository during the selected recovery phase; require obsolete-document teardown, independent exact text, original draft identity, preserved save results and remote invocation counts."
+        },
+        {
+          "source": "GitXTests/NativeRecoveryMoveTests.swift",
+          "identifier": "GitXTests/NativeRecoveryMoveTests/testMovePreservesRecoveryLoadAndOriginalDraftReplacementConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the actual repository during the selected recovery phase; require obsolete-document teardown, independent exact text, original draft identity, preserved save results and remote invocation counts."
+        },
+        {
+          "source": "GitXTests/NativeRecoveryMoveTests.swift",
+          "identifier": "GitXTests/NativeRecoveryMoveTests/testMovePreservesVisibleReplacementConsentAndExactlyOneWrite",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the actual repository during the selected recovery phase; require obsolete-document teardown, independent exact text, original draft identity, preserved save results and remote invocation counts."
+        },
+        {
+          "source": "GitXTests/NativeRecoveryMoveTests.swift",
+          "identifier": "GitXTests/NativeRecoveryMoveTests/testMovePreservesAdmittedRecoveryWriteAndRecordsItsResult",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the actual repository during the selected recovery phase; require obsolete-document teardown, independent exact text, original draft identity, preserved save results and remote invocation counts."
+        },
+        {
+          "source": "GitXTests/NativeRecoveryMoveTests.swift",
+          "identifier": "GitXTests/NativeRecoveryMoveTests/testMoveDuringFinalPersistenceRetainsUnsentTextWithoutRemoteAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the actual repository during the selected recovery phase; require obsolete-document teardown, independent exact text, original draft identity, preserved save results and remote invocation counts."
+        },
+        {
+          "source": "GitXTests/NativeRecoveryMoveTests.swift",
+          "identifier": "GitXTests/NativeRecoveryMoveTests/testMoveDuringAdmittedEditRetainsItsLateRecoveryAfterControllerDeallocation",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the actual repository during the selected recovery phase; require obsolete-document teardown, independent exact text, original draft identity, preserved save results and remote invocation counts."
+        },
+        {
+          "source": "GitXTests/NativeRecoveryMoveTests.swift",
+          "identifier": "GitXTests/NativeRecoveryMoveTests/testMoveMakesQueuedRecoveryAvailableWithoutTheObsoleteEditorSlot",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the actual repository during the selected recovery phase; require obsolete-document teardown, independent exact text, original draft identity, preserved save results and remote invocation counts."
+        },
+        {
+          "source": "GitXTests/NativeRecoveryMoveTests.swift",
+          "identifier": "GitXTests/NativeRecoveryMoveTests/testNativeControllerConsentHooksPreserveRecoveryBeforeARepositoryMove",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the actual repository during the selected recovery phase; require obsolete-document teardown, independent exact text, original draft identity, preserved save results and remote invocation counts."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testNativeCloseConsentIsCoalescedNondestructiveAndPhaseSpecific",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testNativeSessionRevocationSettlesPendingConsentOnceAndSuppressesStaleReplies",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testNativeRegistrySynchronizesFurtherVisibleTextAfterARecoveryWasSaved",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testNativeRecoveryLoadAndWriteFailuresPreserveTheExactTextAndStoredDraft",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testNativeConditionalRecoverySavePreservesAConcurrentDraft",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testNativeOwnerRevocationCancelsUncommittedLoadingAndConsentWithoutWriting",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testNativeAdmittedSaveFinishesAfterActualRevocationWithoutLatePresentation",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testNativeRecoverySaveMarksOnlyItsCapturedTextAndProtectsFurtherEditing",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testStandalonePendingSessionProtectsItsPlaceholderAndSuppressesLateRecoveryAfterDiscard",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testDetachedCompletionSettlesOldPlaceholderConsentBeforePresentingRecovery",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testKeepEditingDuringQuitPreservesRecoveryLoadingAndReplacementConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testFinalAcceptedQuitDiscardsAttachedAndDetachedRecoveryOnlyAtItsReply",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive native recovery and its conditional persistence with held work; require phase-specific nondestructive consent, exact bytes and suppression of revoked callbacks."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testEmptyQuitCoalescesAndSendsOneTerminalReply",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testCancelQuitPreservesStartedWorkAndReopensAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testCompletionWhileTheWaitingPanelAppearsCannotLoseItsWakeup",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testStartedWorkDrainsBeforeTheRemoteQuitChoice",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testRecoveryChangedDuringAnotherConsentNeedsFreshConsentAndKeepEditingCancelsQuit",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testRemoteCompletionRevalidatesRecoveryCreatedWhileWaiting",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testAnOldRemoteDecisionCannotApproveAReentrantQuitAttempt",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testRemoteReplyDuringTheNativeChoiceCannotStrandTheTerminationAttempt",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testImmediateRemoteCancellationReopensAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testMissingRecoveryPresenterCannotAuthorizeQuitOrDiscardExactText",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testSynchronousRecoveryDecisionIsConsumedExactlyOnce",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testRemoteCancellationSettlesTheSameAttempt",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testLocalRegistryPreservesNestedStartedWorkAndRejectsNewContinuations",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testCancelThenImmediatelyRetryingQuitDoesNotLoseTheNewAttempt",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testDraftLoadsDoNotDelayQuitButAdmittedRecoveryWritesDrain",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testRecoveredTextIsDiscardedOnlyAtTheFinalAcceptedTerminationReply",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold local execution, recovery consent or the remote choice deterministically; require revalidated state, sealed admission and exactly one final reply per attempt."
+        },
+        {
+          "source": "GitXTests/NativeTerminationIntegrationTests.swift",
+          "identifier": "GitXTests/NativeTerminationIntegrationTests/testPendingQuitRejectsNativeIndexAndRecoveryWritersButAllowsReads",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Exercise native Git/index/worktree admission and actual app recovery fixtures; require no new mutation during Quit and preserve admitted execution through completion."
+        },
+        {
+          "source": "GitXTests/NativeTerminationIntegrationTests.swift",
+          "identifier": "GitXTests/NativeTerminationIntegrationTests/testCancelQuitReopensTheActualForgeLifecycleWithoutCancellingItsMutation",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Exercise native Git/index/worktree admission and actual app recovery fixtures; require no new mutation during Quit and preserve admitted execution through completion."
+        },
+        {
+          "source": "GitXTests/NativeTerminationIntegrationTests.swift",
+          "identifier": "GitXTests/NativeTerminationIntegrationTests/testRecoveryQuitHarnessRetainsTheExactNativeRecoveryContent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Exercise native Git/index/worktree admission and actual app recovery fixtures; require no new mutation during Quit and preserve admitted execution through completion."
+        },
+        {
+          "source": "GitXTests/NativeTerminationIntegrationTests.swift",
+          "identifier": "GitXTests/NativeTerminationIntegrationTests/testLocalQuitHarnessOwnsRealGitThroughSuccessAndFailure",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Exercise native Git/index/worktree admission and actual app recovery fixtures; require no new mutation during Quit and preserve admitted execution through completion."
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testNativeMenuQuitClosesAnUnprotectedRepository",
+          "role": "boundary",
+          "check": "ui",
+          "oracle": "Use the application-menu Quit action with actual documents, moves or held Git. Keep Editing/Cancel Quit preserve state; accepted Quit follows all guards."
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testNativeQuitRevalidatesAllRecoveredDocumentsAfterKeepEditing",
+          "role": "boundary",
+          "check": "ui",
+          "oracle": "Use the application-menu Quit action with actual documents, moves or held Git. Keep Editing/Cancel Quit preserve state; accepted Quit follows all guards."
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testNativeQuitProtectsDetachedRecoveryAfterARealCoordinatedMove",
+          "role": "boundary",
+          "check": "ui",
+          "oracle": "Use the application-menu Quit action with actual documents, moves or held Git. Keep Editing/Cancel Quit preserve state; accepted Quit follows all guards."
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testNativeQuitWaitsForRealLocalBranchCreationAndCancelQuitKeepsItRunning",
+          "role": "boundary",
+          "check": "ui",
+          "oracle": "Use the application-menu Quit action with actual documents, moves or held Git. Keep Editing/Cancel Quit preserve state; accepted Quit follows all guards."
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testNativeQuitProtectsRecoveredTextAndKeepEditingCancelsTermination",
+          "role": "boundary",
+          "check": "ui",
+          "oracle": "Use the application-menu Quit action with actual documents, moves or held Git. Keep Editing/Cancel Quit preserve state; accepted Quit follows all guards."
+        },
+        {
+          "source": "GitXTests/NativeLocalMutationLifetimeTests.swift",
+          "identifier": "GitXTests/NativeLocalMutationLifetimeTests/testClosingTheOriginalDocumentLetsAnAdmittedHardResetFinish",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Close the original real document during a held hard reset; require continued Git execution and a durable validated backup."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testRepositoryMoveRejectsAnOldCloseCallbackAndTearsDownTheOriginalDocumentOnce",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the original document and reject stale callbacks; require exactly-once registration, presenter and window teardown."
+        },
+        {
+          "source": "GitXTests/GitBinaryTests.swift",
+          "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testUnprotectedRepositoryMoveClosesTheOriginalDocumentAndFilePresenter",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Move the original document and reject stale callbacks; require exactly-once registration, presenter and window teardown."
+        },
+        {
+          "source": "GitXTests/NativeTerminationIntegrationTests.swift",
+          "identifier": "GitXTests/NativeTerminationIntegrationTests/testShippedApplicationDelegateExportsTheNativeQuitSelector",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Require the production ApplicationController and actual application delegate to export applicationShouldTerminate: so AppKit reaches common Quit consent."
+        },
+        {
+          "source": "GitXTests/NativeTerminationIntegrationTests.swift",
+          "identifier": "GitXTests/NativeTerminationIntegrationTests/testActualApplicationQuitProtectsRecoveryAndKeepEditingReopensAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Invoke actual AppKit termination with protected exact recovery, decline twice, and require surviving text and reopened admission after each real delegate reply."
+        },
+        {
+          "identifier": "GitXTests/RepositoryTerminationTests/testMenuQuitProtectsRecoveryBeforeAppKitWaitsForItsSheet",
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Native-menu consent runs before AppKit waits for attached sheets; repeated requests coalesce, Keep Editing preserves text and reopens admission, and only final acceptance invokes AppKit."
+        },
+        {
+          "identifier": "GitXTests/RepositoryTerminationTests/testAppKitQuitJoiningMenuConsentReceivesOneReply",
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "A direct AppKit termination joining pending menu consent receives exactly one terminal reply and cannot launch a second termination."
+        },
+        {
+          "identifier": "GitXTests/NativeRecoverySessionTests/testMenuQuitEndsASavedRecoverySheetBeforeForwardingToAppKit",
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Preserve exact durable draft contents; a saved recovery remains editable before Quit and its attached sheet ends before AppKit receives accepted termination."
+        },
+        {
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testMenuQuitEndsAnUnchangedEditorBeforeForwardingToAppKit",
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "End an unchanged native editor and revoke further presentation authority only at final accepted Quit; leave document teardown to AppKit."
+        },
+        {
+          "identifier": "GitXTests/RepositoryTerminationTests/testKeepEditingPreservesSavedPresentationsWhileAnotherSessionNeedsConsent",
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "check": "correctness",
+          "role": "boundary",
+          "oracle": "Declining one unsaved session preserves other saved presentations and their ownership; no final teardown callback runs."
+        },
+        {
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testNativeMenuQuitClosesAnUnchangedPullRequestEditor",
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "check": "ui",
+          "role": "boundary",
+          "oracle": "Use the actual application menu with an unchanged Pull Request sheet and require process termination instead of AppKit waiting indefinitely."
         }
       ]
     },
     {
       "id": "REFLOG-001",
       "family": "Reflog mutation lifetime and reset evidence",
-      "invariant": "Closing a browser revokes presentation and cancels reads, while admitted mutation workers finish with their captured service. Successful recovery reloads references and first-page events while retiring pagination evidence. Soft and mixed previews read no worktree payloads; hard previews capture only affected paths and obstructions, retaining index, symlink, directory and nested-repository evidence. Reset verifies target, checkout and predecessor evidence through ORIG_HEAD and any available HEAD reflog. Unsafe or unverified outcomes identify expected and observed commits and the validated backup; they never trigger rollback or retry.",
+      "invariant": "Closing a browser revokes presentation and cancels reads, while admitted mutation workers finish with their captured service. Successful recovery reloads references and first-page events while retiring pagination evidence. Soft and mixed previews read no worktree payloads; hard previews capture only affected paths and obstructions, retaining index, symlink, directory and nested-repository evidence. Reset verifies target, checkout and predecessor evidence through ORIG_HEAD and any available HEAD reflog. Unsafe or unverified outcomes identify expected and observed commits and the validated backup; they never trigger rollback or retry. Repository reconciliation completes independently of browser presentation authority, including mutation failure. Read-only commands keep their deadline while started branch/reset writes have no forced timeout. Page/preview work cannot be replaced by row selection. Coalesced repository changes keep stale rows visible, retire pagination evidence and schedule a fresh page without cancelling mutations. Session mutation summaries retain backup identities independently of progress and selection. Display-only invalid bytes are escaped; unsupported references stay disabled and are never substituted into commands. Branch names are validated literally. Post-write evidence read failures remain unverified outcomes.",
       "rootCause": "Presentation teardown cancels mutation workers; unconditional file reads scale with unchanged payload size; target-only verification misses the HEAD actually replaced by Git reset.",
       "sourcePaths": [
         "Classes/Controllers/ReflogBrowserController.swift",
-        "Classes/git/RepositoryReflogService.swift"
+        "Classes/git/RepositoryReflogService.swift",
+        "GitXCore/Sources/GitXCore/ReflogPolicy.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -4383,7 +4977,7 @@
           "identifier": "GitXTests/GitXPerformanceTests/testReflogPreviewWithLargeUnchangedWorktree",
           "role": "performance",
           "check": "performance",
-          "oracle": "Measure five Release samples per reset mode over a 32 MiB unchanged payload and retain JSON timings."
+          "oracle": "Measure Release latency and actual application fingerprint-content reads for large mostly unchanged worktrees. Soft/mixed capture zero worktree payload bytes; hard excludes unaffected payloads."
         },
         {
           "source": "GitXUITests/ReflogWorkflowUITests.swift",
@@ -4405,6 +4999,125 @@
           "role": "valid",
           "check": "correctness",
           "oracle": "Execute every mode in detached and linked worktrees; require target HEAD, validated backup, retained checkout identity and unchanged primary branch."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testDetachedBrowserReconcilesSoftAndMixedResetHistory",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release the browser during held real Git work with watcher disabled; require refreshed cached refs/history on completion, including failure after backup creation."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testDetachedBrowserReconcilesBackupAfterFailedReset",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release the browser during held real Git work with watcher disabled; require refreshed cached refs/history on completion, including failure after backup creation."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testDetachedBrowserReconcilesBranchCreationAndFailure",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Release the browser during held real Git work with watcher disabled; require refreshed cached refs/history on completion, including failure after backup creation."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testPageLoadingProtectsItsRequestFromRowSelection",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testRejectedReaderConstructionDoesNotStrandAnActiveDetailRequest",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testIdleRepositoryChangeAutomaticallyRefreshesReferences",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testUnsupportedReferenceIsEscapedAndDisabledWhileHeadRemainsUsable",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Open a repository already containing an unsupported packed reference. Require escaped disabled display, usable HEAD events and no substituted branch name sent to Git."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testReferencePaginationDiscardsAnInvalidatedPageAndPreservesTheSelection",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testCancellingAReadKeepsOldRowsAndAllowsFreshRecoveryEvidence",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testRequestPolicyProtectsPagesAndPreviewsButAllowsDetailReplacement",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testRepositoryEventsCoalesceWithoutErasingVisibleRows",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testLongMutationReportsWaitingWithoutInterruptingGit",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold native requests or Git and deliver controlled events; require usable controls, retained rows/selection, fresh evidence and durable mutation results."
+        },
+        {
+          "source": "GitXTests/ReflogServiceTests.swift",
+          "identifier": "GitXTests/ReflogServiceTests/testBranchWriteAndVerificationFailuresRetainIdentityWithoutStartingReset",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Inject real-Git write/evidence failures; require expected and observed commit identities, retained backup, no reset after uncertain branch creation and no retry or rollback."
+        },
+        {
+          "source": "GitXTests/ReflogServiceTests.swift",
+          "identifier": "GitXTests/ReflogServiceTests/testPostResetReadFailuresCannotMasqueradeAsMissingPredecessorEvidence",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Inject real-Git write/evidence failures; require expected and observed commit identities, retained backup, no reset after uncertain branch creation and no retry or rollback."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/ReflogPolicyTests.swift",
+          "identifier": "GitXCoreTests/ReflogPolicyTests/testParsesEventTimeActorAndPinnedObjectWithoutUsingCommitTime",
+          "role": "boundary",
+          "check": "core",
+          "oracle": "Parse byte-framed events with strict identity/date evidence. Escape invalid display bytes without discarding the event; reject malformed framing without partial recovery evidence."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/ReflogPolicyTests.swift",
+          "identifier": "GitXCoreTests/ReflogPolicyTests/testInvalidDisplayBytesDoNotDiscardAnIdentifiableEvent",
+          "role": "boundary",
+          "check": "core",
+          "oracle": "Parse byte-framed events with strict identity/date evidence. Escape invalid display bytes without discarding the event; reject malformed framing without partial recovery evidence."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/ReflogPolicyTests.swift",
+          "identifier": "GitXCoreTests/ReflogPolicyTests/testRejectsIncompleteOrMalformedRecordsInsteadOfPartialRecoveryEvidence",
+          "role": "boundary",
+          "check": "core",
+          "oracle": "Parse byte-framed events with strict identity/date evidence. Escape invalid display bytes without discarding the event; reject malformed framing without partial recovery evidence."
         }
       ]
     }

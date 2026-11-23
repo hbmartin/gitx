@@ -28,24 +28,60 @@ public enum ReflogParser {
         [40, 64].contains(value.utf8.count) && value.utf8.allSatisfy { (48 ... 57).contains($0) || (97 ... 102).contains($0) }
     }
 
-    /// Input is `--date=iso-strict --format=%H%x00%gD%x00%gs%x00%gn%x00%ge%x00%s%x00`.
+    /// Display decoding must never change the identity passed back to Git.
+    public static func displayText(_ data: Data) -> String {
+        let bytes = Array(data)
+        var result = ""
+        var index = 0
+        while index < bytes.count {
+            let byte = bytes[index]
+            let count: Int
+            switch byte {
+            case 0 ... 127: count = 1
+            case 194 ... 223: count = 2
+            case 224 ... 239: count = 3
+            case 240 ... 244: count = 4
+            default: count = 0
+            }
+            if count > 0, index + count <= bytes.count,
+               let text = String(bytes: bytes[index ..< index + count], encoding: .utf8)
+            {
+                result += text
+                index += count
+            } else {
+                result += String(format: "\\x%02X", byte)
+                index += 1
+            }
+        }
+        return result
+    }
+
+    /// NUL-delimited fields followed by LF; only descriptive fields tolerate invalid UTF-8.
     public static func entries(from data: Data) throws -> [ReflogEntry] {
         if data.isEmpty {
             return []
         }
-        guard let output = String(data: data, encoding: .utf8), output.hasSuffix("\0\n") else {
-            throw ReflogReadError.incompleteOutput
-        }
         let formatter = ISO8601DateFormatter()
-        return try output.dropLast(2).components(separatedBy: "\0\n").map { row in
-            let fields = row.components(separatedBy: "\0")
-            guard fields.count == 6, isObjectID(fields[0]),
-                  let start = fields[1].range(of: "@{", options: .backwards), fields[1].hasSuffix("}"),
-                  let date = formatter.date(from: String(fields[1][start.upperBound...].dropLast()))
-            else { throw ReflogReadError.invalidRecord }
-            return ReflogEntry(objectID: fields[0], selector: fields[1], eventDate: date,
-                               action: fields[2], actor: fields[3], email: fields[4], subject: fields[5])
+        var cursor = data.startIndex
+        var result: [ReflogEntry] = []
+        while cursor < data.endIndex {
+            var fields: [Data] = []
+            for _ in 0 ..< 6 {
+                guard let end = data[cursor...].firstIndex(of: 0) else { throw ReflogReadError.incompleteOutput }
+                fields.append(Data(data[cursor ..< end]))
+                cursor = data.index(after: end)
+            }
+            guard cursor < data.endIndex, data[cursor] == 10 else { throw ReflogReadError.incompleteOutput }
+            cursor = data.index(after: cursor)
+            guard let objectID = String(data: fields[0], encoding: .utf8), isObjectID(objectID),
+                  let marker = fields[1].range(of: Data("@{".utf8), options: .backwards), fields[1].last == 125,
+                  let timestamp = String(data: fields[1][marker.upperBound ..< fields[1].index(before: fields[1].endIndex)], encoding: .utf8),
+                  let date = formatter.date(from: timestamp) else { throw ReflogReadError.invalidRecord }
+            result.append(ReflogEntry(objectID: objectID, selector: displayText(fields[1]), eventDate: date,
+                                      action: displayText(fields[2]), actor: displayText(fields[3]),
+                                      email: displayText(fields[4]), subject: displayText(fields[5])))
         }
+        return result
     }
 }
 
