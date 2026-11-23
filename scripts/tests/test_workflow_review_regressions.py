@@ -327,10 +327,11 @@ class WorkflowAttemptRegressionTests(unittest.TestCase):
     def test_unreadable_prior_child_artifact_runs_the_check_fresh(self):
         self.assertEqual(self.run_verification((0,), "correctness")[0], 0)
         path = self.root / "artifacts/verification/fixture/workflow.json"
-        child = self.root / "prior.json"
+        child = self.root / "artifacts/verification/prior/receipt.json"
+        child.parent.mkdir(parents=True)
         child.write_text(json.dumps({"status": "passed", "evidence": {"status": "valid"}}))
         value = json.loads(path.read_text())
-        value["steps"][0]["receipt"] = str(child)
+        value["steps"][0]["receipt"] = str(child.resolve())
         path.write_text(json.dumps(value))
         args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "correctness"])
         with mock.patch.object(session, "receipt_artifact_problems", side_effect=OSError("prior artifact unreadable")), \

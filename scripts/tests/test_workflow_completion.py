@@ -58,6 +58,58 @@ class WorkflowCompletionTests(unittest.TestCase):
         self.assertEqual(receipt["steps"][-1]["outputs"][str(app)], session.tree_identity(app))
         self.assertEqual(execute.call_count, 2)
 
+    def test_parallel_stage_and_publication_run_under_the_same_proof_lease(self):
+        app = self.root / "build/GitX.app"
+        proof = session.Leases.return_value
+        owned = False
+        atomic_json = session.atomic_json
+
+        def enter():
+            nonlocal owned
+            self.assertFalse(owned)
+            owned = True
+            return proof.__enter__.return_value
+
+        def leave(*_):
+            nonlocal owned
+            self.assertTrue(owned)
+            owned = False
+
+        class Proof:
+            __enter__ = mock.Mock(side_effect=enter)
+            __exit__ = mock.Mock(side_effect=leave)
+
+        def record(root, path, payload, args, work, selection, *_):
+            self.assertFalse(owned)
+            self.assertEqual(work, [("correctness", ["fixture-test"])])
+            status, step = workflow.record_check(root, path, payload, "correctness", ["fixture-test"],
+                                                 self.current, selection["toolchain"], None, "fake", workflow.time.monotonic(), 0)
+            return status, step
+
+        def stage(command, **kwargs):
+            self.assertTrue(owned)
+            self.assertEqual(command, ["fixture-build"])
+            self.assertEqual(kwargs["env"]["GITX_RESOURCE_LEASES"], "proof-broker")
+            app.mkdir(parents=True)
+            (app / "binary").write_bytes(b"Debug")
+            return 0
+
+        def publish(path, payload):
+            if payload["status"] == "passed":
+                self.assertTrue(owned)
+                self.assertEqual(payload["steps"][-1]["outputs"][str(app)], session.tree_identity(app))
+            atomic_json(path, payload)
+
+        args = workflow.parser().parse_args(["verify", "--jobs", "2", "--run-id", "parallel", "--cleanup-mode", "preview"])
+        proof.__enter__.return_value.environment.side_effect = [os.environ.copy(), {"GITX_RESOURCE_LEASES": "proof-broker"}]
+        with mock.patch.object(session, "Leases", side_effect=[proof, Proof()]), \
+                mock.patch.object(workflow, "execute_parallel", side_effect=record), \
+                mock.patch.object(session, "supervise", side_effect=stage), \
+                mock.patch.object(session, "atomic_json", side_effect=publish), \
+                mock.patch.object(workflow.cleanup, "preview", return_value={"status": "preview"}):
+            self.assertEqual(workflow.verify(args), 0)
+        self.assertFalse(owned)
+
     def test_partial_success_is_not_delivery_eligible(self):
         code, receipt, execute = self.run_verification((0,), "correctness")
         self.assertEqual(code, 0)

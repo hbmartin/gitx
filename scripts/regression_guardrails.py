@@ -354,14 +354,18 @@ def observed_status(payload):
     return payload.get("status", "unknown")
 
 
-def inspect_receipt(path, context, expected_check=None, mutable_caches=None, expected_inputs=None):
+def inspect_receipt(path, context, expected_check=None, mutable_caches=None, expected_inputs=None, *, managed=False):
     path = pathlib.Path(path)
     record = {"receipt": str(path), "check": expected_check, "validity": "invalid",
               "status": "unknown", "reasons": [], "tests": [], "finishedAt": ""}
     try:
+        if managed:
+            path = session.workflow_receipt_path(context.root, path)
         payload = json.loads(path.read_text())
         if not isinstance(payload, dict):
             raise ValueError("Receipt must be an object")
+        if managed:
+            session.validate_evidence_paths(context.root, path, payload, context.toolchain)
         actual_check = receipt_check(payload)
         invocation = payload.get("invocation", {})
         # Staging is proved by the canonical workflow command AND its app output;
@@ -444,10 +448,21 @@ def inspect_workflow(path, payload, context):
         global_problems.append(str(error))
     active_steps = session.active_workflow_steps(payload)
     current_status = observed_status(dict(payload, steps=active_steps))
+    managed = payload.get("artifactProofVersion") == session.ARTIFACT_PROOF_VERSION
+    if managed:
+        try:
+            for step, child_path, child in session.workflow_child_receipts(payload, context.root):
+                if step.get("name") == "fixture-stability" and str(child_path) != step.get("receipt"):
+                    global_problems.extend(session.receipt_artifact_problems(child, context.root, mutable_caches, context.identity))
+                if step.get("name") == "stage-debug" and not dev_workflow.staged_debug_matches(step, child, child_path):
+                    global_problems.append("Staged app does not match the Debug build receipt")
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+            global_problems.append("Child evidence unavailable: " + str(error))
     for step in active_steps:
         name = step.get("name")
         if step.get("receipt"):
-            child = inspect_receipt(result_path(context, step["receipt"]), context, name, mutable_caches, carried.get(name))
+            child = inspect_receipt(result_path(context, step["receipt"]), context, name, mutable_caches, carried.get(name),
+                                    managed=managed)
         else:
             child = {"receipt": str(path), "check": name, "status": observed_status(step),
                      "validity": "invalid", "tests": [], "reasons": [], "finishedAt": timestamp(payload)}
@@ -460,6 +475,9 @@ def inspect_workflow(path, payload, context):
         if step.get("status") == "passed" and step.get("exitCode") != 0:
             problems.append("Passed workflow step disagrees with command exit")
         for output, expected in step.get("outputs", {}).items():
+            if managed and (name != "stage-debug" or output != str(context.root / "build/GitX.app")):
+                problems.append("Unexpected verification output path")
+                continue
             if expected is None or context.identity("results", result_path(context, output)) != expected:
                 problems.append("Workflow output missing or changed: " + output)
         if name == "stage-debug" and str(context.root / "build/GitX.app") not in step.get("outputs", {}):

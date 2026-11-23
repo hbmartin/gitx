@@ -530,6 +530,8 @@ def command_receipt_step(arguments: argparse.Namespace) -> int:
                     }
         except (OSError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError):
             pass
+    if arguments.exit_code == 75:
+        failure_category = "resource-busy"
     if arguments.exit_code and failure_category is None:
         failure_category = "command"
         if arguments.log and pathlib.Path(arguments.log).is_file():
@@ -601,6 +603,11 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
                 payload["exitCode"] = 76
         else:
             payload["deliveryEligible"] = payload["status"] == "passed" and not payload["invocation"].get("analysisProfiling", False)
+        if getattr(arguments, "record_staged_app", False):
+            staged = ROOT / "build/GitX.app"
+            if not staged.is_dir() or staged.is_symlink():
+                raise ValueError("Staged app is missing or redirected")
+            evidence["stagedApp"] = session.tree_identity(staged)
         product_path = payload.get("buildPaths", {}).get("derivedData")
         if product_path:
             evidence["products"] = session.product_identity(product_path)
@@ -895,6 +902,7 @@ def parser() -> argparse.ArgumentParser:
     receipt_finish.add_argument("path", type=pathlib.Path)
     receipt_finish.add_argument("--status", choices=("passed", "failed", "blocked", "interrupted"), required=True)
     receipt_finish.add_argument("--exit-code", type=int, required=True)
+    receipt_finish.add_argument("--record-staged-app", action="store_true")
     receipt_finish.set_defaults(handler=command_receipt_finish)
     resume_analysis = subparsers.add_parser("resume-analyzer")
     resume_analysis.add_argument("prior", type=pathlib.Path)

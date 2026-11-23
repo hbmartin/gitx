@@ -384,6 +384,7 @@ python3 "$support" receipt-init \
 	}
 
 overall_status=failed
+staged_product=0
 interrupted=0
 finish_receipt() {
 	exit_code=$?
@@ -392,8 +393,12 @@ finish_receipt() {
 		overall_status=interrupted
 	elif (( exit_code == 0 )); then
 		overall_status=passed
+	elif (( exit_code == 75 )); then
+		overall_status=blocked
 	fi
-	python3 "$support" receipt-finish "$receipt" --status "$overall_status" --exit-code "$exit_code"
+	finish_arguments=()
+	if (( staged_product )); then finish_arguments+=(--record-staged-app); fi
+	python3 "$support" receipt-finish "$receipt" --status "$overall_status" --exit-code "$exit_code" 		${finish_arguments[@]+"${finish_arguments[@]}"}
 	evidence_status=$?
 	if (( exit_code == 0 && evidence_status != 0 )); then exit_code=$evidence_status; fi
 	if [[ -n "$analyzer_derived_data" && -d "$analyzer_derived_data" ]]; then
@@ -475,6 +480,8 @@ run_supervised_step() {
 	duration=$(elapsed_seconds "$started")
 	if (( step_status == 0 )); then
 		step_result=passed
+	elif (( step_status == 75 )); then
+		step_result=blocked
 	else
 		step_result=failed
 	fi
@@ -706,6 +713,7 @@ case "$command" in
 		run_step build "$logs/build.log" "" "$xcodebuild" "${common[@]}" build CODE_SIGN_IDENTITY=- ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		if (( stage_app )); then
 			stage_built_app ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+			staged_product=1
 		fi
 		;;
 	smoke)
