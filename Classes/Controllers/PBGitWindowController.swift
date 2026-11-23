@@ -230,6 +230,7 @@ nonisolated struct RepositoryGitLoaderLifecycle {
 }
 
 /// Owns the repository window's AppKit wiring while routing decisions to focused coordinators.
+@MainActor
 @objc(PBGitWindowController)
 open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation { // swiftlint:disable:this type_body_length
     @objc private dynamic var _sidebarController: PBGitSidebarController? // swiftlint:disable:this identifier_name

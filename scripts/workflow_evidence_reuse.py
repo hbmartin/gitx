@@ -110,12 +110,10 @@ def lineage(root, original, current):
 
 
 def read_source(root, path, current):
-    artifact_root = session.verification_artifact_root(root).resolve()
-    path = pathlib.Path(path)
-    if path.name != "workflow.json" or not path.resolve().is_relative_to(artifact_root) or path.is_symlink():
-        raise ValueError("Evidence must come from a local workflow receipt")
+    path = session.workflow_receipt_path(root, path, workflow=True)
     receipt = json.loads(path.read_text())
-    if (receipt.get("schemaVersion") != 2 or receipt.get("status") != "passed" or receipt.get("profile") != "full"
+    if (receipt.get("schemaVersion") != 2 or receipt.get("artifactProofVersion") != session.ARTIFACT_PROOF_VERSION
+            or receipt.get("runId") != path.parent.name or receipt.get("status") != "passed" or receipt.get("profile") != "full"
             or receipt.get("scope") != "full" or receipt.get("evidenceStatus") != "valid" or not receipt.get("deliveryEligible")
             or receipt.get("evidenceReuse") or session.changed_inputs(receipt["inputsBefore"], receipt["inputsAfter"])):
         raise ValueError("Evidence reuse requires an original passing full workflow")
@@ -124,7 +122,9 @@ def read_source(root, path, current):
 
 
 def correctness_result(root, step):
-    child = json.loads(pathlib.Path(step["receipt"]).read_text())
+    path = session.workflow_receipt_path(root, step["receipt"])
+    child = json.loads(path.read_text())
+    session.validate_evidence_paths(root, path, child, step.get("toolchain"))
     runs = [item for item in child["steps"] if item["name"] == "test:correctness"]
     invocation = child["invocation"]
     if (child["status"] != "passed" or invocation.get("configuration") != "Debug"
@@ -132,10 +132,8 @@ def correctness_result(root, step):
             or any(arg.startswith(("-only-testing", "-skip-testing")) for arg in invocation.get("arguments", ()))
             or not runs[0].get("testCounts", {}).get("total") or runs[0].get("status") != "passed"):
         raise ValueError("Complete Debug correctness evidence is required")
-    result = root / runs[0]["xcresult"]
-    if not result.resolve().is_relative_to(session.verification_artifact_root(root).resolve()):
-        raise ValueError("Correctness result is outside the checkout evidence")
-    return result
+    return session.owned_result_path(root, path, runs[0]["xcresult"])
+
 
 
 def prepare(root, original_path, current, output, commands, toolchain, caches):
@@ -147,10 +145,9 @@ def prepare(root, original_path, current, output, commands, toolchain, caches):
     carried = []
     for name in sorted(CARRIED_CHECKS):
         step = steps[name]
-        child_path = pathlib.Path(step["receipt"])
-        if not child_path.resolve().is_relative_to(session.verification_artifact_root(root).resolve()):
-            raise ValueError("Reused child receipt is outside the checkout evidence")
+        child_path = session.workflow_receipt_path(root, step["receipt"])
         child = json.loads(child_path.read_text())
+        session.validate_evidence_paths(root, child_path, child, toolchain)
         evidence = child["evidence"]
         if (not session.command_matches(step, commands[name]) or step["toolchain"] != toolchain
                 or step["status"] != "passed" or step["evidenceStatus"] != "valid"
@@ -162,7 +159,8 @@ def prepare(root, original_path, current, output, commands, toolchain, caches):
         carried.append({**step, "reusedFrom": str(original_path), "receiptIdentity": session.file_identity(child_path),
                         "lastAttempt": {"action": "reused", "reason": "evidence-only-descendant"}})
     result = correctness_result(root, steps["correctness"])
-    log = output / "coverage-recheck.log"
+    output_receipt = session.workflow_receipt_path(root, output / "workflow.json", workflow=True)
+    log = session.managed_path(root, output_receipt.parent / "coverage-recheck.log", within=output_receipt.parent)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("x") as stream:
         subprocess.run([sys.executable, str(root / "scripts/check_coverage.py"), str(result)],
@@ -178,12 +176,18 @@ def validation_inputs(root, workflow, current):
     relation = workflow.get("evidenceReuse")
     if not relation:
         return {}
-    path = pathlib.Path(relation["sourceReceipt"])
+    path = session.workflow_receipt_path(root, relation["sourceReceipt"], workflow=True)
+    run_id = workflow.get("runId")
+    if not session.valid_run_id(run_id):
+        raise ValueError("Coverage proof has no managed workflow ID")
+    output = session.workflow_receipt_path(root, session.verification_artifact_root(root) / run_id / "workflow.json",
+                                           workflow=True)
+    coverage_log = session.managed_path(root, relation["coverageLog"], exact=output.parent / "coverage-recheck.log")
     original, paths = read_source(root, path, current)
     if (relation["sourceReceiptIdentity"] != session.file_identity(path) or relation["head"] != current["head"]
             or relation["sourceHead"] != original["inputsAfter"]["head"] or relation["paths"] != paths
             or relation["baseline"] != session.file_identity(root / COVERAGE_POLICY)
-            or relation["coverageLogIdentity"] is None or relation["coverageLogIdentity"] != session.file_identity(relation["coverageLog"])):
+            or relation["coverageLogIdentity"] is None or relation["coverageLogIdentity"] != session.file_identity(coverage_log)):
         raise ValueError("Cross-commit verification evidence changed")
     source_steps = {step["name"]: step for step in session.active_workflow_steps(original, require_selected_checks=True)}
     inputs = original["inputsAfter"]
@@ -192,8 +196,9 @@ def validation_inputs(root, workflow, current):
         name = step["name"]
         if not step.get("reusedFrom"):
             continue
+        child_path = session.workflow_receipt_path(root, step["receipt"])
         if name not in CARRIED_CHECKS or step["reusedFrom"] != str(path) or step["receipt"] != source_steps[name]["receipt"] or (
-                step["receiptIdentity"] is None or step["receiptIdentity"] != session.file_identity(step["receipt"])):
+                step["receiptIdentity"] is None or step["receiptIdentity"] != session.file_identity(child_path)):
             raise ValueError("Workflow step does not bind to the original receipt: " + name)
         eligible[name] = inputs
     if "correctness" not in eligible or relation["coverageResult"] != str(correctness_result(root, source_steps["correctness"])):

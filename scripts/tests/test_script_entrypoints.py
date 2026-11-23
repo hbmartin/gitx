@@ -454,7 +454,7 @@ fi
     def test_workflow_resume_falls_back_to_fresh_after_toolchain_recovery_rejection(self) -> None:
         self.install_script("xcodebuild.sh")
         coordinator = self.install_script("dev_workflow.py")
-        for dependency in ("workflow_records.py", "workflow_cleanup.py", "workflow_feedback.py"):
+        for dependency in ("workflow_records.py", "workflow_cleanup.py", "workflow_feedback.py", "workflow_evidence_reuse.py"):
             shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
         captured = self.install_mock_xcodebuild(self.root / "Products")
         (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")

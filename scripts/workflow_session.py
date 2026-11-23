@@ -236,15 +236,177 @@ def active_workflow_steps(payload, *, require_selected_checks=False):
             if selected is None or step.get("name") in selected]
 
 
-def workflow_cache_snapshots(payload, root=ROOT, receipt_reader=None):
-    """Use completion provenance, never array position, to select each cache owner."""
-    candidates = {"products": {}, "packages": {}, "dependencies": {}}
+FIXTURE_PRESETS = ("correctness", "address-undefined", "thread-sanitizer", "ui")
+FIXTURE_REPETITIONS = range(1, 4)
+ARTIFACT_PROOF_VERSION = 1
+
+
+def managed_path(root, value, *, exact=None, within=None):
+    """Resolve only paths in a caller-supplied managed location."""
+    root = pathlib.Path(root).resolve()
+    path = pathlib.Path(value)
+    path = path if path.is_absolute() else root / path
+    if (".." in path.parts or (exact is not None and path != exact)
+            or (within is not None and (path == within or not path.is_relative_to(within)))):
+        raise ValueError("Evidence path is outside its managed location")
+    if path.resolve() != path:
+        raise ValueError("Evidence path is redirected")
+    return path
+
+
+def workflow_receipt_path(root, value, *, workflow=False):
+    root = pathlib.Path(root).resolve()
+    artifact_root = verification_artifact_root(root)
+    path = pathlib.Path(value)
+    path = path if path.is_absolute() else root / path
+    if not artifact_root.is_relative_to(root) or artifact_root == root or not path.is_relative_to(artifact_root):
+        raise ValueError("Evidence receipt is outside the checkout")
+    parts = path.relative_to(artifact_root).parts
+    if len(parts) != 2 or not valid_run_id(parts[0]):
+        raise ValueError("Evidence receipt has no managed run ID")
+    if workflow:
+        if parts[0] == "Coordination" or parts[1] != "workflow.json":
+            raise ValueError("Expected a managed workflow receipt")
+    elif parts[0] == "Coordination":
+        if path.suffix != ".json" or not valid_run_id(path.stem):
+            raise ValueError("Expected a managed coordination receipt")
+    elif parts[1] != "receipt.json":
+        raise ValueError("Expected a managed child receipt")
+    return managed_path(root, path, within=artifact_root)
+
+
+def owned_result_path(root, receipt, value):
+    receipt = workflow_receipt_path(root, receipt)
+    if receipt.name != "receipt.json":
+        raise ValueError("Results require an owning run")
+    path = managed_path(root, value, within=receipt.parent / "Results")
+    if path.suffix != ".xcresult":
+        raise ValueError("Expected an XCTest result bundle")
+    return path
+
+
+def validate_evidence_paths(root, path, child, toolchain):
+    """Check receipt-derived paths before opening results or inspecting caches."""
+    if not isinstance(child, dict):
+        raise ValueError("Child receipt must be an object")
+    path = workflow_receipt_path(root, path)
+    if "invocation" not in child:
+        return
+    if child.get("runId") != path.parent.name or path.name != "receipt.json":
+        raise ValueError("Child receipt does not own its run")
+    evidence = child.get("evidence", {})
+    package_report = {"test:core": "GitXCoreCoverage.json",
+                      "test:forgekit": "ForgeKitCombinedCoverage.json"}.get(child["invocation"].get("preset"))
+    for value in set(evidence.get("results", {})) | {step["xcresult"] for step in child.get("steps", []) if step.get("xcresult")}:
+        if package_report:
+            managed_path(root, value, exact=path.parent / "Results" / package_report)
+        else:
+            owned_result_path(root, path, value)
+    for value in evidence.get("analysisArtifacts", {}):
+        item = pathlib.Path(value)
+        item = item if item.is_absolute() else pathlib.Path(root) / item
+        location = next((location for location in (path.parent / "Logs", path.parent / "Results")
+                         if item.is_relative_to(location)), None)
+        if location is None:
+            raise ValueError("Analysis evidence is outside its owning run")
+        managed_path(root, item, within=location)
+    build = child.get("buildPaths", {})
+    if not build:
+        return
+    allowed = {field: set() for field in ("derivedData", "swiftPM", "sourcePackages")}
+    for configuration in ("Debug", "Release"):
+        for instrumentation in ("plain", "correctness", "address-undefined", "thread-sanitizer",
+                                "performance", "analysis", "packages"):
+            paths = cache_paths(root, configuration=configuration, instrumentation=instrumentation, toolchain=toolchain)
+            for field in allowed:
+                allowed[field].add(pathlib.Path(paths[field]))
+    packages = allowed["sourcePackages"]
+    packages.update(path.with_name(path.name + "-" + lane) for path in tuple(packages) for lane in ("analysis", "packages"))
+    for field, candidates in allowed.items():
+        if field not in build:
+            continue
+        actual = pathlib.Path(build[field])
+        analyzer_scratch = (field == "derivedData" and child.get("invocation", {}).get("preset") == "analyze"
+                            and re.fullmatch(r"AnalyzerDerivedData\.[a-zA-Z0-9]+", actual.name)
+                            and any(actual.parent == path.parent for path in candidates))
+        if actual not in candidates and not analyzer_scratch:
+            raise ValueError("Evidence cache is outside its configured partitions")
+        managed_path(root, actual, exact=actual)
+
+
+def fixture_receipt_paths(root, manifest_path, manifest):
+    manifest_path = workflow_receipt_path(root, manifest_path)
+    parent = manifest_path.parent.name
+    selected = manifest.get("selectedFixtures")
+    runs = manifest.get("fixtureRuns")
+    if (manifest.get("runId") != parent or manifest.get("entry") != str(pathlib.Path(root) / "scripts/check_fixture_stability.py")
+            or not isinstance(selected, dict) or not isinstance(runs, list) or set(selected) - set(FIXTURE_PRESETS)
+            or any(not isinstance(values, list) or not values or
+                   any(not isinstance(value, str) or not re.fullmatch(r"GitX(?:UI)?Tests/\w+(?:/\w+)?", value)
+                       for value in values) or values != sorted(set(values)) for values in selected.values())):
+        raise ValueError("Malformed fixture receipt manifest")
+    expected = [(preset, sequence) for preset in FIXTURE_PRESETS if preset in selected for sequence in FIXTURE_REPETITIONS]
+    if len(runs) != len(expected):
+        raise ValueError("Fixture repetitions are incomplete")
+    for run, (preset, sequence) in zip(runs, expected, strict=True):
+        run_id = f"{parent}-{preset}-{sequence}"
+        if (not isinstance(run, dict) or run.get("preset") != preset or run.get("runId") != run_id
+                or run.get("selectors") != selected[preset] or not run.get("receiptIdentity")):
+            raise ValueError("Fixture receipt does not match its preset and repetition")
+        child = workflow_receipt_path(root, verification_artifact_root(root) / run_id / "receipt.json")
+        yield child, run
+
+
+def workflow_child_receipts(payload, root, receipt_reader=None):
+    managed = payload.get("artifactProofVersion") == ARTIFACT_PROOF_VERSION
+
+    def read(path):
+        return receipt_reader(path) if receipt_reader else json.loads(path.read_text())
+
     for step in active_workflow_steps(payload):
         if not step.get("receipt"):
             continue
         path = pathlib.Path(step["receipt"])
         path = path if path.is_absolute() else pathlib.Path(root) / path
-        child = receipt_reader(path) if receipt_reader else json.loads(path.read_text())
+        if managed:
+            path = workflow_receipt_path(root, path)
+        child = read(path)
+        if managed:
+            validate_evidence_paths(root, path, child, step.get("toolchain"))
+            if step.get("status") == "passed" and (child.get("status") != "passed" or child.get("evidence", {}).get("status") != "valid"):
+                raise ValueError("Child receipt does not prove a passed check")
+        yield step, path, child
+        if step.get("name") != "fixture-stability" or not managed or step.get("status") != "passed":
+            continue
+        if (path.name != "receipt.json" or not step.get("fixtureReceiptIdentity")
+                or file_identity(path) != step["fixtureReceiptIdentity"]):
+            raise ValueError("Fixture manifest is missing or changed")
+        source = child.get("evidence", {}).get("inputsAfter", {})
+        for path, run in fixture_receipt_paths(root, path, child):
+            if file_identity(path) != run["receiptIdentity"]:
+                raise ValueError("Fixture child receipt changed")
+            leaf = read(path)
+            validate_evidence_paths(root, path, leaf, step.get("toolchain"))
+            evidence, invocation = leaf["evidence"], leaf["invocation"]
+            preset = "test:" + run["preset"]
+            arguments = [run["preset"], *["-only-testing:" + selector for selector in run["selectors"]]]
+            if run["preset"] == "correctness":
+                arguments += ["OTHER_SWIFT_FLAGS=$(inherited) -Xllvm -instrprof-atomic-counter-update-all",
+                              "OTHER_CFLAGS=$(inherited) -fprofile-update=atomic"]
+            tests = [test for test in leaf["steps"] if test["name"] == preset]
+            if (leaf.get("status") != "passed" or leaf.get("exitCode") != 0 or evidence.get("status") != "valid"
+                    or invocation.get("preset") != preset or invocation.get("configuration") != "Debug"
+                    or invocation.get("arguments") != arguments or len(tests) != 1
+                    or tests[0].get("status") != "passed" or not tests[0].get("xcresult") or not leaf.get("finishedAt")
+                    or any(changed_inputs(source, evidence[key]) for key in ("inputsBefore", "inputsAfter"))):
+                raise ValueError("Fixture repetition did not prove its selected test run")
+            yield step, path, leaf
+
+
+def workflow_cache_snapshots(payload, root=ROOT, receipt_reader=None):
+    """Use completion provenance, never array position, to select each cache owner."""
+    candidates = {"products": {}, "packages": {}, "dependencies": {}}
+    for step, path, child in workflow_child_receipts(payload, root, receipt_reader):
         if not isinstance(child, dict):
             raise ValueError("Child receipt must be an object: " + str(path))
         paths, evidence = child.get("buildPaths", {}), child.get("evidence", {})
@@ -2844,7 +3006,25 @@ class NativeTestDiagnostics:
 
 def supervise(command, timeout=7200, startup_timeout=None, desktop=False, directory=None, env=None, pass_fds=(), merge_stderr=True, cwd=None, output_log=None, native_test_root=None, native_artifact_directory=None,
               native_test_bundles=None, capture_native_stderr=False):
-    """Bound a process group, retaining diagnostics and killing only that group."""
+    """Bound a process group, retaining diagnostics and settling its children."""
+    interruption = [None]
+
+    def interrupt(signum, _frame):
+        interruption[0] = signum
+
+    previous = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        return supervise_command(command, timeout, startup_timeout, desktop, directory, env, pass_fds, merge_stderr, cwd,
+                                 output_log, native_test_root, native_artifact_directory, native_test_bundles,
+                                 capture_native_stderr, interruption)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def supervise_command(command, timeout, startup_timeout, desktop, directory, env, pass_fds, merge_stderr, cwd,
+                      output_log, native_test_root, native_artifact_directory, native_test_bundles,
+                      capture_native_stderr, interruption):
     directory = pathlib.Path(directory) if directory is not None else verification_artifact_root(ROOT) / "diagnostics" / ("owned-" + uuid.uuid4().hex)
     keeper = None
     child_env = dict(env or os.environ)
@@ -2886,6 +3066,14 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
         capture = CapturedConsole(output_log) if output_log else None
         if native_diagnostics:
             native_diagnostics.output = capture.write
+        if interruption[0]:
+            if native_diagnostics:
+                ownership['nativeDiagnostics'] = native_diagnostics.close()
+            if capture:
+                ownership['outputCapture'] = capture.close()
+            atomic_json(manifest, ownership | {"status": "failed", "category": "interrupted",
+                        "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
+            return 130
         child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge_stderr else None,
                                  start_new_session=True, env=child_env, pass_fds=pass_fds, cwd=cwd)
     except BaseException as error:
@@ -2899,29 +3087,26 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
         if isinstance(error, NativeProgressSetupError):
             return 2
         raise
-    if desktop and platform.system() == "Darwin":
-        keeper = subprocess.Popen(["/usr/bin/caffeinate", "-di", "-w", str(child.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    started, host_started, interrupted = time.monotonic(), False, None
-    original = {}
+    started, host_started = time.monotonic(), False
+
     def host_startup(source):
         ownership['hostStartup'] = {"source": source, "observedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
         with contextlib.suppress(OSError, ValueError):
             atomic_json(manifest, ownership)
 
-    def interrupt(signum, _):
-        nonlocal interrupted
-        interrupted = signum
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        original[sig] = signal.signal(sig, interrupt)
-    selector = selectors.DefaultSelector()
-    selector.register(child.stdout, selectors.EVENT_READ)
+    selector = None
     buffered = b""
     category = None
     status = None
     try:
-        while child.poll() is None or selector.get_map():
+        if desktop and platform.system() == "Darwin" and not interruption[0]:
+            keeper = subprocess.Popen(["/usr/bin/caffeinate", "-di", "-w", str(child.pid)],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        selector = selectors.DefaultSelector()
+        selector.register(child.stdout, selectors.EVENT_READ)
+        while interruption[0] or child.poll() is None or selector.get_map():
             elapsed = time.monotonic() - started
-            if interrupted:
+            if interruption[0]:
                 category = "interrupted"
                 break
             if elapsed > timeout:
@@ -2989,7 +3174,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             # again before any owned process receives a termination signal.
             exited_before_stop = child.poll()
             ownership['childExitCodeBeforeStop'] = exited_before_stop
-            if interrupted:
+            if interruption[0]:
                 # Give a shell harness its EXIT trap before terminating owned
                 # children; simultaneous termination races PID verification and
                 # can strand otherwise safely removable fixture homes.
@@ -3007,7 +3192,7 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                 # Identity is checked again before escalation; PID reuse never
                 # grants ownership of a replacement process.
                 stop_detached(descendants + detached, signal.SIGKILL)
-            status = (130 if interrupted else 74 if category == "output-capture-failed" else
+            status = (130 if interruption[0] else 74 if category == "output-capture-failed" else
                       2 if category in {'native-progress-unavailable', 'native-startup-publication-failed'} else 124)
             if (category in {'native-progress-unavailable', 'native-startup-publication-failed'} and
                     exited_before_stop is not None and exited_before_stop > 0):
@@ -3028,6 +3213,21 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     if status == 0:
                         status = 2
     finally:
+        if child.poll() is None:
+            # Selector/capture setup can fail after Popen returned a live child.
+            descendants = []
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                descendants = descendant_processes(child.pid)
+                stop_detached(descendants)
+            with contextlib.suppress(ProcessLookupError):
+                child.terminate()
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                stop_detached(descendants, signal.SIGKILL)
         try:
             if native_diagnostics:
                 try:
@@ -3062,7 +3262,8 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             with contextlib.suppress(OSError, ValueError):
                 atomic_json(manifest, ownership | {"status": "failed" if category or child.returncode else "passed",
                             "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
-            selector.close()
+            if selector is not None:
+                selector.close()
             child.stdout.close()
             if native_diagnostics and 'files' in ownership.get('nativeDiagnostics', {}):
                 result = ownership['nativeDiagnostics']
@@ -3074,8 +3275,6 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     atomic_json(native_diagnostics.archive / 'native-diagnostics.json', result)
                     atomic_json(manifest, ownership | {"status": "failed" if category or child.returncode else "passed",
                                 "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
-            for sig, handler in original.items():
-                signal.signal(sig, handler)
             if keeper:
                 keeper.terminate()
                 keeper.wait()
@@ -3204,11 +3403,11 @@ def guard(entry, arguments):
         deadline = time.monotonic() + wait
         while True:
             resources, paths = entry_resources(pathlib.Path(entry).name, arguments, root)
-            if pathlib.Path(entry).name == "xcodebuild.sh":
+            if pathlib.Path(entry).name in {"xcodebuild.sh", "check_fixture_stability.py"}:
                 resources.append(str(verification_artifact_root(root) / run_id))
             with Leases(resources, owner, wait_seconds=max(0, deadline - time.monotonic())) as leases:
                 refreshed_resources, refreshed_paths = entry_resources(pathlib.Path(entry).name, arguments, root)
-                if pathlib.Path(entry).name == "xcodebuild.sh":
+                if pathlib.Path(entry).name in {"xcodebuild.sh", "check_fixture_stability.py"}:
                     refreshed_resources.append(str(verification_artifact_root(root) / run_id))
                 changed = ({canonical_resource(value) for value in refreshed_resources} != set(leases.held) or
                            paths.get("toolchain") != refreshed_paths.get("toolchain"))
@@ -3300,9 +3499,16 @@ def main():
             owner = {"runId": os.environ.get("GITX_SESSION_ID", "command"), "pid": os.getpid(),
                      "producer": producer_identity()}
             if args.xcode_build:
-                with Leases(lock, owner, wait_seconds=args.timeout) as leases:
-                    return supervise(command, args.timeout, args.startup_timeout, args.desktop, args.diagnostics,
-                                     env=leases.environment(), pass_fds=leases.descriptors(), output_log=args.output_log)
+                try:
+                    with Leases(lock, owner, wait_seconds=args.timeout) as leases:
+                        return supervise(command, args.timeout, args.startup_timeout, args.desktop, args.diagnostics,
+                                         env=leases.environment(), pass_fds=leases.descriptors(), output_log=args.output_log)
+                except ResourceBusy as error:
+                    fields = resource_failure_fields(error)
+                    if args.diagnostics is not None:
+                        atomic_json(args.diagnostics / "blocker.json", fields)
+                    print(f"Verification blocker: {fields['category']}. {error}", file=sys.stderr)
+                    return fields["exitCode"]
             inherited = Leases([], owner)
             return supervise(command, args.timeout, args.startup_timeout, args.desktop, args.diagnostics,
                              pass_fds=inherited.descriptors(), output_log=args.output_log,

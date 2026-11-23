@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import fnmatch
 import json
 import os
@@ -82,28 +83,45 @@ def select(paths, explicit=(), failed=()):
     return {preset: sorted(result[preset]) for preset in ("correctness", "address-undefined", "thread-sanitizer", "ui") if preset in result}
 
 
-def observed_tests(root, receipt):
+def observed_tests(root, receipt, receipt_path):
     import regression_guardrails as guardrails
 
-    context = guardrails.EvidenceContext(root)
     for step in receipt.get("steps", []):
         bundle = step.get("xcresult")
         if not bundle or not step.get("name", "").startswith("test:"):
             continue
-        for test in context.tests(guardrails.result_path(context, bundle)):
+        path = session.owned_result_path(root, receipt_path, bundle)
+        for test in guardrails.collect_test_outcomes(guardrails.report_xcresult.run_xcresulttool(path, "tests")):
             yield test["identifier"], test["result"].lower()
 
 
+def failed_tests(root, prior):
+    path = session.workflow_receipt_path(root, prior, workflow=True)
+    workflow = json.loads(path.read_text())
+    for step in session.active_workflow_steps(workflow):
+        if step.get("name") not in session.FIXTURE_PRESETS or step.get("status") != "failed" or not step.get("receipt"):
+            continue
+        try:
+            receipt_path = session.workflow_receipt_path(root, step["receipt"])
+            receipt = json.loads(receipt_path.read_text())
+            if not isinstance(receipt, dict):
+                raise ValueError("Native receipt must be an object")
+            yield from (name for name, status in observed_tests(root, receipt, receipt_path) if status == "failed")
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError, subprocess.SubprocessError):
+            print(f"Prior {step['name']} diagnostic receipt unavailable: {step['receipt']!r}", file=sys.stderr)
+
+
 def verify_pass(root, run_id, selectors):
-    path = session.verification_artifact_root(root) / run_id / "receipt.json"
+    path = session.workflow_receipt_path(root, session.verification_artifact_root(root) / run_id / "receipt.json")
     receipt = json.loads(path.read_text())
     if receipt.get("status") != "passed" or receipt.get("evidence", {}).get("status") != "valid":
         raise ValueError(f"Fixture pass lacks valid evidence: {path}")
-    observations = list(observed_tests(root, receipt))
+    observations = list(observed_tests(root, receipt, path))
     for selector in selectors:
         matches = [status for name, status in observations if name == selector or name.startswith(selector + "/")]
         if not matches or any(status != "passed" for status in matches):
             raise ValueError(f"Fixture selector did not pass: {selector} in {path}")
+    return session.file_identity(path)
 
 
 def main():
@@ -119,32 +137,41 @@ def main():
         return session.guard(entry, sys.argv[1:])
     try:
         _, paths = feedback.changed_paths(root, args.base_ref)
-        failed = []
-        if args.after:
-            workflow = json.loads(args.after.read_text())
-            for step in workflow.get("steps", []):
-                if step.get("status") == "failed" and step.get("receipt"):
-                    receipt = json.loads(pathlib.Path(step["receipt"]).read_text())
-                    failed.extend(name for name, status in observed_tests(root, receipt) if status == "failed")
+        failed = list(failed_tests(root, args.after)) if args.after else []
         selected = select(paths, args.group, failed)
         print(json.dumps(selected, indent=2), flush=True)
         if args.dry_run:
             return 0
         parent = os.environ.get("GITX_SESSION_ID", "fixture-stability-" + uuid.uuid4().hex[:8])
+        if not session.valid_run_id(parent):
+            raise ValueError("Invalid fixture run ID")
+        receipt = session.workflow_receipt_path(root, session.verification_artifact_root(root) / parent / "receipt.json")
+        if receipt.exists():
+            raise ValueError("Fixture run receipt already exists")
         before = session.inputs(root)
+        began = dt.datetime.now(dt.timezone.utc).isoformat()
+        runs = []
         for preset, selectors in selected.items():
-            for repetition in range(1, 4):
+            for repetition in session.FIXTURE_REPETITIONS:
                 run_id = f"{parent}-{preset}-{repetition}"
                 command = [str(root / "scripts/xcodebuild.sh"), "--run-id", run_id, "test", preset,
                            *["-only-testing:" + selector for selector in selectors]]
                 result = subprocess.run(command, cwd=root, check=False)
                 if result.returncode:
                     return result.returncode
-                verify_pass(root, run_id, selectors)
-        if session.changed_inputs(before, session.inputs(root)):
+                runs.append({"runId": run_id, "preset": preset, "selectors": selectors,
+                             "receiptIdentity": verify_pass(root, run_id, selectors)})
+        after = session.inputs(root)
+        if session.changed_inputs(before, after):
             raise ValueError("Inputs changed during fixture stability checks")
+        session.atomic_json(receipt, {"schemaVersion": 2, "runId": parent, "entry": entry,
+                            "producer": session.producer_identity(), "receipt": str(receipt),
+                            "startedAt": began, "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+                            "status": "passed", "exitCode": 0, "selectedFixtures": selected, "fixtureRuns": runs,
+                            "verificationReceipts": [str(receipt.parent.parent / run["runId"] / "receipt.json") for run in runs],
+                            "evidence": {"status": "valid", "inputsBefore": before, "inputsAfter": after}})
         return 0
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as error:
         print(error, file=sys.stderr)
         return 2
 
