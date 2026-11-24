@@ -4587,10 +4587,16 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let afterActivation = state()
         window.makeKeyAndOrderFront(nil)
         let afterRequest = state()
-        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        func isForegroundOwner() -> Bool {
             let sheetIsKey = acceptingAttachedSheet && window.attachedSheet?.isKeyWindow == true
             return NSApp.isActive && (window.isKeyWindow || sheetIsKey)
-        }, object: nil)
+        }
+        // Keep the synchronous key transition observable before yielding
+        // back to another application or the XCTest polling timer.
+        if isForegroundOwner() {
+            return
+        }
+        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in isForegroundOwner() }, object: nil)
         let result = XCTWaiter.wait(for: [foreground], timeout: 5)
         if result != .completed {
             let evidence = "\(name), caller=\(file):\(line), acceptingAttachedSheet=\(acceptingAttachedSheet)\nBefore activation:\n\(before)\nAfter activation callback:\n\(afterActivation)\nAfter key request:\n\(afterRequest)\nAfter waiting:\n\(state())"
