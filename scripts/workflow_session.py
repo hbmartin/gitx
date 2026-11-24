@@ -106,6 +106,10 @@ def tree_identity(path):
     return {"sha256": digest(json.dumps(files, sort_keys=True).encode()), "files": len(files)}
 
 
+def shared_xcode_build_resource(root):
+    return str(pathlib.Path(root).resolve() / "build/.shared-xcode-build")
+
+
 def inputs(root=ROOT):
     """Identity of source and policy, including tracked and new source files.
 
@@ -154,7 +158,7 @@ def build_input_path(name):
 
 def command_identity(command):
     """Known Python scripts depend on their runtime, not its installation path."""
-    if len(command) >= 2 and pathlib.Path(command[1]).name == "check_test_build_contracts.py":
+    if len(command) >= 2 and pathlib.Path(command[1]).name in {"check_test_build_contracts.py", "check_fixture_stability.py"}:
         return {"entry": str(pathlib.Path(command[1]).resolve()), "arguments": command[2:],
                 "python": [platform.python_implementation(), *sys.version_info[:2]]}
     return {"command": command}
@@ -249,8 +253,18 @@ def managed_path(root, value, *, exact=None, within=None):
     if (".." in path.parts or (exact is not None and path != exact)
             or (within is not None and (path == within or not path.is_relative_to(within)))):
         raise ValueError("Evidence path is outside its managed location")
-    if path.resolve() != path:
-        raise ValueError("Evidence path is redirected")
+    try:
+        if not path.is_relative_to(root) and path.resolve() != path:
+            raise ValueError("Evidence path is redirected")
+        # lstat checks the lexical components even when a non-strict resolve
+        # leaves a symlink loop unchanged. Missing output paths are allowed.
+        start = root if path.is_relative_to(root) else pathlib.Path(path.anchor)
+        for component in path.relative_to(start).parts:
+            start /= component
+            if start.is_symlink():
+                raise ValueError("Evidence path is redirected")
+    except (OSError, RuntimeError) as error:
+        raise ValueError("Evidence path cannot be resolved safely") from error
     return path
 
 
@@ -259,8 +273,24 @@ def workflow_receipt_path(root, value, *, workflow=False):
     artifact_root = verification_artifact_root(root)
     path = pathlib.Path(value)
     path = path if path.is_absolute() else root / path
-    if not artifact_root.is_relative_to(root) or artifact_root == root or not path.is_relative_to(artifact_root):
+    if not artifact_root.is_relative_to(root) or artifact_root == root or ".." in path.parts:
         raise ValueError("Evidence receipt is outside the checkout")
+    if not path.is_relative_to(artifact_root):
+        # Accept a user-facing spelling of the checkout itself. Keep every
+        # component below that root lexical so managed_path can reject redirects.
+        relative_artifacts = artifact_root.relative_to(root).parts
+        for index in range(len(path.parts) - len(relative_artifacts) - 1, 0, -1):
+            if path.parts[index:index + len(relative_artifacts)] != relative_artifacts:
+                continue
+            try:
+                same_checkout = pathlib.Path(*path.parts[:index]).resolve(strict=True) == root
+            except (OSError, RuntimeError):
+                same_checkout = False
+            if same_checkout:
+                path = root.joinpath(*path.parts[index:])
+                break
+        else:
+            raise ValueError("Evidence receipt is outside the checkout")
     parts = path.relative_to(artifact_root).parts
     if len(parts) != 2 or not valid_run_id(parts[0]):
         raise ValueError("Evidence receipt has no managed run ID")
@@ -275,10 +305,28 @@ def workflow_receipt_path(root, value, *, workflow=False):
     return managed_path(root, path, within=artifact_root)
 
 
+def workflow_blocker_name(run_id, nonce):
+    if not valid_run_id(run_id) or not re.fullmatch(r"[0-9a-f]{8}", nonce):
+        raise ValueError("Invalid workflow admission blocker identity")
+    return run_id + "-" + nonce + ".json"
+
+
+def matches_workflow_blocker(path, run_id):
+    if not valid_run_id(run_id):
+        return False
+    nonce = path.stem[-8:]
+    return re.fullmatch(r"[0-9a-f]{8}", nonce) is not None and path.name == workflow_blocker_name(run_id, nonce)
+
+
+def has_artifact_proof(payload):
+    return (isinstance(payload, dict) and type(payload.get("schemaVersion")) is int
+            and payload["schemaVersion"] == 2 and type(payload.get("artifactProofVersion")) is int
+            and payload["artifactProofVersion"] == ARTIFACT_PROOF_VERSION)
+
+
 def require_current_workflow(root, path, payload):
     path = workflow_receipt_path(root, path, workflow=True)
-    if (not isinstance(payload, dict) or payload.get("schemaVersion") != 2
-            or payload.get("artifactProofVersion") != ARTIFACT_PROOF_VERSION):
+    if not has_artifact_proof(payload):
         raise ValueError("Historical workflow receipt is for audit only")
     if payload.get("runId") != path.parent.name:
         raise ValueError("Workflow receipt does not own its run")
@@ -350,7 +398,7 @@ def validate_evidence_paths(root, path, child, toolchain):
     allowed = {field: set() for field in ("derivedData", "swiftPM", "sourcePackages")}
     for configuration in ("Debug", "Release"):
         for instrumentation in ("plain", "correctness", "address-undefined", "thread-sanitizer",
-                                "performance", "analysis", "packages"):
+                                "performance", "analysis", "packages", "version-contract"):
             paths = cache_paths(root, configuration=configuration, instrumentation=instrumentation, toolchain=toolchain)
             for field in allowed:
                 allowed[field].add(pathlib.Path(paths[field]))
@@ -394,7 +442,8 @@ def fixture_receipt_paths(root, manifest_path, manifest):
 
 
 def workflow_child_receipts(payload, root, receipt_reader=None):
-    if payload.get("artifactProofVersion") != ARTIFACT_PROOF_VERSION:
+    version = payload.get("artifactProofVersion")
+    if type(version) is not int or version != ARTIFACT_PROOF_VERSION:
         raise ValueError("Historical workflow receipt is for audit only")
 
     def read(path):
@@ -616,7 +665,11 @@ def cache_paths(root=ROOT, configuration="Debug", instrumentation="plain", devel
     # Counter updates are part of instrumentation identity. Never reuse the
     # products previously compiled with racing, non-atomic coverage counters.
     partition = base / configuration / ("correctness-atomic" if instrumentation == "correctness" else instrumentation)
-    return {"derivedData": str(pathlib.Path(os.environ.get("GITX_DERIVED_DATA", partition / "DerivedData")).expanduser().resolve()),
+    derived = pathlib.Path(os.environ.get("GITX_DERIVED_DATA", partition / "DerivedData")).expanduser().resolve()
+    if instrumentation == "version-contract" and "GITX_DERIVED_DATA" in os.environ:
+        # Never rebuild an explicitly supplied correctness product directory.
+        derived = derived.with_name(derived.name + "-version-contract")
+    return {"derivedData": str(derived),
             "swiftPM": str(pathlib.Path(os.environ.get("GITX_SWIFTPM_BUILD_ROOT", partition / "SwiftPM")).expanduser().resolve()),
             "sourcePackages": str(pathlib.Path(os.environ.get("GITX_SOURCE_PACKAGE_CACHE", base / "SourcePackages")).expanduser().resolve()),
             "toolchain": toolchain}
@@ -3355,7 +3408,7 @@ def entry_resources(entry, arguments, root=ROOT, toolchain=None):
     for value in arguments:
         if value.startswith("-configuration="):
             configuration = value.partition("=")[2]
-    instrumentation = next((v for v in ("address-undefined", "thread-sanitizer", "correctness", "performance") if v in arguments), "plain")
+    instrumentation = next((v for v in ("address-undefined", "thread-sanitizer", "correctness", "performance", "version-contract") if v in arguments), "plain")
     if "build-tests" in arguments:
         instrumentation = "correctness"
     plan_instrumentation = {"GitX": "correctness", "GitXAddressUndefined": "address-undefined",
@@ -3538,7 +3591,7 @@ def main():
             print("atomic" if uses_atomic_coverage(args.arguments) else "unchanged")
         if args.command == "run":
             command = args.arguments[1:] if args.arguments[:1] == ["--"] else args.arguments
-            lock = [str(ROOT / "build/.shared-xcode-build")] if args.xcode_build else []
+            lock = [shared_xcode_build_resource(ROOT)] if args.xcode_build else []
             owner = {"runId": os.environ.get("GITX_SESSION_ID", "command"), "pid": os.getpid(),
                      "producer": producer_identity()}
             if args.xcode_build:

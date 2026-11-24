@@ -18,7 +18,7 @@ Usage:
   scripts/xcodebuild.sh archive [--configuration Release]
   scripts/xcodebuild.sh smoke
   scripts/xcodebuild.sh analyze
-  scripts/xcodebuild.sh test correctness|ui|address-undefined|thread-sanitizer|performance|core|forgekit
+  scripts/xcodebuild.sh test correctness|ui|address-undefined|thread-sanitizer|performance|core|forgekit|version-contract
   scripts/xcodebuild.sh raw -- <xcodebuild arguments>
 
 Global options:
@@ -291,13 +291,20 @@ fi
 preset=$command
 if [[ "$command" == "test" ]]; then
 	case "${command_arguments[0]:-}" in
-			correctness|host-preflight|ui|address-undefined|thread-sanitizer|performance|core|forgekit)
+			correctness|host-preflight|ui|address-undefined|thread-sanitizer|performance|core|forgekit|version-contract)
 			preset="test:${command_arguments[0]}"
 			;;
 		-testPlan)
 			preset="test:${command_arguments[1]:-unknown}"
 			;;
 	esac
+fi
+if [[ "$preset" == "test:version-contract" ]]; then
+	if (( ${#command_arguments[@]} != 1 )); then
+		echo "version-contract executes its canonical version test only." >&2
+		exit 2
+	fi
+	command_arguments+=("-only-testing:GitXTests/GitBinaryTests/testEmbeddedToolReportsTheOwningApplicationVersion")
 fi
 # Concurrent readers can corrupt ordinary instrumentation counters, including
 # producing wrapped branch counts. Correctness uses atomic updates in both the
@@ -325,7 +332,7 @@ if [[ "$coverage_mode" == "atomic" ]]; then
 	cache_instrumentation=correctness-atomic
 elif [[ "$command" == "test" ]]; then
 	case "${command_arguments[0]:-}" in
-		address-undefined|thread-sanitizer|performance) cache_instrumentation=${command_arguments[0]} ;;
+		address-undefined|thread-sanitizer|performance|version-contract) cache_instrumentation=${command_arguments[0]} ;;
 	esac
 fi
 cache_policy=$(python3 "$root/scripts/compilation_cache.py" --mode "$compilation_cache" \
@@ -799,6 +806,10 @@ case "$command" in
 					run_step coverage "$logs/coverage.log" "" scripts/check_coverage.py \
 						"$results/$plan.xcresult" --propose-improvements "$proposal" || exit $?
 				fi
+				;;
+			version-contract)
+				plan=$(config testPlans.correctness)
+				xcode_test version-contract "$plan" -enableCodeCoverage NO "${extra[@]}" || exit $?
 				;;
 			ui)
 				preflight=$(config testPlans.ui-preflight)

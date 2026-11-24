@@ -103,6 +103,7 @@ class WorkflowCompletionTests(unittest.TestCase):
         args = workflow.parser().parse_args(["verify", "--jobs", "2", "--run-id", "parallel", "--cleanup-mode", "preview"])
         proof.__enter__.return_value.environment.side_effect = [os.environ.copy(), {"GITX_RESOURCE_LEASES": "proof-broker"}]
         with mock.patch.object(session, "Leases", side_effect=[proof, Proof()]), \
+                mock.patch.object(workflow, "parallel_inputs", return_value=self.current), \
                 mock.patch.object(workflow, "execute_parallel", side_effect=record), \
                 mock.patch.object(session, "supervise", side_effect=stage), \
                 mock.patch.object(session, "atomic_json", side_effect=publish), \
@@ -151,7 +152,7 @@ class WorkflowCompletionTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "failed")
         self.assertEqual(receipt["steps"][0]["exitCode"], 9)
         self.assertEqual(execute.call_count, 1)
-        self.assertNotIn("finishedAt", receipt)
+        self.assertGreaterEqual(receipt["finishedAt"], receipt["firstFailureAt"])
 
     def test_commit_during_verification_invalidates_success(self):
         def statuses():

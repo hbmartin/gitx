@@ -406,6 +406,56 @@ class RegressionGuardrailTests(unittest.TestCase):
         self.assertEqual(record["finishedAt"], guard.timestamp(payload))
         self.assertEqual(guard.assess_checks(["static"], [], [record])[0], "blocked")
 
+    def test_managed_cache_rejects_two_conflicting_owners_without_ordering(self):
+        _, first = self.receipt()
+        _, second = self.receipt("second.json")
+        first_path = self.managed_child("first", first)
+        second_path = self.managed_child("second", second)
+        second["evidence"]["products"] = {"different": "products"}
+        second_path.write_text(json.dumps(second))
+        payload = {"artifactProofVersion": session.ARTIFACT_PROOF_VERSION, "steps": [
+            {"receipt": str(path), "toolchain": self.context.toolchain} for path in (first_path, second_path)]}
+        with self.assertRaisesRegex(ValueError, "Final cache ownership is ambiguous"):
+            session.workflow_cache_snapshots(payload, self.root)
+
+    def test_failed_staging_does_not_discredit_a_passed_correctness_check(self):
+        _, native = self.receipt()
+        tested = self.managed_child("tested", native)
+        _, failed = self.receipt("stage-seed.json", status="failed")
+        failed["steps"] = []
+        failed["finishedAt"] = "2026-10-09T12:05:00Z"
+        failed["invocation"]["preset"] = "build"
+        staged = self.managed_child("staged", failed)
+        commands = dict(guard.dev_workflow.full_profile(self.root))
+        inputs = self.context.inputs
+        payload = {"schemaVersion": 2, "status": "failed", "evidenceStatus": "valid",
+                   "inputsBefore": inputs, "inputsAfter": inputs,
+                   "steps": [
+                       {"name": name, "status": status, "command": commands[name], "receipt": str(path),
+                        "exitCode": exit_code, "toolchain": self.context.toolchain, "evidenceStatus": "valid",
+                        "inputsBefore": inputs, "inputsAfter": inputs}
+                       for name, status, path, exit_code in (("correctness", "passed", tested, 0), ("stage-debug", "failed", staged, 65))
+                   ]}
+        records = {record["check"]: record for record in self.inspect_current(payload)}
+        self.assertEqual(records["correctness"]["validity"], "valid", records["correctness"]["reasons"])
+        self.assertEqual(records["stage-debug"]["status"], "failed")
+
+    def test_workflow_proof_requires_integer_versions(self):
+        path, workflow, _, _ = self.workflow_admission_blocker()
+        for field in ("schemaVersion", "artifactProofVersion"):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "audit only"):
+                session.require_current_workflow(self.root, path, workflow | {field: 2.0})
+
+    def test_checkout_alias_does_not_allow_redirected_managed_descendants(self):
+        path, _, _, _ = self.workflow_admission_blocker()
+        alias = self.root / "alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.assertEqual(session.workflow_receipt_path(self.root, alias / path.relative_to(self.root), workflow=True), path)
+        redirect = path.parent.with_name("redirect")
+        redirect.symlink_to(path.parent, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            session.workflow_receipt_path(self.root, alias / (redirect / path.name).relative_to(self.root), workflow=True)
+
     def workflow_admission_blocker(self):
         config = self.root / "scripts/verification-config.json"
         config.parent.mkdir(parents=True, exist_ok=True)
@@ -426,6 +476,22 @@ class RegressionGuardrailTests(unittest.TestCase):
                    "startedAt": "2026-10-11T12:30:00Z", "finishedAt": "2026-10-11T13:00:00Z"}
         self.save("Coordination/fixture-1234abcd.json", payload)
         return workflow_path, workflow, path, payload
+
+    def test_real_blocker_producer_matches_assessor(self):
+        workflow_path, _, seed, _ = self.workflow_admission_blocker()
+        seed.unlink()
+        workflow = guard.dev_workflow
+        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--check", "static"])
+        failure = session.ResourceBusy("fixture", {"runId": "holding", "pid": 123})
+        with mock.patch.object(session, "ROOT", self.root), mock.patch.object(workflow, "selected_leases", side_effect=failure):
+            self.assertEqual(workflow.verify(args), 75)
+        created, = seed.parent.glob("*.json")
+        payload = json.loads(created.read_text())
+        self.assertLessEqual(payload["startedAt"], payload["finishedAt"])
+        self.assertEqual(payload["workflowReceipt"], str(workflow_path))
+        records = guard.inspect_evidence([created], self.context)
+        self.assertEqual([(record["check"], record["validity"], record["status"]) for record in records],
+                         [("static", "valid", "blocked")])
 
     def test_separate_admission_blocker_supersedes_same_workflow_historical_pass(self):
         workflow_path, _, path, payload = self.workflow_admission_blocker()

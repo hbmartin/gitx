@@ -37,7 +37,7 @@ def full_profile(root):
             *[(name, [xcode, "test", name]) for name in ("correctness", "core", "forgekit", "address-undefined", "thread-sanitizer", "ui")],
             ("performance", [xcode, "--configuration", "Release", "test", "performance"]),
             ("analyze", [xcode, "analyze"]),
-            ("version-contract", [xcode, "test", "correctness", "-only-testing:GitXTests/GitBinaryTests/testEmbeddedToolReportsTheOwningApplicationVersion"]),
+            ("version-contract", [xcode, "test", "version-contract"]),
             ("stage-debug", [xcode, "--configuration", "Debug", "--stage-app", "build"])]
 
 
@@ -159,6 +159,9 @@ def resources_for(commands, directory, root, details=None):
         entry = pathlib.Path(command[0]).name
         arguments = command[1:]
         if entry == "verify_static.sh":
+            continue
+        if len(command) > 1 and pathlib.Path(command[1]).name == "check_fixture_stability.py":
+            toolchain = toolchain or session.toolchain_identity()
             continue
         if entry.endswith(".sh") or (len(command) > 1 and pathlib.Path(command[1]).name == "check_test_build_contracts.py"):
             if not entry.endswith(".sh"):
@@ -286,9 +289,10 @@ def staged_debug_matches(step, child, receipt_path):
             and child.get("evidence", {}).get("stagedApp") == identities[0])
 
 
-def record_check(root, path, payload, name, command, current, toolchain, reason, child_id, step_started, status):
-    after = session.inputs(root)
-    outcome = "passed" if status == 0 else "blocked" if status == 75 else "failed"
+def record_check(root, path, payload, name, command, current, toolchain, reason, child_id, step_started, status, *, after=None):
+    if after is None:
+        after = session.inputs(root)
+    outcome = status_for_exit(status)
     step = {"name": name, "command": command, "commandIdentity": session.command_identity(command), "status": outcome, "exitCode": status,
             "inputsBefore": current, "inputsAfter": after, "toolchain": toolchain, "finishedAt": records.now(),
             "evidenceStatus": "invalid" if session.changed_inputs(current, after) else "valid", "outputs": {},
@@ -344,8 +348,9 @@ def record_check(root, path, payload, name, command, current, toolchain, reason,
         status = 76
     if status:
         payload.setdefault("firstFailureAt", step["finishedAt"])
-    payload.update(status="failed" if status or payload.get("firstFailureAt") else "running",
-                   inputsAfter=after, updatedAt=records.now())
+    if not payload.get("firstFailureAt") or payload["firstFailureAt"] == step["finishedAt"]:
+        payload["status"] = status_for_exit(status) if status else "running"
+    payload.update(inputsAfter=after, updatedAt=records.now())
     session.atomic_json(path, payload)
     return status, step
 
@@ -381,6 +386,12 @@ def permitted_check(name, running, pending):
     return not (set(running) - OFFSCREEN_CHECKS)
 
 
+def parallel_inputs(root, run_id, wait):
+    owner = {"runId": run_id, "pid": os.getpid(), "producer": session.producer_identity()}
+    with session.Leases([session.shared_xcode_build_resource(root)], owner, wait_seconds=wait):
+        return session.inputs(root)
+
+
 def execute_parallel(root, path, payload, args, commands, selection, env, prior_steps, previous_caches):
     """Each supervisor owns its process tree. Only the coordinator writes the workflow receipt."""
     directory = path.parent
@@ -406,7 +417,8 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
                     continue
                 del running[name]
                 status = 128 - status if status < 0 else status
-                status, step = record_check(root, path, payload, name, *prepared, status)
+                after = parallel_inputs(root, payload["runId"], args.timeout)
+                status, step = record_check(root, path, payload, name, *prepared, status, after=after)
                 if status and not stopped:
                     stopped, last_failure = status, step
             if cancelled and not sent_interrupt:
@@ -426,7 +438,7 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
                     if not permitted_check(name, running, pending):
                         continue
                     command = pending.pop(name)
-                    current = session.inputs(root)
+                    current = parallel_inputs(root, payload["runId"], args.timeout)
                     if session.changed_inputs(payload["inputsBefore"], current):
                         stopped = 76
                         last_failure = {"evidenceStatus": "invalid", "evidenceProblems": ["Verification inputs changed before " + name]}
@@ -462,16 +474,23 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
             signal.signal(signum, handler)
 
 
+def status_for_exit(status):
+    if status == 0:
+        return "passed"
+    if status == 75:
+        return "blocked"
+    if status in {129, 130, 143}:
+        return "interrupted"
+    return "failed"
+
+
 def finish_stopped(path, payload, status, step, attempt_started):
     if status == 76 and step and step.get("evidenceStatus") == "invalid":
         return finish_invalid(path, payload, step.get("evidenceProblems", ["Check evidence is invalid"]), attempt_started)
     if status == 75:
-        payload.update(status="blocked", category="resource-busy")
-    elif status in {129, 130, 143}:
-        payload["status"] = "interrupted"
-    else:
-        payload["status"] = "failed"
-    payload.update(exitCode=status, attemptDurationSeconds=round(time.monotonic() - attempt_started, 3))
+        payload["category"] = "resource-busy"
+    payload.update(status=status_for_exit(status), finishedAt=records.now(), deliveryEligible=False,
+                   exitCode=status, attemptDurationSeconds=round(time.monotonic() - attempt_started, 3))
     session.atomic_json(path, payload)
     if step:
         print(f"Verification stopped at {step.get('name', 'check')} (exit {status}). Receipt: {path}")
@@ -490,6 +509,7 @@ def verify(args):
         print(json.dumps(selection, indent=2, sort_keys=True))
         return 0
     attempt_started = time.monotonic()
+    started_at = records.now()
     run_id = args.resume if args.resume is not None else args.run_id if args.run_id is not None else "workflow-" + uuid.uuid4().hex[:12]
     if not session.valid_run_id(run_id):
         raise ValueError("Invalid run ID")
@@ -532,7 +552,8 @@ def verify(args):
             payload.update(status="running", deliveryEligible=False, profile=args.profile, producer=owner["producer"],
                            artifactProofVersion=session.ARTIFACT_PROOF_VERSION, resources=sorted(leases.held),
                            scope="full" if selection["deliveryEligible"] else "partial", selection=selection,
-                           selectedChecks=selection["selectedChecks"], inputsBefore=session.inputs(root),
+                           selectedChecks=selection["selectedChecks"],
+                           inputsBefore=parallel_inputs(root, run_id, args.timeout) if getattr(args, "jobs", 1) == 2 else session.inputs(root),
                            resourceWaitSeconds=round(leases.wait_seconds, 3), executedChecks=[], reusedChecks=[])
             session.atomic_json(path, payload)
             if origin:
@@ -614,12 +635,15 @@ def verify(args):
                 try:
                     payload["finalCacheProducts"] = session.workflow_cache_snapshots(payload, root)
                     problems = session.final_cache_problems(payload, root, derived=payload["finalCacheProducts"])
-                    if origin:
-                        evidence_reuse.validation_inputs(root, payload, payload["inputsAfter"])
-                        evidence_reuse.verify_staged_version(root, payload["inputsAfter"]["head"])
-                except (OSError, ValueError, TypeError, KeyError) as error:
+                except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
                     payload["finalCacheProducts"] = {}
                     problems = ["Final cache ownership cannot be validated: " + str(error)]
+                if origin:
+                    try:
+                        evidence_reuse.validation_inputs(root, payload, payload["inputsAfter"])
+                        evidence_reuse.verify_staged_version(root, payload["inputsAfter"]["head"])
+                    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+                        problems.append("Final evidence reuse validation failed: " + str(error))
                 try:
                     for _, _, child in session.workflow_child_receipts(payload, root, read_child_receipt):
                         problems.extend(session.receipt_artifact_problems(child, root, payload["finalCacheProducts"]))
@@ -643,11 +667,11 @@ def verify(args):
         failure = session.resource_failure_fields(error)
         status = failure["exitCode"]
         if not owned_directory:
-            blocker = session.verification_artifact_root(root) / "Coordination" / f"{run_id}-{uuid.uuid4().hex}.json"
+            blocker = session.verification_artifact_root(root) / "Coordination" / session.workflow_blocker_name(run_id, uuid.uuid4().hex[:8])
             blocked = owner | failure | {"schemaVersion": 2, "receipt": str(blocker), "entry": str(root / "scripts/dev_workflow.py"),
                 "workflowReceipt": str(path),
                 "selectedChecks": selection["selectedChecks"], "resources": [],
-                "startedAt": records.now(),
+                "startedAt": started_at,
                 "attemptDurationSeconds": round(time.monotonic() - attempt_started, 3)}
             session.atomic_json(blocker, blocked)
             print(f"{error}\nBlocker receipt: {blocker}", file=sys.stderr)

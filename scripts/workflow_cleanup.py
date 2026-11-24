@@ -1272,6 +1272,7 @@ def run_cleanup(root, receipt, inherited=None, *, retry_retained_native=False):
     _, initial_reason = eligibility(root, receipt)
     if initial_reason:
         return {"status": "deferred", "reason": initial_reason}
+    receipt = session.workflow_receipt_path(root, receipt, workflow=True)
     directory = state_directory(root)
     proof = proof_resources(root, receipt)
     owner = {"runId": "cleanup-" + uuid.uuid4().hex[:12], "pid": os.getpid(), "receipt": str(receipt),

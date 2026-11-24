@@ -387,7 +387,6 @@ def doctor_payload(
     warnings = sum(check["status"] == "warning" for check in checks)
     return {
         "schemaVersion": 2,
-        "artifactProofVersion": session.ARTIFACT_PROOF_VERSION,
         "mode": mode,
         "scope": scope,
         "status": "failed" if failed else "passed",
@@ -474,6 +473,7 @@ def receipt_base(arguments: argparse.Namespace) -> dict[str, Any]:
 def command_receipt_init(arguments: argparse.Namespace) -> int:
     payload = receipt_base(arguments)
     payload["schemaVersion"] = 2
+    payload["artifactProofVersion"] = session.ARTIFACT_PROOF_VERSION
     payload["producer"], payload["resources"] = session.inherited_ownership()
     payload["evidence"] = {"status": "pending", "inputsBefore": session.inputs(ROOT)}
     payload["buildPaths"] = {key: os.environ.get(variable) for key, variable in (
@@ -606,9 +606,15 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
             payload["deliveryEligible"] = payload["status"] == "passed" and not payload["invocation"].get("analysisProfiling", False)
         if getattr(arguments, "record_staged_app", False):
             staged = ROOT / "build/GitX.app"
-            if not staged.is_dir() or staged.is_symlink():
-                raise ValueError("Staged app is missing or redirected")
-            evidence["stagedApp"] = session.tree_identity(staged)
+            try:
+                session.managed_path(ROOT, staged, exact=ROOT / "build/GitX.app")
+                identity = session.tree_identity(staged) if staged.is_dir() else None
+                if identity is None:
+                    raise ValueError("Staged app is missing")
+                evidence["stagedApp"] = identity
+            except (OSError, ValueError) as error:
+                evidence.update(status="invalid", problems=[str(error)])
+                payload.update(status="invalid", exitCode=76, deliveryEligible=False)
         product_path = payload.get("buildPaths", {}).get("derivedData")
         if product_path:
             evidence["products"] = session.product_identity(product_path)

@@ -389,13 +389,14 @@ let bytes = Array("raw-stderr-".utf8) + [0, 255] + Array("-end\nAddressSanitizer
 _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
 checkpoint("after-raw-write")
 ''')
-        sdk_platform = pathlib.Path(subprocess.check_output(["xcrun", "--show-sdk-platform-path"], text=True).strip())
+        macos = ["xcrun", "--sdk", "macosx"]
+        sdk_platform = pathlib.Path(subprocess.check_output([*macos, "--show-sdk-platform-path"], text=True).strip())
         frameworks = sdk_platform / "Developer/Library/Frameworks"
         cls.required_runtime_paths = [frameworks.parent / "PrivateFrameworks", sdk_platform.parents[2] / "SharedFrameworks"]
         libraries = frameworks.parent.parent / "usr/lib"
         runtime_arguments = [argument for directory in cls.required_runtime_paths
                              for argument in ("-Xlinker", "-rpath", "-Xlinker", str(directory))]
-        compiled = subprocess.run(["xcrun", "swiftc", "-warnings-as-errors", "-I", str(libraries), "-L", str(libraries),
+        compiled = subprocess.run([*macos, "swiftc", "-warnings-as-errors", "-I", str(libraries), "-L", str(libraries),
                         "-Xlinker", "-rpath", "-Xlinker", str(libraries), "-F", str(frameworks),
                         "-Xlinker", "-rpath", "-Xlinker", str(frameworks), *runtime_arguments, "-D", "DEBUG", "-D", "GITX_APP_TARGET",
                         str(ROOT / "GitXTests/GitXTestGitEnvironment.swift"),
