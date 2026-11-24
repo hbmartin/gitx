@@ -127,6 +127,7 @@ final class NativeRecoverySessionTests: XCTestCase {
         let stored = try await fixture.store.load(identity: fixture.identity)
         XCTAssertEqual(stored?.content, fixture.exact)
         XCTAssertTrue(fixture.parent.isVisible, "The coordinator closes presentation before AppKit owns document teardown")
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
     }
 
     func testCancelledMenuQuitRestoresTheSuspendedRecoveryAndItsFirstResponder() async throws {

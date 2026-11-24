@@ -82,14 +82,19 @@ final class NativeTerminationIntegrationTests: XCTestCase {
         }
         let quit = try XCTUnwrap(NSApp.mainMenu?.items.first?.submenu?.items.first { $0.action == #selector(NSApplication.terminate(_:)) })
         let target = try XCTUnwrap(quit.target as? ApplicationController)
-        _ = try target.perform(XCTUnwrap(quit.action), with: nil)
+        let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         let panelID = "GitX.Quit.WaitingForLocalMutations"
-        await waitForHarness {
-            NSApp.windows.contains { $0.isVisible && $0.accessibilityIdentifier() == panelID }
+        func waitingPanel() -> NSWindow? {
+            NSApp.windows.first {
+                !existingWindows.contains(ObjectIdentifier($0)) && $0.isVisible && $0.accessibilityIdentifier() == panelID
+            }
         }
+        _ = try target.perform(XCTUnwrap(quit.action), with: nil)
+        await waitForHarness { waitingPanel() != nil }
+        let panel = try XCTUnwrap(waitingPanel())
         XCTAssertTrue(parent.attachedSheet === alert.window)
         coordinator.cancelPendingQuit()
-        XCTAssertFalse(NSApp.windows.contains { $0.isVisible && $0.accessibilityIdentifier() == panelID })
+        await waitForHarness { !panel.isVisible }
         XCTAssertTrue(parent.attachedSheet === alert.window)
         let admitted = try GitX.RepositoryLocalMutationRegistry.shared.admitContinuation(requiresOpenAdmission: true)
         GitX.RepositoryLocalMutationRegistry.shared.finish(admitted)
