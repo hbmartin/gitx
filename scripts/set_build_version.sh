@@ -1,13 +1,17 @@
 #!/bin/bash
 
-# Set the built app's version fields from the checked-out Git revision.
+# Generate the app's Info.plist input before Xcode processes and signs it.
 
 set -o errexit
 set -o nounset
 
 git_command="$(xcrun -find git)"
 readonly git_command
-readonly info_plist="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+readonly template=$1 output=$2
+info_plist="$(mktemp "${output}.XXXXXX")"
+readonly info_plist
+trap 'rm -f -- "$info_plist"' EXIT
+cp -- "$template" "$info_plist"
 
 # Build version: closest tag or commit, dirty marker, and branch name.
 build_version="$("$git_command" describe --tags --always --dirty=-dirty)-$("$git_command" rev-parse --abbrev-ref HEAD)"
@@ -28,17 +32,14 @@ echo "BUILD VERSION: $build_version"
 echo "SHORT VERSION: $short_version"
 echo "BUNDLE VERSION: $bundle_version"
 
-set_if_changed() {
-	local key=$1 value=$2 current
-	if current=$(/usr/libexec/PlistBuddy -c "Print :$key" "$info_plist" 2>/dev/null); then
-		if [[ "$current" != "$value" ]]; then
-			/usr/libexec/PlistBuddy -c "Set :$key $value" "$info_plist"
-		fi
-	else
-		/usr/libexec/PlistBuddy -c "Add :$key string $value" "$info_plist"
-	fi
-}
+/usr/libexec/PlistBuddy -x \
+	-c "Delete :CFBundleShortVersionString" \
+	-c "Add :CFBundleShortVersionString string $build_version" \
+	-c "Delete :CFBundleVersion" \
+	-c "Add :CFBundleVersion string $bundle_version" \
+	-c "Add :CFBundleBuildVersion string $build_version" "$info_plist"
 
-set_if_changed CFBundleBuildVersion "$build_version"
-set_if_changed CFBundleShortVersionString "$build_version"
-set_if_changed CFBundleVersion "$bundle_version"
+# Leave the existing input untouched when neither its template nor its version changed.
+if ! cmp -s "$info_plist" "$output"; then
+	mv -f -- "$info_plist" "$output"
+fi
