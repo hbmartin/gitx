@@ -1,6 +1,7 @@
 import AppKit
 import ForgeKit
 @testable import GitX
+import Synchronization
 import XCTest
 
 @MainActor
@@ -58,6 +59,40 @@ final class NativeTerminationIntegrationTests: XCTestCase {
             XCTAssertTrue(submission.needsCloseProtection)
             XCTAssertTrue(NSApp.isRunning)
         }
+    }
+
+    func testActualMenuQuitWaitsForAnUnrelatedSheetAndCanBeCancelled() async throws {
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 250), styleMask: [.titled], backing: .buffered, defer: false)
+        parent.isReleasedWhenClosed = false
+        parent.orderFront(nil)
+        let alert = NSAlert()
+        alert.messageText = "Unrelated sheet"
+        alert.beginSheetModal(for: parent) { _ in }
+        let coordinator = GitX.RepositoryTerminationCoordinator.shared
+        defer {
+            coordinator.cancelPendingQuit()
+            if parent.attachedSheet === alert.window {
+                parent.endSheet(alert.window)
+            }
+            parent.close()
+        }
+        guard parent.isVisible, parent.attachedSheet === alert.window else {
+            XCTFail("An unrelated attached sheet must be present before invoking Quit")
+            return
+        }
+        let quit = try XCTUnwrap(NSApp.mainMenu?.items.first?.submenu?.items.first { $0.action == #selector(NSApplication.terminate(_:)) })
+        let target = try XCTUnwrap(quit.target as? ApplicationController)
+        _ = try target.perform(XCTUnwrap(quit.action), with: nil)
+        let panelID = "GitX.Quit.WaitingForLocalMutations"
+        await waitForHarness {
+            NSApp.windows.contains { $0.isVisible && $0.accessibilityIdentifier() == panelID }
+        }
+        XCTAssertTrue(parent.attachedSheet === alert.window)
+        coordinator.cancelPendingQuit()
+        XCTAssertFalse(NSApp.windows.contains { $0.isVisible && $0.accessibilityIdentifier() == panelID })
+        XCTAssertTrue(parent.attachedSheet === alert.window)
+        let admitted = try GitX.RepositoryLocalMutationRegistry.shared.admitContinuation(requiresOpenAdmission: true)
+        GitX.RepositoryLocalMutationRegistry.shared.finish(admitted)
     }
 
     func testPendingQuitRejectsNativeIndexAndRecoveryWritersButAllowsReads() async throws {
@@ -140,6 +175,28 @@ final class NativeTerminationIntegrationTests: XCTestCase {
         func consume(accountID: ForgeAccountID, repository: ForgeRepositoryIdentity, operation: ForgeOperation, scope: GitX.ForgeUnknownMutationOutcomeScope) async throws -> [GitX.ForgeUnknownMutationOutcomeRecord] {
             []
         }
+    }
+
+    func testForgeMutationFinishingDuringTheQuitChoiceNeedsNoUnknownOutcomeRecord() throws {
+        let fixture = try PullRequestAppFixture()
+        let finish = Mutex<(@Sendable () -> Void)?>(nil)
+        let remote = GitX.ForgeMutationQuitCoordinator(
+            persistence: NoUnknownOutcomeWrites(),
+            choiceProvider: { mutations in
+                XCTAssertEqual(mutations.count, 1)
+                finish.withLock { $0 }?()
+                return .quitAnyway
+            },
+            terminationReply: { _ in XCTFail("An already settled operation requires no delayed reply") }
+        )
+        let change = try remote.register(accountID: fixture.accountID, repository: fixture.repository, operation: .editPullRequest)
+        finish.withLock {
+            $0 = { [weak remote] in
+                XCTAssertTrue(remote?.finish(change) == true)
+            }
+        }
+        XCTAssertEqual(remote.applicationShouldTerminate(), .terminateNow)
+        XCTAssertTrue(remote.activeMutations().isEmpty)
     }
 
     func testCancelQuitReopensTheActualForgeLifecycleWithoutCancellingItsMutation() async throws {

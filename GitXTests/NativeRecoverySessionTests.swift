@@ -129,6 +129,34 @@ final class NativeRecoverySessionTests: XCTestCase {
         XCTAssertTrue(fixture.parent.isVisible, "The coordinator closes presentation before AppKit owns document teardown")
     }
 
+    func testCancelledMenuQuitRestoresTheSuspendedRecoveryAndItsFirstResponder() async throws {
+        let fixture = try await fixture()
+        let window = try XCTUnwrap(fixture.sheet.window)
+        let body = try XCTUnwrap(find("GitX.PullRequest.Body", in: window.contentView) as? NSTextView)
+        XCTAssertTrue(window.makeFirstResponder(body))
+        fixture.session.attachedCloseDecision = { completion in completion(true); return true }
+        let forwarded = expectation(description: "AppKit receives the approved Quit request")
+        let coordinator = GitX.RepositoryTerminationCoordinator(
+            mutations: GitX.RepositoryLocalMutationRegistry(),
+            sessions: { [fixture.session] },
+            remoteDecision: { .terminateNow },
+            remoteCancelled: {},
+            terminate: { forwarded.fulfill() },
+            reply: { _ in XCTFail("The AppKit delegate has not started termination") }
+        )
+        let protected = fixture.session.protectionState
+        coordinator.requestTermination()
+        await fulfillment(of: [forwarded], timeout: 5)
+        XCTAssertNil(window.sheetParent)
+        XCTAssertEqual(fixture.session.protectionState, protected)
+
+        coordinator.cancelPendingQuit()
+        await wait { fixture.parent.attachedSheet === window }
+        XCTAssertTrue(window.firstResponder === body)
+        XCTAssertEqual(fixture.sheet.recoveryContentSnapshot, fixture.exact)
+        XCTAssertEqual(fixture.session.protectionState, protected)
+    }
+
     func testNativeRegistrySynchronizesFurtherVisibleTextAfterARecoveryWasSaved() async throws {
         let fixture = try await fixture()
         try await fixture.store.save(identity: fixture.identity, content: fixture.exact, at: .now)

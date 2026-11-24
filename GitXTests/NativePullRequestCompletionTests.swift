@@ -11,9 +11,11 @@ final class NativePullRequestCompletionTests: XCTestCase {
         let plan = try ForgeSyncForkPlan(fork: fixture.fork, parent: fixture.repository, branch: ForgeRefName("main"), localFetchRemoteName: "origin")
         for abandonFetch in [false, true] {
             let mutations = GitX.RepositoryLocalMutationRegistry()
+            let notifications = Mutex(0)
+            mutations.observe { notifications.withLock { $0 += 1 } }
             let gate = IgnoringCancellationGate<Bool>()
             let admitted = expectation(description: "Server mutation is admitted")
-            let runner = NativeSyncForkGitRecorder()
+            let runner = NativePullRequestGitRecorder()
             let service = NativePullRequestMutationService(started: nil, sync: { plan in
                 admitted.fulfill()
                 _ = await gate.wait()
@@ -40,6 +42,44 @@ final class NativePullRequestCompletionTests: XCTestCase {
             }
             XCTAssertFalse(mutations.hasActivity(includingReservedFetches: true))
         }
+    }
+
+    func testRejectedSyncForkReleasesItsReservationAndNotifiesAllObservers() async throws {
+        let fixture = try PullRequestAppFixture()
+        let plan = try ForgeSyncForkPlan(fork: fixture.fork, parent: fixture.repository, branch: ForgeRefName("main"), localFetchRemoteName: "origin")
+        let mutations = GitX.RepositoryLocalMutationRegistry()
+        let notifications = Mutex([0, 0])
+        mutations.observe { notifications.withLock { $0[0] += 1 } }
+        mutations.observe { notifications.withLock { $0[1] += 1 } }
+        let runner = NativePullRequestGitRecorder()
+        let coordinator = GitX.RepositorySyncForkCoordinator(service: NativePullRequestMutationService(started: nil), runner: runner, mutations: mutations)
+
+        do {
+            _ = try await coordinator.sync(accountID: fixture.accountID, plan: plan)
+            XCTFail("The rejected server request must fail Sync Fork")
+        } catch {
+            XCTAssertEqual(error as? GitX.RepositoryPullRequestServiceError, .nativeCreationUnavailable)
+        }
+        XCTAssertEqual(notifications.withLock { $0 }, [1, 1])
+        XCTAssertFalse(mutations.hasActivity(includingReservedFetches: true))
+        XCTAssertTrue(runner.commands.isEmpty)
+    }
+
+    func testCheckoutReportsStatusFailureWithoutAttemptingAnyWrite() throws {
+        let fixture = try PullRequestAppFixture()
+        let failure = URLError(.cannotOpenFile)
+        let runner = NativePullRequestGitRecorder(failure: failure)
+        let remote = try ForgeGitRemote(name: "github-contributor", repository: fixture.fork, fetchURL: XCTUnwrap(URL(string: "https://github.com/contributor/gitx.git")))
+        let head = try ForgeCommitID(String(repeating: "a", count: 40))
+        let plan = try ForgePullRequestCheckoutPlan(repository: fixture.repository, pullRequest: ForgeItemNumber(42), remote: remote,
+                                                    fetchRefspec: "+refs/heads/feature:refs/remotes/github-contributor/feature", localBranch: ForgeRefName("pr-42"), expectedHead: head, addsRemote: true)
+        let executor = GitX.RepositoryPullRequestCheckoutExecutor(runner: runner)
+
+        XCTAssertThrowsError(try executor.execute(plan)) { error in
+            XCTAssertTrue(error is GitX.RepositoryPullRequestCheckoutPreflightError)
+            XCTAssertEqual(error.localizedDescription, failure.localizedDescription)
+        }
+        XCTAssertEqual(runner.commands, [["status", "--porcelain=v2", "--untracked-files=normal"]])
     }
 
     func testCreateFailureLeavesTheSheetAndPreservesItsExactDraftIntent() throws {
@@ -563,14 +603,23 @@ private actor NativePullRequestMutationStorage {
     }
 }
 
-private final nonisolated class NativeSyncForkGitRecorder: GitX.RepositoryPullRequestGitCommandRunning {
+private final nonisolated class NativePullRequestGitRecorder: GitX.RepositoryPullRequestGitCommandRunning {
     private let storage = Mutex<[[String]]>([])
+    private let failure: Error?
+
+    init(failure: Error? = nil) {
+        self.failure = failure
+    }
+
     var commands: [[String]] {
         storage.withLock { $0 }
     }
 
     func run(_ arguments: [String]) throws -> String {
         storage.withLock { $0.append(arguments) }
+        if let failure {
+            throw failure
+        }
         return ""
     }
 }

@@ -91,6 +91,7 @@ final class RepositoryTerminationTests: XCTestCase {
         alert.beginSheetModal(for: parent) { _ in }
         session.attachedCloseDecision = { completion in completion(true); return true }
         let waiting = expectation(description: "Quit waits behind the unrelated sheet")
+        let waitingAgain = expectation(description: "The fresh Quit still waits behind the unrelated sheet")
         let forwarded = expectation(description: "A fresh Quit reaches AppKit after the sheet ends")
         var waitingCount = 0
         weak var waitingPanel: NSPanel?
@@ -100,6 +101,8 @@ final class RepositoryTerminationTests: XCTestCase {
                                                                     waitingCount += 1
                                                                     if waitingCount == 1 {
                                                                         waiting.fulfill()
+                                                                    } else {
+                                                                        waitingAgain.fulfill()
                                                                     }
                                                                 },
                                                                 hasBlockingSheets: { parent.attachedSheet != nil },
@@ -114,8 +117,13 @@ final class RepositoryTerminationTests: XCTestCase {
         coordinator.cancelPendingQuit()
         XCTAssertTrue(parent.attachedSheet === alert.window)
         coordinator.requestTermination()
+        await fulfillment(of: [waitingAgain], timeout: 5)
+        let panel = try XCTUnwrap(waitingPanel)
         parent.endSheet(alert.window)
         await fulfillment(of: [forwarded], timeout: 5)
+        XCTAssertTrue(waitingPanel === panel)
+        let message = try XCTUnwrap(panel.contentView?.subviews.compactMap { $0 as? NSTextField }.first)
+        XCTAssertTrue(message.stringValue.contains("Waiting for macOS to finish Quit"))
         XCTAssertEqual(session.protectionState, protected)
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
         XCTAssertTrue(session.protectionState.isEmpty)
