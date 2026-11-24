@@ -32,6 +32,7 @@ final class RepositoryPullRequestRecoverySession {
     var submissions: [RepositoryEditSubmissionLifetime] = []
     var attachedCloseDecision: ((@escaping (Bool) -> Void) -> Bool)?
     var onAcceptedTermination: (() -> Void)?
+    var attachedEditorsForTermination: (() -> [ForgePullRequestSheetController])?
     private let drafts: any RepositoryPullRequestDraftPersisting
     private let now: @Sendable () -> Date
     private let ownerIsCurrent: () -> Bool
@@ -95,6 +96,7 @@ final class RepositoryPullRequestRecoverySession {
         invalidated = true
         attachedCloseDecision = nil
         onAcceptedTermination = nil
+        attachedEditorsForTermination = nil
         cancelPendingCloseDecision()
     }
 
@@ -104,6 +106,7 @@ final class RepositoryPullRequestRecoverySession {
         isDetached = true
         attachedCloseDecision = nil
         onAcceptedTermination = nil
+        attachedEditorsForTermination = nil
         let host = DetachedRecoveryHost(session: self, presented: presented)
         self.host = host
         Self.detachedHosts[identity] = host
@@ -164,6 +167,18 @@ final class RepositoryPullRequestRecoverySession {
             callbacks.forEach { $0(allowed) }
         }
         return true
+    }
+
+    private var terminationEditors: [ForgePullRequestSheetController] {
+        (attachedEditorsForTermination?() ?? []) + presentations.values.compactMap(\.sheet)
+    }
+
+    func preparePresentationsForTermination() -> Bool {
+        terminationEditors.map { $0.suspendForTermination() }.allSatisfy { $0 }
+    }
+
+    func restorePresentationsAfterCancelledTermination() {
+        terminationEditors.forEach { $0.restoreAfterCancelledTermination() }
     }
 
     /// Called only after every Quit guard has agreed, immediately before AppKit's
@@ -280,6 +295,7 @@ final class RepositoryPullRequestRecoverySession {
             if pending, sheets.isEmpty, waitingWindow == nil {
                 let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 130), styleMask: [.titled, .closable], backing: .buffered, defer: false)
                 panel.isReleasedWhenClosed = false
+                panel.hidesOnDeactivate = false
                 panel.title = "Recovered Pull Request Edit"
                 panel.setAccessibilityIdentifier("GitX.PullRequest.DetachedRecovery.Waiting")
                 let label = NSTextField(wrappingLabelWithString: "The repository moved. A Pull Request edit is still being saved or sent. Its recovered text will appear here if it cannot be saved.")

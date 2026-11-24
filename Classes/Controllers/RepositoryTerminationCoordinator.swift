@@ -9,6 +9,7 @@ final class RepositoryTerminationCoordinator: NSObject {
         static let shared: RepositoryTerminationCoordinator = .init(
             remoteDecision: { ForgeMutationQuitCoordinator.shared.applicationShouldTerminate() },
             remoteCancelled: { ForgeMutationQuitCoordinator.shared.cancelApplicationTermination() },
+            hasBlockingSheets: { NSApp.windows.contains { $0.isVisible && $0.attachedSheet != nil } },
             reply: { NSApp.reply(toApplicationShouldTerminate: $0) }
         )
     #endif
@@ -38,7 +39,10 @@ final class RepositoryTerminationCoordinator: NSObject {
     private let remoteCancelled: () -> Void
     private let reply: (Bool) -> Void
     private let terminate: () -> Void
+    private let hasBlockingSheets: () -> Bool
     private var appKitReplyPending = false
+    private var handedOff = false
+    private var activityObservation: UUID?
     private let waitingPresented: (NSPanel) -> Void
     private var attempt: UUID?
     private var terminationAccepted = false
@@ -55,22 +59,41 @@ final class RepositoryTerminationCoordinator: NSObject {
          remoteDecision: @escaping () -> NSApplication.TerminateReply,
          remoteCancelled: @escaping () -> Void,
          waitingPresented: @escaping (NSPanel) -> Void = { _ in },
+         hasBlockingSheets: @escaping () -> Bool = { false },
          terminate: @escaping () -> Void = { NSApp.terminate(nil) },
          reply: @escaping (Bool) -> Void)
     {
         self.mutations = mutations; self.sessions = sessions; self.remoteDecision = remoteDecision
         self.remoteCancelled = remoteCancelled; self.reply = reply; self.waitingPresented = waitingPresented
-        self.terminate = terminate
+        self.terminate = terminate; self.hasBlockingSheets = hasBlockingSheets
         super.init()
-        mutations.observe { [weak self] in Task { @MainActor in self?.activityDidChange() } }
+        activityObservation = mutations.observe { [weak self] in Task { @MainActor in self?.activityDidChange() } }
+        NotificationCenter.default.addObserver(self, selector: #selector(sheetAvailabilityChanged), name: NSWindow.didEndSheetNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sheetAvailabilityChanged), name: NSWindow.willCloseNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sheetAvailabilityChanged), name: ForgePullRequestSheetController.terminationReadinessDidChange, object: nil)
+    }
+
+    isolated deinit {
+        if let activityObservation {
+            mutations.removeObserver(activityObservation)
+        }
+        NotificationCenter.default.removeObserver(self)
     }
 
     func applicationShouldTerminate() -> NSApplication.TerminateReply {
         if terminationAccepted {
             return .terminateNow
         }
+        if let attempt, handedOff, readyForFinalDecision {
+            finish(attempt, allowed: true)
+            return .terminateNow
+        }
         appKitReplyPending = true
-        beginAttempt()
+        if let attempt {
+            Task { [self] in await advance(attempt) }
+        } else {
+            beginAttempt()
+        }
         return .terminateLater
     }
 
@@ -83,6 +106,7 @@ final class RepositoryTerminationCoordinator: NSObject {
 
     private func beginAttempt() {
         guard attempt == nil else { return }
+        handedOff = false
         let identity = UUID()
         attempt = identity
         approved.removeAll()
@@ -110,7 +134,7 @@ final class RepositoryTerminationCoordinator: NSObject {
             }
         }
         while attempt == identity {
-            if mutations.hasActivity {
+            if mutations.hasActivity(includingReservedFetches: remoteApproved) {
                 showWaitingPanel()
                 guard attempt == identity else { return }
                 let completed = await withCheckedContinuation {
@@ -156,15 +180,38 @@ final class RepositoryTerminationCoordinator: NSObject {
                 }
                 continue
             }
-            // No await separates this final revalidation from AppKit's one reply.
-            guard !mutations.hasActivity,
-                  sessions().allSatisfy({ approved[$0.identity] == $0.protectionState }) else { continue }
-            finish(identity, allowed: true)
+            guard readyForFinalDecision else { continue }
+            if appKitReplyPending {
+                finish(identity, allowed: true)
+                return
+            }
+            guard !handedOff else { return }
+            let canHandoff = sessions().map { $0.preparePresentationsForTermination() }.allSatisfy { $0 }
+            guard canHandoff, !hasBlockingSheets() else {
+                showWaitingPanel(message: "Finish the open sheet to continue quitting, or choose Cancel Quit to keep working.")
+                return
+            }
+            guard readyForFinalDecision else { continue }
+            handedOff = true
+            terminate()
+            if attempt == identity, !appKitReplyPending {
+                showWaitingPanel(message: "Waiting for macOS to finish Quit. Choose Cancel Quit to keep working.")
+            }
+            return
         }
     }
 
+    private var readyForFinalDecision: Bool {
+        remoteApproved && !mutations.hasActivity(includingReservedFetches: true) && sessions().allSatisfy { approved[$0.identity] == $0.protectionState }
+    }
+
+    @objc private func sheetAvailabilityChanged(_: Notification) {
+        guard let attempt, !handedOff, !appKitReplyPending else { return }
+        Task { [self] in await advance(attempt) }
+    }
+
     private func activityDidChange() {
-        guard !mutations.hasActivity, let waiting = activityWait else { return }
+        guard !mutations.hasActivity(includingReservedFetches: remoteApproved), let waiting = activityWait else { return }
         activityWait = nil
         waiting.resume(returning: true)
     }
@@ -179,6 +226,7 @@ final class RepositoryTerminationCoordinator: NSObject {
         attempt = nil
         let needsAppKitReply = appKitReplyPending
         appKitReplyPending = false
+        handedOff = false
         let waiting = activityWait; activityWait = nil
         waiting?.resume(returning: false)
         hideWaitingPanel()
@@ -188,25 +236,30 @@ final class RepositoryTerminationCoordinator: NSObject {
             terminationAccepted = true
             sessions().forEach { $0.completeAcceptedTermination() }
         } else {
-            sessions().forEach { $0.cancelPendingCloseDecision() }
+            for session in sessions() {
+                session.cancelPendingCloseDecision()
+                session.restorePresentationsAfterCancelledTermination()
+            }
             mutations.reopenAdmission()
             remoteCancelled()
         }
         logger.notice("Termination attempt settled allowed=\(allowed, privacy: .public)")
         if needsAppKitReply {
             reply(allowed)
-        } else if allowed {
-            terminate()
         }
     }
 
-    private func showWaitingPanel() {
-        guard waitingPanel == nil else { return }
+    private func showWaitingPanel(message: String = "A repository mutation is still running. Half Dark will wait for it to finish before quitting.") {
+        if let waitingPanel {
+            (waitingPanel.contentView?.subviews.first as? NSTextField)?.stringValue = message
+            return
+        }
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 150), styleMask: [.titled], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
         panel.title = "Waiting to Quit"
         panel.setAccessibilityIdentifier("GitX.Quit.WaitingForLocalMutations")
-        let label = NSTextField(wrappingLabelWithString: "A repository mutation is still running. Half Dark will wait for it to finish before quitting.")
+        let label = NSTextField(wrappingLabelWithString: message)
         label.frame = NSRect(x: 20, y: 64, width: 420, height: 66)
         let cancel = NSButton(title: "Cancel Quit", target: self, action: #selector(cancelPendingQuit))
         cancel.bezelStyle = .rounded
@@ -215,6 +268,7 @@ final class RepositoryTerminationCoordinator: NSObject {
         panel.contentView?.addSubview(label); panel.contentView?.addSubview(cancel)
         waitingPanel = panel
         panel.center(); panel.makeKeyAndOrderFront(nil)
+        logger.notice("Presented cancellable Quit wait")
         waitingPresented(panel)
     }
 

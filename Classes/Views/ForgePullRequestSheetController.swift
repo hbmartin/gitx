@@ -46,6 +46,9 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     private var selectedForm: ForgePullRequestCreationForm?
     private var previewView: ForgeMarkdownNativeView?
     private var hasFinished = false
+    static let terminationReadinessDidChange = Notification.Name("GitX.PullRequest.TerminationReadinessDidChange")
+    private weak var suspendedSheetParent: NSWindow?
+    private weak var suspendedFirstResponder: NSResponder?
     private var recoverySaveIdentity: UUID?
     private var replacementCompletion: ((Bool) -> Void)?
     private var replacementAlert: NSAlert?
@@ -93,6 +96,9 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     func showStandaloneRecovery() {
         guard isRecovery, !hasFinished, let window else { return }
         standaloneRecovery = true
+        suspendedSheetParent = nil
+        suspendedFirstResponder = nil
+        window.hidesOnDeactivate = false
         onDraftChanged?(currentDraftContent())
         window.sheetParent?.endSheet(window)
         window.setAccessibilityIdentifier("GitX.PullRequest.DetachedRecovery")
@@ -455,8 +461,32 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         recoveryNotice.stringValue = "Saved as a draft. Further edits remain unsaved until you choose Save Draft again."
     }
 
+    func suspendForTermination() -> Bool {
+        guard !hasFinished, let window, let parent = window.sheetParent else { return true }
+        guard window.attachedSheet == nil, recoverySaveIdentity == nil else { return false }
+        suspendedSheetParent = parent
+        suspendedFirstResponder = window.firstResponder
+        parent.endSheet(window)
+        window.orderOut(nil)
+        return true
+    }
+
+    func restoreAfterCancelledTermination() {
+        let parent = suspendedSheetParent
+        let responder = suspendedFirstResponder
+        suspendedSheetParent = nil
+        suspendedFirstResponder = nil
+        guard !hasFinished, let parent, let window, window.sheetParent == nil else { return }
+        parent.beginSheet(window)
+        if let responder {
+            window.makeFirstResponder(responder)
+        }
+    }
+
     func invalidatePresentation() {
         hasFinished = true
+        suspendedSheetParent = nil
+        suspendedFirstResponder = nil
         abortRecoverySave()
         if let window, let confirmation = window.attachedSheet {
             window.endSheet(confirmation, returnCode: .abort)
@@ -490,6 +520,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         guard recoverySaveIdentity == id else { return }
         recoverySaveIdentity = nil
         updateSubmitEligibility()
+        NotificationCenter.default.post(name: Self.terminationReadinessDidChange, object: window)
     }
 
     func abortRecoverySave() {

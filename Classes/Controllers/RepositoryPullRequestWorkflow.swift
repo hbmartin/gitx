@@ -516,6 +516,21 @@ nonisolated protocol RepositoryPullRequestMutationServing: Sendable {
         accountID: ForgeAccountID,
         plan: ForgeSyncForkPlan
     ) async throws -> RepositorySyncForkOutcome
+
+    func syncFork(
+        accountID: ForgeAccountID,
+        plan: ForgeSyncForkPlan,
+        onAdmission: @Sendable () -> Void
+    ) async throws -> RepositorySyncForkOutcome
+}
+
+nonisolated extension RepositoryPullRequestMutationServing {
+    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan,
+                  onAdmission: @Sendable () -> Void) async throws -> RepositorySyncForkOutcome
+    {
+        onAdmission()
+        return try await syncFork(accountID: accountID, plan: plan)
+    }
 }
 
 nonisolated enum RepositoryPullRequestServiceError: Error, Equatable, LocalizedError, Sendable {
@@ -1278,9 +1293,10 @@ nonisolated struct RepositoryOperationFailure: Equatable, Identifiable {
     }
 
     static func checkout(_ error: Error) -> Self {
-        let disposition = disposition(for: error)
+        let preflight = error is RepositoryPullRequestCheckoutPreflightError || (error as? ForgePullRequestWorkflowError) == .unsafeWorkingState
+        let disposition = preflight ? .notSent : disposition(for: error)
         let details = disposition == .notSent ? error.localizedDescription
-            : "The checkout did not finish safely. The repository may contain a fetched reference or a newly created branch. Review its current state before trying again.\n\n" + error.localizedDescription
+            : "The checkout did not finish safely. The repository may contain a fetched reference, a newly created branch, or an added contributor remote. Review its current state before trying again.\n\n" + error.localizedDescription
         return Self(operation: "Pull Request checkout", disposition: disposition, details: details)
     }
 

@@ -4357,7 +4357,7 @@
     {
       "id": "CLOSE-001",
       "family": "Repository close consent before teardown",
-      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes. Preflight consent is borrowed only during synchronous callback forwarding and actual teardown; abandoned preflight preserves recovery and cannot authorize later closure. Repository moves transfer exact recovered content, original draft identity and admitted persistence to standalone recovery before obsolete-document teardown. Native Quit waits for started local mutations, seals new admission, composes existing remote choices and revalidates every attached or detached recovery before its one final reply. Cancel Quit and Keep Editing preserve work and text; preflight never discards text. Final accepted Quit ends every current Pull Request presentation, including saved recovery and unchanged editors, before forwarding to AppKit; declining consent ends none.",
+      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes. Preflight consent is borrowed only during synchronous callback forwarding and actual teardown; abandoned preflight preserves recovery and cannot authorize later closure. Repository moves transfer exact recovered content, original draft identity and admitted persistence to standalone recovery before obsolete-document teardown. Native Quit waits for started local mutations, seals new admission, composes existing remote choices and revalidates every attached or detached recovery before its one final reply. Cancel Quit and Keep Editing preserve work and text; preflight never discards text. Menu Quit may suspend presentations before AppKit takes over. Recovery survives if AppKit delays or never calls back, and cancelling restores editor ownership. Only the affirmative AppKit decision discards approved recovery. A reserved Sync Fork fetch preserves the Forge Quit choices and an admitted fetch finishes even when admission is sealed.",
       "rootCause": "A window-only close guard runs after NSDocument has already torn down its document, while independent entry points duplicate consent and repeated window close can release AppKit state twice.",
       "sourcePaths": [
         "Classes/Controllers/PBGitRepositoryDocument.h",
@@ -4385,6 +4385,27 @@
         "analyze"
       ],
       "tests": [
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testAcceptedMenuPreflightCanBeCancelledIfAppKitDoesNotReply",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Accept menu preflight without an AppKit callback, cancel Quit, and require the exact protection and reopened mutation admission."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testQuitWaitsForUnrelatedSheetWithoutDiscardingRecovery",
+          "role": "failure",
+          "check": "correctness",
+          "oracle": "Keep the unrelated sheet and exact recovery through both a cancelled wait and successful AppKit handoff."
+        },
+        {
+          "source": "GitXTests/NativePullRequestCompletionTests.swift",
+          "identifier": "GitXTests/NativePullRequestCompletionTests/testSyncForkDrainsAnAdmittedFetchWhileQuitSealsAdmission",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold the admitted server work and require exactly one fetch when waiting, and zero when its unstarted reservation is abandoned."
+        },
         {
           "source": "GitXTests/GitBinaryTests.swift",
           "identifier": "GitXTests/RepositoryDocumentScriptingCharacterizationTests/testProtectedDocumentCloseDefersTeardownAndCoalescesRepeatedRequests",

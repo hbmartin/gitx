@@ -242,6 +242,14 @@ final nonisolated class RepositoryPullRequestCheckoutPlanner: @unchecked Sendabl
     }
 }
 
+nonisolated struct RepositoryPullRequestCheckoutPreflightError: LocalizedError {
+    let underlying: Error
+
+    var errorDescription: String? {
+        underlying.localizedDescription
+    }
+}
+
 nonisolated struct RepositoryPullRequestCheckoutExecutor: Sendable {
     private let runner: any RepositoryPullRequestGitCommandRunning
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestCheckout")
@@ -293,9 +301,14 @@ nonisolated struct RepositoryPullRequestCheckoutExecutor: Sendable {
     }
 
     private func ensureSafeWorkingState() throws {
-        let status = try runner.run([
-            "status", "--porcelain=v2", "--untracked-files=normal",
-        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let status: String
+        do {
+            status = try runner.run([
+                "status", "--porcelain=v2", "--untracked-files=normal",
+            ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            throw RepositoryPullRequestCheckoutPreflightError(underlying: error)
+        }
         // Ask this exact repository rather than resolving a possibly relative
         // `--git-dir` against the process working directory.
         let operationRefs = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"]
@@ -330,28 +343,37 @@ nonisolated enum RepositorySyncForkError: Error, Equatable, LocalizedError, Send
 nonisolated struct RepositorySyncForkCoordinator: Sendable {
     private let service: any RepositoryPullRequestMutationServing
     private let runner: any RepositoryPullRequestGitCommandRunning
+    private let mutations: RepositoryLocalMutationRegistry
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "SyncFork")
 
     init(
         service: any RepositoryPullRequestMutationServing,
-        runner: any RepositoryPullRequestGitCommandRunning
+        runner: any RepositoryPullRequestGitCommandRunning,
+        mutations: RepositoryLocalMutationRegistry = .shared
     ) {
         self.service = service
         self.runner = runner
+        self.mutations = mutations
     }
 
     func sync(
         accountID: ForgeAccountID,
         plan: ForgeSyncForkPlan
     ) async throws -> RepositorySyncForkReceipt {
-        let server = try await service.syncFork(accountID: accountID, plan: plan)
+        let reservation = try mutations.reserveFetch()
+        defer { mutations.releaseFetchReservation(reservation) }
+        let server = try await service.syncFork(accountID: accountID, plan: plan) {
+            mutations.activateFetchReservation(reservation)
+        }
         do {
-            let activity = try RepositoryLocalMutationRegistry.shared.admit()
-            defer { RepositoryLocalMutationRegistry.shared.finish(activity) }
-            _ = try runner.run([
-                "fetch", "--no-tags", plan.localFetchRemoteName,
-                "+refs/heads/\(plan.branch.value):refs/remotes/\(plan.localFetchRemoteName)/\(plan.branch.value)",
-            ])
+            let activity = try mutations.beginReservedFetch(reservation)
+            defer { mutations.finish(activity) }
+            try mutations.withStartedActivity(activity) {
+                _ = try runner.run([
+                    "fetch", "--no-tags", plan.localFetchRemoteName,
+                    "+refs/heads/\(plan.branch.value):refs/remotes/\(plan.localFetchRemoteName)/\(plan.branch.value)",
+                ])
+            }
         } catch {
             throw RepositorySyncForkError.localFetchFailed(serverSummary: server.serverSummary)
         }

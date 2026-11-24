@@ -250,11 +250,19 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             }
             let held = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: started.path) }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [held], timeout: 15), .completed)
-            app.menuBars.menuBarItems["Half Dark"].click()
-            app.menuBars.menuItems["Quit Half Dark"].click()
-            let waiting = app.dialogs["GitX.Quit.WaitingForLocalMutations"]
-            try requireExists(waiting, timeout: 10)
-            XCTAssertEqual(app.state, .runningForeground)
+            let waiting = app.descendants(matching: .any).matching(identifier: "GitX.Quit.WaitingForLocalMutations").firstMatch
+            func requestQuitWhileGitIsRunning() throws {
+                app.activate()
+                let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .runningForeground }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [foreground], timeout: 10), .completed)
+                app.typeKey("q", modifierFlags: .command)
+                try requireExists(waiting, timeout: 10)
+                if app.state != .runningForeground {
+                    app.activate()
+                }
+                XCTAssertEqual(app.state, .runningForeground)
+            }
+            try requestQuitWhileGitIsRunning()
             retainDiagnosticScreenshot(named: "Native Quit waits for an admitted Git mutation", of: waiting, in: app)
             if cancelFirst {
                 try click(waiting.buttons["GitX.Quit.Cancel"], timeout: 5)
@@ -262,9 +270,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
                 XCTAssertEqual(XCTWaiter.wait(for: [cancelled], timeout: 10), .completed)
                 XCTAssertEqual(app.state, .runningForeground)
                 XCTAssertFalse(try references(in: repository).contains { $0.hasPrefix("refs/heads/recovery/quit-local:") })
-                app.menuBars.menuBarItems["Half Dark"].click()
-                app.menuBars.menuItems["Quit Half Dark"].click()
-                try requireExists(waiting, timeout: 10)
+                try requestQuitWhileGitIsRunning()
             }
             try Data().write(to: release)
             let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .notRunning }, object: nil)
