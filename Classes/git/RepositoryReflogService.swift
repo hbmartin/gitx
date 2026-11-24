@@ -42,6 +42,7 @@ nonisolated struct RepositoryRecoveryPreview: Equatable, Sendable {
 nonisolated enum RepositoryReflogError: Error, LocalizedError {
     case unavailable(String)
     case changed
+    case branchAlreadyExists(String)
     case resetFailed(backup: String, reason: String)
     case branchUnverified(name: String, expected: String, observed: String?, reason: String)
 
@@ -49,6 +50,7 @@ nonisolated enum RepositoryReflogError: Error, LocalizedError {
         switch self {
         case let .unavailable(reason): reason
         case .changed: "The repository changed. Refresh the reflog or prepare a new reset preview, then confirm again."
+        case let .branchAlreadyExists(name): "A branch named \(name) already exists. Choose another name."
         case let .branchUnverified(name, expected, observed, reason):
             "Recovery branch creation has an unverified outcome. Branch: \(name). Expected commit: \(expected). Observed commit: \(observed ?? "unavailable"). Inspect the branch before continuing. No automatic retry or rollback was attempted.\n\n\(reason)"
         case let .resetFailed(backup, reason): "Reset did not complete safely or its outcome could not be verified. The validated preview commit is preserved in \(backup).\n\n\(reason)"
@@ -215,7 +217,16 @@ final nonisolated class RepositoryReflogService: @unchecked Sendable {
             try validateCommit(objectID)
             guard !name.hasPrefix("-"), !name.isEmpty else { throw RepositoryReflogError.unavailable("Enter a valid branch name.") }
             _ = try data(["check-ref-format", "refs/heads/" + name])
-            let reference = "refs/heads/" + name + "^{commit}"
+            let branchRef = "refs/heads/" + name
+            do {
+                _ = try data(["show-ref", "--verify", "--quiet", branchRef])
+                throw RepositoryReflogError.branchAlreadyExists(name)
+            } catch let error as NSError where error.domain == PBTaskErrorDomain && error.code == 4 &&
+                (error.userInfo[PBTaskTerminationStatusKey] as? NSNumber)?.intValue == 1
+            {
+                // Git uses status 1 for a missing exact reference.
+            }
+            let reference = branchRef + "^{commit}"
             do {
                 _ = try data(["branch", "--", name, objectID], execution: .mutation)
             } catch {

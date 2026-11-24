@@ -396,7 +396,11 @@ final class ReflogServiceTests: XCTestCase {
         XCTAssertEqual(try fixture.git(["symbolic-ref", "HEAD"]), "refs/heads/main")
         XCTAssertEqual(try fixture.git(["rev-parse", "recovery/test"]), head)
         XCTAssertEqual(try String(contentsOf: fixture.url.appendingPathComponent("tracked.txt"), encoding: .utf8), "local edit\n")
-        XCTAssertThrowsError(try service.createRecoveryBranch(objectID: head, name: "recovery/test"))
+        XCTAssertThrowsError(try service.createRecoveryBranch(objectID: head, name: "recovery/test")) { error in
+            guard case RepositoryReflogError.branchAlreadyExists("recovery/test") = error else {
+                return XCTFail("Expected an existing-branch refusal, got \(error)")
+            }
+        }
         XCTAssertThrowsError(try service.createRecoveryBranch(objectID: head, name: "--force"))
         XCTAssertThrowsError(try service.createRecoveryBranch(objectID: "--help", name: "safe"))
     }
