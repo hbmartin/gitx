@@ -86,6 +86,72 @@ final class ReflogBrowserTests: XCTestCase {
         XCTAssertTrue(popup.itemTitles.contains("external-change"))
     }
 
+    func testResetModeSheetCannotReplaceAnAutomaticRefresh() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture, command: "reflog")
+        defer { try? gate.open() }
+        var holdRefresh = false
+        let browser = try await presentedBrowser(fixture, serviceFactory: { repository in
+            try RepositoryReflogService(repository: repository, context: holdRefresh ? gate.context : nil)
+        })
+        defer { browser.controller.closeView(); browser.window.close() }
+        try control("Reset", in: browser.controller, as: NSButton.self).performClick(nil)
+        _ = try sheetControl("ResetMode", window: browser.window, as: NSPopUpButton.self)
+        holdRefresh = true
+        try fixture.git(["branch", "refresh-branch"])
+        browser.controller.repositoryDidChange()
+        await waitUntil { FileManager.default.fileExists(atPath: gate.started.path) }
+        let refresh = try XCTUnwrap(browser.controller.operation)
+        try dismissSheet(browser.window, response: .alertFirstButtonReturn)
+        let reset = try control("Reset", in: browser.controller, as: NSButton.self)
+        XCTAssertFalse(reset.isEnabled)
+        XCTAssertTrue(browser.controller.isBusy)
+        try gate.open()
+        await refresh.value
+        let popup = try control("Reference", in: browser.controller, as: NSPopUpButton.self)
+        XCTAssertTrue(popup.itemTitles.contains("refresh-branch"))
+        XCTAssertNil(browser.window.attachedSheet)
+        XCTAssertTrue(reset.isEnabled)
+    }
+
+    func testInvalidatedReadsExplainWhyTheirResultWasDropped() async throws {
+        for preview in [false, true] {
+            let fixture = try ReflogGitFixture()
+            defer { fixture.remove() }
+            let repository = try GitXTestGitRepository(url: fixture.url)
+            let command = preview ? "--is-bare-repository" : "--format=fuller"
+            let gate = try ReflogResetExecutionGate(repository: repository, fixture: fixture, command: command)
+            defer { try? gate.open() }
+            let refreshDelay = DelayGate()
+            var held = false
+            let browser = try await presentedBrowser(fixture, serviceFactory: { repository in
+                try RepositoryReflogService(repository: repository, context: held ? gate.context : nil)
+            }, delay: { _ in await refreshDelay.wait() })
+            defer { browser.controller.closeView(); browser.window.close() }
+            held = true
+            if preview {
+                try control("Reset", in: browser.controller, as: NSButton.self).performClick(nil)
+                try dismissSheet(browser.window, response: .alertFirstButtonReturn)
+            } else {
+                // Deselecting preserves the original rows and lets us start a new detail read.
+                let table = try control("Events", in: browser.controller, as: NSTableView.self)
+                table.deselectAll(nil)
+                table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            }
+            await waitUntil { FileManager.default.fileExists(atPath: gate.started.path) }
+            let read = try XCTUnwrap(browser.controller.operation)
+            browser.controller.repositoryDidChange()
+            try gate.open()
+            await read.value
+            XCTAssertTrue(browser.controller.status?.contains(preview ? "reset preview" : "commit details") == true)
+            XCTAssertNil(browser.window.attachedSheet)
+            await refreshDelay.release()
+            await waitUntil { !browser.controller.isBusy && browser.controller.status?.hasPrefix("1 events") == true }
+        }
+    }
+
     func testUnsupportedReferenceIsEscapedAndDisabledWhileHeadRemainsUsable() async throws {
         let fixture = try ReflogGitFixture()
         defer { fixture.remove() }

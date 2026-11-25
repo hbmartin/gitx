@@ -51,9 +51,82 @@ final class RepositoryTerminationTests: XCTestCase {
         await fulfillment(of: [secondConsent], timeout: 5)
         try XCTUnwrap(answer)(true)
         await fulfillment(of: [accepted], timeout: 5)
-        XCTAssertTrue(session.protectionState.isEmpty)
+        XCTAssertFalse(session.protectionState.isEmpty)
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
+        XCTAssertTrue(session.protectionState.isEmpty)
         XCTAssertEqual(terminated, 1)
+    }
+
+    func testAcceptedMenuPreflightCanBeCancelledIfAppKitDoesNotReply() async throws {
+        let session = try recovery()
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let original = session.protectionState
+        let forwarded = expectation(description: "Quit is offered to AppKit")
+        session.attachedCloseDecision = { completion in
+            completion(true)
+            return true
+        }
+        let coordinator = GitX.RepositoryTerminationCoordinator(mutations: registry, sessions: { [session] }, remoteDecision: { .terminateNow }, remoteCancelled: {},
+                                                                terminate: { forwarded.fulfill() },
+                                                                reply: { _ in XCTFail("There is no AppKit reply pending") })
+        coordinator.requestTermination()
+        await fulfillment(of: [forwarded], timeout: 5)
+        XCTAssertEqual(session.protectionState, original)
+        XCTAssertThrowsError(try registry.admit())
+        coordinator.cancelPendingQuit()
+        XCTAssertEqual(session.protectionState, original)
+        let activity = try registry.admit()
+        registry.finish(activity)
+    }
+
+    func testQuitWaitsForUnrelatedSheetWithoutDiscardingRecovery() async throws {
+        let session = try recovery()
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 250), styleMask: [.titled], backing: .buffered, defer: false)
+        parent.isReleasedWhenClosed = false
+        parent.orderFront(nil)
+        defer { parent.close() }
+        let alert = NSAlert()
+        alert.messageText = "Unrelated alert"
+        alert.beginSheetModal(for: parent) { _ in }
+        session.attachedCloseDecision = { completion in completion(true); return true }
+        let waiting = expectation(description: "Quit waits behind the unrelated sheet")
+        let waitingAgain = expectation(description: "The fresh Quit still waits behind the unrelated sheet")
+        let forwarded = expectation(description: "A fresh Quit reaches AppKit after the sheet ends")
+        var waitingCount = 0
+        weak var waitingPanel: NSPanel?
+        let coordinator = GitX.RepositoryTerminationCoordinator(mutations: registry, sessions: { [session] }, remoteDecision: { .terminateNow }, remoteCancelled: {},
+                                                                waitingPresented: { panel in
+                                                                    waitingPanel = panel
+                                                                    waitingCount += 1
+                                                                    if waitingCount == 1 {
+                                                                        waiting.fulfill()
+                                                                    } else {
+                                                                        waitingAgain.fulfill()
+                                                                    }
+                                                                },
+                                                                hasBlockingSheets: { parent.attachedSheet != nil },
+                                                                terminate: { forwarded.fulfill() },
+                                                                reply: { _ in XCTFail("AppKit has not asked for a reply") })
+        let protected = session.protectionState
+        coordinator.requestTermination()
+        await fulfillment(of: [waiting], timeout: 5)
+        try attachScreenshot(of: XCTUnwrap(waitingPanel), named: "Quit waits for an unrelated sheet")
+        XCTAssertEqual(session.protectionState, protected)
+        XCTAssertTrue(parent.attachedSheet === alert.window)
+        coordinator.cancelPendingQuit()
+        XCTAssertTrue(parent.attachedSheet === alert.window)
+        coordinator.requestTermination()
+        await fulfillment(of: [waitingAgain], timeout: 5)
+        let panel = try XCTUnwrap(waitingPanel)
+        parent.endSheet(alert.window)
+        await fulfillment(of: [forwarded], timeout: 5)
+        XCTAssertTrue(waitingPanel === panel)
+        let message = try XCTUnwrap(panel.contentView?.subviews.compactMap { $0 as? NSTextField }.first)
+        XCTAssertTrue(message.stringValue.contains("Waiting for macOS to finish Quit"))
+        XCTAssertEqual(session.protectionState, protected)
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
+        XCTAssertTrue(session.protectionState.isEmpty)
     }
 
     func testAppKitQuitJoiningMenuConsentReceivesOneReply() async throws {

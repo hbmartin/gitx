@@ -1,10 +1,87 @@
 import AppKit
 import ForgeKit
 @testable import GitX
+import Synchronization
 import XCTest
 
 @MainActor
 final class NativePullRequestCompletionTests: XCTestCase {
+    func testSyncForkDrainsAnAdmittedFetchWhileQuitSealsAdmission() async throws {
+        let fixture = try PullRequestAppFixture()
+        let plan = try ForgeSyncForkPlan(fork: fixture.fork, parent: fixture.repository, branch: ForgeRefName("main"), localFetchRemoteName: "origin")
+        for abandonFetch in [false, true] {
+            let mutations = GitX.RepositoryLocalMutationRegistry()
+            let notifications = Mutex(0)
+            mutations.observe { notifications.withLock { $0 += 1 } }
+            let gate = IgnoringCancellationGate<Bool>()
+            let admitted = expectation(description: "Server mutation is admitted")
+            let runner = NativePullRequestGitRecorder()
+            let service = NativePullRequestMutationService(started: nil, sync: { plan in
+                admitted.fulfill()
+                _ = await gate.wait()
+                return GitX.RepositorySyncForkOutcome(plan: plan, serverSummary: "Fork updated")
+            })
+            let coordinator = GitX.RepositorySyncForkCoordinator(service: service, runner: runner, mutations: mutations)
+            let operation = Task { try await coordinator.sync(accountID: fixture.accountID, plan: plan) }
+            await fulfillment(of: [admitted], timeout: 5)
+            mutations.sealAdmission()
+            XCTAssertFalse(mutations.hasActivity, "Reserved fetch must leave the remote Quit choice available")
+            XCTAssertTrue(mutations.hasActivity(includingReservedFetches: true))
+            if abandonFetch {
+                mutations.abandonReservedFetchesForQuit()
+            }
+            await gate.release(true)
+            switch await operation.result {
+            case .success:
+                XCTAssertFalse(abandonFetch)
+                XCTAssertEqual(runner.commands, [["fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]])
+            case let .failure(error):
+                XCTAssertTrue(abandonFetch)
+                XCTAssertEqual(error as? GitX.RepositorySyncForkError, .localFetchFailed(serverSummary: "Fork updated"))
+                XCTAssertTrue(runner.commands.isEmpty)
+            }
+            XCTAssertFalse(mutations.hasActivity(includingReservedFetches: true))
+        }
+    }
+
+    func testRejectedSyncForkReleasesItsReservationAndNotifiesAllObservers() async throws {
+        let fixture = try PullRequestAppFixture()
+        let plan = try ForgeSyncForkPlan(fork: fixture.fork, parent: fixture.repository, branch: ForgeRefName("main"), localFetchRemoteName: "origin")
+        let mutations = GitX.RepositoryLocalMutationRegistry()
+        let notifications = Mutex([0, 0])
+        mutations.observe { notifications.withLock { $0[0] += 1 } }
+        mutations.observe { notifications.withLock { $0[1] += 1 } }
+        let runner = NativePullRequestGitRecorder()
+        let coordinator = GitX.RepositorySyncForkCoordinator(service: NativePullRequestMutationService(started: nil), runner: runner, mutations: mutations)
+
+        do {
+            _ = try await coordinator.sync(accountID: fixture.accountID, plan: plan)
+            XCTFail("The rejected server request must fail Sync Fork")
+        } catch {
+            XCTAssertEqual(error as? GitX.RepositoryPullRequestServiceError, .nativeCreationUnavailable)
+        }
+        XCTAssertEqual(notifications.withLock { $0 }, [1, 1])
+        XCTAssertFalse(mutations.hasActivity(includingReservedFetches: true))
+        XCTAssertTrue(runner.commands.isEmpty)
+    }
+
+    func testCheckoutReportsStatusFailureWithoutAttemptingAnyWrite() throws {
+        let fixture = try PullRequestAppFixture()
+        let failure = URLError(.cannotOpenFile)
+        let runner = NativePullRequestGitRecorder(failure: failure)
+        let remote = try ForgeGitRemote(name: "github-contributor", repository: fixture.fork, fetchURL: XCTUnwrap(URL(string: "https://github.com/contributor/gitx.git")))
+        let head = try ForgeCommitID(String(repeating: "a", count: 40))
+        let plan = try ForgePullRequestCheckoutPlan(repository: fixture.repository, pullRequest: ForgeItemNumber(42), remote: remote,
+                                                    fetchRefspec: "+refs/heads/feature:refs/remotes/github-contributor/feature", localBranch: ForgeRefName("pr-42"), expectedHead: head, addsRemote: true)
+        let executor = GitX.RepositoryPullRequestCheckoutExecutor(runner: runner)
+
+        XCTAssertThrowsError(try executor.execute(plan)) { error in
+            XCTAssertTrue(error is GitX.RepositoryPullRequestCheckoutPreflightError)
+            XCTAssertEqual(error.localizedDescription, failure.localizedDescription)
+        }
+        XCTAssertEqual(runner.commands, [["status", "--porcelain=v2", "--untracked-files=normal"]])
+    }
+
     func testCreateFailureLeavesTheSheetAndPreservesItsExactDraftIntent() throws {
         let fixture = try PullRequestAppFixture()
         let preparation = try fixture.preparation()
@@ -78,6 +155,7 @@ final class NativePullRequestCompletionTests: XCTestCase {
         }, reply: { _ in XCTFail("Menu Quit must forward after consent") })
         coordinator.requestTermination()
         await fulfillment(of: [forwarded], timeout: 5)
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
         let previous = bindingReads
         controller.newPullRequest()
         XCTAssertEqual(bindingReads, previous, "Final closure must revoke outstanding presentation authority")
@@ -443,8 +521,13 @@ final class NativePullRequestCompletionTests: XCTestCase {
 
 nonisolated struct NativePullRequestMutationService: GitX.RepositoryPullRequestMutationServing {
     private let storage: NativePullRequestMutationStorage
-    init(started: XCTestExpectation?, error: Error = ForgePullRequestWorkflowError.editConflict) {
+    private let sync: (@Sendable (ForgeSyncForkPlan) async -> GitX.RepositorySyncForkOutcome)?
+
+    init(started: XCTestExpectation?, error: Error = ForgePullRequestWorkflowError.editConflict,
+         sync: (@Sendable (ForgeSyncForkPlan) async -> GitX.RepositorySyncForkOutcome)? = nil)
+    {
         storage = NativePullRequestMutationStorage(started: started, error: error)
+        self.sync = sync
     }
 
     var editCount: Int {
@@ -468,7 +551,10 @@ nonisolated struct NativePullRequestMutationService: GitX.RepositoryPullRequestM
     }
 
     func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) async throws -> GitX.RepositorySyncForkOutcome {
-        try await storage.syncFork(accountID: accountID, plan: plan)
+        if let sync {
+            return await sync(plan)
+        }
+        return try await storage.syncFork(accountID: accountID, plan: plan)
     }
 
     func releaseEdit(_ outcome: GitX.RepositoryPullRequestEditOutcome) async {
@@ -514,5 +600,26 @@ private actor NativePullRequestMutationStorage {
 
     func releaseEdit(_ outcome: GitX.RepositoryPullRequestEditOutcome) {
         released = true; waiter?.resume(); waiter = nil
+    }
+}
+
+private final nonisolated class NativePullRequestGitRecorder: GitX.RepositoryPullRequestGitCommandRunning {
+    private let storage = Mutex<[[String]]>([])
+    private let failure: Error?
+
+    init(failure: Error? = nil) {
+        self.failure = failure
+    }
+
+    var commands: [[String]] {
+        storage.withLock { $0 }
+    }
+
+    func run(_ arguments: [String]) throws -> String {
+        storage.withLock { $0.append(arguments) }
+        if let failure {
+            throw failure
+        }
+        return ""
     }
 }

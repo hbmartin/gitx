@@ -108,6 +108,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         static let shared: ForgeMutationQuitCoordinator = .init(
             persistence: sharedPersistence,
             choiceProvider: ForgeMutationQuitAlert.choice,
+            abandonReservedFetches: { RepositoryLocalMutationRegistry.shared.abandonReservedFetchesForQuit() },
             terminationReply: { shouldTerminate in
                 RepositoryTerminationCoordinator.shared.remoteTerminationReply(shouldTerminate)
             }
@@ -116,6 +117,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
 
     private let persistence: any ForgeUnknownMutationOutcomePersisting
     private let choiceProvider: ChoiceProvider
+    private let abandonReservedFetches: @Sendable () -> Void
     private let terminationReply: TerminationReply
     private let terminationTimeout: TimeInterval
     private let scheduleTimeout: TimeoutScheduler
@@ -129,12 +131,14 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     init(
         persistence: any ForgeUnknownMutationOutcomePersisting,
         choiceProvider: @escaping ChoiceProvider,
+        abandonReservedFetches: @escaping @Sendable () -> Void = {},
         terminationReply: @escaping TerminationReply,
         terminationTimeout: TimeInterval = ForgeMutationQuitCoordinator.defaultTerminationTimeout,
         scheduleTimeout: @escaping TimeoutScheduler = ForgeMutationQuitCoordinator.defaultTimeoutScheduler
     ) {
         self.persistence = persistence
         self.choiceProvider = choiceProvider
+        self.abandonReservedFetches = abandonReservedFetches
         self.terminationReply = terminationReply
         self.terminationTimeout = terminationTimeout
         self.scheduleTimeout = scheduleTimeout
@@ -353,6 +357,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
                 terminationReply(false)
             case .terminate:
                 logger.error("Forge outcome recording did not finish within the quit deadline; terminating after Quit Anyway")
+                abandonReservedFetches()
                 terminationReply(true)
             }
         }
@@ -369,6 +374,9 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
             return true
         }
         if shouldReply {
+            if shouldTerminate {
+                abandonReservedFetches()
+            }
             terminationReply(shouldTerminate)
         }
     }

@@ -169,6 +169,9 @@ final class RepositoryPullRequestUIController {
         self.noticeDelay = noticeDelay
         #if GITX_APP_TARGET
             recoverySession.onAcceptedTermination = { [weak self] in self?.invalidateOwner() }
+            recoverySession.attachedEditorsForTermination = { [weak self] in
+                self.map { Array($0.ownedSheets.values) } ?? []
+            }
             recoverySession.attachedCloseDecision = { [weak self] completion in
                 self?.confirmClosingIfNeeded {
                     completion(true)

@@ -671,6 +671,23 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
     }
 
+    // swift6-safety-justification: The fixture exposes only nonisolated notification callbacks that dispatch UI updates to the main actor.
+    private nonisolated struct BackgroundWindowNotifications: @unchecked Sendable {
+        private let controller: GitX.PBGitWindowController
+
+        init(_ controller: GitX.PBGitWindowController) {
+            self.controller = controller
+        }
+
+        func gitBinaryDidChange() {
+            controller.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+        }
+
+        func refreshPreferenceDidChange() {
+            controller.refreshPreferenceDidChange(nil)
+        }
+    }
+
     private final class WindowProbe: GitX.PBGitWindowController {
         var actions: [String] = []
         override func showUncommittedChanges(_: Any?) {
@@ -1598,8 +1615,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         wait(for: [delivered], timeout: 3)
         // A notification already queued off-main may arrive after observer removal.
         let lateCallback = expectation(description: "Late background notification returns")
+        let backgroundNotifications = BackgroundWindowNotifications(actual)
         DispatchQueue.global().async {
-            actual.gitBinaryDidChange(Notification(name: .PBGitBinaryDidChange))
+            backgroundNotifications.gitBinaryDidChange()
             lateCallback.fulfill()
         }
         wait(for: [lateCallback], timeout: 3)
@@ -1870,8 +1888,9 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         ApplicationSettings.repositoryStatusBarVisible = true
         XCTAssertTrue(bar.isHidden, "The isolated notification source must not reconcile an unannounced preference")
         let background = expectation(description: "The compatibility preference selector returns without blocking its publisher")
+        let backgroundNotifications = BackgroundWindowNotifications(actual)
         DispatchQueue.global().async {
-            actual.refreshPreferenceDidChange(nil)
+            backgroundNotifications.refreshPreferenceDidChange()
             background.fulfill()
         }
         wait(for: [background], timeout: 5)
@@ -4587,10 +4606,16 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         let afterActivation = state()
         window.makeKeyAndOrderFront(nil)
         let afterRequest = state()
-        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        func isForegroundOwner() -> Bool {
             let sheetIsKey = acceptingAttachedSheet && window.attachedSheet?.isKeyWindow == true
             return NSApp.isActive && (window.isKeyWindow || sheetIsKey)
-        }, object: nil)
+        }
+        // Keep the synchronous key transition observable before yielding
+        // back to another application or the XCTest polling timer.
+        if isForegroundOwner() {
+            return
+        }
+        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in isForegroundOwner() }, object: nil)
         let result = XCTWaiter.wait(for: [foreground], timeout: 5)
         if result != .completed {
             let evidence = "\(name), caller=\(file):\(line), acceptingAttachedSheet=\(acceptingAttachedSheet)\nBefore activation:\n\(before)\nAfter activation callback:\n\(afterActivation)\nAfter key request:\n\(afterRequest)\nAfter waiting:\n\(state())"

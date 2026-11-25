@@ -187,7 +187,7 @@ class VerificationSchedulingTests(unittest.TestCase):
         def prepare(*_):
             signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
             return ["true"], "child", None
-        with mock.patch.object(session, "inputs", return_value=current), \
+        with mock.patch.object(workflow, "parallel_inputs", return_value=current), \
                 mock.patch.object(workflow, "prepare_check", side_effect=prepare), \
                 mock.patch.object(workflow.subprocess, "Popen") as launch:
             status, _ = workflow.execute_parallel(root, root / "workflow.json",
@@ -210,6 +210,18 @@ class VerificationSchedulingTests(unittest.TestCase):
                     directory=root, output_log=capture.path), 130)
             self.assertEqual(json.loads((root / "diagnostic-owner.json").read_text())["category"], "interrupted")
 
+    def test_parallel_input_snapshot_waits_for_the_shared_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            resource = session.shared_xcode_build_resource(root)
+            with mock.patch.object(session, "inputs", return_value={"source": "stable"}) as inputs:
+                with session.Leases([resource], {"runId": "writer"}, inherited={}):
+                    with self.assertRaises(session.ResourceBusy):
+                        workflow.parallel_inputs(root, "reader", 0)
+                    inputs.assert_not_called()
+                self.assertEqual(workflow.parallel_inputs(root, "reader", 0), {"source": "stable"})
+                inputs.assert_called_once_with(root)
+
     def test_shared_lease_still_reports_busy_when_diagnostics_cannot_be_written(self):
         with tempfile.TemporaryDirectory() as directory:
             argv = ["workflow_session", "run", "--diagnostics", directory, "--timeout", "0", "--xcode-build",
@@ -230,12 +242,12 @@ class VerificationSchedulingTests(unittest.TestCase):
 
         commands = [(name, [name]) for name in ("static", "interop", "correctness")]
         static_pass, interop_failure = job(0, 1), job(9, 0)
-        record = mock.Mock(side_effect=lambda *args: (args[-1], {"name": args[3]}))
+        record = mock.Mock(side_effect=lambda *args, **kwargs: (args[-1], {"name": args[3]}))
         inputs = {"head": "candidate", "source": "same"}
         run = {"runId": "fixture", "inputsBefore": inputs}
         with mock.patch.object(workflow.subprocess, "Popen", side_effect=[static_pass, interop_failure]) as launch, \
                 mock.patch.object(workflow, "record_check", record), \
-                mock.patch.object(workflow.session, "inputs", return_value=inputs), \
+                mock.patch.object(workflow, "parallel_inputs", return_value=inputs), \
                 mock.patch.object(workflow.time, "sleep"):
             status, failed = workflow.execute_parallel(pathlib.Path("/tmp"), pathlib.Path("/tmp/workflow.json"), run,
                                                        SimpleNamespace(timeout=1, resume=None), commands,
@@ -271,6 +283,34 @@ class FeedbackAndFixtureSelectionTests(unittest.TestCase):
                 commands, selection = workflow.selected_commands(args, root)
             self.assertIn("correctness", dict(commands))
             self.assertEqual(selection["testSelectors"], [])
+
+    def test_feedback_widens_for_shared_declarations_and_swift_regex_literals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            path = root / "GitXTests/Example.swift"
+            path.parent.mkdir()
+            for source in (
+                'enum SharedFixture { case ready }\nfinal class A: XCTestCase {}\n',
+                'final class A: XCTestCase { let regex = #/"([^"]*)"/# }\n'
+                'final class B: XCTestCase { func testB() { XCTAssertEqual("x", "x") } }\n',
+            ):
+                with self.subTest(source=source):
+                    path.write_text(source)
+                    self.assertEqual(feedback.test_file_selectors(root, ["GitXTests/Example.swift"]), [])
+
+    def test_feedback_checks_shared_python_infrastructure_beyond_its_namesake(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            path = root / "scripts/tests/test_workflow_records.py"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            self.assertEqual(feedback.script_test_patterns(["scripts/workflow_records.py"], root), ["test*.py"])
+
+    def test_fixture_command_identity_ignores_interpreter_install_path(self):
+        script = pathlib.Path(__file__).resolve().parents[1] / "check_fixture_stability.py"
+        previous = session.command_identity(["/old/python", str(script)])
+        self.assertTrue(session.command_matches({"commandIdentity": previous}, ["/new/python", str(script)]))
+        self.assertFalse(session.command_matches({"commandIdentity": previous}, ["/new/python", str(script), "--group", "quit"]))
 
     def test_deleted_script_test_uses_broad_discovery_even_after_rename(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -139,8 +139,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         let app = try launch(repository: repository, scenario: "recovery-quit")
         try requireExists(app.buttons["GitX.PullRequest.Submit"], timeout: 10)
         XCTAssertFalse(app.buttons["GitX.PullRequest.Recovery.Copy"].exists)
-        app.menuBars.menuBarItems["Half Dark"].click()
-        app.menuBars.menuItems["Quit Half Dark"].click()
+        try quitFromApplicationMenu(in: app)
         let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .notRunning }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 10), .completed)
     }
@@ -149,8 +148,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         let repository = try makeWorkingRepository(name: "quit-unprotected")
         let app = try launch(repository: repository, scenario: "partial-patch-copy")
         try click(app.buttons["OK"], timeout: 10)
-        app.menuBars.menuBarItems["Half Dark"].click()
-        app.menuBars.menuItems["Quit Half Dark"].click()
+        try quitFromApplicationMenu(in: app)
         let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .notRunning }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 10), .completed)
     }
@@ -159,8 +157,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         let first = try makeWorkingRepository(name: "quit-multiple-first")
         let second = try makeWorkingRepository(name: "quit-multiple-second")
         let app = try launch(repository: first, scenario: "recovery-quit")
-        try click(app.buttons["GitX.PullRequest.Submit"], timeout: 10)
-        try requireExists(app.buttons["GitX.PullRequest.Recovery.Copy"], timeout: 10)
+        try submitEditForQuitRecovery(in: app)
         app.typeKey("o", modifierFlags: .command)
         let open = app.windows["open-panel"]
         try requireExists(open, timeout: 10)
@@ -175,19 +172,17 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         let chosen = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !go.exists }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [chosen], timeout: 10), .completed)
         open.typeKey(.return, modifierFlags: [])
-        try click(app.buttons["GitX.PullRequest.Submit"], timeout: 15)
+        try submitEditForQuitRecovery(in: app)
         let recovered = app.buttons.matching(identifier: "GitX.PullRequest.Recovery.Copy")
         let both = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in recovered.count == 2 }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [both], timeout: 15), .completed)
-        app.menuBars.menuBarItems["Half Dark"].click()
-        app.menuBars.menuItems["Quit Half Dark"].click()
+        try quitFromApplicationMenu(in: app)
         try click(app.buttons["Close Without Saving"], timeout: 10)
         try click(app.buttons["Keep Editing"], timeout: 10)
         XCTAssertEqual(app.state, .runningForeground)
         XCTAssertEqual(recovered.count, 2, "Preflight approval must not discard either document's text")
         retainDiagnosticScreenshot(named: "Cancel Quit preserves both recovered documents", of: app.windows.firstMatch, in: app)
-        app.menuBars.menuBarItems["Half Dark"].click()
-        app.menuBars.menuItems["Quit Half Dark"].click()
+        try quitFromApplicationMenu(in: app)
         try click(app.buttons["Close Without Saving"], timeout: 10)
         try click(app.buttons["Close Without Saving"], timeout: 10)
         let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .notRunning }, object: nil)
@@ -197,8 +192,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
     func testNativeQuitProtectsDetachedRecoveryAfterARealCoordinatedMove() throws {
         let repository = try makeWorkingRepository(name: "quit-detached-recovery")
         let app = try launch(repository: repository, scenario: "recovery-quit")
-        try click(app.buttons["GitX.PullRequest.Submit"], timeout: 10)
-        try requireExists(app.buttons["GitX.PullRequest.Recovery.Copy"], timeout: 10)
+        try submitEditForQuitRecovery(in: app)
         let moved = repository.appendingPathExtension("moved")
         defer { try? FileManager.default.removeItem(at: moved) }
         let coordinator = NSFileCoordinator(filePresenter: nil)
@@ -219,16 +213,14 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         let standalone = app.dialogs["GitX.PullRequest.DetachedRecovery"]
         try requireExists(standalone, timeout: 15)
         XCTAssertEqual(standalone.textViews["GitX.PullRequest.Body"].value as? String, "Exact unsaved recovery body")
-        app.menuBars.menuBarItems["Half Dark"].click()
-        app.menuBars.menuItems["Quit Half Dark"].click()
+        try quitFromApplicationMenu(in: app)
         try requireExists(app.buttons["Keep Editing"], timeout: 10)
         retainDiagnosticScreenshot(named: "Detached recovery participates in native Quit", of: standalone, in: app)
         try click(app.buttons["Keep Editing"], timeout: 5)
         XCTAssertEqual(app.state, .runningForeground)
         XCTAssertTrue(standalone.exists)
         XCTAssertEqual(standalone.textViews["GitX.PullRequest.Body"].value as? String, "Exact unsaved recovery body")
-        app.menuBars.menuBarItems["Half Dark"].click()
-        app.menuBars.menuItems["Quit Half Dark"].click()
+        try quitFromApplicationMenu(in: app)
         try click(app.buttons["Close Without Saving"], timeout: 10)
         let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .notRunning }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 10), .completed)
@@ -250,11 +242,14 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             }
             let held = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: started.path) }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [held], timeout: 15), .completed)
-            app.menuBars.menuBarItems["Half Dark"].click()
-            app.menuBars.menuItems["Quit Half Dark"].click()
-            let waiting = app.dialogs["GitX.Quit.WaitingForLocalMutations"]
-            try requireExists(waiting, timeout: 10)
-            XCTAssertEqual(app.state, .runningForeground)
+            let waiting = app.descendants(matching: .any).matching(identifier: "GitX.Quit.WaitingForLocalMutations").firstMatch
+            func requestQuitWhileGitIsRunning() throws {
+                try activateForQuitInteraction(app)
+                app.typeKey("q", modifierFlags: .command)
+                try requireExists(waiting, timeout: 10)
+                try activateForQuitInteraction(app)
+            }
+            try requestQuitWhileGitIsRunning()
             retainDiagnosticScreenshot(named: "Native Quit waits for an admitted Git mutation", of: waiting, in: app)
             if cancelFirst {
                 try click(waiting.buttons["GitX.Quit.Cancel"], timeout: 5)
@@ -262,9 +257,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
                 XCTAssertEqual(XCTWaiter.wait(for: [cancelled], timeout: 10), .completed)
                 XCTAssertEqual(app.state, .runningForeground)
                 XCTAssertFalse(try references(in: repository).contains { $0.hasPrefix("refs/heads/recovery/quit-local:") })
-                app.menuBars.menuBarItems["Half Dark"].click()
-                app.menuBars.menuItems["Quit Half Dark"].click()
-                try requireExists(waiting, timeout: 10)
+                try requestQuitWhileGitIsRunning()
             }
             try Data().write(to: release)
             let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .notRunning }, object: nil)
@@ -277,10 +270,8 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
     func testNativeQuitProtectsRecoveredTextAndKeepEditingCancelsTermination() throws {
         let repository = try makeWorkingRepository(name: "quit-recovery")
         let app = try launch(repository: repository, scenario: "recovery-quit")
-        try click(app.buttons["GitX.PullRequest.Submit"], timeout: 10)
-        try requireExists(app.buttons["GitX.PullRequest.Recovery.Copy"], timeout: 10)
-        app.menuBars.menuBarItems["Half Dark"].click()
-        app.menuBars.menuItems["Quit Half Dark"].click()
+        try submitEditForQuitRecovery(in: app)
+        try quitFromApplicationMenu(in: app)
         try requireExists(app.buttons["Keep Editing"], timeout: 10)
         app.typeKey("q", modifierFlags: .command)
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "title == %@", "Keep Editing")).count, 1)
@@ -289,8 +280,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(app.state, .runningForeground)
         XCTAssertEqual(app.textFields["GitX.PullRequest.Title"].value as? String, "Recovery Quit title")
         XCTAssertEqual(app.textViews["GitX.PullRequest.Body"].value as? String, "Exact unsaved recovery body")
-        app.menuBars.menuBarItems["Half Dark"].click()
-        app.menuBars.menuItems["Quit Half Dark"].click()
+        try quitFromApplicationMenu(in: app)
         try click(app.buttons["Close Without Saving"], timeout: 10)
         let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .notRunning }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 10), .completed)
@@ -823,6 +813,35 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             .split(whereSeparator: \.isNewline)
             .map(String.init)
             .sorted()
+    }
+
+    private func activateForQuitInteraction(_ app: XCUIApplication) throws {
+        guard app.state != .runningForeground else {
+            return
+        }
+        app.activate()
+        if app.state == .runningForeground {
+            return
+        }
+        let foreground = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.state == .runningForeground }, object: nil)
+        guard XCTWaiter.wait(for: [foreground], timeout: 10) == .completed else {
+            XCTFail("GitX did not become the foreground application for the Quit journey")
+            throw Milestone2UIError.elementUnavailable
+        }
+    }
+
+    private func submitEditForQuitRecovery(in app: XCUIApplication) throws {
+        try requireExists(app.buttons["GitX.PullRequest.Submit"], timeout: 15)
+        try activateForQuitInteraction(app)
+        // Return invokes the native sheet's default Save action without pointer hit testing.
+        app.typeKey(.return, modifierFlags: [])
+        try requireExists(app.buttons["GitX.PullRequest.Recovery.Copy"].firstMatch, timeout: 10)
+    }
+
+    private func quitFromApplicationMenu(in app: XCUIApplication) throws {
+        try activateForQuitInteraction(app)
+        app.menuBars.menuBarItems["Half Dark"].click()
+        app.menuBars.menuItems["Quit Half Dark"].click()
     }
 
     private func requireExists(

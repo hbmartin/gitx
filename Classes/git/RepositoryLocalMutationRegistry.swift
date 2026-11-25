@@ -18,18 +18,78 @@ final nonisolated class RepositoryLocalMutationRegistry: @unchecked Sendable {
         fileprivate let joins: Bool
     }
 
+    struct FetchReservation: Sendable {
+        fileprivate let identity: UUID
+    }
+
     private let lock = NSLock()
     private var active: Set<UUID> = []
+    private var reservedFetches: [UUID: Bool] = [:]
     private var threads: [ObjectIdentifier: Int] = [:]
     private var sealed = false
-    private var changed: (@Sendable () -> Void)?
+    private var observers: [UUID: @Sendable () -> Void] = [:]
 
     var hasActivity: Bool {
         lock.withLock { !active.isEmpty }
     }
 
-    func observe(_ change: @escaping @Sendable () -> Void) {
-        lock.withLock { changed = change }
+    func hasActivity(includingReservedFetches: Bool) -> Bool {
+        lock.withLock { !active.isEmpty || (includingReservedFetches && reservedFetches.values.contains(true)) }
+    }
+
+    func reserveFetch() throws -> FetchReservation {
+        try lock.withLock {
+            guard !sealed else { throw RepositoryLocalMutationError.terminationPending }
+            let id = UUID()
+            reservedFetches[id] = false
+            return FetchReservation(identity: id)
+        }
+    }
+
+    func activateFetchReservation(_ reservation: FetchReservation) {
+        lock.withLock {
+            if reservedFetches[reservation.identity] != nil {
+                reservedFetches[reservation.identity] = true
+            }
+        }
+    }
+
+    func beginReservedFetch(_ reservation: FetchReservation) throws -> Ticket {
+        try lock.withLock {
+            guard reservedFetches.removeValue(forKey: reservation.identity) == true else {
+                throw RepositoryLocalMutationError.terminationPending
+            }
+            return register(thread: nil, joins: true)
+        }
+    }
+
+    func releaseFetchReservation(_ reservation: FetchReservation) {
+        let notify = lock.withLock { () -> [@Sendable () -> Void] in
+            guard reservedFetches.removeValue(forKey: reservation.identity) != nil else { return [] }
+            return Array(observers.values)
+        }
+        notify.forEach { $0() }
+    }
+
+    func abandonReservedFetchesForQuit() {
+        let notify = lock.withLock {
+            reservedFetches.removeAll()
+            return Array(observers.values)
+        }
+        notify.forEach { $0() }
+    }
+
+    @discardableResult
+    func observe(_ change: @escaping @Sendable () -> Void) -> UUID {
+        lock.withLock {
+            let id = UUID()
+            observers[id] = change
+            return id
+        }
+    }
+
+    func removeObserver(_ id: UUID) {
+        lock.withLock { _ = observers.removeValue(forKey: id) }
     }
 
     func sealAdmission() {
@@ -86,14 +146,16 @@ final nonisolated class RepositoryLocalMutationRegistry: @unchecked Sendable {
     }
 
     func finish(_ ticket: Ticket) {
-        let notify = lock.withLock { () -> (@Sendable () -> Void)? in
-            guard active.remove(ticket.identity) != nil else { return nil }
+        let notify = lock.withLock { () -> [@Sendable () -> Void] in
+            guard active.remove(ticket.identity) != nil else { return [] }
             if ticket.joins, let thread = ticket.thread {
                 releaseThread(thread)
             }
-            return changed
+            return Array(observers.values)
         }
-        notify?()
+        for observer in notify {
+            observer()
+        }
     }
 
     private func releaseThread(_ thread: ObjectIdentifier) {

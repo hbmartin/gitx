@@ -41,6 +41,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     private var requests = ReflogBrowserRequestPolicy()
     private var repositoryRevision: UInt64 = 0
     private var needsRefresh = false
+    private var failedRefreshRevision: UInt64?
     private var refreshTask: Task<Void, Never>?
     private var slowMutationTask: Task<Void, Never>?
     private var delay: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -232,7 +233,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     private func scheduleRefresh() {
-        guard !closed, !isBusy, needsRefresh else { return }
+        guard !closed, !isBusy, needsRefresh, failedRefreshRevision != repositoryRevision else { return }
         refreshTask?.cancel()
         let delay = delay
         refreshTask = Task { [weak self] in
@@ -367,6 +368,13 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                 self.updateControls()
                 Self.logger.debug("Reflog request finished duration=\(String(describing: started.duration(to: .now)), privacy: .public)")
                 if mutation == nil, self.repositoryRevision != revision {
+                    if kind == .preview || kind == .details {
+                        let message = kind == .preview
+                            ? "The repository changed before the reset preview was ready. Refreshing the reflog…"
+                            : "The repository changed while commit details were loading. Refreshing the reflog…"
+                        self.message.stringValue = message
+                        self.status = message
+                    }
                     self.needsRefresh = true
                     self.scheduleRefresh()
                     return
@@ -430,6 +438,8 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                 owner.fingerprint = load.page.fingerprint
                 owner.hasMore = load.page.hasMore
                 owner.requests.stale = false
+                owner.needsRefresh = false
+                owner.failedRefreshRevision = nil
                 owner.restoringSelection = true
                 owner.table.reloadData()
                 if let selectedObject, let row = owner.entries.firstIndex(where: { $0.objectID == selectedObject }) {
@@ -441,14 +451,18 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                     : "\(owner.entries.count) events. Recovery is available only while Git retains the selected commit."
                 owner.status = owner.message.stringValue
                 owner.updateControls()
-            case let .failure(error): owner.show(error)
+            case let .failure(error):
+                if !append {
+                    owner.failedRefreshRevision = owner.repositoryRevision
+                }
+                owner.show(error)
             }
         }
         if accepted {
             refreshTask?.cancel()
             refreshTask = nil
-            needsRefresh = false
             if !append {
+                needsRefresh = true
                 requests.stale = true; fingerprint = nil; hasMore = false
             }
             updateControls()
@@ -545,8 +559,13 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         alert.accessoryView = modes
         alert.addButton(withTitle: "Preview Reset")
         alert.addButton(withTitle: "Cancel")
+        let revision = repositoryRevision
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self, !self.closed else { return }
+            guard self.repositoryRevision == revision, self.requests.permitsRecovery else {
+                self.scheduleRefresh()
+                return
+            }
             let mode = ReflogResetMode.allCases[modes.indexOfSelectedItem]
             self.run("Preparing reset preview…", kind: .preview, work: { try $0.preview(target: entry.objectID, mode: mode) }) { owner, result in
                 switch result {

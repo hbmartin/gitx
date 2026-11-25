@@ -160,6 +160,10 @@ _Avoid_: Background read, cancellable preview
 Exact Pull Request edit text retained when publication is unsuccessful or unverified and its latest content is not durably saved as a Forge Draft.
 _Avoid_: Saved draft, confirmed remote edit
 
+**Quit Consent**:
+Approval to discard the current Recovered Edits if the pending Quit completes.
+_Avoid_: Document Close Consent
+
 **Detached Recovery**:
 A Recovered Edit retained independently after its repository document is no longer available. Its original Forge Account and destination still identify the Forge Draft it may save.
 _Avoid_: Reopened repository, rebound editor

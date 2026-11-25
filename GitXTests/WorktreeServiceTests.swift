@@ -1925,7 +1925,8 @@ final class WorktreeServiceTests: XCTestCase {
             XCTAssertTrue(installed.tasks.mutations.isEmpty)
             defaults.set("/usr/bin/true", forKey: "gitExecutable")
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-            await fulfillment(of: [readCancelled, queuedCancelled], timeout: 5)
+            let terminated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in oldRead.wasCancelled }, object: nil)
+            await fulfillment(of: [readCancelled, queuedCancelled, terminated], timeout: 5)
             await drainMainQueue()
             let probes = installed.tasks.requests.filter { $0.arguments == ["--version"] }
             XCTAssertEqual(probes.count, 2, "One preference change launches exactly one additional probe")
@@ -2014,7 +2015,8 @@ final class WorktreeServiceTests: XCTestCase {
         defer { observation.invalidate() }
         defaults.set("/usr/bin/true", forKey: "gitExecutable")
         NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
-        await fulfillment(of: [changedAgain, readCancelled, queuedCancelled], timeout: 5)
+        let terminated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in oldRead.wasCancelled }, object: nil)
+        await fulfillment(of: [changedAgain, readCancelled, queuedCancelled, terminated], timeout: 5)
         await drainMainQueue()
         observation.invalidate()
         let probes = installed.tasks.requests.filter { $0.arguments == ["--version"] }

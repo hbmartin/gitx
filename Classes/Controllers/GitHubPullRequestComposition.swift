@@ -952,6 +952,12 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
         accountID: ForgeAccountID,
         plan: ForgeSyncForkPlan
     ) async throws -> RepositorySyncForkOutcome {
+        try await syncFork(accountID: accountID, plan: plan, onAdmission: {})
+    }
+
+    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan,
+                  onAdmission: @Sendable () -> Void) async throws -> RepositorySyncForkOutcome
+    {
         try validate(accountID: accountID, repository: plan.fork)
         let context = try await dependencies.mutationContext(
             accountID: accountID,
@@ -964,6 +970,7 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
             operation: .syncFork,
             startedAt: Date()
         )
+        onAdmission()
         defer {
             if let registration {
                 _ = mutationLifecycle?.finish(registration)

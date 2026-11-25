@@ -2059,11 +2059,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 26FC0A840875C7B200E6366F /* Build configuration list for PBXNativeTarget "GitX" */;
 			buildPhases = (
+				D14A145A27B23E52008374BA /* Generate versioned Info.plist */,
 				8D1107290486CEB800E47090 /* Resources */,
 				8D11072C0486CEB800E47090 /* Sources */,
 				8D11072E0486CEB800E47090 /* Frameworks */,
 				F580E6BD0E73329C009E2D3F /* CopyFiles */,
-				D14A145A27B23E52008374BA /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -2434,7 +2434,7 @@
 			shellPath = /bin/sh;
 			shellScript = "# Build the scripting bridge header GitX.h if the GitX.sdef file changes\nsdp -fh --basename GitX $SRCROOT/Resources/GitX.sdef -o $SRCROOT/Resources\n";
 		};
-		D14A145A27B23E52008374BA /* ShellScript */ = {
+		D14A145A27B23E52008374BA /* Generate versioned Info.plist */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -2443,14 +2443,18 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/Resources/Info.plist",
+				"$(SRCROOT)/scripts/set_build_version.sh",
 			);
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/GitX-Info.plist",
 			);
+			name = "Generate versioned Info.plist";
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${SRCROOT}/scripts/set_build_version.sh\"\n";
+			shellScript = "\"${SRCROOT}/scripts/set_build_version.sh\" \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -3026,7 +3030,7 @@
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = Resources/GitX_Prefix.pch;
-				INFOPLIST_FILE = Resources/Info.plist;
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/GitX-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Half Dark";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_OTHER_PREPROCESSOR_FLAGS = "-traditional";
@@ -3066,7 +3070,7 @@
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = Resources/GitX_Prefix.pch;
 				GCC_PREPROCESSOR_DEFINITIONS_NOT_USED_IN_PRECOMPS = "";
-				INFOPLIST_FILE = Resources/Info.plist;
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/GitX-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Half Dark";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_OTHER_PREPROCESSOR_FLAGS = "-traditional";

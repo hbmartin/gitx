@@ -479,6 +479,23 @@ class WorkflowResourceRegressionTests(unittest.TestCase):
             workflow.resources_for(commands, ROOT / "artifacts/verification/fixture", ROOT)
         probe.assert_called_once()
 
+    def test_fixture_only_workflow_probes_the_native_toolchain(self):
+        command = [("fixture-stability", [sys.executable, str(ROOT / "scripts/check_fixture_stability.py")])]
+        details = {}
+        with mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode 26.6\nBuild version Fixture"):
+            workflow.resources_for(command, ROOT / "fixture", ROOT, details)
+        self.assertEqual(details["toolchain"], "Xcode 26.6\nBuild version Fixture")
+
+    def test_version_contract_never_uses_the_correctness_product_directory(self):
+        commands = dict(workflow.full_profile(ROOT))
+        version_command = commands["version-contract"][1:]
+        correctness = commands["correctness"][1:]
+        for overrides in ({}, {"GITX_DERIVED_DATA": str(ROOT / "explicit-products")}):
+            with self.subTest(overrides=overrides), mock.patch.dict(session.os.environ, overrides):
+                version_path = session.entry_resources("xcodebuild.sh", version_command, ROOT, toolchain="fixture")[1]["derivedData"]
+                correctness_path = session.entry_resources("xcodebuild.sh", correctness, ROOT, toolchain="fixture")[1]["derivedData"]
+                self.assertNotEqual(version_path, correctness_path)
+
     def test_static_only_resources_need_no_native_toolchain_probe(self):
         command = [("static", [str(ROOT / "scripts/verify_static.sh")])]
         with mock.patch.object(session.subprocess, "check_output") as probe:

@@ -335,9 +335,32 @@ class ReceiptTests(unittest.TestCase):
                 self.assertEqual(verification.command_receipt_init(argparse.Namespace(path=path)), 0)
             payload = json.loads(path.read_text())
         self.assertEqual(payload["schemaVersion"], 2)
+        self.assertEqual(payload["artifactProofVersion"], verification.session.ARTIFACT_PROOF_VERSION)
         self.assertEqual(payload["status"], "running")
         self.assertEqual(payload["evidence"], {"status": "pending", "inputsBefore": {"source": "before"}})
         self.assertEqual(payload["buildPaths"], {"derivedData": "/products", "swiftPM": "/packages", "sourcePackages": "/sources"})
+
+    def test_stage_disappearance_still_finalizes_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            path = root / "artifacts/verification/stage/receipt.json"
+            path.parent.mkdir(parents=True)
+            original = {"runId": "stage", "status": "running", "steps": [],
+                        "toolchain": {"developerDir": str(root), "xcodeVersion": "test", "xcodeBuild": "build"},
+                        "invocation": {"preset": "build"},
+                        "evidence": {"status": "pending", "inputsBefore": {}}}
+            path.write_text(json.dumps(original))
+            with mock.patch.object(verification, "ROOT", root), \
+                    mock.patch.object(verification, "load_config", return_value={"artifactRoot": "artifacts/verification"}), \
+                    mock.patch.object(verification, "xcode_version", return_value=("test", "build")), \
+                    mock.patch.object(verification.session, "inputs", return_value={}):
+                code = verification.command_receipt_finish(argparse.Namespace(path=path, status="passed", exit_code=0, record_staged_app=True))
+            final = json.loads(path.read_text())
+        self.assertEqual(code, 76)
+        self.assertEqual(final["status"], "invalid")
+        self.assertEqual(final["exitCode"], 76)
+        self.assertTrue(final["finishedAt"])
+        self.assertFalse(final["deliveryEligible"])
 
     def test_working_tree_fingerprint_includes_untracked_file_contents(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

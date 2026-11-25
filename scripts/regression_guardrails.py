@@ -428,7 +428,13 @@ def inspect_workflow(path, payload, context):
     path = session.require_current_workflow(context.root, path, payload)
     records = []
     commands = dict(dev_workflow.full_profile(context.root))
-    global_problems = input_problems({"status": "invalid" if payload.get("evidenceStatus") == "invalid" else "valid",
+    active_steps = session.active_workflow_steps(payload)
+    workflow_problems = payload.get("evidenceProblems", [])
+    stage_only = bool(workflow_problems) and any(
+        step.get("name") == "stage-debug" and step.get("evidenceStatus") == "invalid"
+        and step.get("evidenceProblems") == workflow_problems for step in active_steps)
+    global_problems = input_problems({
+        "status": "invalid" if payload.get("evidenceStatus") == "invalid" and not stage_only else "valid",
         "inputsBefore": payload.get("inputsBefore"), "inputsAfter": payload.get("inputsAfter")}, context)
     if payload.get("schemaVersion") != 2:
         global_problems.append("Historical workflow schema")
@@ -449,14 +455,15 @@ def inspect_workflow(path, payload, context):
             evidence_reuse.verify_staged_version(context.root, context.inputs["head"])
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         global_problems.append(str(error))
-    active_steps = session.active_workflow_steps(payload)
+    stage_problems = []
     current_status = observed_status(dict(payload, steps=active_steps))
     try:
         for step, child_path, child in session.workflow_child_receipts(payload, context.root):
             if step.get("name") == "fixture-stability" and child_path != session.workflow_receipt_path(context.root, step["receipt"]):
                 global_problems.extend(session.receipt_artifact_problems(child, context.root, mutable_caches, context.identity))
-            if step.get("name") == "stage-debug" and not dev_workflow.staged_debug_matches(step, child, child_path):
-                global_problems.append("Staged app does not match the Debug build receipt")
+            if (step.get("name") == "stage-debug" and step.get("status") == "passed"
+                    and not dev_workflow.staged_debug_matches(step, child, child_path)):
+                stage_problems.append("Staged app does not match the Debug build receipt")
     except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError) as error:
         global_problems.append("Child evidence unavailable: " + str(error))
     for step in active_steps:
@@ -481,8 +488,10 @@ def inspect_workflow(path, payload, context):
                     problems.append("Workflow output missing or changed: " + str(output))
         except (OSError, ValueError, TypeError, RuntimeError) as error:
             problems.append(str(error))
-        if name == "stage-debug" and str(context.root / "build/GitX.app") not in step.get("outputs", {}):
-            problems.append("Staged Debug app identity is missing")
+        if name == "stage-debug":
+            problems.extend(stage_problems)
+            if step.get("status") == "passed" and str(context.root / "build/GitX.app") not in step.get("outputs", {}):
+                problems.append("Staged Debug app identity is missing")
         child["reasons"].extend(problems)
         child["validity"] = "valid" if not child["reasons"] else "invalid"
         if child["status"] == "unknown":
@@ -504,7 +513,7 @@ def inspect_workflow_blocker(path, payload, context):
     canonical_checks = {name for name, _ in dev_workflow.full_profile(context.root)} | {"whitespace"}
     if (path.is_symlink() or path.suffix != ".json" or path.parent.is_symlink() or path.parent.resolve() != artifact / "Coordination" or
             type(payload.get("schemaVersion")) is not int or payload["schemaVersion"] != 2 or
-            not session.valid_run_id(run_id) or not re.fullmatch(re.escape(run_id) + r"-[0-9a-f]{8}", path.stem) or
+            not session.matches_workflow_blocker(path, run_id) or
             payload.get("receipt") != str(path.resolve()) or
             payload.get("entry") != str(context.root / "scripts/dev_workflow.py") or
             payload.get("status") != "blocked" or type(payload.get("exitCode")) is not int or
@@ -549,11 +558,11 @@ def inspect_evidence(paths, context):
             path = session.workflow_receipt_path(context.root, original, workflow=workflow)
             payload = json.loads(path.read_text())
             if workflow:
-                records.extend(inspect_workflow(original, payload, context))
+                records.extend(inspect_workflow(path, payload, context))
             elif isinstance(payload, dict) and "workflowReceipt" in payload:
-                records.extend(inspect_workflow_blocker(original, payload, context))
+                records.extend(inspect_workflow_blocker(path, payload, context))
             else:
-                if not isinstance(payload, dict) or payload.get("artifactProofVersion") != session.ARTIFACT_PROOF_VERSION:
+                if not session.has_artifact_proof(payload):
                     raise ValueError("Historical receipt is for audit only")
                 records.append(inspect_receipt(path, context, managed=True))
         except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError, subprocess.SubprocessError) as error:

@@ -63,8 +63,10 @@ class BuildVersionTests(unittest.TestCase):
             if tag is not None:
                 subprocess.run(["git", "tag", tag], cwd=repository, env=fixture_environment, check=True)
 
-            info_plist = repository / "Info.plist"
-            with info_plist.open("wb") as stream:
+            template = repository / "Info.plist"
+            info_plist = repository / "DerivedFiles" / "GitX-Info.plist"
+            info_plist.parent.mkdir()
+            with template.open("wb") as stream:
                 plistlib.dump(
                     {
                         "CFBundleShortVersionString": "0",
@@ -72,29 +74,25 @@ class BuildVersionTests(unittest.TestCase):
                     },
                     stream,
                 )
-            environment = fixture_environment.copy()
-            environment.update(
-                {
-                    "TARGET_BUILD_DIR": str(repository),
-                    "INFOPLIST_PATH": info_plist.name,
-                }
-            )
+            original = template.read_bytes()
+            command = [str(ROOT / "scripts" / "set_build_version.sh"), str(template), str(info_plist)]
             if dirty:
                 (repository / "tracked.txt").write_text("modified\n")
             subprocess.run(
-                [str(ROOT / "scripts" / "set_build_version.sh")],
+                command,
                 cwd=repository,
-                env=environment,
+                env=fixture_environment,
                 check=True,
                 capture_output=True,
                 text=True,
             )
+            self.assertEqual(template.read_bytes(), original)
             if repeat:
                 os.utime(info_plist, ns=(123000000000, 123000000000))
                 before = info_plist.stat().st_mtime_ns
                 contents = info_plist.read_bytes()
-                subprocess.run([str(ROOT / "scripts" / "set_build_version.sh")], cwd=repository,
-                               env=environment, check=True, capture_output=True, text=True)
+                subprocess.run(command, cwd=repository,
+                               env=fixture_environment, check=True, capture_output=True, text=True)
                 self.assertEqual(info_plist.read_bytes(), contents)
                 self.assertEqual(info_plist.stat().st_mtime_ns, before)
             with info_plist.open("rb") as stream:
@@ -126,5 +124,7 @@ class BuildVersionTests(unittest.TestCase):
         script = ROOT / "scripts" / "set_build_version.sh"
 
         self.assertIn("${SRCROOT}/scripts/set_build_version.sh", project)
+        self.assertIn('"$(DERIVED_FILE_DIR)/GitX-Info.plist",', project)
+        self.assertEqual(project.count('INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/GitX-Info.plist";'), 2)
         self.assertNotIn("LATEST_TAG=$(git describe", project)
         self.assertTrue(os.access(script, os.X_OK))

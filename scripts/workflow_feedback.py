@@ -152,8 +152,6 @@ def script_test_patterns(paths, root):
             patterns.add(name)
         elif path.count("/") == 1 and name in SCRIPT_TESTS:
             patterns.update(SCRIPT_TESTS[name])
-        elif path.count("/") == 1 and name.endswith(".py") and name != "workflow_session.py" and (root / "scripts/tests" / ("test_" + name)).is_file():
-            patterns.add("test_" + name)
         else:
             return ["test*.py"]
     if any(not (root / "scripts/tests" / pattern).is_file() for pattern in patterns):
@@ -175,18 +173,38 @@ def test_file_selectors(root, paths):
         # The masker does not understand nested Swift block comments or raw
         # string delimiters. A conservative full plan is safe even when these
         # characters appear as ordinary text.
-        if path.endswith(".swift") and (re.search(r"/\*(?:(?!\*/).)*?/\*", contents, re.S) or '#"' in contents):
+        if path.endswith(".swift") and (re.search(r"/\*(?:(?!\*/).)*?/\*", contents, re.S) or '#"' in contents or '#/' in contents):
             return []
         # Mask ordinary comments and strings. For unsupported declaration
         # forms, keep the plan broad instead of trusting a partial match.
         masked = re.sub(r'/\*.*?\*/|//[^\n]*|""".*?"""|"(?:\\.|[^"\\])*"',
                         lambda match: " " * len(match[0]), contents, flags=re.S)
         if path.endswith(".swift"):
+            # An unmasked slash can be a bare regex delimiter. Broad execution
+            # is safer than reasoning from a partially masked source file.
+            if "/" in masked:
+                return []
+            top_level = []
+            depth = 0
+            for token in masked:
+                if token == "{":
+                    depth += 1
+                elif token == "}":
+                    depth -= 1
+                elif depth == 0:
+                    top_level.append(token)
+                if depth < 0:
+                    return []
+            if depth or re.search(r"\b(?:enum|struct|protocol|func|var|let|typealias|actor|operator|macro)\b",
+                                  "".join(top_level)):
+                return []
             if re.search(r"\bextension\s+|(?m:^\s*#(?:if|elseif|else|endif)\b)", masked):
                 return []
             classes = re.findall(
                 r"(?m)^[ \t]*(?:@\w+[ \t]+)*(?:(?:final|private|fileprivate|internal|public|open)[ \t]+)*"
                 r"class[ \t]+([a-zA-Z_]\w*)\s*:\s*(?:XCTest\.)?XCTestCase\b", masked)
+            if not all(re.search(r"\bfinal\s+class\s+" + re.escape(name) + r"\b", masked) for name in classes):
+                return []
             declarations = re.findall(r"\bclass\s+([a-zA-Z_]\w*)", masked)
         else:
             classes = re.findall(r"(?m)^\s*@interface\s+(\w+)\s*:\s*XCTestCase\b", masked)
