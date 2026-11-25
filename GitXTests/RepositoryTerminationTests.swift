@@ -285,6 +285,45 @@ final class RepositoryTerminationTests: XCTestCase {
         XCTAssertEqual(invocations, 2)
     }
 
+    func testDelayedDelegateRestartsTheWaitWhenWorkArrivesDuringHandoff() async throws {
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let forwarded = expectation(description: "The first handoff returns before its delegate call")
+        let accepted = expectation(description: "The next native handoff accepts after work drains")
+        weak var waitingPanel: NSPanel?
+        weak var coordinator: GitX.RepositoryTerminationCoordinator?
+        var invocations = 0
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: registry, sessions: { [] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {}, waitingPresented: { waitingPanel = $0 },
+            terminate: {
+                invocations += 1
+                if invocations == 1 {
+                    forwarded.fulfill()
+                } else {
+                    XCTAssertEqual(coordinator?.applicationShouldTerminate(), .terminateNow)
+                    accepted.fulfill()
+                }
+            }, reply: { _ in XCTFail("Neither native request requires a deferred reply") }
+        )
+        coordinator = owner
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [forwarded], timeout: 5)
+        let message = try XCTUnwrap(waitingPanel?.contentView?.subviews.compactMap { $0 as? NSTextField }.first)
+        XCTAssertTrue(message.stringValue.contains("Waiting for macOS to finish Quit"))
+
+        let activity = registry.trackContinuation()
+        XCTAssertEqual(owner.applicationShouldTerminate(), .terminateCancel)
+        let waitsForWork = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            message.stringValue.contains("repository mutation is still running")
+        }, object: nil)
+        await fulfillment(of: [waitsForWork], timeout: 5)
+        XCTAssertEqual(invocations, 1)
+        registry.finish(activity)
+        await fulfillment(of: [accepted], timeout: 5)
+        XCTAssertEqual(invocations, 2)
+    }
+
     func testQuitWaitsForUnrelatedSheetWithoutDiscardingRecovery() async throws {
         let session = try recovery()
         let registry = GitX.RepositoryLocalMutationRegistry()

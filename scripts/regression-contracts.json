@@ -4443,6 +4443,13 @@
         },
         {
           "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testDelayedDelegateRestartsTheWaitWhenWorkArrivesDuringHandoff",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Deliver the delegate callback after native Quit returns and require a visible local wait followed by a fresh handoff."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
           "identifier": "GitXTests/RepositoryTerminationTests/testCancellingQuitAnywayAfterHandoffPreservesTheReservedFetch",
           "role": "failure",
           "check": "correctness",
