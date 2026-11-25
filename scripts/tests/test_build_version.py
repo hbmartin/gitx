@@ -26,7 +26,8 @@ class BuildVersionTests(unittest.TestCase):
             self.assertEqual((foreign / ".git/config").read_bytes(), config)
             self.assertFalse((foreign / ".git/foreign-index").exists())
 
-    def run_version_script(self, tag: str | None = None, *, repeat: bool = False, dirty: bool = False) -> dict[str, object]:
+    def run_version_script(self, tag: str | None = None, *, repeat: bool = False, dirty: bool = False,
+                           template_fields: dict[str, object] | None = None) -> dict[str, object]:
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
             fixture_environment = fixture_git_environment()
@@ -68,7 +69,7 @@ class BuildVersionTests(unittest.TestCase):
             info_plist.parent.mkdir()
             with template.open("wb") as stream:
                 plistlib.dump(
-                    {
+                    template_fields if template_fields is not None else {
                         "CFBundleShortVersionString": "0",
                         "CFBundleVersion": "0",
                     },
@@ -110,6 +111,16 @@ class BuildVersionTests(unittest.TestCase):
     def test_tagged_checkout_preserves_release_version(self) -> None:
         info = self.run_version_script("v2.4.6")
 
+        self.assertTrue(str(info["CFBundleVersion"]).startswith("2.4.6.1 ["))
+
+    def test_stamps_missing_and_existing_version_keys(self) -> None:
+        info = self.run_version_script("v2.4.6", repeat=True, template_fields={
+            "CFBundleBuildVersion": 8,
+            "CFBundleIdentifier": "test.gitx",
+        })
+        self.assertEqual(info["CFBundleIdentifier"], "test.gitx")
+        self.assertEqual(info["CFBundleBuildVersion"], info["CFBundleShortVersionString"])
+        self.assertIn("v2.4.6", info["CFBundleBuildVersion"])
         self.assertTrue(str(info["CFBundleVersion"]).startswith("2.4.6.1 ["))
 
     def test_unchanged_version_does_not_rewrite_the_plist(self) -> None:

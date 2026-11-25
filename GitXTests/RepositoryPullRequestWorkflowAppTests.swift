@@ -3144,7 +3144,7 @@ private actor CompletionMutationService: RepositoryPullRequestMutationServing {
         await editGate.release(outcome)
     }
 
-    func syncFork(accountID _: ForgeAccountID, plan _: ForgeSyncForkPlan) async throws -> RepositorySyncForkOutcome {
+    func syncFork(accountID _: ForgeAccountID, plan _: ForgeSyncForkPlan, onAdmission _: @Sendable () -> Void) async throws -> RepositorySyncForkOutcome {
         throw CompletionError.unexpected
     }
 
@@ -4106,7 +4106,8 @@ private actor CapabilityOnlyMutationService: RepositoryPullRequestMutationServin
 
     func syncFork(
         accountID _: ForgeAccountID,
-        plan _: ForgeSyncForkPlan
+        plan _: ForgeSyncForkPlan,
+        onAdmission _: @Sendable () -> Void
     ) async throws -> RepositorySyncForkOutcome {
         throw CapabilityOnlyError.unexpectedMutation
     }
@@ -4152,7 +4153,8 @@ private struct GatedPreparationMutationService: RepositoryPullRequestMutationSer
 
     func syncFork(
         accountID _: ForgeAccountID,
-        plan _: ForgeSyncForkPlan
+        plan _: ForgeSyncForkPlan,
+        onAdmission _: @Sendable () -> Void
     ) async throws -> RepositorySyncForkOutcome {
         throw GatedError.unexpectedCall
     }
@@ -4195,7 +4197,8 @@ private struct ImmediatePreparationMutationService: RepositoryPullRequestMutatio
 
     func syncFork(
         accountID _: ForgeAccountID,
-        plan _: ForgeSyncForkPlan
+        plan _: ForgeSyncForkPlan,
+        onAdmission _: @Sendable () -> Void
     ) async throws -> RepositorySyncForkOutcome {
         throw ImmediateError.unexpectedCall
     }
@@ -4238,7 +4241,8 @@ private struct FailingPreparationMutationService: RepositoryPullRequestMutationS
 
     func syncFork(
         accountID _: ForgeAccountID,
-        plan _: ForgeSyncForkPlan
+        plan _: ForgeSyncForkPlan,
+        onAdmission _: @Sendable () -> Void
     ) async throws -> RepositorySyncForkOutcome {
         throw RepositoryPullRequestServiceError.nativeCreationUnavailable
     }
@@ -4465,9 +4469,11 @@ private struct StubPullRequestMutationService: RepositoryPullRequestMutationServ
 
     func syncFork(
         accountID _: ForgeAccountID,
-        plan: ForgeSyncForkPlan
+        plan: ForgeSyncForkPlan,
+        onAdmission: @Sendable () -> Void
     ) async throws -> RepositorySyncForkOutcome {
-        RepositorySyncForkOutcome(plan: plan, serverSummary: "Fork updated")
+        onAdmission()
+        return RepositorySyncForkOutcome(plan: plan, serverSummary: "Fork updated")
     }
 
     private enum StubError: Error { case unexpectedCall }
@@ -4545,7 +4551,7 @@ private actor AuthorizationSyncMutationService: RepositoryPullRequestMutationSer
         throw RepositoryPullRequestServiceError.nativeCreationUnavailable
     }
 
-    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) async throws -> RepositorySyncForkOutcome {
+    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan, onAdmission _: @Sendable () -> Void) async throws -> RepositorySyncForkOutcome {
         calls += 1
         let metadata = GitHubResponseMetadata(statusCode: 403,
                                               rateLimit: GitHubRateLimitParser.parse(statusCode: 403, headers: [:], receivedAt: .distantPast),

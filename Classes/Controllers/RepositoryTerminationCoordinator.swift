@@ -9,7 +9,12 @@ final class RepositoryTerminationCoordinator: NSObject {
         static let shared: RepositoryTerminationCoordinator = .init(
             remoteDecision: { ForgeMutationQuitCoordinator.shared.applicationShouldTerminate() },
             remoteCancelled: { ForgeMutationQuitCoordinator.shared.cancelApplicationTermination() },
-            hasBlockingSheets: { NSApp.windows.contains { $0.isVisible && $0.attachedSheet != nil } },
+            hasBlockingSheets: { ownedSheets in
+                NSApp.windows.contains { window in
+                    guard window.isVisible, let sheet = window.attachedSheet else { return false }
+                    return !ownedSheets.contains(ObjectIdentifier(sheet))
+                }
+            },
             reply: { NSApp.reply(toApplicationShouldTerminate: $0) }
         )
     #endif
@@ -39,19 +44,28 @@ final class RepositoryTerminationCoordinator: NSObject {
     private let remoteCancelled: () -> Void
     private let reply: (Bool) -> Void
     private let terminate: () -> Void
-    private let hasBlockingSheets: () -> Bool
+    private let hasBlockingSheets: (Set<ObjectIdentifier>) -> Bool
     private var appKitReplyPending = false
-    private var handedOff = false
+    private enum NativeHandoff: Equatable {
+        case idle
+        case queued(UUID)
+        case awaitingDelegate(UUID)
+        case cancelled
+    }
+
+    private var handoff: NativeHandoff = .idle
+    private var nativeInvocationInProgress = false
+    private var retryRequested = false
+    private var probeScheduled = false
     private var activityObservation: UUID?
     private let waitingPresented: (NSPanel) -> Void
     private var attempt: UUID?
     private var terminationAccepted = false
     private var approved: [UUID: [RepositoryPullRequestRecoverySession.Protection]] = [:]
-    private var remoteApproved = false
+    private var remoteApproval: ForgeMutationQuitCoordinator.QuitDecision?
     private var waitingForRemote = false
     private var advancing: UUID?
     private var waitingPanel: NSPanel?
-    private var activityWait: CheckedContinuation<Bool, Never>?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryTermination")
 
     init(mutations: RepositoryLocalMutationRegistry = .shared,
@@ -59,7 +73,7 @@ final class RepositoryTerminationCoordinator: NSObject {
          remoteDecision: @escaping () -> NSApplication.TerminateReply,
          remoteCancelled: @escaping () -> Void,
          waitingPresented: @escaping (NSPanel) -> Void = { _ in },
-         hasBlockingSheets: @escaping () -> Bool = { false },
+         hasBlockingSheets: @escaping (Set<ObjectIdentifier>) -> Bool = { _ in false },
          terminate: @escaping () -> Void = { NSApp.terminate(nil) },
          reply: @escaping (Bool) -> Void)
     {
@@ -84,13 +98,31 @@ final class RepositoryTerminationCoordinator: NSObject {
         if terminationAccepted {
             return .terminateNow
         }
-        if let attempt, handedOff, readyForFinalDecision {
-            finish(attempt, allowed: true)
-            return .terminateNow
+        if handoff == .cancelled {
+            handoff = .idle
+            hideWaitingPanel()
+            if !nativeInvocationInProgress {
+                scheduleRequestedRetry()
+            }
+            return .terminateCancel
         }
+        if let attempt, handoff == .awaitingDelegate(attempt) {
+            handoff = .idle
+            if presentationBlocker == nil, acceptIfReady(attempt) {
+                return .terminateNow
+            }
+            restorePresentations()
+            if !nativeInvocationInProgress {
+                scheduleAdvance(attempt)
+            }
+            return .terminateCancel
+        }
+
+        // A system-origin request may arrive before our queued menu call starts.
+        handoff = .idle
         appKitReplyPending = true
         if let attempt {
-            Task { [self] in await advance(attempt) }
+            scheduleAdvance(attempt)
         } else {
             beginAttempt()
         }
@@ -101,32 +133,45 @@ final class RepositoryTerminationCoordinator: NSObject {
     /// asks for consent first, while those sheets can still present that consent.
     func requestTermination() {
         guard !terminationAccepted else { terminate(); return }
-        beginAttempt()
+        if attempt != nil || retryRequested {
+            waitingPanel?.makeKeyAndOrderFront(nil)
+            return
+        }
+        if handoff == .cancelled || nativeInvocationInProgress {
+            retryRequested = true
+            showNativeWait()
+            scheduleCancellationProbe()
+        } else {
+            beginAttempt()
+        }
     }
 
     private func beginAttempt() {
-        guard attempt == nil else { return }
-        handedOff = false
+        guard attempt == nil, handoff == .idle else { return }
         let identity = UUID()
         attempt = identity
         approved.removeAll()
-        remoteApproved = false
+        remoteApproval = nil
         waitingForRemote = false
         mutations.sealAdmission()
         logger.notice("Began termination attempt with local admission sealed")
+        scheduleAdvance(identity)
+    }
+
+    func remoteTerminationReply(_ decision: ForgeMutationQuitCoordinator.QuitDecision) {
+        guard let attempt, waitingForRemote else { return }
+        waitingForRemote = false
+        guard decision != .cancelled else { finish(attempt, allowed: false); return }
+        remoteApproval = decision
+        scheduleAdvance(attempt)
+    }
+
+    private func scheduleAdvance(_ identity: UUID) {
         Task { [self] in await advance(identity) }
     }
 
-    func remoteTerminationReply(_ shouldTerminate: Bool) {
-        guard let attempt, waitingForRemote else { return }
-        waitingForRemote = false
-        guard shouldTerminate else { finish(attempt, allowed: false); return }
-        remoteApproved = true
-        Task { [self] in await advance(attempt) }
-    }
-
     private func advance(_ identity: UUID) async {
-        guard attempt == identity, advancing != identity else { return }
+        guard attempt == identity, advancing != identity, handoff == .idle, !nativeInvocationInProgress else { return }
         advancing = identity
         defer {
             if advancing == identity {
@@ -134,19 +179,12 @@ final class RepositoryTerminationCoordinator: NSObject {
             }
         }
         while attempt == identity {
-            if mutations.hasActivity(includingReservedFetches: remoteApproved) {
+            if mutations.hasActivity(includingReservedFetches: remoteApproval == .waitForFetches) {
                 showWaitingPanel()
-                guard attempt == identity else { return }
-                let completed = await withCheckedContinuation {
-                    activityWait = $0
-                    // Work can settle while AppKit is presenting the waiting panel.
-                    activityDidChange()
-                }
-                guard completed, attempt == identity else { return }
-                hideWaitingPanel()
-                continue
+                return
             }
             if let session = sessions().first(where: { approved[$0.identity] != $0.protectionState }) {
+                hideWaitingPanel()
                 let state = session.protectionState
                 let allowed = await withCheckedContinuation { continuation in
                     var replied = false
@@ -163,12 +201,14 @@ final class RepositoryTerminationCoordinator: NSObject {
                 approved[session.identity] = state
                 continue
             }
-            if !remoteApproved {
+            if remoteApproval == nil {
+                guard !waitingForRemote else { return }
+                hideWaitingPanel()
                 waitingForRemote = true
                 let decision = remoteDecision()
                 guard attempt == identity else { return }
                 switch decision {
-                case .terminateNow: remoteApproved = true; waitingForRemote = false
+                case .terminateNow: remoteApproval = .waitForFetches; waitingForRemote = false
                 case .terminateLater:
                     // A native modal remote choice may deliver completion before
                     // its original delegate call returns.
@@ -182,43 +222,142 @@ final class RepositoryTerminationCoordinator: NSObject {
             }
             guard readyForFinalDecision else { continue }
             if appKitReplyPending {
-                finish(identity, allowed: true)
+                if acceptIfReady(identity) {
+                    return
+                }
+                continue
+            }
+            if let blocker = presentationBlocker {
+                showWaitingPanel(message: blocker)
                 return
             }
-            guard !handedOff else { return }
-            let canHandoff = sessions().map { $0.preparePresentationsForTermination() }.allSatisfy { $0 }
-            guard canHandoff, !hasBlockingSheets() else {
-                showWaitingPanel(message: "Finish the open sheet to continue quitting, or choose Cancel Quit to keep working.")
-                return
-            }
-            guard readyForFinalDecision else { continue }
-            handedOff = true
-            terminate()
-            if attempt == identity, !appKitReplyPending {
-                showWaitingPanel(message: "Waiting for macOS to finish Quit. Choose Cancel Quit to keep working.")
-            }
+            handoff = .queued(identity)
+            scheduleOnDefaultRunLoop { [weak self] in self?.performHandoff(identity) }
             return
         }
     }
 
     private var readyForFinalDecision: Bool {
-        remoteApproved && !mutations.hasActivity(includingReservedFetches: true) && sessions().allSatisfy { approved[$0.identity] == $0.protectionState }
+        remoteApproval != nil && !mutations.hasActivity(includingReservedFetches: remoteApproval == .waitForFetches)
+            && sessions().allSatisfy { approved[$0.identity] == $0.protectionState }
+    }
+
+    private var presentationBlocker: String? {
+        let editors = sessions().flatMap(\.terminationEditors)
+        let ownedSheets = Set(editors.compactMap { editor -> ObjectIdentifier? in
+            guard let window = editor.window, window.sheetParent != nil else { return nil }
+            return ObjectIdentifier(window)
+        })
+        let editorBlockers = editors.compactMap(\.terminationBlocker)
+        if editorBlockers.contains(.sheet) || hasBlockingSheets(ownedSheets) {
+            return "Finish the open sheet to continue quitting, or choose Cancel Quit to keep working."
+        }
+        if editorBlockers.contains(.draftSave) {
+            return "A recovered edit is still being saved. Wait for the draft save to finish, or choose Cancel Quit to keep working."
+        }
+        return nil
+    }
+
+    private func performHandoff(_ identity: UUID) {
+        guard attempt == identity, handoff == .queued(identity) else { return }
+        handoff = .idle
+        guard readyForFinalDecision, presentationBlocker == nil else {
+            scheduleAdvance(identity)
+            return
+        }
+        let suspended = sessions().map { $0.preparePresentationsForTermination() }.allSatisfy { $0 }
+        guard attempt == identity, suspended, readyForFinalDecision, presentationBlocker == nil else {
+            restorePresentations()
+            scheduleAdvance(identity)
+            return
+        }
+        handoff = .awaitingDelegate(identity)
+        invokeNativeTermination()
+    }
+
+    private func invokeNativeTermination(isCancellationProbe: Bool = false) {
+        nativeInvocationInProgress = true
+        terminate()
+        nativeInvocationInProgress = false
+        if let attempt {
+            if handoff == .awaitingDelegate(attempt) {
+                showNativeWait()
+            } else if handoff == .idle {
+                scheduleAdvance(attempt)
+            }
+        } else if handoff == .idle {
+            scheduleRequestedRetry()
+        } else if handoff == .cancelled, retryRequested {
+            showNativeWait()
+            if !isCancellationProbe {
+                scheduleCancellationProbe()
+            }
+        }
+    }
+
+    private func scheduleCancellationProbe() {
+        guard handoff == .cancelled, !nativeInvocationInProgress, !probeScheduled else { return }
+        probeScheduled = true
+        scheduleOnDefaultRunLoop { [weak self] in
+            guard let self else { return }
+            self.probeScheduled = false
+            guard self.retryRequested, self.handoff == .cancelled else { return }
+            self.invokeNativeTermination(isCancellationProbe: true)
+        }
+    }
+
+    private func scheduleRequestedRetry() {
+        guard retryRequested, handoff == .idle else { return }
+        scheduleOnDefaultRunLoop { [weak self] in
+            guard let self, self.retryRequested, self.handoff == .idle, !self.nativeInvocationInProgress else { return }
+            self.retryRequested = false
+            self.beginAttempt()
+        }
+    }
+
+    private func scheduleOnDefaultRunLoop(_ action: @escaping @MainActor @Sendable () -> Void) {
+        // The main run loop's default mode runs after AppKit's nested Quit loop unwinds.
+        RunLoop.main.perform(inModes: [.default]) {
+            // swift6-safety-justification: RunLoop.main executes its scheduled blocks on the main thread.
+            MainActor.assumeIsolated { action() }
+        }
+    }
+
+    private func showNativeWait() {
+        showWaitingPanel(message: "Waiting for macOS to finish Quit. Choose Cancel Quit to keep working.")
     }
 
     @objc private func sheetAvailabilityChanged(_: Notification) {
-        guard let attempt, !handedOff, !appKitReplyPending else { return }
-        Task { [self] in await advance(attempt) }
+        if let attempt {
+            scheduleAdvance(attempt)
+        }
     }
 
     private func activityDidChange() {
-        guard !mutations.hasActivity(includingReservedFetches: remoteApproved), let waiting = activityWait else { return }
-        activityWait = nil
-        waiting.resume(returning: true)
+        if let attempt {
+            scheduleAdvance(attempt)
+        }
     }
 
     @objc func cancelPendingQuit() {
-        guard let attempt else { return }
-        finish(attempt, allowed: false)
+        if let attempt {
+            finish(attempt, allowed: false)
+        } else if retryRequested {
+            retryRequested = false
+            hideWaitingPanel()
+        }
+    }
+
+    private func acceptIfReady(_ identity: UUID) -> Bool {
+        guard attempt == identity, readyForFinalDecision,
+              mutations.commitTermination(waitForReservedFetches: remoteApproval == .waitForFetches)
+        else { return false }
+        finish(identity, allowed: true)
+        return true
+    }
+
+    private func restorePresentations() {
+        sessions().forEach { $0.restorePresentationsAfterCancelledTermination() }
     }
 
     private func finish(_ identity: UUID, allowed: Bool) {
@@ -226,9 +365,7 @@ final class RepositoryTerminationCoordinator: NSObject {
         attempt = nil
         let needsAppKitReply = appKitReplyPending
         appKitReplyPending = false
-        handedOff = false
-        let waiting = activityWait; activityWait = nil
-        waiting?.resume(returning: false)
+        handoff = !allowed && handoff == .awaitingDelegate(identity) ? .cancelled : .idle
         hideWaitingPanel()
         approved.removeAll()
         waitingForRemote = false
@@ -236,10 +373,8 @@ final class RepositoryTerminationCoordinator: NSObject {
             terminationAccepted = true
             sessions().forEach { $0.completeAcceptedTermination() }
         } else {
-            for session in sessions() {
-                session.cancelPendingCloseDecision()
-                session.restorePresentationsAfterCancelledTermination()
-            }
+            sessions().forEach { $0.cancelPendingCloseDecision() }
+            restorePresentations()
             mutations.reopenAdmission()
             remoteCancelled()
         }

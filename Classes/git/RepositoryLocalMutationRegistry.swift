@@ -71,12 +71,15 @@ final nonisolated class RepositoryLocalMutationRegistry: @unchecked Sendable {
         notify.forEach { $0() }
     }
 
-    func abandonReservedFetchesForQuit() {
-        let notify = lock.withLock {
+    /// Final AppKit approval and the start of a reserved fetch share the same lock.
+    func commitTermination(waitForReservedFetches: Bool) -> Bool {
+        lock.withLock {
+            guard sealed, active.isEmpty,
+                  !waitForReservedFetches || !reservedFetches.values.contains(true)
+            else { return false }
             reservedFetches.removeAll()
-            return Array(observers.values)
+            return true
         }
-        notify.forEach { $0() }
     }
 
     @discardableResult

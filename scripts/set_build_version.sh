@@ -32,12 +32,9 @@ echo "BUILD VERSION: $build_version"
 echo "SHORT VERSION: $short_version"
 echo "BUNDLE VERSION: $bundle_version"
 
-/usr/libexec/PlistBuddy -x \
-	-c "Delete :CFBundleShortVersionString" \
-	-c "Add :CFBundleShortVersionString string $build_version" \
-	-c "Delete :CFBundleVersion" \
-	-c "Add :CFBundleVersion string $bundle_version" \
-	-c "Add :CFBundleBuildVersion string $build_version" "$info_plist"
+/usr/bin/plutil -replace CFBundleShortVersionString -string "$build_version" "$info_plist"
+/usr/bin/plutil -replace CFBundleVersion -string "$bundle_version" "$info_plist"
+/usr/bin/plutil -replace CFBundleBuildVersion -string "$build_version" "$info_plist"
 
 # Leave the existing input untouched when neither its template nor its version changed.
 if ! cmp -s "$info_plist" "$output"; then

@@ -4357,7 +4357,7 @@
     {
       "id": "CLOSE-001",
       "family": "Repository close consent before teardown",
-      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes. Preflight consent is borrowed only during synchronous callback forwarding and actual teardown; abandoned preflight preserves recovery and cannot authorize later closure. Repository moves transfer exact recovered content, original draft identity and admitted persistence to standalone recovery before obsolete-document teardown. Native Quit waits for started local mutations, seals new admission, composes existing remote choices and revalidates every attached or detached recovery before its one final reply. Cancel Quit and Keep Editing preserve work and text; preflight never discards text. Menu Quit may suspend presentations before AppKit takes over. Recovery survives if AppKit delays or never calls back, and cancelling restores editor ownership. Only the affirmative AppKit decision discards approved recovery. A reserved Sync Fork fetch preserves the Forge Quit choices and an admitted fetch finishes even when admission is sealed.",
+      "invariant": "Window close, direct document close, document preflight, Close All and file-presenter deletion share a coalesced decision against the original document. Declining preserves registration, index ownership and the file presenter. Accepted closure runs once; stale callbacks cannot close a replacement. Recovery writes retain their result across Keep Editing, and accepted closure suppresses late UI without cancelling admitted writes. Preflight consent is borrowed only during synchronous callback forwarding and actual teardown; abandoned preflight preserves recovery and cannot authorize later closure. Repository moves transfer exact recovered content, original draft identity and admitted persistence to standalone recovery before obsolete-document teardown. Native Quit waits for started local mutations, seals new admission, composes existing remote choices and revalidates every attached or detached recovery before its one final reply. Cancel Quit and Keep Editing preserve work and text; preflight never discards text. Menu Quit may suspend presentations before AppKit takes over. Recovery survives if AppKit delays or never calls back, and cancelling restores editor ownership. Only the affirmative AppKit decision discards approved recovery. A revoked native handoff refuses its delayed callback before a later menu attempt asks for fresh consent. Late local work forces a new native handoff after it drains. Unrelated sheets and recovery saves leave attached editors visible. A reserved Sync Fork fetch remains eligible until the final Quit Anyway decision and started fetches drain even when admission is sealed.",
       "rootCause": "A window-only close guard runs after NSDocument has already torn down its document, while independent entry points duplicate consent and repeated window close can release AppKit state twice.",
       "sourcePaths": [
         "Classes/Controllers/PBGitRepositoryDocument.h",
@@ -4391,6 +4391,41 @@
           "role": "boundary",
           "check": "correctness",
           "oracle": "Accept menu preflight without an AppKit callback, cancel Quit, and require the exact protection and reopened mutation admission."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testCancelledMenuHandoffRejectsItsDelayedDelegate",
+          "role": "failure",
+          "check": "correctness",
+          "oracle": "Cancel an unanswered menu handoff and require its delayed delegate call to reject without discarding exact recovery."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testFreshQuitRefusesTheCancelledHandoffBeforeSeekingNewConsent",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive a cancellation-only delegate callback before requesting fresh recovery consent exactly once for another menu Quit."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testMenuHandoffDefersAgainWhenActivityArrivesAtTheDelegate",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Admit late work at the delegate boundary and require a cancellable wait followed by a new native handoff."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testCancellingQuitAnywayAfterHandoffPreservesTheReservedFetch",
+          "role": "failure",
+          "check": "correctness",
+          "oracle": "Approve the remote choice and cancel while AppKit is pending; the original Sync Fork reservation can still start."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testWaitingForADraftSaveKeepsTheAttachedEditorVisible",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Hold a recovery save and check the draft-specific wait, attached editor and exact content through Cancel Quit."
         },
         {
           "source": "GitXTests/RepositoryTerminationTests.swift",
@@ -5091,6 +5126,20 @@
           "role": "boundary",
           "check": "core",
           "oracle": "Exercise each active request and stale rows against the pure request policy without starting the application."
+        },
+        {
+          "source": "GitXCore/Tests/GitXCoreTests/ReflogBrowserRequestPolicyTests.swift",
+          "identifier": "GitXCoreTests/ReflogBrowserRequestPolicyTests/testPreviewAuthorityAndRefreshRetryFollowTheRepositoryRevision",
+          "role": "boundary",
+          "check": "core",
+          "oracle": "Reject stale reset consent and suppress retries only for the failed refresh revision."
+        },
+        {
+          "source": "GitXTests/ReflogBrowserTests.swift",
+          "identifier": "GitXTests/ReflogBrowserTests/testResetModeSheetCannotReplaceAnAutomaticRefresh",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Confirm an invalidated reset mode during a held reload and keep the retry notice visible after the new rows appear."
         },
         {
           "source": "GitXTests/ReflogBrowserTests.swift",

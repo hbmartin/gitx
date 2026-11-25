@@ -2011,7 +2011,7 @@
             let waitCoordinator = ForgeMutationQuitCoordinator(
                 persistence: persistence,
                 choiceProvider: { _ in .wait },
-                terminationReply: { replies.append($0) }
+                terminationReply: { replies.append($0 != .cancelled) }
             )
             let first = try waitCoordinator.register(
                 accountID: fixture.accountID,
@@ -2034,7 +2034,7 @@
             let quitCoordinator = ForgeMutationQuitCoordinator(
                 persistence: persistence,
                 choiceProvider: { _ in .quitAnyway },
-                terminationReply: { quitReplies.append($0) }
+                terminationReply: { quitReplies.append($0 != .cancelled) }
             )
             _ = try quitCoordinator.register(
                 accountID: fixture.accountID,
@@ -2901,9 +2901,11 @@
 
         func syncFork(
             accountID _: ForgeAccountID,
-            plan: ForgeSyncForkPlan
+            plan: ForgeSyncForkPlan,
+            onAdmission: @Sendable () -> Void
         ) async throws -> RepositorySyncForkOutcome {
-            RepositorySyncForkOutcome(plan: plan, serverSummary: "Fork updated")
+            onAdmission()
+            return RepositorySyncForkOutcome(plan: plan, serverSummary: "Fork updated")
         }
     }
 
@@ -3058,9 +3060,11 @@
 
         func syncFork(
             accountID _: ForgeAccountID,
-            plan: ForgeSyncForkPlan
+            plan: ForgeSyncForkPlan,
+            onAdmission: @Sendable () -> Void
         ) async throws -> RepositorySyncForkOutcome {
-            RepositorySyncForkOutcome(plan: plan, serverSummary: "Fork updated")
+            onAdmission()
+            return RepositorySyncForkOutcome(plan: plan, serverSummary: "Fork updated")
         }
     }
 

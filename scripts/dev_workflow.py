@@ -235,6 +235,9 @@ def admitted_failure_receipt(path, payload_getter, producer, attempt_started):
     """Publish blocked state before the enclosing directory lease is released."""
     try:
         yield
+    except KeyboardInterrupt:
+        finish_stopped(path, payload_getter(), 130, None, attempt_started)
+        raise
     except (session.ResourceBusy, session.ResourceDefinitionError) as error:
         payload = payload_getter()
         payload.update(session.resource_failure_fields(error), producer=producer,
@@ -397,7 +400,10 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
     directory = path.parent
     pending = dict(commands)
     running = {}
+    completed = {}
     stopped = 0
+    observed_failure = None
+    snapshot_wait = None
     last_failure = None
     cancelled = None
     sent_interrupt = False
@@ -407,29 +413,64 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
         nonlocal cancelled
         cancelled = signum
 
+    def snapshot():
+        nonlocal snapshot_wait
+        try:
+            current = parallel_inputs(root, payload["runId"], 0)
+        except session.ResourceBusy as error:
+            children = {prepared[4] for _, prepared in running.values()}
+            owner = error.owner.get("runId")
+            internal = any(owner == child or (owner or "").startswith(child + "-") for child in children)
+            if snapshot_wait is None or snapshot_wait[0] != owner:
+                snapshot_wait = (owner, time.monotonic())
+            budget = args.timeout if internal else getattr(args, "wait_for_resources", 0)
+            if not cancelled and time.monotonic() - snapshot_wait[1] >= budget:
+                raise
+            return None
+        snapshot_wait = None
+        return current
+
     for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         originals[signum] = signal.signal(signum, interrupt)
     try:
-        while pending or running:
+        while pending or running or completed:
             for name, (process, prepared) in list(running.items()):
                 status = process.poll()
                 if status is None:
                     continue
                 del running[name]
                 status = 128 - status if status < 0 else status
-                after = parallel_inputs(root, payload["runId"], args.timeout)
-                status, step = record_check(root, path, payload, name, *prepared, status, after=after)
-                if status and not stopped:
-                    stopped, last_failure = status, step
+                completed[name] = (prepared, status)
+                if status and not observed_failure and not sent_interrupt:
+                    observed_failure = (status, {"name": name})
             if cancelled and not sent_interrupt:
-                stopped = stopped or 128 + cancelled
                 sent_interrupt = True
                 for process, _ in running.values():
                     if process.poll() is None:
                         process.terminate()
+
+            if completed:
+                # A child can finish while its peer still holds the build lease.
+                # Keep the exit status, but publish proof only from a coherent snapshot.
+                try:
+                    after = snapshot()
+                except session.ResourceBusy:
+                    if observed_failure:
+                        return (stopped, last_failure) if stopped else observed_failure
+                    raise
+                if after is not None:
+                    for name, (prepared, status) in completed.items():
+                        status, step = record_check(root, path, payload, name, *prepared, status, after=after)
+                        if status and not stopped and (not cancelled or (observed_failure and name == observed_failure[1]["name"])):
+                            stopped, last_failure = status, step
+                    completed.clear()
+            if cancelled:
+                if stopped:
+                    return stopped, last_failure
+                return observed_failure or (128 + cancelled, None)
             if stopped and not running:
                 return stopped, last_failure
-            if not stopped:
+            if not stopped and not completed and not observed_failure:
                 # Start analysis before offscreen packages once the compiler prerequisites settle.
                 priority = sorted(pending, key=lambda name: name != "analyze")
                 for name in priority:
@@ -437,8 +478,10 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
                         break
                     if not permitted_check(name, running, pending):
                         continue
+                    current = snapshot()
+                    if current is None:
+                        break
                     command = pending.pop(name)
-                    current = parallel_inputs(root, payload["runId"], args.timeout)
                     if session.changed_inputs(payload["inputsBefore"], current):
                         stopped = 76
                         last_failure = {"evidenceStatus": "invalid", "evidenceProblems": ["Verification inputs changed before " + name]}
@@ -461,7 +504,7 @@ def execute_parallel(root, path, payload, args, commands, selection, env, prior_
                     started = time.monotonic()
                     process = subprocess.Popen(supervisor, env=os.environ | child_env, cwd=root, start_new_session=True)
                     running[name] = (process, (command, current, selection["toolchain"], reason, child_id, started))
-            if running:
+            if running or completed or (pending and not stopped):
                 time.sleep(.15)
         return stopped or (128 + cancelled if cancelled else 0), last_failure
     finally:
@@ -526,7 +569,7 @@ def verify(args):
         if path.exists():
             raise ValueError("Run already exists; use --resume or a fresh run ID")
         payload = {"schemaVersion": 2, "runId": run_id, "startedAt": records.now(), "profile": args.profile,
-                   "steps": [], "status": "running", "inputsBefore": session.inputs(root)}
+                   "steps": [], "status": "running"}
     owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(path), "producer": session.producer_identity()}
     previous_caches = None
     owned_directory = False
@@ -553,8 +596,9 @@ def verify(args):
                            artifactProofVersion=session.ARTIFACT_PROOF_VERSION, resources=sorted(leases.held),
                            scope="full" if selection["deliveryEligible"] else "partial", selection=selection,
                            selectedChecks=selection["selectedChecks"],
-                           inputsBefore=parallel_inputs(root, run_id, args.timeout) if getattr(args, "jobs", 1) == 2 else session.inputs(root),
                            resourceWaitSeconds=round(leases.wait_seconds, 3), executedChecks=[], reusedChecks=[])
+            payload["inputsBefore"] = (parallel_inputs(root, run_id, getattr(args, "wait_for_resources", 0))
+                                       if getattr(args, "jobs", 1) == 2 else session.inputs(root))
             session.atomic_json(path, payload)
             if origin:
                 origin_path = directory.parent / origin / "workflow.json"
@@ -594,6 +638,7 @@ def verify(args):
                 stage = to_execute
             proof_paths = resources_for(commands, directory, root) if parallel else []
             if parallel:
+                proof_paths.append(session.shared_xcode_build_resource(root))
                 for name in OFFSCREEN_BUILDS & dict(commands).keys():
                     proof_paths += list(offscreen_environment(root, name, selection["toolchain"]).values())
             proof_lease = session.Leases(proof_paths, owner, inherited=leases.held,
@@ -663,6 +708,8 @@ def verify(args):
                 print(f"Checks: {len(payload['executedChecks'])} executed, {len(payload['reusedChecks'])} reused; "
                       f"{payload['attemptDurationSeconds']:.1f}s; delivery eligible: {payload['deliveryEligible']}")
                 print(f"Local verification passed. Receipt: {path}")
+    except KeyboardInterrupt:
+        return 130
     except (session.ResourceBusy, session.ResourceDefinitionError) as error:
         failure = session.resource_failure_fields(error)
         status = failure["exitCode"]

@@ -747,7 +747,8 @@ import OSLog // swiftlint:disable:this unused_import
 
         func syncFork(
             accountID _: ForgeAccountID,
-            plan _: ForgeSyncForkPlan
+            plan _: ForgeSyncForkPlan,
+            onAdmission _: @Sendable () -> Void
         ) async throws -> RepositorySyncForkOutcome {
             throw RepositoryPullRequestServiceError.nativeCreationUnavailable
         }
@@ -798,11 +799,13 @@ import OSLog // swiftlint:disable:this unused_import
 
         func syncFork(
             accountID: ForgeAccountID,
-            plan: ForgeSyncForkPlan
+            plan: ForgeSyncForkPlan,
+            onAdmission: @Sendable () -> Void
         ) async throws -> RepositorySyncForkOutcome {
             guard accountID == expectedAccountID, plan == expectedPlan else {
                 throw Milestone2UITestHarnessError.unexpectedSyncForkIntent
             }
+            onAdmission()
             return RepositorySyncForkOutcome(
                 plan: plan,
                 serverSummary: "GitHub synchronized the fork from its parent."

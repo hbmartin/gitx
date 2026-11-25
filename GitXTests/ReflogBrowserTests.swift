@@ -108,12 +108,18 @@ final class ReflogBrowserTests: XCTestCase {
         let reset = try control("Reset", in: browser.controller, as: NSButton.self)
         XCTAssertFalse(reset.isEnabled)
         XCTAssertTrue(browser.controller.isBusy)
+        XCTAssertTrue(browser.controller.status?.contains("try Preview Reset again") == true)
         try gate.open()
         await refresh.value
         let popup = try control("Reference", in: browser.controller, as: NSPopUpButton.self)
         XCTAssertTrue(popup.itemTitles.contains("refresh-branch"))
         XCTAssertNil(browser.window.attachedSheet)
         XCTAssertTrue(reset.isEnabled)
+        XCTAssertTrue(browser.controller.status?.contains("try Preview Reset again") == true)
+        try attachScreenshot(of: browser.window, named: "Reflog requires a fresh reset preview")
+        reset.performClick(nil)
+        XCTAssertFalse(browser.controller.status?.contains("try Preview Reset again") == true)
+        try dismissSheet(browser.window, response: .alertSecondButtonReturn)
     }
 
     func testInvalidatedReadsExplainWhyTheirResultWasDropped() async throws {

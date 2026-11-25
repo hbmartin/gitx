@@ -4,7 +4,7 @@ import XCTest
 final class ReflogBrowserRequestPolicyTests: XCTestCase {
     func testRequestPolicyProtectsPagesAndPreviewsButAllowsDetailReplacement() {
         var policy = ReflogBrowserRequestPolicy()
-        policy.stale = false
+        policy.refreshSucceeded()
         XCTAssertTrue(policy.permitsRecovery)
         for kind in [ReflogBrowserRequestKind.page, .preview, .mutation] {
             policy.active = kind
@@ -21,7 +21,30 @@ final class ReflogBrowserRequestPolicyTests: XCTestCase {
         }
         policy.active = nil
         XCTAssertTrue(policy.permits(.page))
-        policy.stale = true
+        policy.beginRefresh()
         XCTAssertFalse(policy.permitsRecovery)
+    }
+
+    func testPreviewAuthorityAndRefreshRetryFollowTheRepositoryRevision() {
+        var policy = ReflogBrowserRequestPolicy()
+        policy.refreshSucceeded()
+        let original = policy.revision
+        XCTAssertTrue(policy.permitsResetPreview(at: original))
+
+        policy.repositoryDidChange()
+        XCTAssertTrue(policy.shouldRefresh)
+        policy.active = .page
+        XCTAssertFalse(policy.shouldRefresh)
+        policy.active = nil
+        policy.refreshFailed()
+        XCTAssertFalse(policy.shouldRefresh)
+        XCTAssertFalse(policy.permitsResetPreview(at: original))
+
+        policy.repositoryDidChange()
+        XCTAssertTrue(policy.shouldRefresh)
+        policy.refreshSucceeded()
+        XCTAssertFalse(policy.shouldRefresh)
+        XCTAssertFalse(policy.permitsResetPreview(at: original))
+        XCTAssertTrue(policy.permitsResetPreview(at: policy.revision))
     }
 }

@@ -461,6 +461,22 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
         recoveryNotice.stringValue = "Saved as a draft. Further edits remain unsaved until you choose Save Draft again."
     }
 
+    enum TerminationBlocker {
+        case sheet
+        case draftSave
+    }
+
+    var terminationBlocker: TerminationBlocker? {
+        guard !hasFinished, let window, window.isVisible || window.sheetParent != nil else { return nil }
+        if window.attachedSheet != nil {
+            return .sheet
+        }
+        if recoverySaveIdentity != nil {
+            return .draftSave
+        }
+        return nil
+    }
+
     func suspendForTermination() -> Bool {
         guard !hasFinished, let window, let parent = window.sheetParent else { return true }
         guard window.attachedSheet == nil, recoverySaveIdentity == nil else { return false }

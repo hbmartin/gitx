@@ -130,6 +130,36 @@ final class NativeRecoverySessionTests: XCTestCase {
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
     }
 
+    func testWaitingForADraftSaveKeepsTheAttachedEditorVisible() async throws {
+        let fixture = try await fixture()
+        let editor = try XCTUnwrap(fixture.sheet.window)
+        let save = try XCTUnwrap(fixture.sheet.beginRecoverySave())
+        defer { fixture.sheet.finishRecoverySave(save) }
+        fixture.session.attachedCloseDecision = { completion in completion(true); return true }
+        let waiting = expectation(description: "Quit explains the recovery save")
+        weak var waitingPanel: NSPanel?
+        let coordinator = GitX.RepositoryTerminationCoordinator(
+            mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [fixture.session] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {}, waitingPresented: { panel in
+                let text = panel.contentView?.subviews.compactMap { $0 as? NSTextField }.first?.stringValue
+                XCTAssertTrue(text?.contains("recovered edit is still being saved") == true)
+                XCTAssertTrue(editor.sheetParent === fixture.parent)
+                waitingPanel = panel
+                waiting.fulfill()
+            }, hasBlockingSheets: { ownedSheets in
+                guard let attached = fixture.parent.attachedSheet else { return false }
+                return !ownedSheets.contains(ObjectIdentifier(attached))
+            }, terminate: { XCTFail("Quit cannot advance during recovery persistence") },
+            reply: { _ in XCTFail("There is no AppKit reply pending") }
+        )
+        coordinator.requestTermination()
+        await fulfillment(of: [waiting], timeout: 5)
+        try attachScreenshot(of: XCTUnwrap(waitingPanel), named: "Quit waits for a recovered draft save")
+        coordinator.cancelPendingQuit()
+        XCTAssertTrue(fixture.sheet.acceptsRecoverySave(save))
+        XCTAssertEqual(fixture.sheet.recoveryContentSnapshot, fixture.exact)
+    }
+
     func testCancelledMenuQuitRestoresTheSuspendedRecoveryAndItsFirstResponder() async throws {
         let fixture = try await fixture()
         let window = try XCTUnwrap(fixture.sheet.window)

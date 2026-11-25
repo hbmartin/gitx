@@ -514,22 +514,14 @@ nonisolated protocol RepositoryPullRequestMutationServing: Sendable {
 
     func syncFork(
         accountID: ForgeAccountID,
-        plan: ForgeSyncForkPlan
-    ) async throws -> RepositorySyncForkOutcome
-
-    func syncFork(
-        accountID: ForgeAccountID,
         plan: ForgeSyncForkPlan,
         onAdmission: @Sendable () -> Void
     ) async throws -> RepositorySyncForkOutcome
 }
 
 nonisolated extension RepositoryPullRequestMutationServing {
-    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan,
-                  onAdmission: @Sendable () -> Void) async throws -> RepositorySyncForkOutcome
-    {
-        onAdmission()
-        return try await syncFork(accountID: accountID, plan: plan)
+    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) async throws -> RepositorySyncForkOutcome {
+        try await syncFork(accountID: accountID, plan: plan, onAdmission: {})
     }
 }
 
@@ -600,7 +592,8 @@ nonisolated struct UnavailableRepositoryPullRequestMutationService: RepositoryPu
 
     func syncFork(
         accountID _: ForgeAccountID,
-        plan _: ForgeSyncForkPlan
+        plan _: ForgeSyncForkPlan,
+        onAdmission _: @Sendable () -> Void
     ) async throws -> RepositorySyncForkOutcome {
         throw RepositoryPullRequestServiceError.nativeCreationUnavailable
     }
