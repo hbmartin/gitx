@@ -177,6 +177,81 @@ final class RepositoryTerminationTests: XCTestCase {
         registry.finish(fetch)
     }
 
+    func testCancelQuitWhileARevokedHandoffProbeIsStillWaiting() async throws {
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let probed = expectation(description: "Fresh Quit probes the revoked handoff once")
+        var forwards = 0
+        weak var coordinator: GitX.RepositoryTerminationCoordinator?
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: registry, sessions: { [] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {}, terminate: {
+                forwards += 1
+                if forwards == 1 {
+                    coordinator?.cancelPendingQuit()
+                    coordinator?.requestTermination()
+                } else {
+                    probed.fulfill()
+                }
+            }, reply: { _ in XCTFail("The revoked requests never ask for a deferred reply") }
+        )
+        coordinator = owner
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [probed], timeout: 5)
+        owner.requestTermination()
+        owner.cancelPendingQuit()
+        XCTAssertEqual(owner.applicationShouldTerminate(), .terminateCancel)
+        XCTAssertEqual(forwards, 2)
+        try registry.finish(registry.admit())
+    }
+
+    func testWorkRegisteredBeforeQueuedHandoffDefersNativeQuit() async throws {
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let waiting = expectation(description: "Quit waits for work registered before its native handoff")
+        var ticket: GitX.RepositoryLocalMutationRegistry.Ticket?
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: registry, sessions: { [] }, remoteDecision: {
+                self.onNextNativeTurn { ticket = registry.trackContinuation() }
+                return .terminateNow
+            }, remoteCancelled: {}, waitingPresented: { panel in
+                let title = panel.contentView?.subviews.compactMap { $0 as? NSTextField }.first?.stringValue
+                XCTAssertTrue(title?.contains("repository mutation") == true)
+                waiting.fulfill()
+            }, terminate: { XCTFail("Late work must drain before calling AppKit") },
+            reply: { _ in XCTFail("There is no AppKit reply pending") }
+        )
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [waiting], timeout: 5)
+        owner.cancelPendingQuit()
+        try registry.finish(XCTUnwrap(ticket))
+    }
+
+    func testSystemQuitCanJoinBeforeTheQueuedMenuHandoffStarts() async {
+        let replied = expectation(description: "AppKit receives the one deferred reply")
+        weak var coordinator: GitX.RepositoryTerminationCoordinator?
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [] }, remoteDecision: {
+                self.onNextNativeTurn { [weak coordinator] in
+                    XCTAssertEqual(coordinator?.applicationShouldTerminate(), .terminateLater)
+                }
+                return .terminateNow
+            }, remoteCancelled: {}, terminate: { XCTFail("The system delegate already owns termination") },
+            reply: { allowed in XCTAssertTrue(allowed); replied.fulfill() }
+        )
+        coordinator = owner
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [replied], timeout: 5)
+    }
+
+    private func onNextNativeTurn(_ action: @escaping @MainActor @Sendable () -> Void) {
+        RunLoop.main.perform(inModes: [.default]) {
+            // swift6-safety-justification: The test registers work in the main run loop's default mode.
+            MainActor.assumeIsolated { action() }
+        }
+    }
+
     func testMenuHandoffDefersAgainWhenActivityArrivesAtTheDelegate() async throws {
         let registry = GitX.RepositoryLocalMutationRegistry()
         let waiting = expectation(description: "Late work presents a cancellable wait")

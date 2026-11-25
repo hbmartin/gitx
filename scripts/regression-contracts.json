@@ -4408,6 +4408,34 @@
         },
         {
           "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testCancelQuitWhileARevokedHandoffProbeIsStillWaiting",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Invalidate repeated menu Quit during an outstanding cancellation-only probe and require its delayed callback to refuse termination."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testWorkRegisteredBeforeQueuedHandoffDefersNativeQuit",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Register new local activity immediately before the queued handoff and require the native call to wait."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
+          "identifier": "GitXTests/RepositoryTerminationTests/testSystemQuitCanJoinBeforeTheQueuedMenuHandoffStarts",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Drive a system delegate call ahead of the queued menu handoff and require one terminal reply."
+        },
+        {
+          "source": "GitXTests/NativeRecoverySessionTests.swift",
+          "identifier": "GitXTests/NativeRecoverySessionTests/testQuitRestoresAnEditorIfAnUnrelatedSheetAppearsDuringHandoff",
+          "role": "boundary",
+          "check": "correctness",
+          "oracle": "Attach an unrelated sheet during suspension and require the original recovery editor and exact contents to be restored."
+        },
+        {
+          "source": "GitXTests/RepositoryTerminationTests.swift",
           "identifier": "GitXTests/RepositoryTerminationTests/testMenuHandoffDefersAgainWhenActivityArrivesAtTheDelegate",
           "role": "boundary",
           "check": "correctness",
