@@ -2006,6 +2006,12 @@ fi
         app_binary.write_text("#!/bin/bash\nfor attempt in {1..200}; do\n    [[ -s $GITX_TEST_PROCESS_PID_FILE ]] && break\n    sleep 0.01\ndone\nexit 1\n")
         app_binary.chmod(0o755)
         self.install_sleeping_executable(self.bin / "log")
+        # A host peekaboo would make readiness depend on real window queries, and bash SECONDS
+        # rounds a one-second deadline down to as little as zero. Never report a window, and
+        # allow enough time for the fixture to exit so the launch reliably fails as an exit.
+        peekaboo = self.bin / "peekaboo"
+        peekaboo.write_text("#!/bin/bash\nexit 1\n")
+        peekaboo.chmod(0o755)
         recorded_pid = self.root / "log-process.pid"
         environment = self.environment | {
             "TMPDIR": str(temporary_root),
@@ -2013,7 +2019,7 @@ fi
         }
 
         result = subprocess.run(
-            [script, "--no-build", "--repo", str(repository), "--timeout", "1"],
+            [script, "--no-build", "--repo", str(repository), "--timeout", "5"],
             capture_output=True,
             text=True,
             env=environment,
