@@ -148,7 +148,7 @@ final class AppKitForgeLinkConfirmationPresenter: ForgeLinkConfirmationPresentin
 
     init(
         windowProvider: @escaping () -> NSWindow?,
-        alertPresentation: @escaping AlertPresentation = AppKitForgeLinkConfirmationPresenter.present
+        alertPresentation: @escaping AlertPresentation = WindowModalPresenter.present
     ) {
         self.windowProvider = windowProvider
         self.alertPresentation = alertPresentation
@@ -224,18 +224,6 @@ final class AppKitForgeLinkConfirmationPresenter: ForgeLinkConfirmationPresentin
 
     private static func recipientSummary(_ recipients: [String]) -> String {
         recipients.isEmpty ? "None" : recipients.joined(separator: ", ")
-    }
-
-    private static func present(
-        _ alert: NSAlert,
-        for window: NSWindow?,
-        completion: @escaping (NSApplication.ModalResponse) -> Void
-    ) {
-        if let window {
-            alert.beginSheetModal(for: window, completionHandler: completion)
-        } else {
-            completion(alert.runModal())
-        }
     }
 }
 

@@ -84,7 +84,7 @@ final class AppKitRepositoryForgeLinkAlertPresenter: NSObject, RepositoryForgeLi
 
     init(
         windowProvider: @escaping () -> NSWindow?,
-        alertPresentation: @escaping AlertPresentation = AppKitRepositoryForgeLinkAlertPresenter.present,
+        alertPresentation: @escaping AlertPresentation = WindowModalPresenter.present,
         errorPresentation: @escaping (Error) -> Void
     ) {
         self.windowProvider = windowProvider
@@ -173,18 +173,6 @@ final class AppKitRepositoryForgeLinkAlertPresenter: NSObject, RepositoryForgeLi
 
     func show(error: Error) {
         errorPresentation(error)
-    }
-
-    static func present(
-        _ alert: NSAlert,
-        for window: NSWindow?,
-        completion: @escaping (NSApplication.ModalResponse) -> Void
-    ) {
-        if let window {
-            alert.beginSheetModal(for: window, completionHandler: completion)
-        } else {
-            completion(alert.runModal())
-        }
     }
 }
 

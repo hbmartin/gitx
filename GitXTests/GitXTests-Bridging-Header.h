@@ -214,6 +214,11 @@ typedef NS_ENUM(NSInteger, PBBranchSortMode) {
 @interface GitXRelativeDateFormatter : NSFormatter
 @end
 
+@interface GitXAccessibilityAnnouncer : NSObject
+@property (class, nonatomic, copy) void (^_Nonnull post)(NSString *_Nonnull message, id _Nonnull element);
++ (void)announce:(NSString *_Nonnull)message from:(nullable id)element;
+@end
+
 typedef NS_ENUM(NSInteger, PBHistorySearchExecutionKind) {
 	PBHistorySearchExecutionKindClear,
 	PBHistorySearchExecutionKindBasic,

@@ -345,6 +345,7 @@
 		C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */; };
 		C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */; };
 		C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000014 /* TerminalIntegration.swift */; };
+		222674065519560B49C5A13C /* AccessibilityAnnouncer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF7D15D6DFCE42162D1B977 /* AccessibilityAnnouncer.swift */; };
 		C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */; };
 		C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */; };
 		C0DF00000000000000000001 /* RepositoryForgeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */; };
@@ -395,7 +396,9 @@
 		D8F80000000000000000000B /* RepositoryForgeCollaborationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */; };
 		D8F80000000000000000000C /* RepositoryForgeCollaborationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */; };
 		F0D100000000000000000001 /* ForgeExternalLinkRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */; };
+		92E0C27A01C81AC5884CEC49 /* WindowModalPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49113795A92D208CD09AB5CC /* WindowModalPresenter.swift */; };
 		F0D100000000000000000002 /* ForgeExternalLinkRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */; };
+		1252ABBBD338AB1340162E55 /* WindowModalPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49113795A92D208CD09AB5CC /* WindowModalPresenter.swift */; };
 		F0D100000000000000000003 /* ForgeExternalLinkRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */; };
 		F0E100000000000000000001 /* ForgeAccountsPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0E100000000000000000011 /* ForgeAccountsPreferences.swift */; };
 		F0E100000000000000000002 /* ForgeAccountsPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0E100000000000000000011 /* ForgeAccountsPreferences.swift */; };
@@ -430,6 +433,7 @@
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */; };
 		C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */; };
+		CBE613D259613C6E4549C2A2 /* WindowModalPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D26CB5ABCC9949FEF49867 /* WindowModalPresentationTests.swift */; };
 		DBDA67595B88825D222FC3D2 /* RelativeDateFormatterCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53FEA8077117FE870A59313A /* RelativeDateFormatterCharacterizationTests.swift */; };
 		C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE81000000000000000002 /* GitBinaryTests.swift */; };
 		C0DE90260000000000000005 /* ReliabilityCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90260000000000000006 /* ReliabilityCompatibilityTests.swift */; };
@@ -1121,6 +1125,7 @@
 		FD2100000000000000000011 /* HistoryFlowRevisionProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFlowRevisionProvider.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationPreferencesUI.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000014 /* TerminalIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegration.swift; sourceTree = "<group>"; };
+		4FF7D15D6DFCE42162D1B977 /* AccessibilityAnnouncer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAnnouncer.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsStore.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPresentationPolicies.swift; sourceTree = "<group>"; };
 		C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeCoordinator.swift; sourceTree = "<group>"; };
@@ -1154,6 +1159,7 @@
 		D8F800000000000000000105 /* ForgeAttentionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAttentionViewController.swift; sourceTree = "<group>"; };
 		D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeCollaborationController.swift; sourceTree = "<group>"; };
 		F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeExternalLinkRouting.swift; sourceTree = "<group>"; };
+		49113795A92D208CD09AB5CC /* WindowModalPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowModalPresenter.swift; sourceTree = "<group>"; };
 		F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeExternalLinkRoutingTests.swift; sourceTree = "<group>"; };
 		F0E100000000000000000011 /* ForgeAccountsPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountsPreferences.swift; sourceTree = "<group>"; };
 		F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestWorkflow.swift; sourceTree = "<group>"; };
@@ -1196,6 +1202,7 @@
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
 		C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBChildProcessOwnerTests.swift; sourceTree = "<group>"; };
 		C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFlowRevisionProviderTests.swift; sourceTree = "<group>"; };
+		A0D26CB5ABCC9949FEF49867 /* WindowModalPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowModalPresentationTests.swift; sourceTree = "<group>"; };
 		53FEA8077117FE870A59313A /* RelativeDateFormatterCharacterizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelativeDateFormatterCharacterizationTests.swift; sourceTree = "<group>"; };
 		C0DE81000000000000000002 /* GitBinaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryTests.swift; sourceTree = "<group>"; };
 		C0DE90260000000000000006 /* ReliabilityCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReliabilityCompatibilityTests.swift; sourceTree = "<group>"; };
@@ -1555,6 +1562,7 @@
 				D8F800000000000000000104 /* RepositoryAttentionSession.swift */,
 				D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */,
 				F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */,
+				49113795A92D208CD09AB5CC /* WindowModalPresenter.swift */,
 				F0E100000000000000000011 /* ForgeAccountsPreferences.swift */,
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
 				FD2000000000000000000011 /* FlowDeltaAdapters.swift */,
@@ -1563,6 +1571,7 @@
 				C0D1C0A00000000000000011 /* ApplicationIcon.swift */,
 				C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */,
 				C0D0C0A00000000000000014 /* TerminalIntegration.swift */,
+				4FF7D15D6DFCE42162D1B977 /* AccessibilityAnnouncer.swift */,
 				C0DEC2000000000000000011 /* RepositoryToolbarController.swift */,
 				C0D5B0000000000000000011 /* RepositoryStatusBarPresentation.swift */,
 				C0D5B0000000000000000012 /* RepositoryStatusBarController.swift */,
@@ -1978,6 +1987,7 @@
 				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
 				C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */,
 				C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */,
+				A0D26CB5ABCC9949FEF49867 /* WindowModalPresentationTests.swift */,
 				53FEA8077117FE870A59313A /* RelativeDateFormatterCharacterizationTests.swift */,
 				C0DE81000000000000000002 /* GitBinaryTests.swift */,
 				C0DF22000000000000000002 /* ForgeDraftStoreTests.swift */,
@@ -2576,6 +2586,7 @@
 				F0B100000000000000000004 /* ForgeApplicationServices.swift in Sources */,
 				F0B200000000000000000003 /* GitHubReadComposition.swift in Sources */,
 				F0D100000000000000000001 /* ForgeExternalLinkRouting.swift in Sources */,
+				92E0C27A01C81AC5884CEC49 /* WindowModalPresenter.swift in Sources */,
 				F0E100000000000000000001 /* ForgeAccountsPreferences.swift in Sources */,
 				F0F200000000000000000001 /* RepositoryPullRequestWorkflow.swift in Sources */,
 				F0F200000000000000000002 /* RepositoryPullRequestGitOperations.swift in Sources */,
@@ -2601,6 +2612,7 @@
 				FD2100000000000000000001 /* HistoryFlowRevisionProvider.swift in Sources */,
 				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
+				222674065519560B49C5A13C /* AccessibilityAnnouncer.swift in Sources */,
 				C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */,
 				C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */,
 				C0DF00000000000000000001 /* RepositoryForgeCoordinator.swift in Sources */,
@@ -2792,6 +2804,7 @@
 				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
 				C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */,
 				C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */,
+				CBE613D259613C6E4549C2A2 /* WindowModalPresentationTests.swift in Sources */,
 				DBDA67595B88825D222FC3D2 /* RelativeDateFormatterCharacterizationTests.swift in Sources */,
 				C0DEB1000000000000000003 /* PBChildProcessOwner.swift in Sources */,
 				C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */,
@@ -2825,6 +2838,7 @@
 				F0B100000000000000000009 /* ForgeApplicationServices.swift in Sources */,
 				F0B200000000000000000004 /* GitHubReadComposition.swift in Sources */,
 				F0D100000000000000000002 /* ForgeExternalLinkRouting.swift in Sources */,
+				1252ABBBD338AB1340162E55 /* WindowModalPresenter.swift in Sources */,
 				F0D100000000000000000003 /* ForgeExternalLinkRoutingTests.swift in Sources */,
 				F0F200000000000000000011 /* RepositoryPullRequestWorkflow.swift in Sources */,
 				F0F200000000000000000012 /* RepositoryPullRequestGitOperations.swift in Sources */,
