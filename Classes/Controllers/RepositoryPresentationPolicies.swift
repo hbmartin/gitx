@@ -176,7 +176,7 @@ final class RepositoryRemoteURLCoordinator: NSObject {
             case .unavailable:
                 present(
                     title: "No Web Remote Available",
-                    message: "Configure a Git remote or a custom web URL template in Repository Settings.",
+                    message: "Configure a Git remote or a custom web URL template in Repository Configuration.",
                     window: window
                 )
             case .cancelled:
@@ -224,7 +224,7 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         guard let url else {
             present(
                 title: "Remote URL Is Invalid",
-                message: "Check the remote and custom template in Repository Settings.",
+                message: "Check the remote and custom template in Repository Configuration.",
                 window: window
             )
             return

@@ -170,6 +170,12 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(Array(roundTrip.arguments.dropFirst(3)), ["--", "dir name/it's.txt", "back\\slash"])
     }
 
+    func testRepositoryMenuNamesRepositoryConfiguration() throws {
+        let repositoryMenu = try XCTUnwrap(NSApp.mainMenu?.item(withTitle: "Repository")?.submenu)
+        let item = try XCTUnwrap(repositoryMenu.items.first { $0.action == NSSelectorFromString("showRepositorySettings:") })
+        XCTAssertEqual(item.title, "Repository Configuration…")
+    }
+
     func testWindowControllerObjectiveCCompatibilitySurfaceBeforeConversion() {
         let controller = PBGitWindowController()
 

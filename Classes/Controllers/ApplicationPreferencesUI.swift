@@ -424,7 +424,7 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
     static func generalView(legacyView: NSView) -> NSView {
         let view = SettingsPaneView(
             title: "General",
-            detail: "Choose the default repository browsing behavior. Repository-specific choices live in Repository Settings."
+            detail: "Choose the default repository browsing behavior. Repository-specific choices live in Repository Configuration."
         )
         _ = view.addCheckbox(
             "Show only changed files in commit tree views",

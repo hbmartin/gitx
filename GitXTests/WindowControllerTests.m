@@ -4293,6 +4293,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertEqual(PBWindowAlertSheetCount, 1U);
 	XCTAssertEqual(PBWindowAlertAppModalCount, 0U);
 	XCTAssertEqualObjects(PBWindowPresentedAlerts.lastObject.messageText, @"No Web Remote Available");
+	XCTAssertEqualObjects(PBWindowPresentedAlerts.lastObject.informativeText,
+						  @"Configure a Git remote or a custom web URL template in Repository Configuration.");
 	XCTAssertEqual(PBWindowWorkspaceOpenCount, 0U);
 }
 

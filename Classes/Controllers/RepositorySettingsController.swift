@@ -64,7 +64,7 @@ final class RepositorySettingsController: NSWindowController, NSToolbarDelegate,
             backing: .buffered,
             defer: false
         )
-        panel.title = "Settings for \(repository.projectName() ?? "Repository")"
+        panel.title = "Repository Configuration for \(repository.projectName() ?? "Repository")"
         super.init(window: panel)
         panel.delegate = self
         configureToolbar()
