@@ -72,6 +72,74 @@ final class RepositoryConfigurationSheetTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(store.string(forKey: RepositorySettingsStore.diffSuppressionKey), "# generated\n\\.lock$")
     }
 
+    func testInvalidValuesSelectTheirTabFocusTheControlAndExplainBesideSave() async throws {
+        var announcements: [String] = []
+        let restoreAnnouncer = AccessibilityAnnouncer.post
+        AccessibilityAnnouncer.post = { message, _ in announcements.append(message) }
+        defer { AccessibilityAnnouncer.post = restoreAnnouncer }
+        let window = try XCTUnwrap(owner.window)
+        WindowDialogPresenter.showRepositorySettings(for: owner)
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        XCTAssertEqual(sheet.title, "Repository Configuration for \(repository.projectName() ?? "")")
+        let message = try XCTUnwrap(firstSubview(of: NSTextField.self, in: sheet.contentView) {
+            $0.accessibilityIdentifier() == "GitX.RepositoryConfiguration.ValidationMessage"
+        })
+        XCTAssertTrue(message.isHidden)
+        let save = try XCTUnwrap(firstSubview(of: NSButton.self, in: sheet.contentView) { $0.title == "Save" })
+        let store = ApplicationComposition.shared.repositoryConfiguration(for: repository)
+
+        try selectTab("Commit", in: sheet)
+        let rules = try XCTUnwrap(control(NSTextView.self, "GitX.RepositoryConfiguration.CommitRules", in: sheet))
+        rules.string = "fixup => squash\nbroken rule"
+        try selectTab("General", in: sheet)
+        save.performClick(nil)
+        XCTAssertTrue(window.attachedSheet === sheet)
+        XCTAssertFalse(message.isHidden)
+        XCTAssertEqual(message.stringValue, "Commit message replacement rule on line 2 must contain =>.")
+        XCTAssertEqual(sheet.toolbar?.selectedItemIdentifier?.rawValue, "Commit")
+        XCTAssertTrue(sheet.firstResponder === rules)
+        XCTAssertEqual(rules.selectedRange(), NSRange(location: 16, length: 11))
+        try attachScreenshot(of: sheet, named: "Repository-Configuration-Invalid-Rule")
+
+        rules.string = "fixup => squash"
+        try selectTab("Diff", in: sheet)
+        let patterns = try XCTUnwrap(control(NSTextView.self, "GitX.RepositoryConfiguration.DiffSuppressionPatterns", in: sheet))
+        patterns.string = "# generated\n[unclosed"
+        try selectTab("General", in: sheet)
+        let webURLTemplate = try XCTUnwrap(control(NSTextField.self, "GitX.RepositoryConfiguration.WebURLTemplate", in: sheet))
+        webURLTemplate.stringValue = "http://example.com/{branch}"
+        try selectTab("Sidebar", in: sheet)
+        save.performClick(nil)
+        XCTAssertEqual(message.stringValue, "The web URL template must use HTTPS.")
+        XCTAssertEqual(sheet.toolbar?.selectedItemIdentifier?.rawValue, "General")
+        XCTAssertTrue((sheet.firstResponder as? NSText)?.delegate === webURLTemplate)
+        try attachScreenshot(of: sheet, named: "Repository-Configuration-Invalid-Template")
+
+        webURLTemplate.stringValue = "https://example.com/{branch}"
+        save.performClick(nil)
+        XCTAssertEqual(message.stringValue, "Diff suppression pattern on line 2 is not a valid regular expression.")
+        XCTAssertEqual(sheet.toolbar?.selectedItemIdentifier?.rawValue, "Diff")
+        XCTAssertTrue(sheet.firstResponder === patterns)
+        XCTAssertEqual(patterns.selectedRange(), NSRange(location: 12, length: 9))
+        XCTAssertEqual(store.string(forKey: RepositorySettingsStore.webURLTemplateKey), "", "Rejected values are never written")
+        XCTAssertEqual(announcements, [
+            "Commit message replacement rule on line 2 must contain =>.",
+            "The web URL template must use HTTPS.",
+            "Diff suppression pattern on line 2 is not a valid regular expression.",
+        ])
+
+        patterns.string = "# generated\n\\.lock$"
+        let saved = expectation(forNotification: .repositorySettingsDidChange, object: repository)
+        save.performClick(nil)
+        await fulfillment(of: [saved], timeout: 2)
+        XCTAssertNil(window.attachedSheet)
+        XCTAssertEqual(store.string(forKey: RepositorySettingsStore.diffSuppressionKey), "# generated\n\\.lock$")
+    }
+
+    func control<View: NSView>(_ type: View.Type, _ identifier: String, in sheet: NSWindow) -> View? {
+        firstSubview(of: type, in: sheet.contentView) { $0.accessibilityIdentifier() == identifier }
+    }
+
     // MARK: - Helpers
 
     func selectTab(_ name: String, in sheet: NSWindow) throws {

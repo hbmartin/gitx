@@ -43,6 +43,7 @@ final class RepositorySettingsController: NSWindowController, NSToolbarDelegate,
     )
     private let hideContainedButton = NSButton()
     private let suppressionTextView = NSTextView()
+    private let validationLabel = NSTextField(wrappingLabelWithString: "")
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositorySettingsSheet")
 
     /// Objective-C callers are not visible to SwiftLint's analyzer.
@@ -99,9 +100,21 @@ final class RepositorySettingsController: NSWindowController, NSToolbarDelegate,
         save.keyEquivalent = "\r"
         save.bezelStyle = .rounded
         save.translatesAutoresizingMaskIntoConstraints = false
+        validationLabel.textColor = .systemRed
+        validationLabel.maximumNumberOfLines = 2
+        validationLabel.isHidden = true
+        validationLabel.translatesAutoresizingMaskIntoConstraints = false
+        validationLabel.setAccessibilityIdentifier("GitX.RepositoryConfiguration.ValidationMessage")
+        webURLTemplateField.setAccessibilityIdentifier("GitX.RepositoryConfiguration.WebURLTemplate")
+        rulesTextView.setAccessibilityIdentifier("GitX.RepositoryConfiguration.CommitRules")
+        suppressionTextView.setAccessibilityIdentifier("GitX.RepositoryConfiguration.DiffSuppressionPatterns")
+        root.addSubview(validationLabel)
         root.addSubview(cancel)
         root.addSubview(save)
         NSLayoutConstraint.activate([
+            validationLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            validationLabel.trailingAnchor.constraint(lessThanOrEqualTo: cancel.leadingAnchor, constant: -12),
+            validationLabel.centerYAnchor.constraint(equalTo: save.centerYAnchor),
             contentHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             contentHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             contentHost.topAnchor.constraint(equalTo: root.topAnchor),
@@ -292,8 +305,17 @@ final class RepositorySettingsController: NSWindowController, NSToolbarDelegate,
     }
 
     @objc private func save(_ sender: Any?) {
+        if let issue = RepositoryConfigurationPolicy.validate(
+            webURLTemplate: webURLTemplateField.stringValue,
+            commitRules: rulesTextView.string,
+            diffSuppressionPatterns: suppressionTextView.string
+        ) {
+            show(issue)
+            return
+        }
+        validationLabel.stringValue = ""
+        validationLabel.isHidden = true
         do {
-            try validateValues()
             try store.setString(primaryBranchField.stringValue, forKey: RepositorySettingsStore.primaryBranchKey)
             try store.setBool(autoOpenURLButton.state == .on, forKey: RepositorySettingsStore.autoOpenURLKey)
             try store.setBool(requireHostMatchButton.state == .on, forKey: RepositorySettingsStore.requireHostMatchKey)
@@ -311,17 +333,36 @@ final class RepositorySettingsController: NSWindowController, NSToolbarDelegate,
         }
     }
 
-    private func validateValues() throws {
-        guard let issue = RepositoryConfigurationPolicy.validate(
-            webURLTemplate: webURLTemplateField.stringValue,
-            commitRules: rulesTextView.string,
-            diffSuppressionPatterns: suppressionTextView.string
-        ) else { return }
-        throw NSError(
-            domain: PBGitXErrorDomain,
-            code: 0,
-            userInfo: [NSLocalizedDescriptionKey: RepositoryConfigurationIssuePresenter.message(for: issue)]
+    /// Shows a validation issue beside Save, selects the tab that owns the invalid value, and focuses
+    /// the control, selecting the offending line in multi-line rules.
+    private func show(_ issue: RepositoryConfigurationValidationIssue) {
+        let message = RepositoryConfigurationIssuePresenter.message(for: issue)
+        validationLabel.stringValue = message
+        validationLabel.isHidden = false
+        switch issue.field {
+        case .webURLTemplate:
+            select(tab: .general)
+            window?.makeFirstResponder(webURLTemplateField)
+            webURLTemplateField.currentEditor()?.selectAll(nil)
+        case .commitRules:
+            select(tab: .commit)
+            focus(rulesTextView, line: issue.line)
+        case .diffSuppressionPatterns:
+            select(tab: .diff)
+            focus(suppressionTextView, line: issue.line)
+        }
+        logger.notice(
+            "Rejected repository configuration: field=\(issue.field.rawValue, privacy: .public) line=\(issue.line ?? 0, privacy: .public)"
         )
+        AccessibilityAnnouncer.announce(message, from: validationLabel)
+    }
+
+    private func focus(_ textView: NSTextView, line: Int?) {
+        window?.makeFirstResponder(textView)
+        guard let line,
+              let range = RepositoryConfigurationTextLines.characterRange(ofLine: line, in: textView.string) else { return }
+        textView.setSelectedRange(range)
+        textView.scrollRangeToVisible(range)
     }
 
     private func closeSheet() {

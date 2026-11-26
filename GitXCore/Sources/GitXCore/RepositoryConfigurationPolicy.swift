@@ -16,6 +16,58 @@ public enum RepositoryConfigurationValidationIssue: Equatable, Sendable {
     case diffSuppressionInvalidRegularExpression(line: Int)
 }
 
+/// The editable control that holds the value a validation issue refers to.
+public enum RepositoryConfigurationField: String, CaseIterable, Sendable {
+    case webURLTemplate
+    case commitRules
+    case diffSuppressionPatterns
+}
+
+public extension RepositoryConfigurationValidationIssue {
+    var field: RepositoryConfigurationField {
+        switch self {
+        case .webURLTemplateMustUseHTTPS: .webURLTemplate
+        case .commitRuleMissingSeparator, .commitRuleInvalidRegularExpression: .commitRules
+        case .diffSuppressionInvalidRegularExpression: .diffSuppressionPatterns
+        }
+    }
+
+    /// The 1-based line `RepositoryConfigurationPolicy.validate` reported, when the issue has one.
+    var line: Int? {
+        switch self {
+        case .webURLTemplateMustUseHTTPS: nil
+        case let .commitRuleMissingSeparator(line),
+             let .commitRuleInvalidRegularExpression(line),
+             let .diffSuppressionInvalidRegularExpression(line): line
+        }
+    }
+}
+
+public enum RepositoryConfigurationTextLines {
+    /// The UTF-16 characters `CharacterSet.newlines` contains; validation numbers lines by splitting on each.
+    private static let newlineUnits: Set<UInt16> = [0x0A, 0x0B, 0x0C, 0x0D, 0x85, 0x2028, 0x2029]
+
+    /// The UTF-16 range of `line` (1-based) numbered exactly as validation numbers lines, so each half
+    /// of a CRLF pair starts a line. Returns nil when the text has fewer lines.
+    public static func characterRange(ofLine line: Int, in text: String) -> NSRange? {
+        guard line >= 1 else { return nil }
+        var current = 1
+        var start = 0
+        var offset = 0
+        for unit in text.utf16 {
+            if newlineUnits.contains(unit) {
+                if current == line {
+                    return NSRange(location: start, length: offset - start)
+                }
+                current += 1
+                start = offset + 1
+            }
+            offset += 1
+        }
+        return current == line ? NSRange(location: start, length: offset - start) : nil
+    }
+}
+
 public enum RepositoryConfigurationPolicy {
     public static func validate(
         webURLTemplate: String,
@@ -93,7 +145,7 @@ public enum RepositoryConfigurationIssuePresenter {
         case let .commitRuleMissingSeparator(line):
             "Commit message replacement rule on line \(line) must contain =>."
         case let .commitRuleInvalidRegularExpression(line):
-            "Commit message replacement rule \(line) is not a valid regular expression."
+            "Commit message replacement rule on line \(line) is not a valid regular expression."
         case let .diffSuppressionInvalidRegularExpression(line):
             "Diff suppression pattern on line \(line) is not a valid regular expression."
         }
