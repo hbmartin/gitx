@@ -221,4 +221,63 @@ final class SidebarPolicyTests: XCTestCase {
             )
         }
     }
+
+    func testSelectionFallbackOnlyAppliesWhenTheViewedReferenceDisappeared() {
+        XCTAssertEqual(
+            SidebarSelectionFallbackPolicy.resolve(
+                restoredSelection: true,
+                viewedReferenceName: "refs/heads/gone",
+                viewedReferenceSurvives: false,
+                checkedOutReferenceName: "refs/heads/main"
+            ),
+            .keep
+        )
+        XCTAssertEqual(
+            SidebarSelectionFallbackPolicy.resolve(
+                restoredSelection: false,
+                viewedReferenceName: nil,
+                viewedReferenceSurvives: false,
+                checkedOutReferenceName: "refs/heads/main"
+            ),
+            .keep
+        )
+        XCTAssertEqual(
+            SidebarSelectionFallbackPolicy.resolve(
+                restoredSelection: false,
+                viewedReferenceName: "refs/heads/feature",
+                viewedReferenceSurvives: true,
+                checkedOutReferenceName: "refs/heads/main"
+            ),
+            .keep
+        )
+        XCTAssertEqual(
+            SidebarSelectionFallbackPolicy.resolve(
+                restoredSelection: false,
+                viewedReferenceName: "refs/heads/feature",
+                viewedReferenceSurvives: false,
+                checkedOutReferenceName: nil
+            ),
+            .none
+        )
+    }
+
+    func testSelectionFallbackAnnouncesShortReferenceNames() {
+        let cases: [(String, String, String)] = [
+            ("refs/heads/feature/x", "refs/heads/main", "feature/x no longer exists. Showing main."),
+            ("refs/remotes/origin/topic", "refs/heads/main", "origin/topic no longer exists. Showing main."),
+            ("refs/tags/v1.0", "HEAD", "v1.0 no longer exists. Showing HEAD."),
+            ("refs/gitx/custom", "refs/heads/trunk", "refs/gitx/custom no longer exists. Showing trunk."),
+        ]
+        for (viewed, checkedOut, announcement) in cases {
+            XCTAssertEqual(
+                SidebarSelectionFallbackPolicy.resolve(
+                    restoredSelection: false,
+                    viewedReferenceName: viewed,
+                    viewedReferenceSurvives: false,
+                    checkedOutReferenceName: checkedOut
+                ),
+                .checkedOutBranch(announcement: announcement)
+            )
+        }
+    }
 }
