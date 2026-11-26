@@ -164,6 +164,42 @@ final class WindowModalPresentationTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(results, [nil])
     }
 
+    func testFolderPanelWithoutAWindowOpensModelessAndCancelCompletesWithoutAFolder() throws {
+        var results: [URL?] = []
+        let prompt = "Choose Without Window"
+
+        GitX.WindowModalPresenter.chooseDirectory(prompt: prompt, for: nil) { results.append($0) }
+
+        var panel: NSOpenPanel?
+        try waitUntil {
+            panel = NSApp.windows.lazy.compactMap { $0 as? NSOpenPanel }.first { $0.isVisible && $0.prompt == prompt }
+            return panel != nil
+        }
+        let shown = try XCTUnwrap(panel)
+        XCTAssertNil(shown.sheetParent)
+        XCTAssertNil(NSApp.modalWindow)
+        shown.cancel(nil)
+        try waitUntil { results.count == 1 }
+        XCTAssertEqual(results, [nil])
+    }
+
+    func testForgeLinkChoicesWithNothingToChooseCompleteWithoutPresenting() {
+        var presentations = 0
+        var results: [String] = []
+        let presenter = GitX.AppKitRepositoryForgeLinkAlertPresenter(
+            windowProvider: { [window] in window },
+            alertPresentation: { _, _, _ in presentations += 1 },
+            errorPresentation: { error in XCTFail("Unexpected error: \(error)") }
+        )
+
+        presenter.chooseBinding(from: []) { results.append($0 == nil ? "no binding" : "binding") }
+        presenter.chooseDestination(from: []) { results.append($0 == nil ? "no destination" : "destination") }
+
+        XCTAssertEqual(results, ["no binding", "no destination"])
+        XCTAssertEqual(presentations, 0)
+        XCTAssertNil(window.attachedSheet)
+    }
+
     // MARK: - Helpers
 
     private func end(_ sheet: NSWindow?, response: NSApplication.ModalResponse) throws {

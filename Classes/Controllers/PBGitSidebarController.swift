@@ -689,7 +689,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     /// A viewed reference deleted outside GitX falls back to the checked-out branch. Selection
     /// restoration stays passive, so mounted inspector and Forge content remain in place.
-    private final func fallBackIfViewedReferenceDisappeared(
+    final func fallBackIfViewedReferenceDisappeared(
         restored: Bool,
         viewedRevision: PBGitRevSpecifier?,
         checkedOut: PBGitRevSpecifier?

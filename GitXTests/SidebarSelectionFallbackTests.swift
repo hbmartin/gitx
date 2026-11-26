@@ -87,6 +87,51 @@ final class SidebarSelectionFallbackTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(announcements, [])
     }
 
+    func testDetachedHeadIsShownWhenTheViewedBranchDisappears() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        try fixture.git(["branch", "topic"])
+        try fixture.git(["checkout", "--quiet", "--detach"])
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let owner = GitX.PBGitWindowController()
+        owner.repository = repository
+        owner.showWindow(nil)
+        defer { owner.close(); repository.worktreeService.cancel() }
+        let sidebar = try XCTUnwrap(owner.sidebarViewController)
+        await waitUntil { repository.branches.contains { $0.simpleRef() == "refs/heads/topic" } }
+        let topic = try XCTUnwrap(repository.branches.first { $0.simpleRef() == "refs/heads/topic" })
+        repository.currentBranch = topic
+        sidebar.selectCurrentBranch()
+
+        try fixture.git(["branch", "-D", "topic"])
+        repository.reloadRefs()
+        await waitUntil { repository.currentBranch?.simpleRef() == "HEAD" }
+
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), "HEAD")
+        XCTAssertEqual(announcements, ["topic no longer exists. Showing HEAD."])
+    }
+
+    func testViewedReferenceWithoutACheckedOutReferenceLeavesTheSidebarUnchanged() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let owner = GitX.PBGitWindowController()
+        owner.repository = repository
+        owner.showWindow(nil)
+        defer { owner.close(); repository.worktreeService.cancel() }
+        let sidebar = try XCTUnwrap(owner.sidebarViewController)
+        await waitUntil { repository.branches.contains { $0.simpleRef() == "refs/heads/main" } }
+        sidebar.selectCurrentBranch()
+        let viewed = repository.currentBranch
+        let missing = PBGitRevSpecifier(ref: PBGitRef(string: "refs/heads/deleted-elsewhere"))
+
+        sidebar.fallBackIfViewedReferenceDisappeared(restored: false, viewedRevision: missing, checkedOut: nil)
+
+        XCTAssertTrue(repository.currentBranch === viewed)
+        XCTAssertEqual(sidebar.selectedItem()?.revSpecifier?.simpleRef(), "refs/heads/main")
+        XCTAssertEqual(announcements, [])
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 10,
         _ condition: @escaping @MainActor () -> Bool,

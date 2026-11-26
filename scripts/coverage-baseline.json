@@ -1,5 +1,6 @@
 {
   "files": {
+    "Classes/Controllers/AccessibilityAnnouncer.swift": 1.0,
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.9446,
     "Classes/Controllers/ApplicationIcon.swift": 1.0,
@@ -89,6 +90,7 @@
     "Classes/Controllers/StagingImageReader.swift": 0.9619,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
     "Classes/Controllers/StagingViewController.swift": 0.942,
+    "Classes/Controllers/WindowModalPresenter.swift": 0.8974,
     "Classes/Controllers/WorkspaceActionCoordinator.swift": 0.9805,
     "Classes/GitXRelativeDateFormatter.swift": 0.6666,
     "Classes/GitXSwift.swift": 1.0,
@@ -171,6 +173,7 @@
     "Classes/git/GitCommandRunning.swift": 1.0,
     "Classes/git/GitDiscoveryProbe.swift": 1.0,
     "Classes/git/GitOutputFormatting.swift": 1.0,
+    "Classes/git/GitXCommandLineSearch.m": 1.0,
     "Classes/git/IndexCommandRunning.swift": 1.0,
     "Classes/git/IndexCommitCoordinator.swift": 1.0,
     "Classes/git/IndexCommitService.swift": 0.9692,
