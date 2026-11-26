@@ -8,10 +8,11 @@ The package currently owns:
 
 - application-preference validation and repository view-state identity;
 - commit remote presentation and submission eligibility;
-- history-search normalization and Git argument construction;
+- history-search normalization, raw and path argument tokenization, and Git argument construction;
 - captured reflog records, event parsing, reset-mode descriptions, and recovery eligibility;
-- repository-configuration validation and commit-message rules;
-- sidebar remote synchronization and revision placement.
+- relative-date classification and wording for the History list;
+- repository-configuration validation, the field and line each issue targets, and commit-message rules;
+- sidebar remote synchronization, revision placement, and the fallback when a viewed reference disappears.
 
 `swift test --package-path GitXCore --enable-code-coverage` is the canonical hostless test command. CI runs it as a job separate from app-hosted XCTest and enforces `GitXCore/coverage-baseline.json`. `scripts/check_gitxcore_boundary.py` rejects application and global-runtime dependencies.
 
@@ -19,10 +20,9 @@ The package currently owns:
 
 Move behavior in narrow, behavior-preserving slices:
 
-1. Relative-date calculation. Inject `now` and `Calendar`; retain the Objective-C-visible formatter as the app adapter.
-2. Revision-specifier parsing and reference-name classification. Keep conversion to ObjectiveGit values in the app.
-3. Source-language lookup from `PBHighlighting`. Keep attributed-string construction and HighlightKit in the app.
-4. History menu eligibility, staging eligibility, split limits, and retry delays when those decisions are next changed.
+1. Revision-specifier parsing and reference-name classification. Keep conversion to ObjectiveGit values in the app.
+2. Source-language lookup from `PBHighlighting`. Keep attributed-string construction and HighlightKit in the app.
+3. History menu eligibility, staging eligibility, split limits, and retry delays when those decisions are next changed.
 
 URL-provider detection, remote-to-Forge identity, and remote-link destination construction are no longer GitXCore candidates. Milestone 0 of the Forge integration moves those decisions into the provider-neutral `ForgeKit` package defined by ADR-0004 so authenticated and unauthenticated Forge behavior share one model.
 
@@ -49,7 +49,7 @@ For each slice:
 
 ## Deferred Build Work
 
-Dependency and script-phase tuning is intentionally separate from core extraction. See `docs/build-performance-followups.md`.
+Dependency and script-phase tuning is intentionally separate from core extraction. Measure it with `scripts/benchmark_build.py`, which records paired cold and no-op warm Debug builds on the same machine.
 
 ## Reflog Recovery Boundary
 
