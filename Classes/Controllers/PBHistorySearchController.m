@@ -17,6 +17,18 @@
 #import "PBError.h"
 #import "GitX-Swift.h"
 
+#import <os/log.h>
+
+static os_log_t PBHistorySearchLog(void)
+{
+	static os_log_t log;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		log = os_log_create("com.gitx.gitx", "HistorySearch");
+	});
+	return log;
+}
+
 @interface PBHistorySearchController ()
 
 - (void)selectNextResultInDirection:(NSInteger)direction;
@@ -95,6 +107,7 @@
 - (void)clearSearch
 {
 	[searchField setStringValue:@""];
+	[numberOfMatchesField setToolTip:nil];
 	if (results) {
 		results = nil;
 		[historyController.commitList reloadData];
@@ -364,6 +377,7 @@
 
 - (void)startBasicSearch
 {
+	[numberOfMatchesField setToolTip:nil];
 	NSString *searchString = [searchField stringValue];
 	if ([searchString isEqualToString:@""]) {
 		[self clearSearch];
@@ -399,10 +413,16 @@
 		[self clearSearch];
 		return;
 	}
+	if (plan.kind == PBHistorySearchExecutionKindInvalid) {
+		[self showInvalidSearchPlan:plan];
+		return;
+	}
 	if (plan.kind != PBHistorySearchExecutionKindBackground)
 		return;
 
 	results = nil;
+	[numberOfMatchesField setToolTip:plan.message];
+	os_log_info(PBHistorySearchLog(), "Starting background history search with %lu Git arguments", (unsigned long)plan.arguments.count);
 	NSString *searchString = plan.query;
 	NSArray<NSString *> *searchArguments = plan.arguments;
 
@@ -428,6 +448,23 @@
 	}];
 
 	[self startProgressIndicator];
+}
+
+// Malformed raw or path queries never start Git; the match field explains how to fix them.
+- (void)showInvalidSearchPlan:(PBHistorySearchPlan *)plan
+{
+	backgroundSearchTask = nil;
+	if (results) {
+		results = nil;
+		[historyController.commitList reloadData];
+	}
+	[self clearProgressIndicator];
+	[numberOfMatchesField setStringValue:plan.summary];
+	[numberOfMatchesField setToolTip:plan.message];
+	[numberOfMatchesField setHidden:NO];
+	[stepper setHidden:YES];
+	os_log_info(PBHistorySearchLog(), "Rejected malformed history search: %{public}@", plan.summary);
+	[GitXAccessibilityAnnouncer announce:[NSString stringWithFormat:@"%@. %@", plan.summary, plan.message] from:searchField];
 }
 
 - (void)parseBackgroundSearchResults:(NSData *)data

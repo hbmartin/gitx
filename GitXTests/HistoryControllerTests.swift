@@ -5847,6 +5847,59 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotNil(historyController.commitController.arrangedObjects)
     }
 
+    func testPathAndRawSearchesHonorQuotingAndExplainMalformedQueriesWithoutStartingGit() throws {
+        let quotedPath = "dir name/it's.txt"
+        try fixture.write("quoted path\n", to: quotedPath)
+        try fixture.git(["add", "--", quotedPath])
+        try fixture.git(["commit", "-qm", "Track quoted path"])
+        historyController.refresh(self)
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            ((self.historyController.commitController.arrangedObjects as? [PBGitCommit]) ?? []).contains { $0.subject == "Track quoted path" }
+        })
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let matches = try XCTUnwrap(searchController.numberOfMatchesField)
+        var announcements: [String] = []
+        let restoreAnnouncer = GitXAccessibilityAnnouncer.post
+        GitXAccessibilityAnnouncer.post = { message, _ in announcements.append(message) }
+        defer { GitXAccessibilityAnnouncer.post = restoreAnnouncer }
+
+        XCTAssertEqual(try searchResultRows(for: #" "dir name/it's.txt" "#, mode: .path).count, 1)
+        XCTAssertEqual(matches.stringValue, "1 match")
+        XCTAssertEqual(matches.toolTip, "Git arguments: [--] [dir name/it's.txt]")
+        XCTAssertEqual(try searchResultRows(for: #"dir\ name/it\'s.txt"#, mode: .path).count, 1)
+
+        XCTAssertEqual(try searchResultRows(for: "--grep='Track quoted'", mode: .raw).count, 1)
+        XCTAssertEqual(matches.toolTip, "Git arguments: [--grep=Track quoted]")
+
+        XCTAssertTrue(try searchResultRows(for: quotedPath, mode: .path).isEmpty)
+        XCTAssertNil(searchController.value(forKey: "backgroundSearchTask"))
+        XCTAssertFalse(matches.isHidden)
+        XCTAssertEqual(matches.stringValue, "Unclosed quote")
+        XCTAssertEqual(matches.toolTip, "Close the single quote or escape it with a backslash.")
+        XCTAssertTrue(searchController.stepper.isHidden)
+        XCTAssertEqual(announcements, ["Unclosed quote. Close the single quote or escape it with a backslash."])
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Search-Unclosed-Quote")
+
+        XCTAssertTrue(try searchResultRows(for: "--all ''", mode: .raw).isEmpty)
+        XCTAssertEqual(matches.stringValue, "Empty argument")
+        XCTAssertEqual(matches.toolTip, "Argument 2 is empty. Remove the empty quotes.")
+
+        XCTAssertEqual(try searchResultRows(for: "Track", mode: .basic).count, 1)
+        XCTAssertNil(matches.toolTip)
+        searchController.clearSearch()
+        XCTAssertNil(matches.toolTip)
+
+        let sender = NSMenuItem()
+        sender.representedObject = [quotedPath]
+        historyController.perform(NSSelectorFromString("showCommitsFromTree:"), with: sender)
+        XCTAssertEqual(searchField.stringValue, #"'dir name/it'\''s.txt'"#)
+        XCTAssertEqual(searchController.searchMode, .path)
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            searchController.value(forKey: "backgroundSearchTask") == nil && matches.stringValue == "1 match"
+        })
+    }
+
     func testHistorySearchModesCharacterizeCurrentWhitespaceAndUnicodeBehavior() throws {
         let searchController = historyController.searchController
         let searchField = try XCTUnwrap(searchController.searchField)

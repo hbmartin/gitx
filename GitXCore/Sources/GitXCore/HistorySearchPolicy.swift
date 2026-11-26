@@ -12,6 +12,8 @@ public enum HistorySearchExecution: Equatable, Sendable {
     case clear
     case basic(query: String)
     case background(query: String, arguments: [String])
+    /// Raw or path text that cannot be split into Git arguments; no search runs.
+    case invalid(query: String, issue: HistorySearchArgumentIssue)
 }
 
 public enum HistorySearchPolicy {
@@ -27,23 +29,24 @@ public enum HistorySearchPolicy {
             let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty else { return .clear }
             var arguments = ["log", "--pretty=format:%H", "--no-textconv"]
-            if mode == .regex {
+            switch mode {
+            case .regex:
                 arguments.append("--pickaxe-regex")
                 arguments.append("-S\(normalized)")
-            } else if mode == .pickaxe {
+            case .pickaxe:
                 arguments.append("-S\(normalized)")
-            } else if mode == .path {
-                arguments.append("--")
-                arguments.append(contentsOf: components(in: normalized))
-            } else {
-                arguments.append(contentsOf: components(in: normalized))
+            default:
+                switch HistorySearchArgumentSyntax.arguments(in: query) {
+                case let .success(parsed):
+                    if mode == .path {
+                        arguments.append("--")
+                    }
+                    arguments.append(contentsOf: parsed)
+                case let .failure(issue):
+                    return .invalid(query: normalized, issue: issue)
+                }
             }
             return .background(query: normalized, arguments: arguments)
         }
-    }
-
-    private static func components(in query: String) -> [String] {
-        query.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
     }
 }

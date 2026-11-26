@@ -38,4 +38,34 @@ final class HistorySearchPolicyTests: XCTestCase {
             )
         )
     }
+
+    func testRawAndPathSearchesHonorQuotingAndRejectMalformedArguments() {
+        let prefix = ["log", "--pretty=format:%H", "--no-textconv"]
+        XCTAssertEqual(
+            HistorySearchPolicy.execution(query: #" "dir name/file's.txt" other "#, mode: .path),
+            .background(
+                query: #""dir name/file's.txt" other"#,
+                arguments: prefix + ["--", "dir name/file's.txt", "other"]
+            )
+        )
+        XCTAssertEqual(
+            HistorySearchPolicy.execution(query: "--author='GitX Tests' --grep=a\\.b", mode: .raw),
+            .background(
+                query: "--author='GitX Tests' --grep=a\\.b",
+                arguments: prefix + ["--author=GitX Tests", "--grep=a\\.b"]
+            )
+        )
+        XCTAssertEqual(
+            HistorySearchPolicy.execution(query: " don't ", mode: .path),
+            .invalid(query: "don't", issue: .unclosedQuote("'"))
+        )
+        XCTAssertEqual(
+            HistorySearchPolicy.execution(query: "--all ''", mode: .raw),
+            .invalid(query: "--all ''", issue: .emptyArgument(index: 1))
+        )
+        XCTAssertEqual(
+            HistorySearchPolicy.execution(query: "don't", mode: .pickaxe),
+            .background(query: "don't", arguments: prefix + ["-Sdon't"])
+        )
+    }
 }
