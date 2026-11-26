@@ -96,6 +96,10 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositorySidebar")
+    /// Saves a chosen Forge Repository Binding. Tests replace it to exercise a failed save.
+    static var saveForgeBinding: @MainActor (RepositoryForgeCoordinator, RepositoryForgeBindingCandidate) throws -> Void = {
+        _ = try $0.select(candidate: $1)
+    }
 
     @IBOutlet private weak var window: NSWindow?
     @IBOutlet open private(set) dynamic weak var sourceView: NSOutlineView?
@@ -937,10 +941,11 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         presenter.chooseBinding(from: resolution.candidates) { [weak self] candidate in
             guard let self, !self.hasClosed, let candidate else { return }
             do {
-                _ = try coordinator.select(candidate: candidate)
+                try Self.saveForgeBinding(coordinator, candidate)
                 self.collaborationController?.repositoryBindingDidChange()
                 self.populateList()
             } catch {
+                Self.logger.error("Could not save the chosen Forge Repository Binding")
                 self.windowController?.showErrorSheet(error)
             }
         }

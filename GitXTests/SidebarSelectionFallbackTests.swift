@@ -132,6 +132,54 @@ final class SidebarSelectionFallbackTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(announcements, [])
     }
 
+    func testFailedForgeBindingSaveShowsTheErrorAndKeepsTheChoice() async throws {
+        let fixture = try ReflogGitFixture()
+        defer { fixture.remove() }
+        try fixture.git(["remote", "add", "fork", "https://github.com/hbmartin/gitx.git"])
+        try fixture.git(["remote", "add", "upstream", "https://github.com/gitx/gitx.git"])
+        let originalSave = GitX.PBGitSidebarController.saveForgeBinding
+        GitX.PBGitSidebarController.saveForgeBinding = { _, _ in
+            throw NSError(domain: "GitXTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "The binding could not be saved."])
+        }
+        defer { GitX.PBGitSidebarController.saveForgeBinding = originalSave }
+        let repository = try GitXTestGitRepository(url: fixture.url)
+        let owner = GitX.PBGitWindowController()
+        owner.repository = repository
+        owner.showWindow(nil)
+        defer { owner.close(); repository.worktreeService.cancel() }
+        let window = try XCTUnwrap(owner.window)
+        let outline = try XCTUnwrap(owner.sidebarViewController?.sourceView)
+        let choiceTitle = "Choose Primary Repository…"
+        await waitUntil { self.row(titled: choiceTitle, in: outline) != nil }
+
+        try outline.selectRowIndexes(IndexSet(integer: XCTUnwrap(row(titled: choiceTitle, in: outline))), byExtendingSelection: false)
+        await waitUntil { self.sheet(in: window, containing: "Use Repository") != nil }
+        try window.endSheet(XCTUnwrap(sheet(in: window, containing: "Use Repository")), returnCode: .alertFirstButtonReturn)
+        await waitUntil { self.sheet(in: window, containing: "The binding could not be saved.") != nil }
+        let failure = try XCTUnwrap(sheet(in: window, containing: "The binding could not be saved."))
+
+        try attachScreenshot(of: failure, named: "Forge-Binding-Save-Failure")
+        XCTAssertEqual(GitX.RepositoryForgeCoordinator(repository: repository).resolveBinding().kind, .requiresChoice)
+        XCTAssertNotNil(row(titled: choiceTitle, in: outline))
+        window.endSheet(failure, returnCode: .alertFirstButtonReturn)
+        await waitUntil { window.attachedSheet == nil }
+    }
+
+    private func row(titled title: String, in outline: NSOutlineView) -> Int? {
+        (0 ..< outline.numberOfRows).first { (outline.item(atRow: $0) as? PBSourceViewItem)?.title == title }
+    }
+
+    private func sheet(in window: NSWindow, containing text: String) -> NSWindow? {
+        guard let sheet = window.attachedSheet, texts(in: sheet.contentView).contains(text) else { return nil }
+        return sheet
+    }
+
+    private func texts(in view: NSView?) -> [String] {
+        guard let view else { return [] }
+        let own = (view as? NSButton)?.title ?? (view as? NSTextField)?.stringValue
+        return (own.map { [$0] } ?? []) + view.subviews.flatMap(texts(in:))
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 10,
         _ condition: @escaping @MainActor () -> Bool,
