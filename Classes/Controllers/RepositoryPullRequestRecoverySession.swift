@@ -169,7 +169,7 @@ final class RepositoryPullRequestRecoverySession {
         return true
     }
 
-    private var terminationEditors: [ForgePullRequestSheetController] {
+    var terminationEditors: [ForgePullRequestSheetController] {
         (attachedEditorsForTermination?() ?? []) + presentations.values.compactMap(\.sheet)
     }
 

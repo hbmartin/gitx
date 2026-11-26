@@ -47,10 +47,10 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(coordinator.finish(registration))
         await fulfillment(of: [replied], timeout: 1)
         replies.expectation = nil
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.waitForFetches])
 
         timeouts.fireAll()
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.waitForFetches])
     }
 
     func testTerminationAcceptanceSealsTheCoordinator() throws {
@@ -99,7 +99,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
 
         timeouts.fireAll()
 
-        XCTAssertEqual(replies.values, [false])
+        XCTAssertEqual(replies.values, [.cancelled])
         XCTAssertEqual(coordinator.activeMutations().count, 1)
 
         // Cancelling the expired attempt must return to idle so a subsequent quit
@@ -108,7 +108,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
         XCTAssertEqual(choices.requestCount, 2)
         timeouts.fireAll()
-        XCTAssertEqual(replies.values, [false, true])
+        XCTAssertEqual(replies.values, [.cancelled, .quitAnyway])
     }
 
     func testCompletedWaitWatchdogCannotCancelAcceptedTermination() async throws {
@@ -133,7 +133,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(coordinator.finish(first))
         await fulfillment(of: [replied], timeout: 1)
         replies.expectation = nil
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.waitForFetches])
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
 
         XCTAssertThrowsError(try coordinator.register(
@@ -145,7 +145,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         }
 
         timeouts.fireAll()
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.waitForFetches])
         XCTAssertTrue(coordinator.activeMutations().isEmpty)
     }
 
@@ -170,7 +170,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
         timeouts.fireAll()
 
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.quitAnyway])
     }
 
     func testTimedOutRecordingCompletionCannotReplyToAcceptedTermination() async throws {
@@ -197,14 +197,14 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(persistence.pendingRecordCount, 1)
 
         timeouts.fireAll()
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.quitAnyway])
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
 
         persistence.resumeNextRecord()
         for _ in 0 ..< 10 {
             await Task.yield()
         }
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.quitAnyway])
     }
 
     func testWaitDefersTerminationUntilEveryRegisteredMutationFinishes() async throws {
@@ -243,7 +243,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(coordinator.finish(edit))
         await fulfillment(of: [replied], timeout: 1)
 
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.waitForFetches])
         XCTAssertFalse(coordinator.finish(edit))
         XCTAssertTrue(coordinator.activeMutations().isEmpty)
     }
@@ -281,7 +281,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(records.map(\.accountID), [fixture.accountID, fixture.accountID])
         XCTAssertEqual(records.map(\.repository), [fixture.repository, fixture.repository])
         XCTAssertEqual(Set(records.map(\.operation)), [.createPullRequest, .editPullRequest])
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.quitAnyway])
         XCTAssertEqual(choices.requestCount, 1)
 
         let encoded = try JSONEncoder().encode(XCTUnwrap(records.first))
@@ -316,7 +316,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
         await fulfillment(of: [replied], timeout: 1)
-        XCTAssertEqual(replies.values, [false])
+        XCTAssertEqual(replies.values, [.cancelled])
 
         XCTAssertTrue(coordinator.finish(registration))
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
@@ -639,7 +639,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         replies.expectation = replied
         XCTAssertTrue(coordinator.finish(second))
         await fulfillment(of: [replied], timeout: 5)
-        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(replies.values, [.waitForFetches])
         XCTAssertEqual(choices.requestCount, 2)
     }
 
@@ -705,9 +705,9 @@ private final class ChoiceSpy {
 @MainActor
 private final class ReplySpy {
     var expectation: XCTestExpectation?
-    private(set) var values: [Bool] = []
+    private(set) var values: [ForgeMutationQuitCoordinator.QuitDecision] = []
 
-    func record(_ value: Bool) {
+    func record(_ value: ForgeMutationQuitCoordinator.QuitDecision) {
         values.append(value)
         expectation?.fulfill()
     }

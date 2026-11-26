@@ -39,9 +39,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     private var entries: [ReflogEntry] = []
     private var references: [RepositoryReflogReference] = []
     private var requests = ReflogBrowserRequestPolicy()
-    private var repositoryRevision: UInt64 = 0
-    private var needsRefresh = false
-    private var failedRefreshRevision: UInt64?
+    private var resetRetryNotice: String?
     private var refreshTask: Task<Void, Never>?
     private var slowMutationTask: Task<Void, Never>?
     private var delay: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -217,28 +215,25 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
 
     func repositoryDidChange() {
         guard !closed else { return }
-        repositoryRevision &+= 1
-        requests.stale = true
+        requests.repositoryDidChange()
         fingerprint = nil
         hasMore = false
-        needsRefresh = true
         if !isBusy {
-            message.stringValue = "The repository changed. Refreshing the reflog…"
-            status = message.stringValue
+            showStatus("The repository changed. Refreshing the reflog…")
             scheduleRefresh()
         }
         updateControls()
-        let revision = repositoryRevision
+        let revision = requests.revision
         Self.logger.debug("Coalesced reflog invalidation revision=\(revision)")
     }
 
     private func scheduleRefresh() {
-        guard !closed, !isBusy, needsRefresh, failedRefreshRevision != repositoryRevision else { return }
+        guard !closed, requests.shouldRefresh else { return }
         refreshTask?.cancel()
         let delay = delay
         refreshTask = Task { [weak self] in
             do { try await delay(.milliseconds(150)) } catch { return }
-            guard !Task.isCancelled, let self, !self.closed, !self.isBusy, self.needsRefresh else { return }
+            guard !Task.isCancelled, let self, !self.closed, self.requests.shouldRefresh else { return }
             self.refreshTask = nil
             self.loadPage(append: false)
         }
@@ -253,6 +248,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     override func closeView() {
+        resetRetryNotice = nil
         guard !closed else { return }
         closed = true
         refreshTask?.cancel()
@@ -319,7 +315,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         slowMutationTask?.cancel()
         generation &+= 1
         let request = generation
-        let revision = repositoryRevision
+        let revision = requests.revision
         let repositoryIdentity = ObjectIdentifier(repository)
         let started = ContinuousClock.now
         do {
@@ -327,16 +323,14 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
             requests.active = kind
             mutating = mutation != nil
             isBusy = true
-            message.stringValue = title
-            status = title
+            showStatus(title)
             updateControls()
             if mutation != nil {
                 let delay = delay
                 slowMutationTask = Task { [weak self] in
                     do { try await delay(.seconds(60)) } catch { return }
                     guard !Task.isCancelled, let self, !self.closed, self.generation == request, self.mutating else { return }
-                    self.message.stringValue = "The Git operation is still running. It will finish without being interrupted."
-                    self.status = self.message.stringValue
+                    self.showStatus("The Git operation is still running. It will finish without being interrupted.")
                     Self.logger.notice("Admitted reflog mutation remains active after sixty seconds")
                 }
             }
@@ -367,15 +361,13 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                 self.isBusy = false
                 self.updateControls()
                 Self.logger.debug("Reflog request finished duration=\(String(describing: started.duration(to: .now)), privacy: .public)")
-                if mutation == nil, self.repositoryRevision != revision {
+                if mutation == nil, self.requests.revision != revision {
                     if kind == .preview || kind == .details {
                         let message = kind == .preview
                             ? "The repository changed before the reset preview was ready. Refreshing the reflog…"
                             : "The repository changed while commit details were loading. Refreshing the reflog…"
-                        self.message.stringValue = message
-                        self.status = message
+                        self.showStatus(message)
                     }
-                    self.needsRefresh = true
                     self.scheduleRefresh()
                     return
                 }
@@ -386,10 +378,16 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         return true
     }
 
+    private func showStatus(_ text: String) {
+        let displayed = resetRetryNotice ?? text
+        message.stringValue = displayed
+        status = displayed
+    }
+
     private func show(_ error: Error) {
-        message.stringValue = error is CancellationError ? "Cancelled." : error.localizedDescription
-        status = message.stringValue
-        detailText.string = message.stringValue
+        let errorMessage = error is CancellationError ? "Cancelled." : error.localizedDescription
+        showStatus(errorMessage)
+        detailText.string = errorMessage
         Self.logger.error("Reflog request failed category=\(error is CancellationError ? "cancelled" : "unavailable", privacy: .public)")
     }
 
@@ -398,6 +396,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
     }
 
     @objc private func referenceChanged() {
+        resetRetryNotice = nil
         loadPage(append: false)
     }
 
@@ -437,23 +436,20 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
                 owner.entries = append && reference == load.reference ? owner.entries + load.page.entries : load.page.entries
                 owner.fingerprint = load.page.fingerprint
                 owner.hasMore = load.page.hasMore
-                owner.requests.stale = false
-                owner.needsRefresh = false
-                owner.failedRefreshRevision = nil
+                owner.requests.refreshSucceeded()
                 owner.restoringSelection = true
                 owner.table.reloadData()
                 if let selectedObject, let row = owner.entries.firstIndex(where: { $0.objectID == selectedObject }) {
                     owner.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
                 }
                 owner.restoringSelection = false
-                owner.message.stringValue = owner.entries.isEmpty
+                owner.showStatus(owner.entries.isEmpty
                     ? "This reflog has no retained events. Git may have expired older history."
-                    : "\(owner.entries.count) events. Recovery is available only while Git retains the selected commit."
-                owner.status = owner.message.stringValue
+                    : "\(owner.entries.count) events. Recovery is available only while Git retains the selected commit.")
                 owner.updateControls()
             case let .failure(error):
                 if !append {
-                    owner.failedRefreshRevision = owner.repositoryRevision
+                    owner.requests.refreshFailed()
                 }
                 owner.show(error)
             }
@@ -462,8 +458,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
             refreshTask?.cancel()
             refreshTask = nil
             if !append {
-                needsRefresh = true
-                requests.stale = true; fingerprint = nil; hasMore = false
+                requests.beginRefresh(); fingerprint = nil; hasMore = false
             }
             updateControls()
         }
@@ -506,8 +501,7 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
             switch result {
             case let .success(details):
                 owner.detailText.string = details
-                owner.message.stringValue = objectID
-                owner.status = objectID
+                owner.showStatus(objectID)
             case let .failure(error): owner.show(error)
             }
         }
@@ -550,6 +544,10 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
 
     @objc private func resetCheckout() {
         guard let entry = selectedEntry, let window = view.window, !closed, !isBusy else { return }
+        if resetRetryNotice != nil {
+            resetRetryNotice = nil
+            showStatus("Choose a reset mode to preview the affected paths.")
+        }
         let alert = NSAlert()
         alert.messageText = "Reset Current Checkout to This Commit"
         alert.informativeText = "Choose a mode, then review the affected paths before making changes."
@@ -559,10 +557,13 @@ final class ReflogBrowserController: PBViewController, NSTableViewDataSource, NS
         alert.accessoryView = modes
         alert.addButton(withTitle: "Preview Reset")
         alert.addButton(withTitle: "Cancel")
-        let revision = repositoryRevision
+        let revision = requests.revision
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self, !self.closed else { return }
-            guard self.repositoryRevision == revision, self.requests.permitsRecovery else {
+            guard self.requests.permitsResetPreview(at: revision) else {
+                let notice = "The repository changed. Review the current reflog and try Preview Reset again."
+                self.resetRetryNotice = notice
+                self.showStatus(notice)
                 self.scheduleRefresh()
                 return
             }

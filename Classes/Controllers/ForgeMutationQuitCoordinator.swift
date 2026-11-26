@@ -67,7 +67,13 @@ nonisolated extension ForgeMutationLifecycleCoordinating {
 // swift6-safety-justification: The private lock protects active mutations and termination state.
 final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoordinating, @unchecked Sendable {
     typealias ChoiceProvider = @MainActor @Sendable ([ForgeInFlightMutation]) -> ForgeMutationQuitChoice
-    typealias TerminationReply = @MainActor @Sendable (Bool) -> Void
+    enum QuitDecision: Equatable {
+        case waitForFetches
+        case quitAnyway
+        case cancelled
+    }
+
+    typealias TerminationReply = @MainActor @Sendable (QuitDecision) -> Void
     /// Runs `body` after `seconds`. Injected so tests drive the deadline directly
     /// instead of waiting on the clock.
     typealias TimeoutScheduler = @MainActor @Sendable (
@@ -108,16 +114,14 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         static let shared: ForgeMutationQuitCoordinator = .init(
             persistence: sharedPersistence,
             choiceProvider: ForgeMutationQuitAlert.choice,
-            abandonReservedFetches: { RepositoryLocalMutationRegistry.shared.abandonReservedFetchesForQuit() },
-            terminationReply: { shouldTerminate in
-                RepositoryTerminationCoordinator.shared.remoteTerminationReply(shouldTerminate)
+            terminationReply: { decision in
+                RepositoryTerminationCoordinator.shared.remoteTerminationReply(decision)
             }
         )
     #endif
 
     private let persistence: any ForgeUnknownMutationOutcomePersisting
     private let choiceProvider: ChoiceProvider
-    private let abandonReservedFetches: @Sendable () -> Void
     private let terminationReply: TerminationReply
     private let terminationTimeout: TimeInterval
     private let scheduleTimeout: TimeoutScheduler
@@ -131,14 +135,12 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     init(
         persistence: any ForgeUnknownMutationOutcomePersisting,
         choiceProvider: @escaping ChoiceProvider,
-        abandonReservedFetches: @escaping @Sendable () -> Void = {},
         terminationReply: @escaping TerminationReply,
         terminationTimeout: TimeInterval = ForgeMutationQuitCoordinator.defaultTerminationTimeout,
         scheduleTimeout: @escaping TimeoutScheduler = ForgeMutationQuitCoordinator.defaultTimeoutScheduler
     ) {
         self.persistence = persistence
         self.choiceProvider = choiceProvider
-        self.abandonReservedFetches = abandonReservedFetches
         self.terminationReply = terminationReply
         self.terminationTimeout = terminationTimeout
         self.scheduleTimeout = scheduleTimeout
@@ -192,7 +194,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         if result.reply {
             Task { @MainActor [self, terminationReply] in
                 guard lock.withForgeMutationLock({ terminationAttemptGeneration == result.generation }) else { return }
-                terminationReply(true)
+                terminationReply(.waitForFetches)
             }
         }
         return true
@@ -354,11 +356,10 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
                 return
             case .cancel:
                 logger.error("Forge mutation did not finish within the quit deadline; cancelling this quit attempt")
-                terminationReply(false)
+                terminationReply(.cancelled)
             case .terminate:
                 logger.error("Forge outcome recording did not finish within the quit deadline; terminating after Quit Anyway")
-                abandonReservedFetches()
-                terminationReply(true)
+                terminationReply(.quitAnyway)
             }
         }
     }
@@ -374,10 +375,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
             return true
         }
         if shouldReply {
-            if shouldTerminate {
-                abandonReservedFetches()
-            }
-            terminationReply(shouldTerminate)
+            terminationReply(shouldTerminate ? .quitAnyway : .cancelled)
         }
     }
 

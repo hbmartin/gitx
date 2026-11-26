@@ -948,13 +948,6 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
         }
     }
 
-    func syncFork(
-        accountID: ForgeAccountID,
-        plan: ForgeSyncForkPlan
-    ) async throws -> RepositorySyncForkOutcome {
-        try await syncFork(accountID: accountID, plan: plan, onAdmission: {})
-    }
-
     func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan,
                   onAdmission: @Sendable () -> Void) async throws -> RepositorySyncForkOutcome
     {

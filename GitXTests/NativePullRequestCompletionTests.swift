@@ -28,7 +28,7 @@ final class NativePullRequestCompletionTests: XCTestCase {
             XCTAssertFalse(mutations.hasActivity, "Reserved fetch must leave the remote Quit choice available")
             XCTAssertTrue(mutations.hasActivity(includingReservedFetches: true))
             if abandonFetch {
-                mutations.abandonReservedFetchesForQuit()
+                XCTAssertTrue(mutations.commitTermination(waitForReservedFetches: false))
             }
             await gate.release(true)
             switch await operation.result {
@@ -550,11 +550,12 @@ nonisolated struct NativePullRequestMutationService: GitX.RepositoryPullRequestM
         try await storage.editPullRequest(accountID: accountID, edit: edit)
     }
 
-    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) async throws -> GitX.RepositorySyncForkOutcome {
+    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan, onAdmission: @Sendable () -> Void) async throws -> GitX.RepositorySyncForkOutcome {
         if let sync {
+            onAdmission()
             return await sync(plan)
         }
-        return try await storage.syncFork(accountID: accountID, plan: plan)
+        return try await storage.syncFork(accountID: accountID, plan: plan, onAdmission: onAdmission)
     }
 
     func releaseEdit(_ outcome: GitX.RepositoryPullRequestEditOutcome) async {
@@ -594,7 +595,7 @@ private actor NativePullRequestMutationStorage {
         throw failure
     }
 
-    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) async throws -> GitX.RepositorySyncForkOutcome {
+    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan, onAdmission _: @Sendable () -> Void) async throws -> GitX.RepositorySyncForkOutcome {
         throw GitX.RepositoryPullRequestServiceError.nativeCreationUnavailable
     }
 

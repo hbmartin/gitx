@@ -79,6 +79,251 @@ final class RepositoryTerminationTests: XCTestCase {
         registry.finish(activity)
     }
 
+    func testCancelledMenuHandoffRejectsItsDelayedDelegate() async throws {
+        let session = try recovery()
+        session.attachedCloseDecision = { complete in complete(true); return true }
+        let forwarded = expectation(description: "AppKit receives the menu request")
+        let coordinator = GitX.RepositoryTerminationCoordinator(
+            mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [session] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {},
+            terminate: { forwarded.fulfill() },
+            reply: { _ in XCTFail("A refused delegate callback requires no deferred reply") }
+        )
+        defer { coordinator.cancelPendingQuit() }
+        let original = session.protectionState
+        coordinator.requestTermination()
+        await fulfillment(of: [forwarded], timeout: 5)
+        coordinator.cancelPendingQuit()
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateCancel)
+        XCTAssertEqual(session.protectionState, original)
+    }
+
+    func testFreshQuitRefusesTheCancelledHandoffBeforeSeekingNewConsent() async throws {
+        let session = try recovery()
+        let firstHandoff = expectation(description: "AppKit delays its first delegate call")
+        let freshConsent = expectation(description: "A new attempt requests fresh consent")
+        let finalized = expectation(description: "The new AppKit attempt is accepted")
+        var prompts = 0
+        var forwards = 0
+        var freshAnswer: ((Bool) -> Void)?
+        weak var coordinator: GitX.RepositoryTerminationCoordinator?
+        session.attachedCloseDecision = { complete in
+            prompts += 1
+            if prompts == 1 {
+                complete(true)
+            } else {
+                freshAnswer = complete
+                freshConsent.fulfill()
+            }
+            return true
+        }
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [session] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {}, terminate: {
+                forwards += 1
+                switch forwards {
+                case 1:
+                    firstHandoff.fulfill()
+                case 2:
+                    XCTAssertEqual(prompts, 1)
+                    XCTAssertEqual(coordinator?.applicationShouldTerminate(), .terminateCancel)
+                    XCTAssertFalse(session.protectionState.isEmpty)
+                case 3:
+                    XCTAssertEqual(coordinator?.applicationShouldTerminate(), .terminateNow)
+                    finalized.fulfill()
+                default:
+                    XCTFail("Unexpected native Quit call")
+                }
+            }, reply: { _ in XCTFail("A menu handoff is answered synchronously") }
+        )
+        coordinator = owner
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [firstHandoff], timeout: 5)
+        owner.cancelPendingQuit()
+        owner.requestTermination()
+        owner.requestTermination()
+        await fulfillment(of: [freshConsent], timeout: 5)
+        XCTAssertEqual(forwards, 2)
+        try XCTUnwrap(freshAnswer)(true)
+        await fulfillment(of: [finalized], timeout: 5)
+        XCTAssertEqual(prompts, 2)
+        XCTAssertTrue(session.protectionState.isEmpty)
+    }
+
+    func testCancellingQuitAnywayAfterHandoffPreservesTheReservedFetch() async throws {
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let reservation = try registry.reserveFetch()
+        registry.activateFetchReservation(reservation)
+        let remoteAsked = expectation(description: "Forge offers the remote Quit choice")
+        let forwarded = expectation(description: "AppKit delays the final decision")
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: registry, sessions: { [] }, remoteDecision: {
+                remoteAsked.fulfill()
+                return .terminateLater
+            }, remoteCancelled: {}, terminate: { forwarded.fulfill() },
+            reply: { _ in XCTFail("The native delegate has not requested a reply") }
+        )
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [remoteAsked], timeout: 5)
+        owner.remoteTerminationReply(.quitAnyway)
+        await fulfillment(of: [forwarded], timeout: 5)
+        XCTAssertTrue(registry.hasActivity(includingReservedFetches: true))
+        owner.cancelPendingQuit()
+        XCTAssertEqual(owner.applicationShouldTerminate(), .terminateCancel)
+        let fetch = try registry.beginReservedFetch(reservation)
+        XCTAssertTrue(registry.hasActivity)
+        registry.finish(fetch)
+    }
+
+    func testCancelQuitWhileARevokedHandoffProbeIsStillWaiting() async throws {
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let probed = expectation(description: "Fresh Quit probes the revoked handoff once")
+        var forwards = 0
+        weak var coordinator: GitX.RepositoryTerminationCoordinator?
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: registry, sessions: { [] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {}, terminate: {
+                forwards += 1
+                if forwards == 1 {
+                    coordinator?.cancelPendingQuit()
+                    coordinator?.requestTermination()
+                } else {
+                    probed.fulfill()
+                }
+            }, reply: { _ in XCTFail("The revoked requests never ask for a deferred reply") }
+        )
+        coordinator = owner
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [probed], timeout: 5)
+        owner.requestTermination()
+        owner.cancelPendingQuit()
+        XCTAssertEqual(owner.applicationShouldTerminate(), .terminateCancel)
+        XCTAssertEqual(forwards, 2)
+        try registry.finish(registry.admit())
+    }
+
+    func testWorkRegisteredBeforeQueuedHandoffDefersNativeQuit() async throws {
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let waiting = expectation(description: "Quit waits for work registered before its native handoff")
+        var ticket: GitX.RepositoryLocalMutationRegistry.Ticket?
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: registry, sessions: { [] }, remoteDecision: {
+                self.onNextNativeTurn { ticket = registry.trackContinuation() }
+                return .terminateNow
+            }, remoteCancelled: {}, waitingPresented: { panel in
+                let title = panel.contentView?.subviews.compactMap { $0 as? NSTextField }.first?.stringValue
+                XCTAssertTrue(title?.contains("repository mutation") == true)
+                waiting.fulfill()
+            }, terminate: { XCTFail("Late work must drain before calling AppKit") },
+            reply: { _ in XCTFail("There is no AppKit reply pending") }
+        )
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [waiting], timeout: 5)
+        owner.cancelPendingQuit()
+        try registry.finish(XCTUnwrap(ticket))
+    }
+
+    func testSystemQuitCanJoinBeforeTheQueuedMenuHandoffStarts() async {
+        let replied = expectation(description: "AppKit receives the one deferred reply")
+        weak var coordinator: GitX.RepositoryTerminationCoordinator?
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [] }, remoteDecision: {
+                self.onNextNativeTurn { [weak coordinator] in
+                    XCTAssertEqual(coordinator?.applicationShouldTerminate(), .terminateLater)
+                }
+                return .terminateNow
+            }, remoteCancelled: {}, terminate: { XCTFail("The system delegate already owns termination") },
+            reply: { allowed in XCTAssertTrue(allowed); replied.fulfill() }
+        )
+        coordinator = owner
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [replied], timeout: 5)
+    }
+
+    private func onNextNativeTurn(_ action: @escaping @MainActor @Sendable () -> Void) {
+        RunLoop.main.perform(inModes: [.default]) {
+            // swift6-safety-justification: The test registers work in the main run loop's default mode.
+            MainActor.assumeIsolated { action() }
+        }
+    }
+
+    func testMenuHandoffDefersAgainWhenActivityArrivesAtTheDelegate() async throws {
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let waiting = expectation(description: "Late work presents a cancellable wait")
+        let accepted = expectation(description: "A fresh handoff can accept once the work ends")
+        var activity: GitX.RepositoryLocalMutationRegistry.Ticket?
+        var invocations = 0
+        weak var coordinator: GitX.RepositoryTerminationCoordinator?
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: registry, sessions: { [] }, remoteDecision: { .terminateNow },
+            remoteCancelled: {}, waitingPresented: { panel in
+                if panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first?.stringValue.contains("mutation") == true {
+                    waiting.fulfill()
+                }
+            }, terminate: {
+                invocations += 1
+                if invocations == 1 {
+                    activity = registry.trackContinuation()
+                    XCTAssertEqual(coordinator?.applicationShouldTerminate(), .terminateCancel)
+                } else {
+                    XCTAssertEqual(coordinator?.applicationShouldTerminate(), .terminateNow)
+                    accepted.fulfill()
+                }
+            }, reply: { _ in XCTFail("The retried native handoff returns its decision to the delegate") }
+        )
+        coordinator = owner
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [waiting], timeout: 5)
+        try registry.finish(XCTUnwrap(activity))
+        await fulfillment(of: [accepted], timeout: 5)
+        XCTAssertEqual(invocations, 2)
+    }
+
+    func testDelayedDelegateRestartsTheWaitWhenWorkArrivesDuringHandoff() async throws {
+        let registry = GitX.RepositoryLocalMutationRegistry()
+        let forwarded = expectation(description: "The first handoff returns before its delegate call")
+        let accepted = expectation(description: "The next native handoff accepts after work drains")
+        weak var waitingPanel: NSPanel?
+        weak var coordinator: GitX.RepositoryTerminationCoordinator?
+        var invocations = 0
+        let owner = GitX.RepositoryTerminationCoordinator(
+            mutations: registry, sessions: { [] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {}, waitingPresented: { waitingPanel = $0 },
+            terminate: {
+                invocations += 1
+                if invocations == 1 {
+                    forwarded.fulfill()
+                } else {
+                    XCTAssertEqual(coordinator?.applicationShouldTerminate(), .terminateNow)
+                    accepted.fulfill()
+                }
+            }, reply: { _ in XCTFail("Neither native request requires a deferred reply") }
+        )
+        coordinator = owner
+        defer { owner.cancelPendingQuit() }
+        owner.requestTermination()
+        await fulfillment(of: [forwarded], timeout: 5)
+        let message = try XCTUnwrap(waitingPanel?.contentView?.subviews.compactMap { $0 as? NSTextField }.first)
+        XCTAssertTrue(message.stringValue.contains("Waiting for macOS to finish Quit"))
+
+        let activity = registry.trackContinuation()
+        XCTAssertEqual(owner.applicationShouldTerminate(), .terminateCancel)
+        let waitsForWork = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            message.stringValue.contains("repository mutation is still running")
+        }, object: nil)
+        await fulfillment(of: [waitsForWork], timeout: 5)
+        XCTAssertEqual(invocations, 1)
+        registry.finish(activity)
+        await fulfillment(of: [accepted], timeout: 5)
+        XCTAssertEqual(invocations, 2)
+    }
+
     func testQuitWaitsForUnrelatedSheetWithoutDiscardingRecovery() async throws {
         let session = try recovery()
         let registry = GitX.RepositoryLocalMutationRegistry()
@@ -105,7 +350,7 @@ final class RepositoryTerminationTests: XCTestCase {
                                                                         waitingAgain.fulfill()
                                                                     }
                                                                 },
-                                                                hasBlockingSheets: { parent.attachedSheet != nil },
+                                                                hasBlockingSheets: { _ in parent.attachedSheet != nil },
                                                                 terminate: { forwarded.fulfill() },
                                                                 reply: { _ in XCTFail("AppKit has not asked for a reply") })
         let protected = session.protectionState
@@ -191,7 +436,7 @@ final class RepositoryTerminationTests: XCTestCase {
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
         XCTAssertEqual(replies, [true])
         XCTAssertThrowsError(try registry.admit())
-        coordinator.remoteTerminationReply(true)
+        coordinator.remoteTerminationReply(.waitForFetches)
         coordinator.cancelPendingQuit()
         XCTAssertEqual(replies, [true])
     }
@@ -310,8 +555,8 @@ final class RepositoryTerminationTests: XCTestCase {
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
         await fulfillment(of: [remoteAsked], timeout: 5)
         visible = [recovery]
-        coordinator.remoteTerminationReply(true)
-        coordinator.remoteTerminationReply(true)
+        coordinator.remoteTerminationReply(.waitForFetches)
+        coordinator.remoteTerminationReply(.waitForFetches)
         await fulfillment(of: [consent], timeout: 5)
         try XCTUnwrap(decision)(false)
         await fulfillment(of: [replied], timeout: 5)
@@ -345,7 +590,7 @@ final class RepositoryTerminationTests: XCTestCase {
         var coordinator: GitX.RepositoryTerminationCoordinator!
         defer { coordinator = nil }
         coordinator = GitX.RepositoryTerminationCoordinator(mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [] }, remoteDecision: {
-            coordinator.remoteTerminationReply(true)
+            coordinator.remoteTerminationReply(.waitForFetches)
             return .terminateLater
         }, remoteCancelled: {}, reply: { XCTAssertTrue($0); replied.fulfill() })
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
@@ -396,7 +641,7 @@ final class RepositoryTerminationTests: XCTestCase {
         }, remoteCancelled: {}, reply: { XCTAssertFalse($0); replied.fulfill() })
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
         await fulfillment(of: [asked], timeout: 5)
-        coordinator.remoteTerminationReply(false)
+        coordinator.remoteTerminationReply(.cancelled)
         await fulfillment(of: [replied], timeout: 5)
     }
 
@@ -498,7 +743,7 @@ final class RepositoryTerminationTests: XCTestCase {
         try XCTUnwrap(answer)(true)
         await fulfillment(of: [remote], timeout: 5)
         XCTAssertTrue(recovery.submissions[0].needsCloseProtection, "Accepted preflight cannot discard text while a later guard is undecided")
-        coordinator.remoteTerminationReply(true)
+        coordinator.remoteTerminationReply(.waitForFetches)
         await fulfillment(of: [replied], timeout: 5)
         XCTAssertTrue(recovery.submissions.isEmpty)
     }

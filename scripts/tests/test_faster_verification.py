@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import pathlib
 import plistlib
 import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -221,6 +224,60 @@ class VerificationSchedulingTests(unittest.TestCase):
                     inputs.assert_not_called()
                 self.assertEqual(workflow.parallel_inputs(root, "reader", 0), {"source": "stable"})
                 inputs.assert_called_once_with(root)
+
+    def test_interrupt_during_a_contended_parallel_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            resource = session.shared_xcode_build_resource(root)
+            with session.Leases([resource], {"runId": "other-run"}, inherited={}):
+                signal_sent = threading.Event()
+
+                def send_interrupt():
+                    os.kill(os.getpid(), signal.SIGINT)
+                    signal_sent.set()
+
+                with mock.patch.object(session, "producer_identity", return_value={}), \
+                        mock.patch.object(workflow.subprocess, "Popen") as launch:
+                    timer = threading.Timer(.1, send_interrupt)
+                    timer.start()
+                    began = time.monotonic()
+                    try:
+                        status, _ = workflow.execute_parallel(
+                            root, root / "workflow.json", {"runId": "reader"},
+                            SimpleNamespace(timeout=2, wait_for_resources=2, resume=None),
+                            [("static", ["true"])], {}, {}, {}, None)
+                    finally:
+                        timer.cancel()
+                        timer.join()
+                    self.assertTrue(signal_sent.is_set())
+                    self.assertEqual(status, 130)
+                    self.assertLess(time.monotonic() - began, 1.5)
+                    launch.assert_not_called()
+                with self.assertRaises(session.ResourceBusy):
+                    workflow.parallel_inputs(root, "another-reader", 0)
+
+    def test_interrupt_while_snapshot_is_blocked_preserves_the_observed_failure(self):
+        current = {"head": "candidate"}
+        child = mock.Mock()
+        child.poll.return_value = 9
+
+        def inputs(*_):
+            if child.poll.called:
+                signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+                raise session.ResourceBusy("/fixture", {"runId": "other"})
+            return current
+
+        root = pathlib.Path("/tmp")
+        with mock.patch.object(workflow.subprocess, "Popen", return_value=child), \
+                mock.patch.object(workflow, "parallel_inputs", side_effect=inputs), \
+                mock.patch.object(workflow, "record_check") as record:
+            status, failure = workflow.execute_parallel(
+                root, root / "workflow.json", {"runId": "reader", "inputsBefore": current},
+                SimpleNamespace(timeout=2, wait_for_resources=2, resume=None),
+                [("static", ["true"])], {"toolchain": "test"}, {}, {}, None)
+        self.assertEqual(status, 9)
+        self.assertEqual(failure["name"], "static")
+        record.assert_not_called()
 
     def test_shared_lease_still_reports_busy_when_diagnostics_cannot_be_written(self):
         with tempfile.TemporaryDirectory() as directory:

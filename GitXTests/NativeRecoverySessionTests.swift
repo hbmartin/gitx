@@ -130,6 +130,86 @@ final class NativeRecoverySessionTests: XCTestCase {
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
     }
 
+    func testWaitingForADraftSaveKeepsTheAttachedEditorVisible() async throws {
+        let fixture = try await fixture()
+        let editor = try XCTUnwrap(fixture.sheet.window)
+        let save = try XCTUnwrap(fixture.sheet.beginRecoverySave())
+        defer { fixture.sheet.finishRecoverySave(save) }
+        let nested = NSAlert()
+        nested.messageText = "Draft replacement needs a decision"
+        nested.beginSheetModal(for: editor) { _ in }
+        defer {
+            if editor.attachedSheet === nested.window {
+                editor.endSheet(nested.window)
+            }
+        }
+        fixture.session.attachedCloseDecision = { completion in completion(true); return true }
+        let waiting = expectation(description: "Quit waits for the nested sheet")
+        weak var waitingPanel: NSPanel?
+        let coordinator = GitX.RepositoryTerminationCoordinator(
+            mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [fixture.session] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {}, waitingPresented: { panel in
+                let text = panel.contentView?.subviews.compactMap { $0 as? NSTextField }.first?.stringValue
+                XCTAssertTrue(text?.contains("Finish the open sheet") == true)
+                XCTAssertTrue(editor.sheetParent === fixture.parent)
+                waitingPanel = panel
+                waiting.fulfill()
+            }, hasBlockingSheets: { ownedSheets in
+                guard let attached = fixture.parent.attachedSheet else { return false }
+                return !ownedSheets.contains(ObjectIdentifier(attached))
+            }, terminate: { XCTFail("Quit cannot advance during recovery persistence") },
+            reply: { _ in XCTFail("There is no AppKit reply pending") }
+        )
+        coordinator.requestTermination()
+        await fulfillment(of: [waiting], timeout: 5)
+        XCTAssertTrue(editor.attachedSheet === nested.window)
+        let message = try XCTUnwrap(waitingPanel?.contentView?.subviews.compactMap { $0 as? NSTextField }.first)
+        editor.endSheet(nested.window)
+        await wait { message.stringValue.contains("recovered edit is still being saved") }
+        try attachScreenshot(of: XCTUnwrap(waitingPanel), named: "Quit waits for a recovered draft save")
+        coordinator.cancelPendingQuit()
+        XCTAssertTrue(fixture.sheet.acceptsRecoverySave(save))
+        XCTAssertEqual(fixture.sheet.recoveryContentSnapshot, fixture.exact)
+    }
+
+    func testQuitRestoresAnEditorIfAnUnrelatedSheetAppearsDuringHandoff() async throws {
+        let fixture = try await fixture()
+        let editor = try XCTUnwrap(fixture.sheet.window)
+        fixture.session.attachedCloseDecision = { completion in completion(true); return true }
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 250), styleMask: [.titled], backing: .buffered, defer: false)
+        parent.isReleasedWhenClosed = false
+        parent.orderFront(nil)
+        let alert = NSAlert()
+        alert.messageText = "Unrelated operation finished"
+        var appeared = false
+        defer {
+            if parent.attachedSheet === alert.window {
+                parent.endSheet(alert.window)
+            }
+            parent.close()
+        }
+        let waiting = expectation(description: "Quit reattaches recovery when a sheet blocks the handoff")
+        let coordinator = GitX.RepositoryTerminationCoordinator(
+            mutations: GitX.RepositoryLocalMutationRegistry(), sessions: { [fixture.session] },
+            remoteDecision: { .terminateNow }, remoteCancelled: {}, waitingPresented: { _ in
+                XCTAssertTrue(parent.attachedSheet === alert.window)
+                XCTAssertTrue(editor.sheetParent === fixture.parent)
+                waiting.fulfill()
+            }, hasBlockingSheets: { _ in
+                if editor.sheetParent == nil, !appeared {
+                    appeared = true
+                    alert.beginSheetModal(for: parent) { _ in }
+                }
+                return parent.attachedSheet === alert.window
+            }, terminate: { XCTFail("The unrelated sheet must finish before AppKit takes over") },
+            reply: { _ in XCTFail("The native delegate has not started termination") }
+        )
+        defer { coordinator.cancelPendingQuit() }
+        coordinator.requestTermination()
+        await fulfillment(of: [waiting], timeout: 5)
+        XCTAssertEqual(fixture.sheet.recoveryContentSnapshot, fixture.exact)
+    }
+
     func testCancelledMenuQuitRestoresTheSuspendedRecoveryAndItsFirstResponder() async throws {
         let fixture = try await fixture()
         let window = try XCTUnwrap(fixture.sheet.window)
