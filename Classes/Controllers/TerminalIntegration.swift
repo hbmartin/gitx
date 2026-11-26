@@ -61,7 +61,13 @@ final class TerminalLauncher: NSObject {
 
     @objc(openDirectory:presentingWindow:)
     func open(directory: URL, presenting window: NSWindow?) {
-        guard let identifier = configuredIdentifier(presenting: window) else { return }
+        configuredIdentifier(presenting: window) { [self] identifier in
+            guard let identifier else { return }
+            open(directory: directory, identifier: identifier, presenting: window)
+        }
+    }
+
+    private func open(directory: URL, identifier: String, presenting window: NSWindow?) {
         do {
             if identifier == "custom" {
                 try launchCustom(directory: directory)
@@ -81,9 +87,11 @@ final class TerminalLauncher: NSObject {
         }
     }
 
-    private func configuredIdentifier(presenting window: NSWindow?) -> String? {
+    /// Completes with the configured terminal, asking on `window` when none is configured yet.
+    private func configuredIdentifier(presenting window: NSWindow?, completion: @escaping (String?) -> Void) {
         if let identifier = ApplicationSettings.terminalBundleIdentifier, !identifier.isEmpty {
-            return identifier
+            completion(identifier)
+            return
         }
         let available = TerminalApplication.all.filter(\.isInstalled)
         let alert = NSAlert()
@@ -99,10 +107,18 @@ final class TerminalLauncher: NSObject {
         alert.accessoryView = popup
         alert.addButton(withTitle: "Open")
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let identifier = popup.selectedItem?.representedObject as? String else { return nil }
-        ApplicationSettings.terminalBundleIdentifier = identifier
-        return identifier
+        WindowModalPresenter.present(alert, for: window) { [self] response in
+            guard response == .alertFirstButtonReturn,
+                  let identifier = popup.selectedItem?.representedObject as? String
+            else {
+                logger.info("Terminal application choice cancelled")
+                completion(nil)
+                return
+            }
+            ApplicationSettings.terminalBundleIdentifier = identifier
+            logger.info("Terminal application chosen")
+            completion(identifier)
+        }
     }
 
     private func launchApplication(identifier: String, directory: URL, presenting window: NSWindow?) throws {
@@ -204,12 +220,7 @@ final class TerminalLauncher: NSObject {
     }
 
     private func present(error: Error, window: NSWindow?) {
-        let alert = NSAlert(error: error)
-        if let window {
-            alert.beginSheetModal(for: window)
-        } else {
-            alert.runModal()
-        }
+        WindowModalPresenter.present(NSAlert(error: error), for: window)
     }
 }
 
@@ -379,35 +390,67 @@ final class IntegrationManager: NSObject {
     private let managedPrefix = "gitx-raycast-"
 
     @objc func installRaycastScripts(presenting window: NSWindow?) {
-        guard let directory = scriptsDirectory(presenting: window) else { return }
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            for script in raycastScripts {
-                let destination = directory.appendingPathComponent(managedPrefix + script.filename)
-                if FileManager.default.fileExists(atPath: destination.path),
-                   let existing = try? String(contentsOf: destination, encoding: .utf8),
-                   existing != script.contents,
-                   !ManagedScriptChecksumPolicy.hasValidChecksum(for: existing)
-                {
-                    let alert = NSAlert()
-                    alert.messageText = "Replace Modified Raycast Script?"
-                    alert.informativeText = destination.lastPathComponent
-                    alert.addButton(withTitle: "Replace Modified")
-                    alert.addButton(withTitle: "Cancel")
-                    guard alert.runModal() == .alertFirstButtonReturn else { return }
-                }
-                try script.contents.write(to: destination, atomically: true, encoding: .utf8)
-                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
+        scriptsDirectory(presenting: window) { [self] directory in
+            guard let directory else { return }
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                present(error: error, window: window)
+                return
             }
+            install(raycastScripts, from: 0, into: directory, presenting: window)
+        }
+    }
+
+    /// Writes each managed script in order. A script the person modified is replaced only after
+    /// they confirm on `window`; declining stops the installation.
+    private func install(
+        _ scripts: [(filename: String, contents: String)],
+        from index: Int,
+        into directory: URL,
+        presenting window: NSWindow?
+    ) {
+        guard scripts.indices.contains(index) else {
             logger.info("Installed managed Raycast commands")
             present(title: "Raycast Commands Installed", message: "Four Half Dark commands are ready in Raycast.", window: window)
-        } catch {
-            present(error: error, window: window)
+            return
+        }
+        let script = scripts[index]
+        let destination = directory.appendingPathComponent(managedPrefix + script.filename)
+        let writeAndContinue = { [self] in
+            do {
+                try script.contents.write(to: destination, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
+            } catch {
+                present(error: error, window: window)
+                return
+            }
+            install(scripts, from: index + 1, into: directory, presenting: window)
+        }
+        guard FileManager.default.fileExists(atPath: destination.path),
+              let existing = try? String(contentsOf: destination, encoding: .utf8),
+              existing != script.contents,
+              !ManagedScriptChecksumPolicy.hasValidChecksum(for: existing)
+        else {
+            writeAndContinue()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Replace Modified Raycast Script?"
+        alert.informativeText = destination.lastPathComponent
+        alert.addButton(withTitle: "Replace Modified")
+        alert.addButton(withTitle: "Cancel")
+        WindowModalPresenter.present(alert, for: window) { [self] response in
+            guard response == .alertFirstButtonReturn else {
+                logger.info("Kept a modified managed Raycast command; installation stopped")
+                return
+            }
+            writeAndContinue()
         }
     }
 
     @objc func removeRaycastScripts(presenting window: NSWindow?) {
-        guard let directory = scriptsDirectory(presenting: window, promptIfMissing: false) else { return }
+        guard let directory = configuredScriptsDirectory else { return }
         do {
             var removedCount = 0
             var preservedCount = 0
@@ -437,19 +480,23 @@ final class IntegrationManager: NSObject {
         }
     }
 
-    private func scriptsDirectory(presenting window: NSWindow?, promptIfMissing: Bool = true) -> URL? {
-        if !ApplicationSettings.raycastScriptsDirectory.isEmpty {
-            return URL(fileURLWithPath: ApplicationSettings.raycastScriptsDirectory, isDirectory: true)
+    private var configuredScriptsDirectory: URL? {
+        let path = ApplicationSettings.raycastScriptsDirectory
+        return path.isEmpty ? nil : URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    /// Completes with the configured scripts folder, asking on `window` when none is configured yet.
+    private func scriptsDirectory(presenting window: NSWindow?, completion: @escaping (URL?) -> Void) {
+        if let configuredScriptsDirectory {
+            completion(configuredScriptsDirectory)
+            return
         }
-        guard promptIfMissing else { return nil }
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.prompt = "Choose"
-        let response = window.map { _ in panel.runModal() } ?? panel.runModal()
-        guard response == .OK, let url = panel.url else { return nil }
-        ApplicationSettings.raycastScriptsDirectory = url.path
-        return url
+        WindowModalPresenter.chooseDirectory(prompt: "Choose", for: window) { url in
+            if let url {
+                ApplicationSettings.raycastScriptsDirectory = url.path
+            }
+            completion(url)
+        }
     }
 
     private var raycastScripts: [(filename: String, contents: String)] {
@@ -461,19 +508,10 @@ final class IntegrationManager: NSObject {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        if let window {
-            alert.beginSheetModal(for: window)
-        } else {
-            alert.runModal()
-        }
+        WindowModalPresenter.present(alert, for: window)
     }
 
     private func present(error: Error, window: NSWindow?) {
-        let alert = NSAlert(error: error)
-        if let window {
-            alert.beginSheetModal(for: window)
-        } else {
-            alert.runModal()
-        }
+        WindowModalPresenter.present(NSAlert(error: error), for: window)
     }
 }

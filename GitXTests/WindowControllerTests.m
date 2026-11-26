@@ -4236,6 +4236,66 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 						  @"https://github.com/acme/widgets/pull/42");
 }
 
+- (NSWindow *)remoteChoiceWindow
+{
+	return [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 480, 320)
+									   styleMask:NSWindowStyleMaskTitled
+										 backing:NSBackingStoreBuffered
+										   defer:NO];
+}
+
+- (void)configureAmbiguousForgeRemotes
+{
+	[self configureForgeRemotes:@{
+		@"origin" : @"git@github.com:person/widgets.git",
+		@"upstream" : @"ssh://git@gitlab.com/organization/widgets.git",
+	}];
+}
+
+- (void)testViewRemoteAsksForTheForgeRepositoryInASheetAndOpensTheChosenRemote
+{
+	[self configureAmbiguousForgeRemotes];
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		NSPopUpButton *popup = (NSPopUpButton *)alert.accessoryView;
+		for (NSMenuItem *item in popup.itemArray)
+			if ([item.title hasPrefix:@"upstream"]) [popup selectItem:item];
+	};
+
+	[PBRepositoryRemoteURLCoordinator.shared viewRemoteForRepository:self.repository presentingWindow:[self remoteChoiceWindow]];
+
+	XCTAssertEqual(PBWindowAlertSheetCount, 1U);
+	XCTAssertEqual(PBWindowAlertAppModalCount, 0U);
+	XCTAssertEqualObjects(PBWindowPresentedAlerts.firstObject.messageText, @"Choose a Primary Forge Repository");
+	XCTAssertEqual(PBWindowWorkspaceOpenCount, 1U);
+	XCTAssertTrue([PBWindowWorkspaceOpenedURLs.lastObject.absoluteString hasPrefix:@"https://gitlab.com/organization/widgets"],
+				  @"%@", PBWindowWorkspaceOpenedURLs.lastObject);
+}
+
+- (void)testCancellingTheForgeRepositoryChoiceOpensNothingAndShowsNoFurtherAlert
+{
+	[self configureAmbiguousForgeRemotes];
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+
+	[PBRepositoryRemoteURLCoordinator.shared viewRemoteForRepository:self.repository presentingWindow:[self remoteChoiceWindow]];
+
+	XCTAssertEqual(PBWindowAlertSheetCount, 1U);
+	XCTAssertEqual(PBWindowAlertAppModalCount, 0U);
+	XCTAssertEqual(PBWindowPresentedAlerts.count, 1U);
+	XCTAssertEqual(PBWindowWorkspaceOpenCount, 0U);
+}
+
+- (void)testViewRemoteWithoutAForgeRemoteExplainsItInASheet
+{
+	[self configureForgeRemotes:@{@"origin" : @"http://example.com/acme/widgets.git"}];
+
+	[PBRepositoryRemoteURLCoordinator.shared viewRemoteForRepository:self.repository presentingWindow:[self remoteChoiceWindow]];
+
+	XCTAssertEqual(PBWindowAlertSheetCount, 1U);
+	XCTAssertEqual(PBWindowAlertAppModalCount, 0U);
+	XCTAssertEqualObjects(PBWindowPresentedAlerts.lastObject.messageText, @"No Web Remote Available");
+	XCTAssertEqual(PBWindowWorkspaceOpenCount, 0U);
+}
+
 - (void)testViewingRemoteHonorsRepositoryCustomURLTemplate
 {
 	[self configureForgeRemotes:@{@"origin" : @"https://github.com/acme/widgets.git"}];
