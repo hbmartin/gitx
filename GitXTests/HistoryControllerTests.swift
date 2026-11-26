@@ -5962,6 +5962,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testRelativeDateColumnFormatsCommitDatesWithTheRelativeDateFormatter() throws {
+        let commitList = historyController.commitList
+        let column = try XCTUnwrap(commitList.tableColumn(withIdentifier: .init("RelativeDateColumn")))
+        let cell = try XCTUnwrap(commitList.makeView(withIdentifier: column.identifier, owner: nil) as? NSTableCellView)
+        let formatter = try XCTUnwrap(cell.textField?.formatter as? GitXRelativeDateFormatter)
+        XCTAssertEqual(formatter.string(for: Date().addingTimeInterval(-600)), "10 minutes ago")
+    }
+
     func testHistorySearchRecentsCharacterizeSubmissionNavigationDedupAndClearing() throws {
         let searchController = historyController.searchController
         let searchField = try XCTUnwrap(searchController.searchField)
