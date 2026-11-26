@@ -11,6 +11,7 @@
     "HistorySearchPolicy.swift": 1.0,
     "ReflogBrowserRequestPolicy.swift": 1.0,
     "ReflogPolicy.swift": 1.0,
+    "RelativeDatePolicy.swift": 1.0,
     "RepositoryConfigurationPolicy.swift": 1.0,
     "SidebarPolicy.swift": 1.0,
     "Worktree.swift": 1.0,

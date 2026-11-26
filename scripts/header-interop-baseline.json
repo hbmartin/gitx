@@ -13,7 +13,6 @@
     "Classes/Controllers/PBServicesController.h",
     "Classes/Controllers/PBWebController.h",
     "Classes/Controllers/PBWebDiffController.h",
-    "Classes/GitXRelativeDateFormatter.h",
     "Classes/NSColor+RGB.h",
     "Classes/NSSplitView+GitX.h",
     "Classes/PBCommitList.h",

@@ -90,7 +90,7 @@
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
     "Classes/Controllers/StagingViewController.swift": 0.942,
     "Classes/Controllers/WorkspaceActionCoordinator.swift": 0.9805,
-    "Classes/GitXRelativeDateFormatter.m": 0.6666,
+    "Classes/GitXRelativeDateFormatter.swift": 0.6666,
     "Classes/GitXSwift.swift": 1.0,
     "Classes/NSAppearance+PBDarkMode.m": 0.9473,
     "Classes/NSColor+RGB.m": 1.0,

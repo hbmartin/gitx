@@ -1,7 +1,6 @@
 #import <Quartz/Quartz.h>
 // Import the app bridge explicitly before @testable consumers; compatibility refinements remain categories.
 #import "GitX-Bridging-Header.h"
-#import "GitXRelativeDateFormatter.h"
 #import "PBRepositoryFinder.h"
 #import "PBMacros.h"
 #import "PBGitRevSpecifier.h"
@@ -211,6 +210,9 @@ typedef NS_ENUM(NSInteger, PBBranchSortMode) {
 	PBBranchSortModeAlphabetical,
 	PBBranchSortModeRecentCommit,
 };
+
+@interface GitXRelativeDateFormatter : NSFormatter
+@end
 
 typedef NS_ENUM(NSInteger, PBHistorySearchExecutionKind) {
 	PBHistorySearchExecutionKindClear,
