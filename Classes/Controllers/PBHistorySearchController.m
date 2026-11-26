@@ -266,7 +266,6 @@
 	[searchMenu addItem:item];
 
 	item = [NSMenuItem separatorItem];
-	[item setTag:NSSearchFieldRecentsTitleMenuItemTag];
 	[searchMenu addItem:item];
 
 	item = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Clear Recent Searches", @"Searches menu: title of clear recent searches item") action:NULL keyEquivalent:@""];

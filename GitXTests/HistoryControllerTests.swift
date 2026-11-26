@@ -5970,6 +5970,18 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(formatter.string(for: Date().addingTimeInterval(-600)), "10 minutes ago")
     }
 
+    func testSearchMenuTemplateTagsExactlyOneRecentsTitleItem() throws {
+        let searchField = try XCTUnwrap(historyController.searchController.searchField)
+        let searchFieldCell = try XCTUnwrap(searchField.cell as? NSSearchFieldCell)
+        let menu = try XCTUnwrap(searchFieldCell.searchMenuTemplate)
+
+        let titleItems = menu.items.filter { $0.tag == NSSearchField.recentsTitleMenuItemTag }
+        XCTAssertEqual(titleItems.count, 1)
+        XCTAssertEqual(titleItems.first?.title, "Recent Searches")
+        XCTAssertFalse(titleItems.first?.isSeparatorItem ?? true)
+        XCTAssertTrue(menu.items.filter(\.isSeparatorItem).allSatisfy { $0.tag == 0 })
+    }
+
     func testHistorySearchRecentsCharacterizeSubmissionNavigationDedupAndClearing() throws {
         let searchController = historyController.searchController
         let searchField = try XCTUnwrap(searchController.searchField)
