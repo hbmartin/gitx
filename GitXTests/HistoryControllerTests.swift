@@ -6064,10 +6064,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try attachScreenshot(of: XCTUnwrap(popUp.superview), named: "PR2-History-Search-Mode-Scope-Bar")
     }
 
-    /// Keeps the app-wide recents preferences of the test host intact around a recents test.
+    /// Keeps the app-wide saved and recent search preferences of the test host intact around a test.
     private func preservingHistorySearchRecents(_ body: () throws -> Void) rethrows {
         let defaults = UserDefaults.standard
-        let keys = ["PBHistorySearchRecents", "Recent History Searches", "PBHistorySearchMode"]
+        let keys = ["PBHistorySearchRecents", "Recent History Searches", "PBHistorySearchMode", "PBSavedHistorySearches"]
         let original = keys.map { defaults.object(forKey: $0) }
         defer {
             for (key, value) in zip(keys, original) {
@@ -6179,6 +6179,101 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: stored) as? [String: Any])
             XCTAssertEqual(payload["version"] as? Int, 1)
             XCTAssertEqual((payload["recents"] as? [Any])?.count, 0)
+        }
+    }
+
+    func testSavedSearchesAppearInTheSearchMenuAndRunInTheirModes() throws {
+        try preservingHistorySearchRecents {
+            let searchController = historyController.searchController
+            let searchField = try XCTUnwrap(searchController.searchField)
+            let originalMode = searchController.searchMode
+            defer {
+                searchController.clearSearch()
+                searchController.searchMode = originalMode
+            }
+            UserDefaults.standard.set(Data("""
+            {"version":1,"searches":[{"id":"\(UUID().uuidString)","mode":5,"name":"Ada","text":"--author=GitX"}]}
+            """.utf8), forKey: "PBSavedHistorySearches")
+            NotificationCenter.default.post(name: Notification.Name("PBSavedHistorySearchesDidChangeNotification"), object: nil)
+
+            XCTAssertEqual(try Array(searchMenuTitles()[5 ..< 11]), [
+                "---", "Saved Searches", "Ada", "Save Search As…", "Manage Saved Searches…", "---",
+            ])
+            let validation = try XCTUnwrap(searchController as AnyObject as? NSMenuItemValidation)
+            let saveAs = try searchMenuItem("GitX.History.Search.SaveAs")
+            let manage = try searchMenuItem("GitX.History.Search.ManageSaved")
+            searchField.stringValue = ""
+            XCTAssertFalse(validation.validateMenuItem(saveAs))
+            XCTAssertTrue(validation.validateMenuItem(manage))
+            searchField.stringValue = "needle"
+            XCTAssertTrue(validation.validateMenuItem(saveAs))
+            XCTAssertTrue(try validation.validateMenuItem(searchMenuItem("GitX.History.Search.Saved.Ada")))
+
+            // Choosing a saved search runs it in its mode and remembers it as a recent search.
+            let ada = try searchMenuItem("GitX.History.Search.Saved.Ada")
+            XCTAssertEqual(ada.toolTip, "--author=GitX — Raw")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(ada.action), to: ada.target, from: ada))
+            XCTAssertEqual(searchController.searchMode, .raw)
+            XCTAssertEqual(searchField.stringValue, "--author=GitX")
+            XCTAssertEqual(searchController.modePopUp?.titleOfSelectedItem, "Raw")
+            XCTAssertTrue(try searchMenuTitles().contains("--author=GitX — Raw"))
+
+            // A saved search removed elsewhere is ignored, and the menu catches up.
+            UserDefaults.standard.removeObject(forKey: "PBSavedHistorySearches")
+            searchField.stringValue = "kept"
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(ada.action), to: ada.target, from: ada))
+            XCTAssertEqual(searchField.stringValue, "kept")
+            XCTAssertEqual(try Array(searchMenuTitles()[6 ..< 8]), ["Saved Searches", "No Saved Searches"])
+            XCTAssertFalse(try validation.validateMenuItem(searchMenuItem("GitX.History.Search.ManageSaved")))
+        }
+    }
+
+    func testSaveAndManageSavedSearchesOpenSheetsOnTheHistoryWindow() throws {
+        try preservingHistorySearchRecents {
+            let searchController = historyController.searchController
+            let searchField = try XCTUnwrap(searchController.searchField)
+            let window = try XCTUnwrap(searchField.window)
+            defer {
+                while let sheet = window.attachedSheet {
+                    window.endSheet(sheet)
+                    sheet.orderOut(nil)
+                }
+                searchController.clearSearch()
+            }
+
+            // Nothing to save: no sheet.
+            searchField.stringValue = ""
+            let emptySaveAs = try searchMenuItem("GitX.History.Search.SaveAs")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(emptySaveAs.action), to: emptySaveAs.target, from: emptySaveAs))
+            XCTAssertNil(window.attachedSheet)
+
+            searchController.searchMode = .pickaxe
+            searchField.stringValue = "needle"
+            let saveAs = try searchMenuItem("GitX.History.Search.SaveAs")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(saveAs.action), to: saveAs.target, from: saveAs))
+            let saveSheet = try XCTUnwrap(window.attachedSheet)
+            XCTAssertNil(NSApp.modalWindow)
+            let nameField = try XCTUnwrap(descendant(identifier: "GitX.SavedSearches.Name", in: saveSheet.contentView) as? NSTextField)
+            nameField.stringValue = "Needles"
+            window.endSheet(saveSheet, returnCode: .alertFirstButtonReturn)
+            saveSheet.orderOut(nil)
+            XCTAssertEqual(try Array(searchMenuTitles()[6 ..< 8]), ["Saved Searches", "Needles"])
+
+            searchField.stringValue = "something else"
+            searchController.searchMode = .basic
+            let manage = try searchMenuItem("GitX.History.Search.ManageSaved")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(manage.action), to: manage.target, from: manage))
+            let manageSheet = try XCTUnwrap(window.attachedSheet)
+            XCTAssertEqual(manageSheet.accessibilityIdentifier(), "GitX.SavedSearches.Sheet")
+            let table = try XCTUnwrap(descendant(identifier: "GitX.SavedSearches.Table", in: manageSheet.contentView) as? NSTableView)
+            XCTAssertEqual(table.numberOfRows, 1)
+            table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            let apply = try XCTUnwrap(descendant(identifier: "GitX.SavedSearches.Apply", in: manageSheet.contentView) as? NSButton)
+            apply.performClick(nil)
+
+            XCTAssertNil(window.attachedSheet)
+            XCTAssertEqual(searchController.searchMode, .pickaxe)
+            XCTAssertEqual(searchField.stringValue, "needle")
         }
     }
 

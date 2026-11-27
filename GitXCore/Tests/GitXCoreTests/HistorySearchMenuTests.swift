@@ -3,25 +3,58 @@ import XCTest
 
 final class HistorySearchMenuTests: XCTestCase {
     func testWithoutRecentsTheMenuListsModesAndSaysThereAreNoRecents() {
-        XCTAssertEqual(HistorySearchMenu.rows(selectedMode: .path, recents: HistorySearchRecents()), [
+        XCTAssertEqual(HistorySearchMenu.rows(selectedMode: .path, library: SavedHistorySearchLibrary(), recents: HistorySearchRecents()), [
             .mode(.basic, isSelected: false),
             .mode(.pickaxe, isSelected: false),
             .mode(.regex, isSelected: false),
             .mode(.path, isSelected: true),
             .mode(.raw, isSelected: false),
             .separator,
+            .savedSearchesHeader,
+            .noSavedSearches,
+            .saveSearchAs,
+            .manageSavedSearches,
+            .separator,
             .recentSearchesHeader,
             .noRecentSearches,
         ])
     }
 
+    func testSavedSearchesAreListedByNameBeforeTheSaveAndManageItems() throws {
+        var library = SavedHistorySearchLibrary()
+        let zebra = try library.save(name: "Zebra", query: HistorySearchQuery(mode: .path, text: "docs/")).get()
+        let ada = try library.save(name: "Ada", query: HistorySearchQuery(mode: .raw, text: "--author=Ada")).get()
+        let rows = HistorySearchMenu.rows(selectedMode: .basic, library: library, recents: HistorySearchRecents())
+
+        XCTAssertEqual(Array(rows[5 ..< 11]), [
+            .separator,
+            .savedSearchesHeader,
+            .savedSearch(ada),
+            .savedSearch(zebra),
+            .saveSearchAs,
+            .manageSavedSearches,
+        ])
+        XCTAssertTrue(HistorySearchMenu.canManageSavedSearches(library))
+        XCTAssertFalse(HistorySearchMenu.canManageSavedSearches(SavedHistorySearchLibrary()))
+    }
+
+    func testOnlyRunnableQueriesCanBeSaved() {
+        XCTAssertTrue(HistorySearchMenu.canSaveSearch(HistorySearchQuery(mode: .pickaxe, text: "needle")))
+        XCTAssertFalse(HistorySearchMenu.canSaveSearch(HistorySearchQuery(mode: .pickaxe, text: "")))
+        XCTAssertFalse(HistorySearchMenu.canSaveSearch(HistorySearchQuery(mode: .raw, text: "'open")))
+    }
+
     func testRecentsAreListedNewestFirstWithAClearItem() {
         let newest = HistorySearchQuery(mode: .raw, text: "--all")
         let older = HistorySearchQuery(mode: .basic, text: "needle")
-        let rows = HistorySearchMenu.rows(selectedMode: .basic, recents: HistorySearchRecents(queries: [newest, older]))
+        let rows = HistorySearchMenu.rows(
+            selectedMode: .basic,
+            library: SavedHistorySearchLibrary(),
+            recents: HistorySearchRecents(queries: [newest, older])
+        )
 
         XCTAssertEqual(Array(rows.prefix(1)), [.mode(.basic, isSelected: true)])
-        XCTAssertEqual(Array(rows.dropFirst(5)), [
+        XCTAssertEqual(Array(rows.dropFirst(10)), [
             .separator,
             .recentSearchesHeader,
             .recentSearch(index: 0, query: newest),

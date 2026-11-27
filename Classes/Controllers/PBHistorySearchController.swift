@@ -41,7 +41,7 @@ final class PBHistorySearchController: NSObject {
     @objc private(set) var backgroundSearchTask: PBTask?
     private var rewindPanel: NSPanel?
     private var arrangedObjectsObservation: NSKeyValueObservation?
-    /// App-wide recent searches, read from application preferences when first needed.
+    /// App-wide saved and recent searches, read from application preferences when first needed.
     private lazy var searchStore = SavedHistorySearchStore()
 
     @objc dynamic var searchMode: PBHistorySearchMode {
@@ -133,14 +133,57 @@ final class PBHistorySearchController: NSObject {
         }
         let query = queries[index]
         Self.logger.info("Running recent history search \(query.text, privacy: .private) in mode \(query.mode.rawValue)")
-        searchMode = PBSearchModeForInteger(query.mode.rawValue)
-        searchField?.stringValue = query.text
-        updateSearch(self)
-        recordCurrentSearch()
+        run(query)
     }
 
     @objc func clearRecentSearches(_: Any?) {
         searchStore.clearRecents()
+    }
+
+    /// Runs the chosen saved search in the mode it was saved with.
+    @objc func selectSavedSearch(_ sender: Any) {
+        guard let identifier = (sender as? NSMenuItem)?.representedObject as? String,
+              let id = UUID(uuidString: identifier),
+              let search = searchStore.library.search(id: id)
+        else {
+            Self.logger.error("Ignored a saved history search that no longer exists")
+            rebuildSearchMenu()
+            return
+        }
+        Self.logger.info("Running saved history search \(search.name, privacy: .private)")
+        run(search.query)
+    }
+
+    /// Asks for a name and saves the current search for every repository window.
+    @objc func saveSearchAs(_: Any?) {
+        let query = currentQuery
+        guard HistorySearchMenu.canSaveSearch(query) else {
+            NSSound.beep()
+            return
+        }
+        let prompt = SavedHistorySearchSavePrompt(
+            query: query,
+            modeLabel: Self.label(for: searchMode),
+            store: searchStore
+        )
+        let field = searchField
+        prompt.present(for: presentationWindow) { saved in
+            guard let saved else { return }
+            AccessibilityAnnouncer.announce(
+                String(format: NSLocalizedString("Saved search “%@”", comment: "Announcement after saving a search"), saved.name),
+                from: field
+            )
+        }
+    }
+
+    @objc func manageSavedSearches(_: Any?) {
+        guard let window = presentationWindow else { return }
+        let sheet = SavedHistorySearchesSheetController(
+            store: searchStore,
+            modeLabel: { Self.label(for: PBSearchModeForInteger($0.rawValue)) },
+            onApply: { [weak self] search in self?.run(search.query) }
+        )
+        sheet.present(for: window)
     }
 
     override nonisolated func awakeFromNib() {
@@ -157,12 +200,9 @@ final class PBHistorySearchController: NSObject {
         searchField?.maximumRecents = 0
         rebuildSearchMenu()
         setupModePopUp()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(recentSearchesDidChange(_:)),
-            name: .historySearchRecentsDidChange,
-            object: nil
-        )
+        for name in [Notification.Name.historySearchRecentsDidChange, .savedHistorySearchesDidChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(searchListsDidChange(_:)), name: name, object: nil)
+        }
         searchMode = PBSearchModeForInteger(PBGitDefaults.historySearchMode())
         updateUI()
         arrangedObjectsObservation = commitController?.observe(\.arrangedObjects, options: []) { [weak self] _, _ in
@@ -243,19 +283,39 @@ final class PBHistorySearchController: NSObject {
         updateUI()
     }
 
-    @objc private func recentSearchesDidChange(_: Notification) {
+    @objc private func searchListsDidChange(_: Notification) {
         rebuildSearchMenu()
     }
 
-    private func recordCurrentSearch() {
-        guard let text = searchField?.stringValue else { return }
-        searchStore.recordRecent(HistorySearchQuery(mode: Self.coreMode(searchMode), text: text))
+    private var currentQuery: HistorySearchQuery {
+        HistorySearchQuery(mode: Self.coreMode(searchMode), text: searchField?.stringValue ?? "")
     }
 
-    /// Builds the search field menu: the modes, then the recent searches with their modes.
+    private var presentationWindow: NSWindow? {
+        searchField?.window ?? historyController?.view.window
+    }
+
+    private func recordCurrentSearch() {
+        guard searchField != nil else { return }
+        searchStore.recordRecent(currentQuery)
+    }
+
+    /// Shows and runs `query` in this window and remembers it as a recent search.
+    private func run(_ query: HistorySearchQuery) {
+        searchMode = PBSearchModeForInteger(query.mode.rawValue)
+        searchField?.stringValue = query.text
+        updateSearch(self)
+        recordCurrentSearch()
+    }
+
+    /// Builds the search field menu: the modes, the saved searches, then the recent searches with their modes.
     private func rebuildSearchMenu() {
         let searchMenu = NSMenu(title: NSLocalizedString("Search Menu", comment: "Title of the Search menu."))
-        let rows = HistorySearchMenu.rows(selectedMode: Self.coreMode(searchMode), recents: searchStore.recents)
+        let rows = HistorySearchMenu.rows(
+            selectedMode: Self.coreMode(searchMode),
+            library: searchStore.library,
+            recents: searchStore.recents
+        )
         for row in rows {
             searchMenu.addItem(menuItem(for: row))
         }
@@ -274,18 +334,36 @@ final class PBHistorySearchController: NSObject {
             return item
         case .separator:
             return .separator()
+        case .savedSearchesHeader:
+            return Self.headerItem(NSLocalizedString("Saved Searches", comment: "Searches menu: saved searches section title"))
+        case let .savedSearch(search):
+            let item = NSMenuItem(title: search.name, action: #selector(selectSavedSearch(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = search.id.uuidString
+            item.toolTip = Self.title(of: search.query, text: search.query.text)
+            item.identifier = NSUserInterfaceItemIdentifier("GitX.History.Search.Saved.\(search.name)")
+            return item
+        case .noSavedSearches:
+            return Self.headerItem(NSLocalizedString("No Saved Searches", comment: "Searches menu: no saved searches"))
+        case .saveSearchAs:
+            return actionItem(
+                NSLocalizedString("Save Search As…", comment: "Searches menu: save the current search"),
+                action: #selector(saveSearchAs(_:)),
+                identifier: "GitX.History.Search.SaveAs"
+            )
+        case .manageSavedSearches:
+            return actionItem(
+                NSLocalizedString("Manage Saved Searches…", comment: "Searches menu: open the saved searches sheet"),
+                action: #selector(manageSavedSearches(_:)),
+                identifier: "GitX.History.Search.ManageSaved"
+            )
         case .recentSearchesHeader:
             return Self.headerItem(NSLocalizedString(
                 "Recent Searches",
                 comment: "Searches menu: title of inactive headline item for Recent Searches section"
             ))
         case let .recentSearch(index, query):
-            let title = String(
-                format: NSLocalizedString("%@ — %@", comment: "Searches menu: a recent search, as its text and its mode"),
-                HistorySearchMenu.displayText(for: query.text),
-                Self.label(for: PBSearchModeForInteger(query.mode.rawValue))
-            )
-            let item = NSMenuItem(title: title, action: #selector(selectRecentSearch(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: Self.title(of: query, text: HistorySearchMenu.displayText(for: query.text)), action: #selector(selectRecentSearch(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = NSNumber(value: index)
             item.toolTip = query.text
@@ -297,15 +375,28 @@ final class PBHistorySearchController: NSObject {
                 comment: "Searches menu: title of dummy item displayed in recent searches section when there are no recent searches"
             ))
         case .clearRecentSearches:
-            let item = NSMenuItem(
-                title: NSLocalizedString("Clear Recent Searches", comment: "Searches menu: title of clear recent searches item"),
+            return actionItem(
+                NSLocalizedString("Clear Recent Searches", comment: "Searches menu: title of clear recent searches item"),
                 action: #selector(clearRecentSearches(_:)),
-                keyEquivalent: ""
+                identifier: "GitX.History.Search.ClearRecents"
             )
-            item.target = self
-            item.identifier = NSUserInterfaceItemIdentifier("GitX.History.Search.ClearRecents")
-            return item
         }
+    }
+
+    private func actionItem(_ title: String, action: Selector, identifier: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.identifier = NSUserInterfaceItemIdentifier(identifier)
+        return item
+    }
+
+    /// "text — Mode", as the search menu lists a search.
+    private static func title(of query: HistorySearchQuery, text: String) -> String {
+        String(
+            format: NSLocalizedString("%@ — %@", comment: "Searches menu: a search, as its text and its mode"),
+            text,
+            label(for: PBSearchModeForInteger(query.mode.rawValue))
+        )
     }
 
     /// An inactive menu item: menus disable items that have no action.
@@ -622,6 +713,19 @@ final class PBHistorySearchController: NSObject {
             MainActor.assumeIsolated { clearSearch() }
         } else {
             Task { @MainActor [weak self] in self?.clearSearch() }
+        }
+    }
+}
+
+extension PBHistorySearchController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(saveSearchAs(_:)):
+            HistorySearchMenu.canSaveSearch(currentQuery)
+        case #selector(manageSavedSearches(_:)):
+            HistorySearchMenu.canManageSavedSearches(searchStore.library)
+        default:
+            true
         }
     }
 }

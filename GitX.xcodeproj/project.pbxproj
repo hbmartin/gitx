@@ -96,6 +96,9 @@
 		C0DE5EA0000000000000B001 /* PBHistorySearchController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */; };
 		C0DE5EA0000000000000B002 /* SavedHistorySearchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */; };
 		C0DE5EA0000000000000B003 /* SavedHistorySearchStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F003 /* SavedHistorySearchStoreTests.swift */; };
+		C0DE5EA0000000000000B004 /* SavedHistorySearchSavePrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */; };
+		C0DE5EA0000000000000B005 /* SavedHistorySearchesSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */; };
+		C0DE5EA0000000000000B006 /* SavedHistorySearchSheetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F006 /* SavedHistorySearchSheetTests.swift */; };
 		4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763B14A9A9CC00DF6C68 /* PBPrefsWindowController.m */; };
 		4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763F14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift */; };
 		4A5D76EE14A9A9CC00DF6C68 /* PBServicesController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764114A9A9CC00DF6C68 /* PBServicesController.m */; };
@@ -824,6 +827,9 @@
 		C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBHistorySearchController.swift; sourceTree = "<group>"; };
 		C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchStore.swift; sourceTree = "<group>"; };
 		C0DE5EA0000000000000F003 /* SavedHistorySearchStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchStoreTests.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchSavePrompt.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchesSheetController.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F006 /* SavedHistorySearchSheetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchSheetTests.swift; sourceTree = "<group>"; };
 		4A5D763A14A9A9CC00DF6C68 /* PBPrefsWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBPrefsWindowController.h; sourceTree = "<group>"; };
 		4A5D763B14A9A9CC00DF6C68 /* PBPrefsWindowController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBPrefsWindowController.m; sourceTree = "<group>"; };
 		4A5D763F14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBRepositoryDocumentController.swift; sourceTree = "<group>"; };
@@ -1654,6 +1660,8 @@
 				C0DED0000000000000000017 /* PBGitWindowController+Dialogs.swift */,
 				C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */,
 				C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */,
+				C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */,
+				C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */,
 				6C5244021E00C33F0051DE20 /* PBHistorySearchMode.h */,
 				6C5244121E00C66E0051DE20 /* PBHistorySearchMode.m */,
 				4A5D763A14A9A9CC00DF6C68 /* PBPrefsWindowController.h */,
@@ -1985,6 +1993,7 @@
 				AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
 				C0DE5EA0000000000000F003 /* SavedHistorySearchStoreTests.swift */,
+				C0DE5EA0000000000000F006 /* SavedHistorySearchSheetTests.swift */,
 				C0DEC0000000000000000002 /* WindowControllerTests.m */,
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
 				284FF6D365052CB33482C14E /* RepositoryPushRecoveryCharacterizationTests.swift */,
@@ -2652,6 +2661,8 @@
 				4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */,
 				C0DE5EA0000000000000B001 /* PBHistorySearchController.swift in Sources */,
 				C0DE5EA0000000000000B002 /* SavedHistorySearchStore.swift in Sources */,
+				C0DE5EA0000000000000B004 /* SavedHistorySearchSavePrompt.swift in Sources */,
+				C0DE5EA0000000000000B005 /* SavedHistorySearchesSheetController.swift in Sources */,
 				4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */,
 				6C4855C81D57DCFC0027A7B4 /* PBTerminalUtil.m in Sources */,
 				4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift in Sources */,
@@ -2801,6 +2812,7 @@
                 AAB112000000000000000002 /* InspectorActionViewport.swift in Sources */,
 				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
 				C0DE5EA0000000000000B003 /* SavedHistorySearchStoreTests.swift in Sources */,
+				C0DE5EA0000000000000B006 /* SavedHistorySearchSheetTests.swift in Sources */,
 				C0DEC0000000000000000001 /* WindowControllerTests.m in Sources */,
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
 				A132C8818C83B2A9E118B05E /* RepositoryPushRecoveryCharacterizationTests.swift in Sources */,

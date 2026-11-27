@@ -109,6 +109,45 @@ final class SavedHistorySearchTests: XCTestCase {
         XCTAssertNil(initialized.search(named: "Overflow"))
     }
 
+    func testNameFeedbackExplainsProblemsAndOffersToReplaceDuplicates() throws {
+        var library = SavedHistorySearchLibrary()
+        _ = try library.save(name: "Café", query: pickaxe).get()
+
+        XCTAssertEqual(
+            library.nameFeedback(for: "  "),
+            SavedHistorySearchNameFeedback(message: nil, canSave: false, replacedName: nil)
+        )
+        XCTAssertEqual(
+            library.nameFeedback(for: "New"),
+            SavedHistorySearchNameFeedback(message: nil, canSave: true, replacedName: nil)
+        )
+        XCTAssertEqual(
+            library.nameFeedback(for: " cafe "),
+            SavedHistorySearchNameFeedback(
+                message: "A saved search named “Café” already exists. Saving replaces it.",
+                canSave: true,
+                replacedName: "Café"
+            )
+        )
+        XCTAssertEqual(
+            library.nameFeedback(for: String(repeating: "x", count: 65)),
+            SavedHistorySearchNameFeedback(message: "Use a name of 64 characters or fewer.", canSave: false, replacedName: nil)
+        )
+
+        for index in 1 ..< SavedHistorySearchLibrary.maximumCount {
+            _ = try library.save(name: "Search \(index)", query: pickaxe).get()
+        }
+        XCTAssertEqual(
+            library.nameFeedback(for: "One more"),
+            SavedHistorySearchNameFeedback(
+                message: "You can keep up to 100 saved searches. Remove one to save another.",
+                canSave: false,
+                replacedName: nil
+            )
+        )
+        XCTAssertEqual(library.nameFeedback(for: "CAFE").replacedName, "Café")
+    }
+
     // MARK: Library persistence
 
     func testLibraryRoundTripsThroughItsVersionedEncoding() throws {

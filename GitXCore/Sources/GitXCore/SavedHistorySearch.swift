@@ -273,6 +273,45 @@ public struct SavedHistorySearchLibrary: Equatable, Sendable {
     }
 }
 
+/// What the Save Search sheet shows while a name is typed.
+public struct SavedHistorySearchNameFeedback: Equatable, Sendable {
+    /// An explanation to show under the name, or nil when there is nothing to say.
+    public let message: String?
+    public let canSave: Bool
+    /// The existing search that saving would replace, which needs confirmation.
+    public let replacedName: String?
+
+    public init(message: String?, canSave: Bool, replacedName: String?) {
+        self.message = message
+        self.canSave = canSave
+        self.replacedName = replacedName
+    }
+}
+
+public extension SavedHistorySearchLibrary {
+    /// Live feedback for a proposed name. An empty name says nothing yet; a duplicate can still be saved after
+    /// confirming the replacement.
+    func nameFeedback(for name: String) -> SavedHistorySearchNameFeedback {
+        switch nameIssue(for: name) {
+        case nil where searches.count >= Self.maximumCount:
+            let issue = SavedHistorySearchIssue.libraryFull(limit: Self.maximumCount)
+            return SavedHistorySearchNameFeedback(message: issue.message, canSave: false, replacedName: nil)
+        case nil:
+            return SavedHistorySearchNameFeedback(message: nil, canSave: true, replacedName: nil)
+        case .emptyName:
+            return SavedHistorySearchNameFeedback(message: nil, canSave: false, replacedName: nil)
+        case let .duplicateName(existing):
+            return SavedHistorySearchNameFeedback(
+                message: "A saved search named “\(existing)” already exists. Saving replaces it.",
+                canSave: true,
+                replacedName: existing
+            )
+        case let issue?:
+            return SavedHistorySearchNameFeedback(message: issue.message, canSave: false, replacedName: nil)
+        }
+    }
+}
+
 public struct SavedHistorySearchLibraryDecoding: Equatable, Sendable {
     public let library: SavedHistorySearchLibrary
     public let droppedEntryCount: Int
