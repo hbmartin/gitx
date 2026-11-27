@@ -72,6 +72,26 @@ _Avoid_: Search history, recents
 A named history search and its History Search Mode, kept in Application Preferences and run by name from any repository window, the `gitx` tool, or AppleScript.
 _Avoid_: Bookmark, favorite search, smart search
 
+**Flow Review**:
+The History Flow tab's examination of one Commit's control-flow and data-flow changes, function by function.
+_Avoid_: Flow diff, graph view
+
+**Flow Presentation**:
+How a Flow Review shows the selected function: as a Delta graph, as Before / After graphs, or as Calls.
+_Avoid_: Review mode, Flow mode
+
+**Noise Level**:
+The Application Preference that decides which cosmetic node changes a Flow Review shows as unchanged: Show All Changes, Hide Formatting or Hide Cosmetic Changes. Hidden changes stay counted and one click away.
+_Avoid_: Filter, noise filter
+
+**Concern Group**:
+A set of related function changes in one Commit, grouped as behavioral, refactoring or cosmetic. A Commit with several behavioral groups is tangled.
+_Avoid_: Cluster, change set
+
+**Walkthrough Step**:
+One stop of a guided tour through a Flow Review's changed nodes, in causal order, with a short narration.
+_Avoid_: Slide, tour step
+
 ## Forge Integration
 
 **Forge**:
