@@ -67,9 +67,24 @@ type changes are refused before any backup or reset is attempted.
 
 Recovery of expired objects, recursive submodule reset, and hard-reset handling
 of incomplete or hidden-index previews remain outside this surface. The next
-approved slices are visible history-search modes and shared named searches,
-passive LFS diagnostics with explicit current-revision downloads, and GitHub.com
-Actions inspection and rerun-failed through Pull Requests and Attention.
+approved slices are visible history-search modes and shared named searches, and
+GitHub.com Actions inspection and rerun-failed through Pull Requests and
+Attention.
+
+## Git LFS Boundary
+
+GitX reads Git LFS repositories passively and downloads LFS Objects only for
+the current checkout, on request (ADR 0014). The status bar reports Not
+Downloaded paths and a missing or outdated git-lfs. History and staging show
+a placeholder or the verified stored object, Quick Look export refuses content
+that is not downloaded, and Flow analyzes the stored object or leaves the file
+out.
+
+Still outside this surface: file locking, pushing LFS Objects, fetching objects
+for revisions other than the checkout, `git lfs prune` and `migrate`, progress
+for `file://` remotes (git-lfs writes none), and downloading a single path
+whose name contains a comma. GitX's own checkout, reset and stash commands keep
+running whatever filters the repository configures.
 
 ## Deferred History Rendering Concurrency Work
 
