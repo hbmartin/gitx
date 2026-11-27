@@ -334,6 +334,25 @@ public struct LFSDownloadPlan: Equatable, Sendable {
     }
 }
 
+/// Which selected paths a Download LFS Content command acts on.
+public enum LFSDownloadEligibility {
+    /// The files not downloaded that the selection names, directly or as a folder holding them, in status order.
+    /// Empty when git-lfs cannot download.
+    public static func paths(_ selected: [String], summary: LFSWorktreeSummary, tool: LFSToolStatus) -> [String] {
+        guard tool.isAvailable else { return [] }
+        let exact = Set(selected)
+        let folders = selected.map { $0.hasSuffix("/") ? $0 : $0 + "/" }
+        return summary.notDownloadedPaths.filter { path in
+            exact.contains(path) || folders.contains { path.hasPrefix($0) }
+        }
+    }
+
+    /// Whether to offer Download LFS Content at all: only in a checkout with LFS pointers.
+    public static func isOffered(summary: LFSWorktreeSummary) -> Bool {
+        summary.pointerCount > 0
+    }
+}
+
 /// One line of the file git-lfs writes progress to when `GIT_LFS_PROGRESS` names it.
 public struct LFSProgressEvent: Equatable, Sendable {
     public let direction: String
@@ -409,7 +428,7 @@ public enum LFSPresentation {
         case .missing:
             return "Uses Git LFS, but git-lfs is not installed"
         case let .unsupported(version):
-            return "Git LFS \(version) is too old; GitX needs \(LFSToolPolicy.minimumMajorVersion).0 or later"
+            return "Git LFS \(version) is too old; Half Dark needs \(LFSToolPolicy.minimumMajorVersion).0 or later"
         case .unrecognized:
             return "Uses Git LFS, but git-lfs did not report its version"
         case .available:
@@ -418,6 +437,27 @@ public enum LFSPresentation {
             let more = summary.isTruncated ? "+" : ""
             let files = count == 1 && !summary.isTruncated ? "1 file" : "\(count)\(more) files"
             return "LFS: \(files) not downloaded (\(byteCount(summary.notDownloadedBytes))\(more))"
+        }
+    }
+
+    /// The Details sheet's explanation of the status label.
+    public static func detailsText(summary: LFSWorktreeSummary, tool: LFSToolStatus) -> String {
+        switch tool {
+        case .missing:
+            return "This repository stores files with Git LFS, but git-lfs is not installed. Install git-lfs "
+                + "\(LFSToolPolicy.minimumMajorVersion).0 or later, for example with “brew install git-lfs”, then refresh."
+        case let .unsupported(version):
+            return "Half Dark needs git-lfs \(LFSToolPolicy.minimumMajorVersion).0 or later to download Git LFS content, "
+                + "and this Mac has \(version). Update git-lfs, then refresh."
+        case .unrecognized:
+            return "git-lfs did not report a version Half Dark recognizes. Check its installation, then refresh."
+        case .available:
+            let count = summary.notDownloadedPaths.count
+            guard count > 0 else { return "Every Git LFS file in this checkout is downloaded." }
+            let more = summary.isTruncated ? " or more" : ""
+            let files = count == 1 && !summary.isTruncated ? "1 file holds a Git LFS pointer" : "\(count)\(more) files hold Git LFS pointers"
+            return "\(files) instead of \(count == 1 && !summary.isTruncated ? "its" : "their") content "
+                + "(\(byteCount(summary.notDownloadedBytes))\(more)). Half Dark shows a placeholder until the content is downloaded."
         }
     }
 

@@ -291,13 +291,15 @@ struct RepositoryStatusBarLayout: Equatable, Sendable {
     let showsLocalCounts: Bool
     let showsForgeAccount: Bool
     let showsForgeFreshness: Bool
+    let showsLFS: Bool
 
     static func presentation(forWidth width: CGFloat) -> RepositoryStatusBarLayout {
         RepositoryStatusBarLayout(
             showsAheadBehind: width >= 760,
             showsLocalCounts: width >= 900,
             showsForgeAccount: width >= 820,
-            showsForgeFreshness: width >= 680
+            showsForgeFreshness: width >= 680,
+            showsLFS: width >= 600
         )
     }
 }

@@ -6169,6 +6169,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(open.isEnabled)
     }
 
+    func testPathMenuOffersGitLFSDownloadOnlyForTheCheckedOutCommit() throws {
+        let commits = loadedCommits()
+        let head = try XCTUnwrap(commits.first { $0.oid == repository.headOID() })
+        historyController.selectedCommits = [head]
+        let items = historyController.menuItems(forPaths: ["nested/tracked.txt"])
+        let download = try XCTUnwrap(items.first { $0.title == "Download LFS Content" })
+        XCTAssertEqual(download.action, NSSelectorFromString("downloadLFSContent:"))
+        XCTAssertEqual(download.representedObject as? [String], ["nested/tracked.txt"])
+
+        let older = try XCTUnwrap(commits.first { $0.oid != head.oid })
+        historyController.selectedCommits = [older]
+        XCTAssertFalse(historyController.menuItems(forPaths: ["nested/tracked.txt"]).contains { $0.title == "Download LFS Content" })
+    }
+
     func testWorkingStateTextDragPreservesPasteboard() throws {
         let working = PBUncommittedChanges(repository: repository)
         let committed = try XCTUnwrap(loadedCommits().first)

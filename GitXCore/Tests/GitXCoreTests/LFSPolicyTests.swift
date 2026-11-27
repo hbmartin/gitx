@@ -209,6 +209,24 @@ final class LFSPolicyTests: XCTestCase {
         )
     }
 
+    func testDownloadEligibilityKeepsSelectedFilesAndFoldersThatAreNotDownloaded() {
+        let summary = LFSWorktreeSummary(
+            pointerCount: 4,
+            notDownloadedPaths: ["a.bin", "assets/logo.png", "assets/icons/x.png", "assetsheet.bin", "c.bin"],
+            notDownloadedBytes: 5,
+            isTruncated: false
+        )
+        let available = LFSToolStatus.available(version: "3.8.1")
+        XCTAssertEqual(LFSDownloadEligibility.paths(["c.bin", "b.bin", "a.bin", "c.bin"], summary: summary, tool: available), ["a.bin", "c.bin"])
+        XCTAssertEqual(LFSDownloadEligibility.paths(["assets"], summary: summary, tool: available), ["assets/logo.png", "assets/icons/x.png"])
+        XCTAssertEqual(LFSDownloadEligibility.paths(["assets/icons/"], summary: summary, tool: available), ["assets/icons/x.png"])
+        XCTAssertEqual(LFSDownloadEligibility.paths(["b.bin"], summary: summary, tool: available), [])
+        XCTAssertEqual(LFSDownloadEligibility.paths(["a.bin"], summary: summary, tool: .missing), [])
+        XCTAssertEqual(LFSDownloadEligibility.paths(["a.bin"], summary: summary, tool: .unsupported(version: "2.0")), [])
+        XCTAssertTrue(LFSDownloadEligibility.isOffered(summary: summary))
+        XCTAssertFalse(LFSDownloadEligibility.isOffered(summary: .empty))
+    }
+
     // MARK: Progress
 
     func testParsesProgressLinesWhoseNamesHoldSpaces() throws {
@@ -268,9 +286,41 @@ final class LFSPolicyTests: XCTestCase {
         XCTAssertEqual(LFSPresentation.statusText(summary: downloaded, tool: .missing), "Uses Git LFS, but git-lfs is not installed")
         XCTAssertEqual(
             LFSPresentation.statusText(summary: one, tool: .unsupported(version: "2.13.3")),
-            "Git LFS 2.13.3 is too old; GitX needs 3.0 or later"
+            "Git LFS 2.13.3 is too old; Half Dark needs 3.0 or later"
         )
         XCTAssertEqual(LFSPresentation.statusText(summary: one, tool: .unrecognized), "Uses Git LFS, but git-lfs did not report its version")
+    }
+
+    func testDetailsTextExplainsWhatToDoNext() {
+        let one = LFSWorktreeSummary(pointerCount: 2, notDownloadedPaths: ["a.bin"], notDownloadedBytes: 12_400_000, isTruncated: false)
+        let two = LFSWorktreeSummary(pointerCount: 2, notDownloadedPaths: ["a", "b"], notDownloadedBytes: 4000, isTruncated: false)
+        let truncated = LFSWorktreeSummary(pointerCount: 2, notDownloadedPaths: ["a"], notDownloadedBytes: 1, isTruncated: true)
+        let available = LFSToolStatus.available(version: "3.8.1")
+        XCTAssertEqual(
+            LFSPresentation.detailsText(summary: one, tool: available),
+            "1 file holds a Git LFS pointer instead of its content (12.4 MB). Half Dark shows a placeholder until the content is downloaded."
+        )
+        XCTAssertEqual(
+            LFSPresentation.detailsText(summary: two, tool: available),
+            "2 files hold Git LFS pointers instead of their content (4 KB). Half Dark shows a placeholder until the content is downloaded."
+        )
+        XCTAssertEqual(
+            LFSPresentation.detailsText(summary: truncated, tool: available),
+            "1 or more files hold Git LFS pointers instead of their content (1 byte or more). Half Dark shows a placeholder until the content is downloaded."
+        )
+        XCTAssertEqual(LFSPresentation.detailsText(summary: .empty, tool: available), "Every Git LFS file in this checkout is downloaded.")
+        XCTAssertEqual(
+            LFSPresentation.detailsText(summary: one, tool: .missing),
+            "This repository stores files with Git LFS, but git-lfs is not installed. Install git-lfs 3.0 or later, for example with “brew install git-lfs”, then refresh."
+        )
+        XCTAssertEqual(
+            LFSPresentation.detailsText(summary: one, tool: .unsupported(version: "2.13.3")),
+            "Half Dark needs git-lfs 3.0 or later to download Git LFS content, and this Mac has 2.13.3. Update git-lfs, then refresh."
+        )
+        XCTAssertEqual(
+            LFSPresentation.detailsText(summary: one, tool: .unrecognized),
+            "git-lfs did not report a version Half Dark recognizes. Check its installation, then refresh."
+        )
     }
 
     func testByteCountsReadLikeTheFinder() {
