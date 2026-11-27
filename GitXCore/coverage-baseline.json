@@ -10,6 +10,7 @@
     "HistoryFlowSelectionPolicy.swift": 1.0,
     "HistorySearchArgumentSyntax.swift": 1.0,
     "HistorySearchPolicy.swift": 1.0,
+    "LFSPolicy.swift": 1.0,
     "ReflogBrowserRequestPolicy.swift": 1.0,
     "ReflogPolicy.swift": 1.0,
     "RelativeDatePolicy.swift": 1.0,
