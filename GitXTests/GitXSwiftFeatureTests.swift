@@ -136,7 +136,10 @@ final class GitXSwiftFeatureTests: XCTestCase {
     }
 
     func testCommandLineSearchFlagsSelectModesAndQuotePathAndRawArguments() {
-        XCTAssertEqual(GitXCommandLineSearchPrefixes(), ["-s", "--search=", "-S", "--Search=", "-r", "--regex=", "-p", "--path="])
+        XCTAssertEqual(
+            GitXCommandLineSearchPrefixes(),
+            ["-s", "--search=", "-S", "--Search=", "-r", "--regex=", "-p", "--path=", "--raw-search="]
+        )
         XCTAssertEqual(GitXCommandLineSearchModeForArgument("-sneedle"), .basic)
         XCTAssertEqual(GitXCommandLineSearchModeForArgument("--search=needle"), .basic)
         XCTAssertEqual(GitXCommandLineSearchModeForArgument("-Sneedle"), .pickaxe)
@@ -145,7 +148,17 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(GitXCommandLineSearchModeForArgument("--regex=a.b"), .regex)
         XCTAssertEqual(GitXCommandLineSearchModeForArgument("-p"), .path)
         XCTAssertEqual(GitXCommandLineSearchModeForArgument("--path=a"), .path)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("--raw-search=--all"), .raw)
         XCTAssertEqual(GitXCommandLineSearchModeForArgument("--all").rawValue, 0)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("--saved-search=Ada").rawValue, 0)
+        XCTAssertEqual(GitXCommandLineSearchQuery(["--raw-search=--author=GitX Tests", "--grep=fix"], .raw), "'--author=GitX Tests' --grep=fix")
+        XCTAssertEqual(GitXCommandLineSearchQuery(["--raw-search="], .raw), "")
+
+        XCTAssertEqual(GitXCommandLineSavedSearchName(["--saved-search=Ada"]), "Ada")
+        XCTAssertEqual(GitXCommandLineSavedSearchName(["--saved-search=Ada’s", "release", "work "]), "Ada’s release work")
+        XCTAssertEqual(GitXCommandLineSavedSearchName(["--saved-search="]), "")
+        XCTAssertNil(GitXCommandLineSavedSearchName(["--search=Ada"]))
+        XCTAssertNil(GitXCommandLineSavedSearchName([]))
 
         XCTAssertEqual(GitXCommandLineSearchQuotedArgument("plain/file.txt"), "plain/file.txt")
         XCTAssertEqual(GitXCommandLineSearchQuotedArgument(""), "''")

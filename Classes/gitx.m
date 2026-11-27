@@ -10,9 +10,10 @@
 #import "GitXApplicationLocator.h"
 #import "GitXScriptingConstants.h"
 #import "GitX.h"
-#import "PBHistorySearchController.h"
+#import "PBHistorySearchMode.h"
 #import "GitXCommandLineSearch.h"
 
+#import <CoreServices/CoreServices.h>
 #import <mach-o/dyld.h>
 #import <sys/param.h>
 
@@ -109,6 +110,10 @@ void usage(char const *programName)
 	printf("                           commits that introduce or remove strings that match <regex>\n");
 	printf("    -p<file path>, --path=<file path>\n");
 	printf("                           commits that modify the file at file path\n");
+	printf("    --raw-search=<git log arguments>\n");
+	printf("                           commits that the git log arguments select\n");
+	printf("    --saved-search=<name>\n");
+	printf("                           runs the saved search with that name in its own mode\n");
 	printf("\n");
 	printf("Creating repositories\n");
 	printf("    These commands will create a git repository and then open it up in Half Dark\n");
@@ -226,8 +231,33 @@ void handleGitXSearch(NSURL *repositoryURL, PBHistorySearchMode mode, NSMutableA
 
 	// need to find the document after opening it
 	GitXDocument *repositoryDocument = documentForURL([gitXApp documents], repositoryURL);
-	[repositoryDocument searchString:searchString inMode:mode];
+	[repositoryDocument searchString:searchString inMode:mode named:nil];
 
+	exit(0);
+}
+
+void handleGitXSavedSearch(NSURL *repositoryURL, NSString *name)
+{
+	if (name.length == 0) {
+		fprintf(stderr, "gitx: --saved-search needs the name of a saved search.\n");
+		exit(1);
+	}
+
+	GitXApplication *gitXApp = gitXApplication();
+	[gitXApp open:[NSArray arrayWithObject:repositoryURL]];
+
+	GitXDocument *repositoryDocument = documentForURL([gitXApp documents], repositoryURL);
+	[repositoryDocument searchString:nil inMode:0 named:name];
+	NSError *deliveryError = [gitXApp lastError];
+	if (deliveryError.code == errAENoSuchObject) {
+		fprintf(stderr, "gitx: there is no saved search named \"%s\".\n", name.UTF8String);
+		exit(1);
+	}
+	if (deliveryError) {
+		const char *message = deliveryError.localizedDescription.UTF8String ?: "Unknown Apple-event delivery error";
+		fprintf(stderr, "gitx: could not run the saved search in Half Dark: %s\n", message);
+		exit(3);
+	}
 	exit(0);
 }
 
@@ -370,6 +400,10 @@ int main(int argc, const char **argv)
 				[arguments removeObjectAtIndex:0];
 				handleClone(wdURL, arguments);
 			}
+
+			NSString *savedSearchName = GitXCommandLineSavedSearchName(arguments);
+			if (savedSearchName)
+				handleGitXSavedSearch(wdURL, savedSearchName);
 
 			PBHistorySearchMode mode;
 			if ((mode = GitXCommandLineSearchModeForArgument(firstArgument))) {

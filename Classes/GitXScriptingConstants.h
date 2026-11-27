@@ -18,7 +18,4 @@ NS_ASSUME_NONNULL_BEGIN
 #define kGitXCloneDestinationURLKey @"destinationURL"
 #define kGitXCloneIsBareKey @"isBare"
 
-#define kGitXFindSearchStringKey @"searchString"
-#define kGitXFindInModeKey @"inMode"
-
 NS_ASSUME_NONNULL_END

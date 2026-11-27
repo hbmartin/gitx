@@ -26,7 +26,7 @@
 #import "PBSidebarTableViewCell.h"
 #import "PBWorktreeCompatibility.h"
 #import "PBGitSidebarControllerCompatibility.h"
-#import "PBHistorySearchController.h"
+#import "PBHistorySearchControllerCompatibility.h"
 #import "RepositoryIgnoreTestSupport.h"
 #import "PBGitBinary.h"
 #import "PBGitWindowControllerCompatibility.h"
@@ -1587,10 +1587,6 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @interface PBGitRevisionCell (GitXTests)
 + (NSColor *)shadowColor;
 + (NSColor *)lineShadowColor;
-@end
-
-@interface PBHistorySearchController (GitXTests)
-- (BOOL)hasSearchResults;
 @end
 
 @interface PBHistoryTableInteractionCoordinator : NSObject <NSTableViewDelegate, NSTableViewDataSource>

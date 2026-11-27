@@ -28,7 +28,7 @@ extern NSString *PBGitRepositoryDocumentType;
 // Scripting Bridge
 /// Applies captured open options after the matching document has its window controllers.
 - (void)handleGitXScriptingArguments:(nullable NSArray<NSString *> *)arguments NS_SWIFT_NAME(applyGitXOpenArguments(_:));
-- (void)findInModeScriptCommand:(NSScriptCommand *)command;
+// The search command's handler is in PBGitRepositoryDocument+HistorySearchScripting.swift.
 
 - (IBAction)showUncommittedChanges:(nullable id)sender;
 - (IBAction)showHistoryView:(nullable id)sender;

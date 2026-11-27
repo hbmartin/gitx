@@ -67,9 +67,17 @@ type changes are refused before any backup or reset is attempted.
 
 Recovery of expired objects, recursive submodule reset, and hard-reset handling
 of incomplete or hidden-index previews remain outside this surface. The next
-approved slices are visible history-search modes and shared named searches,
-passive LFS diagnostics with explicit current-revision downloads, and GitHub.com
-Actions inspection and rerun-failed through Pull Requests and Attention.
+approved slices are passive LFS diagnostics with explicit current-revision
+downloads, and GitHub.com Actions inspection and rerun-failed through Pull
+Requests and Attention.
+
+## History Search Boundary
+
+Visible history-search modes, Recent Searches that remember their mode, and
+app-wide Saved Searches have shipped. A saved search runs from the search menu,
+the Saved Searches sheet, `gitx --saved-search=<name>`, and the AppleScript
+`search named` parameter. Syncing saved searches between Macs and per-repository
+saved searches remain outside this surface.
 
 ## Deferred History Rendering Concurrency Work
 
