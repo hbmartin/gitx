@@ -6,14 +6,24 @@ public struct HistoryFlowDiagnosticInput: Equatable, Sendable {
         case error
     }
 
+    /// The kind of problem, mirroring FlowDelta's diagnostic codes.
+    public enum Code: Equatable, Sendable {
+        case partialParse
+        case resourceLimit
+        case unsupportedConstruct
+        case internalInvariant
+    }
+
     public let severity: Severity
     public let path: String?
     public let message: String
+    public let code: Code?
 
-    public init(severity: Severity, path: String?, message: String) {
+    public init(severity: Severity, path: String?, message: String, code: Code? = nil) {
         self.severity = severity
         self.path = path
         self.message = message
+        self.code = code
     }
 }
 
@@ -26,6 +36,8 @@ public struct HistoryFlowDiagnosticsSummary: Equatable, Sendable {
     public let details: [String]
     /// How many further problems `details` leaves out.
     public let omittedCount: Int
+    /// One explanation per kind of problem that has one, in a fixed order.
+    public let notes: [String]
 
     /// Returns `nil` when nothing is worth telling the user, so a clean
     /// analysis shows no banner at all.
@@ -57,7 +69,17 @@ public struct HistoryFlowDiagnosticsSummary: Equatable, Sendable {
         return HistoryFlowDiagnosticsSummary(
             headline: headline,
             details: details,
-            omittedCount: ordered.count - details.count
+            omittedCount: ordered.count - details.count,
+            notes: notes(for: Set(reportable.compactMap(\.code)))
         )
+    }
+
+    private static func notes(for codes: Set<HistoryFlowDiagnosticInput.Code>) -> [String] {
+        let explained: [(HistoryFlowDiagnosticInput.Code, String)] = [
+            (.resourceLimit, "Some files or functions are larger than Flow analyzes."),
+            (.partialParse, "Some files contain syntax Flow could not parse, so their graphs may be incomplete."),
+            (.internalInvariant, "Flow hit an internal error. Please report it with this commit."),
+        ]
+        return explained.filter { codes.contains($0.0) }.map(\.1)
     }
 }

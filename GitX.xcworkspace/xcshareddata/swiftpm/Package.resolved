@@ -1,5 +1,5 @@
 {
-  "originHash" : "bf032673a2a1b4ce530b8f61cda4bb4799aed76d01d3f4d10468b15eb21e2dbf",
+  "originHash" : "0ed8a88435b9c1ed78228399c433fa19af72ce8c47d74ebf31097e8da6f46552",
   "pins" : [
     {
       "identity" : "apollo-ios",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/hbmartin/FlowDelta.git",
       "state" : {
-        "revision" : "dcb4be36f6aee92be9ce026b83b6b4012ff4b0ca",
-        "version" : "0.2.2"
+        "revision" : "d0290e6020f25389c5df625b2832b213cb683d64",
+        "version" : "0.3.2"
       }
     },
     {

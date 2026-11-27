@@ -44,4 +44,26 @@ final class HistoryFlowDiagnosticsSummaryTests: XCTestCase {
         XCTAssertEqual(summary.details, [])
         XCTAssertEqual(summary.omittedCount, 1)
     }
+
+    func testDiagnosticCodesAddOneExplanationPerKindOfProblem() throws {
+        let summary = try XCTUnwrap(HistoryFlowDiagnosticsSummary.make(from: [
+            HistoryFlowDiagnosticInput(severity: .error, path: "Big.swift", message: "Too large.", code: .resourceLimit),
+            HistoryFlowDiagnosticInput(severity: .warning, path: "A.py", message: "Parsed partially.", code: .partialParse),
+            HistoryFlowDiagnosticInput(severity: .error, path: "Huge.swift", message: "Too large.", code: .resourceLimit),
+            HistoryFlowDiagnosticInput(severity: .warning, path: "B.go", message: "No graph.", code: .unsupportedConstruct),
+            HistoryFlowDiagnosticInput(severity: .error, path: nil, message: "Broken.", code: .internalInvariant),
+            HistoryFlowDiagnosticInput(severity: .information, path: nil, message: "Noted.", code: .resourceLimit),
+        ]))
+        XCTAssertEqual(summary.notes, [
+            "Some files or functions are larger than Flow analyzes.",
+            "Some files contain syntax Flow could not parse, so their graphs may be incomplete.",
+            "Flow hit an internal error. Please report it with this commit.",
+        ])
+
+        let uncoded = try XCTUnwrap(HistoryFlowDiagnosticsSummary.make(from: [
+            HistoryFlowDiagnosticInput(severity: .warning, path: nil, message: "Something."),
+        ]))
+        XCTAssertEqual(uncoded.notes, [])
+        XCTAssertNil(HistoryFlowDiagnosticInput(severity: .warning, path: nil, message: "Something.").code)
+    }
 }

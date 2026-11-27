@@ -11,6 +11,7 @@
     "Classes/Controllers/CommitTableInteractionCoordinator.swift": 0.9883,
     "Classes/Controllers/DBPrefsWindowController.m": 0.7142,
     "Classes/Controllers/FlowDeltaAdapters.swift": 0.9771,
+    "Classes/Controllers/FlowDeltaReviewCommands.swift": 0.0,
     "Classes/Controllers/ForgeAccountLifecycle.swift": 0.9853,
     "Classes/Controllers/ForgeAccountsPreferences.swift": 0.9465,
     "Classes/Controllers/ForgeApplicationRefreshCoordinator.swift": 0.9457,

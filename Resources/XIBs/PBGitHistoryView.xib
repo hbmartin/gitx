@@ -13,6 +13,7 @@
                 <outlet property="commitList" destination="27" id="43"/>
                 <outlet property="fileBrowser" destination="15" id="87"/>
                 <outlet property="fileView" destination="452" id="488"/>
+                <outlet property="flowAdapterView" destination="FD-flow-view" id="FD-flow-adapter-outlet"/>
                 <outlet property="historySplitView" destination="2" id="275"/>
                 <outlet property="localRemoteBranchesFilterItem" destination="387" id="393"/>
                 <outlet property="scopeBarView" destination="311" id="328"/>

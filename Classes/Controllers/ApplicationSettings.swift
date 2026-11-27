@@ -143,6 +143,19 @@ final nonisolated class ApplicationSettings: NSObject {
         set { defaults.set(newValue, forKey: Key.groupIncomingBranchCommits) }
     }
 
+    /// The Flow review choices every History window applies to the next report it shows.
+    static var historyFlowReviewPreferences: HistoryFlowReviewPreferences {
+        get { HistoryFlowReviewPreferences(reading: { defaults.object(forKey: $0.rawValue) }) }
+        set {
+            for (key, value) in newValue.storedValues {
+                switch value {
+                case let .string(text): defaults.set(text, forKey: key.rawValue)
+                case let .bool(flag): defaults.set(flag, forKey: key.rawValue)
+                }
+            }
+        }
+    }
+
     @objc static var branchSort: BranchSortMode {
         get { enumValue(Key.branchSort, fallback: .alphabetical) }
         set { defaults.set(newValue.rawValue, forKey: Key.branchSort) }

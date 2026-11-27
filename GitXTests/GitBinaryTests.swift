@@ -2481,8 +2481,8 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         }
     }
 
-    // swift6-safety-justification: the mutex protects the aggregate read count; UserDefaults serializes its own storage.
-    private final nonisolated class CountingForgeDefaults: UserDefaults, @unchecked Sendable {
+    /// Not Sendable: Swift 6.4 can see UserDefaults' Sendable conformance as unavailable, and the snapshot APIs take plain UserDefaults.
+    private final nonisolated class CountingForgeDefaults: UserDefaults {
         let aggregateReads = Mutex(0)
         override func dictionary(forKey key: String) -> [String: Any]? {
             if key == "PBRepositoryUISettings" {
