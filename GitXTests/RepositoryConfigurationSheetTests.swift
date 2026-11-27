@@ -136,8 +136,11 @@ final class RepositoryConfigurationSheetTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(store.string(forKey: RepositorySettingsStore.diffSuppressionKey), "# generated\n\\.lock$")
     }
 
+    /// Finds a control by accessibility identifier, then checks its type. Under the Thread Sanitizer build
+    /// on macOS 27, a search that read identifiers only from `NSTextField`s missed the web URL template
+    /// field even though it carried the identifier; searching every view first finds it in both builds.
     func control<View: NSView>(_ type: View.Type, _ identifier: String, in sheet: NSWindow) -> View? {
-        firstSubview(of: type, in: sheet.contentView) { $0.accessibilityIdentifier() == identifier }
+        firstSubview(of: NSView.self, in: sheet.contentView) { $0.accessibilityIdentifier() == identifier } as? View
     }
 
     // MARK: - Helpers
