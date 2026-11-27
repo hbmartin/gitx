@@ -32,6 +32,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)stepperPressed:(id)sender;
 
 - (void)clearSearch;
+- (void)clearRecentSearches:(nullable id)sender;
+- (void)selectRecentSearch:(id)sender;
 - (IBAction)updateSearch:(nullable id)sender;
 
 - (void)setHistorySearch:(nullable NSString *)searchString mode:(PBHistorySearchMode)mode;
