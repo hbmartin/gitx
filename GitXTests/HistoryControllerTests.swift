@@ -1475,6 +1475,53 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testFlowReviewCommandsRouteFromTheCommitListToTheVisibleFlowTab() throws {
+        let presentationKey = "PBHistoryFlowPresentation"
+        let savedPresentation = UserDefaults.standard.object(forKey: presentationKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: presentationKey)
+            if let savedPresentation {
+                UserDefaults.standard.set(savedPresentation, forKey: presentationKey)
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: presentationKey)
+        let action = NSSelectorFromString("performHistoryFlowCommand:")
+        let hiddenTarget = try XCTUnwrap(
+            historyController.supplementalTarget(forAction: action, sender: nil) as? NSMenuItemValidation
+        )
+        XCTAssertFalse(
+            hiddenTarget.validateMenuItem(flowMenuItem(tag: 102, action: action)),
+            "Flow Review commands are disabled while Details is shown"
+        )
+
+        selectCommitForFlowAnalysis()
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) { self.flowLabels(in: flowView).contains { $0.contains("function delta") } },
+            "Flow labels after analysis: \(flowLabels(in: flowView))"
+        )
+
+        var responder: NSResponder? = historyController.commitList
+        while let current = responder, current !== historyController {
+            responder = current.nextResponder
+        }
+        XCTAssertTrue(responder === historyController, "The commit list's responder chain reaches the History controller")
+        let target = try XCTUnwrap(historyController.supplementalTarget(forAction: action, sender: nil) as? NSView)
+        XCTAssertTrue(target === flowView, "History routes Flow Review commands to its Flow tab")
+        XCTAssertNil(historyController.supplementalTarget(forAction: NSSelectorFromString("gitxUnknownAction:"), sender: nil))
+
+        let calls = flowMenuItem(tag: 102, action: action)
+        XCTAssertTrue(try XCTUnwrap(target as? NSMenuItemValidation).validateMenuItem(calls))
+        XCTAssertTrue(NSApp.sendAction(action, to: target, from: calls))
+        let presentation = try XCTUnwrap(
+            descendant(identifier: "FlowDelta.Review.Presentation", in: flowView) as? NSSegmentedControl
+        )
+        XCTAssertEqual(presentation.selectedSegment, 2)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: presentationKey), "calls")
+        try attachScreenshot(of: flowView, named: "History-Flow-Calls-From-Menu")
+    }
+
     func testHistoryFlowReportsRevisionAnalysisFailure() throws {
         selectCommitForFlowAnalysis()
         let repositoryURL = URL(fileURLWithPath: fixture.path)
@@ -7223,6 +7270,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             line: line
         )
         return sha
+    }
+
+    private func flowMenuItem(tag: Int, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: "Flow Review", action: action, keyEquivalent: "")
+        item.tag = tag
+        return item
     }
 
     private func flowLabels(in flowView: NSView) -> [String] {

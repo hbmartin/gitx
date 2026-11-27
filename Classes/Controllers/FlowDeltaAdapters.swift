@@ -8,7 +8,7 @@ import OSLog // swiftlint:disable:this unused_import -- Logger and privacy inter
 
 @MainActor
 @objc(PBFlowDeltaAdapterView)
-final class FlowDeltaAdapterView: NSView {
+final class FlowDeltaAdapterView: NSView, FlowDeltaReviewViewDelegate {
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "FlowDelta")
     /// Selection changes made while scrolling the commit list are coalesced so
     /// a held arrow key does not start one git chain per row.
@@ -19,7 +19,14 @@ final class FlowDeltaAdapterView: NSView {
     @IBOutlet private weak var historyController: PBGitHistoryController?
 
     private let contentStack = NSStackView()
-    private let reviewView = FlowDeltaReviewView()
+    /// The embedded review. Flow Review menu commands drive it (see FlowDeltaReviewCommands.swift).
+    let reviewView = FlowDeltaReviewView()
+    /// The report the review shows, or nil while a message, the progress overlay or nothing is shown.
+    private(set) var displayedReport: RevisionFlowDeltaReport?
+    /// Where Copy Flow Report As puts its text. Tests use a private pasteboard.
+    var reportPasteboard = NSPasteboard.general
+    /// The copy or export rendering in flight, so a newer one supersedes it.
+    var exportTask: Task<Void, Never>?
     private let diagnosticsBanner = NSStackView()
     private let diagnosticsLabel = NSTextField(wrappingLabelWithString: "")
     private let statusOverlay = NSVisualEffectView()
@@ -53,6 +60,7 @@ final class FlowDeltaAdapterView: NSView {
 
     deinit {
         analysisTask?.cancel()
+        exportTask?.cancel()
     }
 
     override func layout() {
@@ -89,6 +97,7 @@ final class FlowDeltaAdapterView: NSView {
 
         reviewView.translatesAutoresizingMaskIntoConstraints = false
         reviewView.setAccessibilityIdentifier("History.Flow.Review")
+        reviewView.delegate = self
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.orientation = .vertical
         contentStack.alignment = .width
@@ -236,13 +245,19 @@ final class FlowDeltaAdapterView: NSView {
         return try FlowDeltaAnalyzer().analyze(comparison)
     }
 
-    private func display(_ report: RevisionFlowDeltaReport) {
+    /// Shows `report` with the saved Flow review preferences. Tests display reports directly.
+    func display(_ report: RevisionFlowDeltaReport) {
         guard !report.files.isEmpty else {
             Self.logger.notice("History flow delta has no analyzable files")
             showMessage(Self.noAnalyzableFilesMessage)
             return
         }
+        let preferences = ApplicationSettings.historyFlowReviewPreferences
+        applyPreferences(preferences)
         reviewView.display(report)
+        // Showing a function turns Slice off, so the saved slice applies after the report is on screen.
+        applySavedSlice(preferences)
+        displayedReport = report
         showDiagnostics(Self.diagnosticsSummary(for: report))
         reviewView.isHidden = false
         statusOverlay.isHidden = true
@@ -257,7 +272,18 @@ final class FlowDeltaAdapterView: NSView {
             case .warning: .warning
             case .error: .error
             }
-            return HistoryFlowDiagnosticInput(severity: severity, path: diagnostic.path, message: diagnostic.message)
+            let code: HistoryFlowDiagnosticInput.Code = switch diagnostic.code {
+            case .partialParse: .partialParse
+            case .resourceLimit: .resourceLimit
+            case .unsupportedConstruct: .unsupportedConstruct
+            case .internalInvariant: .internalInvariant
+            }
+            return HistoryFlowDiagnosticInput(
+                severity: severity,
+                path: diagnostic.path,
+                message: diagnostic.message,
+                code: code
+            )
         }
         return HistoryFlowDiagnosticsSummary.make(from: inputs)
     }
@@ -273,6 +299,7 @@ final class FlowDeltaAdapterView: NSView {
         if summary.omittedCount > 0 {
             lines.append("… and \(summary.omittedCount) more.")
         }
+        lines += summary.notes
         let text = lines.joined(separator: "\n")
         diagnosticsLabel.stringValue = text
         diagnosticsLabel.toolTip = text
@@ -286,6 +313,7 @@ final class FlowDeltaAdapterView: NSView {
     }
 
     private func showOverlay(_ message: String, loading: Bool) {
+        displayedReport = nil
         reviewView.isHidden = true
         diagnosticsBanner.isHidden = true
         statusOverlay.isHidden = false
@@ -296,5 +324,59 @@ final class FlowDeltaAdapterView: NSView {
         } else {
             progressIndicator.stopAnimation(nil)
         }
+    }
+
+    // MARK: Review preferences
+
+    /// Applies the saved noise, grouping and presentation as host changes, so applying them never saves them again.
+    func applyPreferences(_ preferences: HistoryFlowReviewPreferences) {
+        let current = reviewView.state
+        let noise = FlowNoisePolicy(rawValue: preferences.noise.rawValue) ?? .showAll
+        if current.noise != noise {
+            reviewView.setNoise(noise)
+        }
+        if current.groupsByConcern != preferences.groupsByConcern {
+            reviewView.setGroupsByConcern(preferences.groupsByConcern)
+        }
+        let presentation = Self.flowPresentation(preferences.presentation)
+        if current.presentation != presentation {
+            reviewView.setPresentation(presentation)
+        }
+    }
+
+    /// Turns on the saved slice, which FlowDelta draws from the next node the user selects in the delta graph.
+    func applySavedSlice(_ preferences: HistoryFlowReviewPreferences) {
+        guard let slice = preferences.slice.map(Self.flowSlice), reviewView.state.presentation == .delta else { return }
+        reviewView.setSlice(slice)
+        Self.logger.debug("Applied the saved \(preferences.slice?.rawValue ?? "none", privacy: .public) slice")
+    }
+
+    func flowDeltaReviewView(_: FlowDeltaReviewView, didChange _: FlowReviewState, cause: FlowReviewChangeCause) {
+        guard cause == .user else { return }
+        rememberReviewPreferences()
+    }
+
+    /// Saves the review's presentation, slice, noise and grouping as the app-wide Flow review preferences.
+    func rememberReviewPreferences() {
+        let state = reviewView.state
+        var preferences = ApplicationSettings.historyFlowReviewPreferences
+        preferences.presentation = Self.presentation(state.presentation)
+        // FlowDelta draws a slice only from a node selected in the delta graph, and reports none otherwise. The saved
+        // slice changes only while one could be drawn, so other choices keep it for the next selection.
+        if state.presentation == .delta, state.selectedNodeStableID != nil {
+            preferences.slice = state.slice.map(Self.slice)
+        }
+        preferences.noise = HistoryFlowNoiseLevel(rawValue: state.noise.rawValue) ?? preferences.noise
+        preferences.groupsByConcern = state.groupsByConcern
+        guard preferences != ApplicationSettings.historyFlowReviewPreferences else { return }
+        ApplicationSettings.historyFlowReviewPreferences = preferences
+        Self.logger.notice(
+            """
+            Saved Flow review preferences: \(preferences.presentation.rawValue, privacy: .public), \
+            slice \(preferences.slice?.rawValue ?? "none", privacy: .public), \
+            noise \(preferences.noise.rawValue, privacy: .public), \
+            grouped \(preferences.groupsByConcern, privacy: .public)
+            """
+        )
     }
 }

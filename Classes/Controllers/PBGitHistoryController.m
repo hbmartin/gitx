@@ -46,6 +46,7 @@
 	__weak IBOutlet NSButton *allBranchesFilterItem;
 	__weak IBOutlet NSButton *localRemoteBranchesFilterItem;
 	__weak IBOutlet NSButton *selectedBranchFilterItem;
+	__weak IBOutlet PBFlowDeltaAdapterView *flowAdapterView;
 
 	NSInteger selectedCommitDetailsIndex;
 	BOOL forceSelectionUpdate;
@@ -667,6 +668,18 @@
 }
 
 #pragma mark Table Column Methods
+
+#pragma mark Flow Review
+
+/// View ▸ Flow Review commands reach the Flow tab while the commit list or another History control is focused.
+/// The adapter disables them whenever the Flow tab is hidden or shows no report.
+- (id)supplementalTargetForAction:(SEL)action sender:(id)sender
+{
+	if (action == @selector(performHistoryFlowCommand:) && flowAdapterView != nil) {
+		return flowAdapterView;
+	}
+	return [super supplementalTargetForAction:action sender:sender];
+}
 
 @end
 #pragma clang diagnostic pop

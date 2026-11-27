@@ -644,6 +644,112 @@ DQ
                                     <action selector="setFlowView:" target="-1" id="fLw-Vw-ac1"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Flow Review" identifier="GitX.View.FlowReview" id="flow-review-menu-item">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <menu key="submenu" title="Flow Review" id="flow-review-menu">
+                                    <items>
+                                        <menuItem title="Delta" tag="100" keyEquivalent="1" identifier="GitX.FlowReview.Delta" id="flow-review-delta">
+                                            <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-delta-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Before / After" tag="101" keyEquivalent="2" identifier="GitX.FlowReview.BeforeAfter" id="flow-review-beforeafter">
+                                            <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-beforeafter-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Calls" tag="102" keyEquivalent="3" identifier="GitX.FlowReview.Calls" id="flow-review-calls">
+                                            <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-calls-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="flow-review-separator-presentation"/>
+                                        <menuItem title="Forward Slice" tag="110" keyEquivalent="&#xF701;" identifier="GitX.FlowReview.ForwardSlice" id="flow-review-forwardslice">
+                                            <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-forwardslice-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Backward Slice" tag="111" keyEquivalent="&#xF700;" identifier="GitX.FlowReview.BackwardSlice" id="flow-review-backwardslice">
+                                            <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-backwardslice-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="flow-review-separator-slice"/>
+                                        <menuItem title="Show All Changes" tag="120" identifier="GitX.FlowReview.ShowAllChanges" id="flow-review-showallchanges">
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-showallchanges-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Hide Formatting" tag="121" identifier="GitX.FlowReview.HideFormatting" id="flow-review-hideformatting">
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-hideformatting-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Hide Cosmetic Changes" tag="122" identifier="GitX.FlowReview.HideCosmeticChanges" id="flow-review-hidecosmeticchanges">
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-hidecosmeticchanges-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Group by Concern" tag="130" identifier="GitX.FlowReview.GroupByConcern" id="flow-review-groupbyconcern">
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-groupbyconcern-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="flow-review-separator-noise"/>
+                                        <menuItem title="Start Walkthrough" tag="140" identifier="GitX.FlowReview.StartWalkthrough" id="flow-review-startwalkthrough">
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-startwalkthrough-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Next Step" tag="141" keyEquivalent="]" identifier="GitX.FlowReview.NextStep" id="flow-review-nextstep">
+                                            <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-nextstep-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Previous Step" tag="142" keyEquivalent="[" identifier="GitX.FlowReview.PreviousStep" id="flow-review-previousstep">
+                                            <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-previousstep-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="flow-review-separator-walkthrough"/>
+                                        <menuItem title="Copy Flow Report As" identifier="GitX.FlowReview.CopyAs" id="flow-review-copy-as">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <menu key="submenu" title="Copy Flow Report As" id="flow-review-copy-as-menu">
+                                                <items>
+                                                    <menuItem title="Markdown" tag="150" identifier="GitX.FlowReview.CopyMarkdown" id="flow-review-copymarkdown">
+                                                        <connections>
+                                                            <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-copymarkdown-action"/>
+                                                        </connections>
+                                                    </menuItem>
+                                                    <menuItem title="JSON" tag="151" identifier="GitX.FlowReview.CopyJSON" id="flow-review-copyjson">
+                                                        <connections>
+                                                            <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-copyjson-action"/>
+                                                        </connections>
+                                                    </menuItem>
+                                                    <menuItem title="Mermaid" tag="152" identifier="GitX.FlowReview.CopyMermaid" id="flow-review-copymermaid">
+                                                        <connections>
+                                                            <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-copymermaid-action"/>
+                                                        </connections>
+                                                    </menuItem>
+                                                </items>
+                                            </menu>
+                                        </menuItem>
+                                        <menuItem title="Export Flow Report…" tag="160" keyEquivalent="e" identifier="GitX.FlowReview.ExportReport" id="flow-review-exportreport">
+                                            <modifierMask key="keyEquivalentModifierMask" shift="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="performHistoryFlowCommand:" target="-1" id="flow-review-exportreport-action"/>
+                                            </connections>
+                                        </menuItem>
+                                    </items>
+                                </menu>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="916"/>
                             <menuItem title="Jump to Checked-Out Branch" keyEquivalent="j" id="jump-to-checked-out-branch-menu-item">
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
