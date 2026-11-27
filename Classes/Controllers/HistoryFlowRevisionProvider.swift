@@ -40,11 +40,12 @@ nonisolated enum HistoryFlowRevisionProviderError: Error, Equatable, Sendable, C
 /// Loads the changed source files of one revision pair through GitX's
 /// configured git binary.
 ///
-/// FlowDelta's own `GitCLIRevisionProvider` keeps a rename when either side is
-/// a supported language and then traps when it loads the unsupported side, it
-/// always runs `/usr/bin/git`, and a cancelled analysis leaves its git
-/// processes running to completion. This provider owns those three behaviours
-/// and reuses FlowDelta's error type so failures read the same either way.
+/// Since 0.3.0, FlowDelta's own `GitCLIRevisionProvider` runs a caller-chosen
+/// git, skips the unsupported side of a rename and terminates git when its task
+/// is cancelled. GitX keeps this provider because it also bounds every git read:
+/// it checks a blob's size before reading it and terminates git once its output
+/// or error output passes a fixed limit. It reuses FlowDelta's error type so
+/// failures read the same either way.
 nonisolated struct HistoryFlowRevisionProvider: RevisionProvider {
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "FlowDelta")
     private static let maximumRevisionOutputBytes = 4 * 1024

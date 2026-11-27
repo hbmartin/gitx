@@ -1468,7 +1468,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(
             waitForCondition(timeout: 10) {
                 self.flowLabels(in: flowView).contains {
-                    $0.contains("1 files (Swift)") && $0.contains("function deltas")
+                    $0.contains("1 file (Swift)") && $0.contains("function delta")
                 }
             },
             "Flow labels after analysis: \(flowLabels(in: flowView))"
@@ -1523,7 +1523,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(
             waitForCondition(timeout: 10) {
                 self.flowLabels(in: flowView).contains {
-                    $0.contains("1 files (Swift)") && $0.contains("function deltas")
+                    $0.contains("1 file (Swift)") && $0.contains("function delta")
                 }
             },
             "Flow labels after returning to the pending revision: \(flowLabels(in: flowView))"
@@ -1536,7 +1536,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
         XCTAssertTrue(
             waitForCondition(timeout: 10) {
-                self.flowLabels(in: flowView).contains { $0.contains("1 files (Swift)") }
+                self.flowLabels(in: flowView).contains { $0.contains("1 file (Swift)") }
             },
             "Flow labels after analysis: \(flowLabels(in: flowView))"
         )
@@ -1569,7 +1569,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(
             waitForCondition(timeout: 10) {
                 let labels = self.flowLabels(in: flowView)
-                return labels.contains { $0.contains("1 files (Swift)") }
+                return labels.contains { $0.contains("1 file (Swift)") }
                     && labels.contains { $0.contains(String(retiredSHA.prefix(7))) }
             },
             "Flow labels after analyzing a rename to an unsupported extension: \(flowLabels(in: flowView))"
@@ -1582,7 +1582,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(
             waitForCondition(timeout: 10) {
                 let labels = self.flowLabels(in: flowView)
-                return labels.contains { $0.contains("1 files (Swift)") }
+                return labels.contains { $0.contains("1 file (Swift)") }
                     && labels.contains { $0.contains(String(restoredSHA.prefix(7))) }
             },
             "Flow labels after analyzing a rename from an unsupported extension: \(flowLabels(in: flowView))"

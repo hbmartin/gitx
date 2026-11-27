@@ -349,6 +349,7 @@
 		FD2000000000000000000003 /* FlowDeltaAnalysis in Frameworks */ = {isa = PBXBuildFile; productRef = FD2000000000000000000019 /* FlowDeltaAnalysis */; };
 		FD2000000000000000000004 /* FlowDeltaGit in Frameworks */ = {isa = PBXBuildFile; productRef = FD200000000000000000001A /* FlowDeltaGit */; };
 		FD2000000000000000000005 /* FlowDeltaUI in Frameworks */ = {isa = PBXBuildFile; productRef = FD200000000000000000001B /* FlowDeltaUI */; };
+		FD2000000000000000000006 /* FlowDeltaExport in Frameworks */ = {isa = PBXBuildFile; productRef = FD200000000000000000001C /* FlowDeltaExport */; };
 		F0A000000000000000000001 /* ForgeKit in Frameworks */ = {isa = PBXBuildFile; productRef = F0A000000000000000000018 /* ForgeKit */; };
 		C0D0C0A00000000000000002 /* ApplicationComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000011 /* ApplicationComposition.swift */; };
 		C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */; };
@@ -1330,6 +1331,7 @@
 				FD2000000000000000000003 /* FlowDeltaAnalysis in Frameworks */,
 				FD2000000000000000000004 /* FlowDeltaGit in Frameworks */,
 				FD2000000000000000000005 /* FlowDeltaUI in Frameworks */,
+				FD2000000000000000000006 /* FlowDeltaExport in Frameworks */,
 				C0DE1000000000000000001A /* UserNotifications.framework in Frameworks */,
 				C0DE10000000000000000016 /* HighlightKit in Frameworks */,
 				4A68AD7414A00541006DE321 /* Sparkle.framework in Frameworks */,
@@ -2158,6 +2160,7 @@
 				FD2000000000000000000019 /* FlowDeltaAnalysis */,
 				FD200000000000000000001A /* FlowDeltaGit */,
 				FD200000000000000000001B /* FlowDeltaUI */,
+				FD200000000000000000001C /* FlowDeltaExport */,
 				C0DE10000000000000000018 /* HighlightKit */,
 			);
 			productInstallPath = "$(HOME)/Applications";
@@ -3552,7 +3555,7 @@
 			repositoryURL = "https://github.com/hbmartin/FlowDelta.git";
 			requirement = {
 				kind = exactVersion;
-				version = 0.2.2;
+				version = 0.3.2;
 			};
 		};
 		C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */ = {
@@ -3600,6 +3603,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = FD2000000000000000017 /* XCRemoteSwiftPackageReference "FlowDelta" */;
 			productName = FlowDeltaUI;
+		};
+		FD200000000000000000001C /* FlowDeltaExport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FD2000000000000000017 /* XCRemoteSwiftPackageReference "FlowDelta" */;
+			productName = FlowDeltaExport;
 		};
 		C0DE10000000000000000018 /* HighlightKit */ = {
 			isa = XCSwiftPackageProductDependency;
