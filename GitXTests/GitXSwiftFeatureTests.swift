@@ -154,6 +154,8 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(GitXCommandLineSearchQuotedArgument("it's"), #"'it'\''s'"#)
         XCTAssertEqual(GitXCommandLineSearchQuotedArgument(#"say"hi""#), #"'say"hi"'"#)
         XCTAssertEqual(GitXCommandLineSearchQuotedArgument(#"back\slash"#), #"'back\slash'"#)
+        // A quote followed by a combining mark is still a quote to the search tokenizer.
+        XCTAssertEqual(GitXCommandLineSearchQuotedArgument("it'\u{0301}s"), "'it'\\''\u{0301}s'")
 
         XCTAssertEqual(GitXCommandLineSearchQuery(["-p", "dir name/it's.txt", "plain"], .path), #"'dir name/it'\''s.txt' plain"#)
         XCTAssertEqual(GitXCommandLineSearchQuery(["--path=dir name/a.txt"], .path), "'dir name/a.txt'")

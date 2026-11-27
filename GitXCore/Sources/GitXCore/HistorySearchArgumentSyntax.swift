@@ -16,18 +16,31 @@ public enum HistorySearchArgumentIssue: Error, Equatable, Sendable {
 /// - Outside quotes, a backslash escapes whitespace, a quote, or another backslash. Any other
 ///   backslash is literal, so regular expressions such as `--grep=a\.b` pass through unchanged.
 /// - Adjacent quoted and unquoted text forms one argument, as in a shell.
+///
+/// The syntax is read as Unicode scalars: Swift groups a delimiter with a following combining mark into
+/// one `Character`, which would otherwise hide quotes and whitespace in front of combining marks.
 public enum HistorySearchArgumentSyntax {
     public static func arguments(in text: String) -> Result<[String], HistorySearchArgumentIssue> {
-        var scanner = Scanner(characters: Array(text))
+        var scanner = Scanner(scalars: Array(text.unicodeScalars))
         return scanner.scan()
     }
 
     /// Returns `argument` in a form `arguments(in:)` reads back as exactly one argument.
     public static func quoted(_ argument: String) -> String {
-        if !argument.isEmpty, !argument.contains(where: needsQuoting) {
+        if !argument.isEmpty, !argument.unicodeScalars.contains(where: needsQuoting) {
             return argument
         }
-        return "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        var quoted = String.UnicodeScalarView()
+        quoted.append("'")
+        for scalar in argument.unicodeScalars {
+            if scalar == "'" {
+                quoted.append(contentsOf: "'\\''".unicodeScalars)
+            } else {
+                quoted.append(scalar)
+            }
+        }
+        quoted.append("'")
+        return String(quoted)
     }
 
     public static func joined(_ arguments: [String]) -> String {
@@ -57,37 +70,40 @@ public enum HistorySearchArgumentSyntax {
         }
     }
 
-    private static func needsQuoting(_ character: Character) -> Bool {
-        character.isWhitespace || character == "'" || character == "\"" || character == "\\"
+    private static func needsQuoting(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.properties.isWhitespace || isQuoteOrBackslash(scalar)
+    }
+
+    private static func isQuoteOrBackslash(_ scalar: Unicode.Scalar) -> Bool {
+        scalar == "'" || scalar == "\"" || scalar == "\\"
     }
 
     private struct Scanner {
-        let characters: [Character]
+        let scalars: [Unicode.Scalar]
         var index = 0
         var arguments: [String] = []
-        var current = ""
+        var current = String.UnicodeScalarView()
         var hasArgument = false
 
-        init(characters: [Character]) {
-            self.characters = characters
+        init(scalars: [Unicode.Scalar]) {
+            self.scalars = scalars
         }
 
         mutating func scan() -> Result<[String], HistorySearchArgumentIssue> {
-            while index < characters.count {
-                let character = characters[index]
+            while index < scalars.count {
+                let scalar = scalars[index]
                 index += 1
-                if character.isWhitespace {
+                if scalar.properties.isWhitespace {
                     finishArgument()
-                } else if character == "'" || character == "\"" {
+                } else if scalar == "'" || scalar == "\"" {
                     hasArgument = true
-                    guard readQuoted(until: character) else { return .failure(.unclosedQuote(character)) }
-                } else if character == "\\" {
+                    guard readQuoted(until: scalar) else { return .failure(.unclosedQuote(Character(scalar))) }
+                } else if scalar == "\\" {
                     hasArgument = true
-                    let escaped = readEscape(escapable: { $0.isWhitespace || Self.isQuoteOrBackslash($0) })
-                    current.append(escaped)
+                    readEscape(escapable: { $0.properties.isWhitespace || HistorySearchArgumentSyntax.isQuoteOrBackslash($0) })
                 } else {
                     hasArgument = true
-                    current.append(character)
+                    current.append(scalar)
                 }
             }
             finishArgument()
@@ -97,39 +113,36 @@ public enum HistorySearchArgumentSyntax {
             return .success(arguments)
         }
 
-        private mutating func readQuoted(until quote: Character) -> Bool {
-            while index < characters.count {
-                let character = characters[index]
+        private mutating func readQuoted(until quote: Unicode.Scalar) -> Bool {
+            while index < scalars.count {
+                let scalar = scalars[index]
                 index += 1
-                if character == quote {
+                if scalar == quote {
                     return true
                 }
-                if quote == "\"", character == "\\" {
-                    let escaped = readEscape(escapable: { $0 == "\"" || $0 == "\\" })
-                    current.append(escaped)
+                if quote == "\"", scalar == "\\" {
+                    readEscape(escapable: { $0 == "\"" || $0 == "\\" })
                 } else {
-                    current.append(character)
+                    current.append(scalar)
                 }
             }
             return false
         }
 
-        /// Consumes the character after a backslash when it is escapable; otherwise the backslash is literal.
-        private mutating func readEscape(escapable: (Character) -> Bool) -> String {
-            guard index < characters.count, escapable(characters[index]) else { return "\\" }
-            let escaped = characters[index]
+        /// Appends the scalar after a backslash when it is escapable; otherwise the backslash is literal.
+        private mutating func readEscape(escapable: (Unicode.Scalar) -> Bool) {
+            guard index < scalars.count, escapable(scalars[index]) else {
+                current.append("\\")
+                return
+            }
+            current.append(scalars[index])
             index += 1
-            return String(escaped)
-        }
-
-        private static func isQuoteOrBackslash(_ character: Character) -> Bool {
-            character == "'" || character == "\"" || character == "\\"
         }
 
         private mutating func finishArgument() {
             guard hasArgument else { return }
-            arguments.append(current)
-            current = ""
+            arguments.append(String(current))
+            current = String.UnicodeScalarView()
             hasArgument = false
         }
     }
