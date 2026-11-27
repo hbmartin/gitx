@@ -5,7 +5,6 @@
 #import "PBGitRepository.h"
 #import "PBGitCommit.h"
 #import "PBGitWindowController.h"
-#import "PBHistorySearchController.h"
 #import "PBQLTextView.h"
 #import "PBDiffWindowController.h"
 #import "GitX-Swift.h"

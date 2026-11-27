@@ -1,26 +1,15 @@
-//
-//  PBHistorySearchController.h
-//  GitX
-//
-//  Created by Nathan Kinsinger on 8/21/10.
-//  Copyright 2010 Nathan Kinsinger. All rights reserved.
-//
-
 #import <Cocoa/Cocoa.h>
+
 #import "PBHistorySearchMode.h"
+
+@class PBGitHistoryController;
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class PBGitHistoryController;
-@class PBTask;
-
-@interface PBHistorySearchController : NSObject {
-	PBHistorySearchMode searchMode;
-	NSIndexSet *_Nullable results;
-	NSTimer *_Nullable searchTimer;
-	PBTask *_Nullable backgroundSearchTask;
-	NSPanel *_Nullable rewindPanel;
-}
+/// Narrow test-only mirror of GitX-Swift.h's PBHistorySearchController interface.
+/// App-hosted tests use this declaration without importing the complete generated
+/// header, while production owns the runtime class.
+@interface PBHistorySearchController : NSObject
 
 @property (weak, nullable) IBOutlet PBGitHistoryController *historyController;
 @property (weak, nullable) IBOutlet NSArrayController *commitController;
@@ -31,7 +20,6 @@ NS_ASSUME_NONNULL_BEGIN
 @property (weak, nullable) IBOutlet NSProgressIndicator *progressIndicator;
 
 @property PBHistorySearchMode searchMode;
-
 
 - (BOOL)isRowInSearchResults:(NSInteger)rowIndex;
 - (BOOL)hasSearchResults;
@@ -45,7 +33,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)clearSearch;
 - (IBAction)updateSearch:(nullable id)sender;
 
-/// Ignores a nil or empty search string; otherwise selects the mode and submits the text.
 - (void)setHistorySearch:(nullable NSString *)searchString mode:(PBHistorySearchMode)mode;
 
 @end

@@ -10,7 +10,7 @@
 #import "GitXApplicationLocator.h"
 #import "GitXScriptingConstants.h"
 #import "GitX.h"
-#import "PBHistorySearchController.h"
+#import "PBHistorySearchMode.h"
 #import "GitXCommandLineSearch.h"
 
 #import <mach-o/dyld.h>
