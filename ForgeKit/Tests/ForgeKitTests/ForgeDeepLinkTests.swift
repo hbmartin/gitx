@@ -47,6 +47,16 @@ final class ForgeDeepLinkTests: XCTestCase {
         }
     }
 
+    func testWorkflowDestinationsHaveNoDeepLink() throws {
+        let repository = try TestSupport.repository()
+        let run = try ForgeWorkflowRunID(7)
+        for destination in try [ForgeDestination.workflowRun(repository, run), .workflowJob(repository, run: run, job: ForgeWorkflowJobID(8))] {
+            XCTAssertThrowsError(try ForgeDeepLinkCodec.url(for: destination)) {
+                XCTAssertEqual($0 as? ForgeDeepLinkError, .unsupportedRoute)
+            }
+        }
+    }
+
     func testFileAndCompareGrammarEncodesEveryRevisionKindExplicitly() throws {
         let fixture = try Fixture()
         let file = try ForgeDestination.file(

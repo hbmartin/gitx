@@ -3850,9 +3850,40 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
         ))
     }
 
+    func testClassicScopeMappingMatchesTheGitHubAdapterForEveryPermissionScopeAndVisibility() throws {
+        let fixture = try PullRequestAppFixture()
+        let credential = try ForgeCredentialReference(
+            accountID: fixture.accountID,
+            credentialID: ForgeCredentialID("classic"),
+            generation: ForgeCredentialGeneration(1)
+        )
+        let scopeSets: [Set<String>] = [[], ["repo"], ["RePo"], ["public_repo"], ["PUBLIC_REPO"], ["repo:status"], ["read:org"], ["public_repo", "repo:status"]]
+        for scopes in scopeSets {
+            for isPublic in [false, true] {
+                for source in [ForgeCredentialSource.classicPersonalAccessToken, .commandLineBroker] {
+                    let authority: GitHubCredentialAuthority = source == .classicPersonalAccessToken
+                        ? .classicPersonalAccessToken(credential: credential, repository: fixture.repository, scopes: scopes, repositoryIsPublic: isPublic)
+                        : .commandLineBroker(credential: credential, repository: fixture.repository, scopes: scopes, repositoryIsPublic: isPublic)
+                    let evidence = try GitHubCapabilityMapper.permissionEvidence(
+                        credentialMetadata: ForgeCredentialMetadata(reference: credential, source: source),
+                        repository: fixture.repository,
+                        authority: authority
+                    )
+                    for permission in ForgeRepositoryPermission.allCases {
+                        XCTAssertEqual(
+                            GitHubCapabilityMapper.classicAuthority(permission: permission, scopes: scopes, repositoryIsPublic: isPublic),
+                            evidence.authority(for: permission),
+                            "\(source) \(scopes.sorted()) public=\(isPublic) \(permission)"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     func testClassicScopeMappingUsesKnownScopeAndRepositoryVisibilityWithoutGuessing() {
         XCTAssertEqual(
-            ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            GitHubCapabilityMapper.classicAuthority(
                 permission: .pullRequests,
                 scopes: ["repo"],
                 repositoryIsPublic: false
@@ -3860,7 +3891,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
             .known(.write)
         )
         XCTAssertEqual(
-            ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            GitHubCapabilityMapper.classicAuthority(
                 permission: .contents,
                 scopes: ["public_repo"],
                 repositoryIsPublic: true
@@ -3868,7 +3899,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
             .known(.write)
         )
         XCTAssertEqual(
-            ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            GitHubCapabilityMapper.classicAuthority(
                 permission: .contents,
                 scopes: ["public_repo"],
                 repositoryIsPublic: false
@@ -3876,7 +3907,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
             .unknown
         )
         XCTAssertEqual(
-            ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            GitHubCapabilityMapper.classicAuthority(
                 permission: .pullRequests,
                 scopes: [],
                 repositoryIsPublic: true

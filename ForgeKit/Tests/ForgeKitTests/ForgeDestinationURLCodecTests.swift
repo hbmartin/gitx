@@ -132,6 +132,41 @@ final class ForgeDestinationURLCodecTests: XCTestCase {
         }
     }
 
+    func testWorkflowRunsAndJobsRoundTripOnlyOnGitHub() throws {
+        let github = try TestSupport.repository(kind: .github)
+        let run = try ForgeWorkflowRunID(30_433_642)
+        let job = try ForgeWorkflowJobID(76_543_210_987)
+        let runURL = try ForgeDestinationURLCodec.url(for: .workflowRun(github, run))
+        let jobURL = try ForgeDestinationURLCodec.url(for: .workflowJob(github, run: run, job: job))
+        XCTAssertEqual(runURL.absoluteString, "https://github.com/acme/widgets/actions/runs/30433642")
+        XCTAssertEqual(jobURL.absoluteString, "https://github.com/acme/widgets/actions/runs/30433642/job/76543210987")
+        XCTAssertEqual(try ForgeDestinationURLCodec.parse(runURL, boundTo: github), .workflowRun(github, run))
+        XCTAssertEqual(try ForgeDestinationURLCodec.parse(jobURL, boundTo: github), .workflowJob(github, run: run, job: job))
+
+        for kind in [ForgeKind.gitLab, .bitbucket] {
+            let repository = try TestSupport.repository(kind: kind)
+            for destination in [ForgeDestination.workflowRun(repository, run), .workflowJob(repository, run: run, job: job)] {
+                XCTAssertThrowsError(try ForgeDestinationURLCodec.url(for: destination)) {
+                    XCTAssertEqual($0 as? ForgeDestinationURLCodecError, .unsupportedDestination)
+                }
+            }
+        }
+
+        let rejected: [(String, ForgeDestinationURLCodecError)] = [
+            ("https://github.com/acme/widgets/actions/runs/0", .malformedDestination),
+            ("https://github.com/acme/widgets/actions/runs/+5", .malformedDestination),
+            ("https://github.com/acme/widgets/actions/runs/12/job/x", .malformedDestination),
+            ("https://github.com/acme/widgets/actions/runs/99999999999999999999", .malformedDestination),
+            ("https://github.com/acme/widgets/actions/runs/12/attempts/2", .unsupportedDestination),
+            ("https://github.com/acme/widgets/actions", .unsupportedDestination),
+        ]
+        for (string, expected) in rejected {
+            XCTAssertThrowsError(try ForgeDestinationURLCodec.parse(XCTUnwrap(URL(string: string)), boundTo: github), string) {
+                XCTAssertEqual($0 as? ForgeDestinationURLCodecError, expected, string)
+            }
+        }
+    }
+
     func testAmbiguousFileAndCompareRevisionKindsParseAsOpaqueWithoutLosingText() throws {
         let repository = try TestSupport.repository()
         let revisions: [ForgeRevision] = try [

@@ -138,8 +138,29 @@ final class GitHubReadAdapterTests: XCTestCase {
             }
         )
 
+        let workflows = try await adapter.commitWorkflowRuns(
+            repository: repository,
+            commit: ForgeCommitID("abcdef12"),
+            includeWorkflowRuns: true,
+            pageSize: 1,
+            jobPageSize: 1,
+            after: cursor
+        )
+        XCTAssertEqual(workflows.completeness, .complete)
+        let suite = try XCTUnwrap(workflows.value.suites.items.first)
+        XCTAssertEqual(ForgeWorkflowPresentationPolicy.summary(suite), "CI #42 · Failed")
+        let jobs = try await adapter.checkSuiteJobs(repository: repository, suite: suite, pageSize: 1, after: cursor)
+        XCTAssertEqual(jobs.value.items.map(\.name), ["test"])
+        let steps = try await adapter.workflowJobSteps(
+            repository: repository,
+            job: XCTUnwrap(suite.jobs.items.first),
+            pageSize: 1,
+            after: cursor
+        )
+        XCTAssertEqual(steps.value.items.map(\.name), ["Set up job"])
+
         let requests = capture.requests
-        XCTAssertEqual(requests.count, 10)
+        XCTAssertEqual(requests.count, 13)
         XCTAssertTrue(requests.allSatisfy { $0.url?.absoluteString == "https://api.github.com/graphql" })
         XCTAssertTrue(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer secret-for-test" })
         XCTAssertTrue(requests.allSatisfy { $0.value(forHTTPHeaderField: "User-Agent") == "GitX-ForgeKit" })
@@ -2233,7 +2254,57 @@ private extension GitHubReadAdapterTests {
         "GitHubPullRequestDetails", "GitHubIssueDetails", "GitHubHistoryOverlay",
         "GitHubRepositoryItemSearch", "GitHubAttentionCandidates",
         "GitHubPullRequestReviewThreads", "GitHubPullRequestReviewThreadComments",
+        "GitHubCommitWorkflowRuns", "GitHubCheckSuiteJobs", "GitHubWorkflowJobSteps",
     ]
+
+    static func workflowJob(
+        id: String = "job-node",
+        databaseID: Int? = 555,
+        name: String = "build",
+        status: String = "COMPLETED",
+        conclusion: String? = "FAILURE",
+        detailsURL: String? = "https://github.com/hbmartin/gitx/actions/runs/777/job/555"
+    ) -> [String: Any] {
+        [
+            "__typename": "CheckRun", "id": id, "databaseId": databaseID ?? NSNull(), "name": name,
+            "status": status, "conclusion": conclusion ?? NSNull(), "detailsUrl": detailsURL ?? NSNull(),
+            "startedAt": "2026-07-29T12:00:00Z", "completedAt": "2026-07-29T12:05:00Z",
+        ]
+    }
+
+    static func workflowSuite(
+        id: String = "suite-node",
+        slug: String = "github-actions",
+        appName: String = "GitHub Actions",
+        status: String = "COMPLETED",
+        conclusion: String? = "FAILURE",
+        workflowRun: [String: Any]? = workflowRunObject(),
+        jobs: [String: Any]? = connection("CheckRunConnection", nodes: [workflowJob()])
+    ) -> [String: Any] {
+        [
+            "__typename": "CheckSuite", "id": id, "status": status, "conclusion": conclusion ?? NSNull(),
+            "updatedAt": "2026-07-29T12:06:00Z",
+            "app": ["__typename": "App", "name": appName, "slug": slug],
+            "workflowRun": workflowRun.map { $0 as Any } ?? NSNull(),
+            "checkRuns": jobs.map { $0 as Any } ?? NSNull(),
+        ]
+    }
+
+    static func workflowRunObject(databaseID: Int? = 777, attempt: Int = 1) -> [String: Any] {
+        [
+            "__typename": "WorkflowRun", "databaseId": databaseID ?? NSNull(), "runNumber": 42,
+            "runAttempt": attempt, "event": "pull_request", "displayTitle": "Fix the build",
+            "workflow": ["__typename": "Workflow", "name": "CI"],
+        ]
+    }
+
+    static func commitWorkflowRunsData(
+        suites: [String: Any]? = connection("CheckSuiteConnection", nodes: [workflowSuite()])
+    ) -> [String: Any] {
+        var repository = repositoryIdentity
+        repository["object"] = ["__typename": "Commit", "oid": "abcdef12", "checkSuites": suites.map { $0 as Any } ?? NSNull()]
+        return ["repository": repository]
+    }
 
     static var pageInfo: [String: Any] {
         [
@@ -2630,6 +2701,21 @@ private extension GitHubReadAdapterTests {
                 ],
                 "comments": connection("PullRequestReviewCommentConnection", nodes: [reviewComment]),
             ]]
+        case "GitHubCommitWorkflowRuns":
+            data = commitWorkflowRunsData()
+        case "GitHubCheckSuiteJobs":
+            data = ["node": [
+                "__typename": "CheckSuite", "id": "suite-node", "repository": repositoryIdentity,
+                "checkRuns": connection("CheckRunConnection", nodes: [workflowJob(id: "job-2", databaseID: 556, name: "test")]),
+            ]]
+        case "GitHubWorkflowJobSteps":
+            data = ["node": [
+                "__typename": "CheckRun", "id": "job-node", "repository": repositoryIdentity,
+                "steps": connection("CheckStepConnection", nodes: [[
+                    "__typename": "CheckStep", "number": 1, "name": "Set up job", "status": "COMPLETED",
+                    "conclusion": "SUCCESS", "startedAt": "2026-07-29T12:00:00Z", "completedAt": NSNull(),
+                ]]),
+            ]]
         default: throw GitHubReadError.malformedResponse
         }
         return try JSONSerialization.data(withJSONObject: ["data": data])
@@ -2947,5 +3033,302 @@ private extension ForgeReviewParticipant {
     var actorValue: ForgeActor? {
         guard case let .actor(actor) = self else { return nil }
         return actor
+    }
+}
+
+// MARK: - Workflow reads
+
+/// The on-demand workflow reads of ADR 0015: check suites, jobs and steps, and how a refused workflow run
+/// degrades them.
+extension GitHubReadAdapterTests {
+    private func installGraphQL(data: [String: Any], errors: [[String: Any]]) throws {
+        let body = try JSONSerialization.data(withJSONObject: ["data": data, "errors": errors])
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, headers: Self.successHeaders, body: body)
+        }
+    }
+
+    private func readWorkflows(includeWorkflowRuns: Bool = true) async throws -> GitHubReadResult<ForgeCommitWorkflowSnapshot> {
+        try await makeAdapter().commitWorkflowRuns(
+            repository: makeRepository(),
+            commit: ForgeCommitID("abcdef12"),
+            includeWorkflowRuns: includeWorkflowRuns
+        )
+    }
+
+    private func expectMappingFailure(
+        _ operation: () async throws -> some Any,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            _ = try await operation()
+            XCTFail("Expected a mapping failure", file: file, line: line)
+        } catch GitHubReadError.mapping {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected \(error)", file: file, line: line)
+        }
+    }
+
+    func testWorkflowRunsMapRunsJobsAndTheirPages() async throws {
+        let actionsJobs = Self.connection("CheckRunConnection", nodes: [
+            Self.workflowJob(),
+            Self.workflowJob(id: "job-ok", databaseID: 556, name: "  lint  ", conclusion: "SUCCESS"),
+        ])
+        var paged = Self.connection("CheckSuiteConnection", nodes: [
+            Self.workflowSuite(jobs: actionsJobs),
+            Self.workflowSuite(
+                id: "lint-suite",
+                slug: "lint-app",
+                appName: "Lint App",
+                status: "IN_PROGRESS",
+                conclusion: nil,
+                workflowRun: nil,
+                jobs: Self.connection("CheckRunConnection", nodes: [
+                    Self.workflowJob(id: "lint-run", databaseID: 900, name: "lint", status: "IN_PROGRESS", conclusion: nil, detailsURL: "https://lint.example/runs/1"),
+                ])
+            ),
+        ])
+        paged["totalCount"] = 3
+        paged["pageInfo"] = Self.pageInfo(hasNextPage: true, endCursor: "suite-cursor")
+        try installGraphQLData(Self.commitWorkflowRunsData(suites: paged))
+
+        let result = try await readWorkflows()
+        XCTAssertEqual(result.completeness, .complete)
+        let snapshot = result.value
+        XCTAssertFalse(snapshot.actionsUnavailable)
+        XCTAssertEqual(snapshot.suites.nextCursor?.value, "suite-cursor")
+        XCTAssertEqual(snapshot.suites.totalCount, 3)
+        let repository = try makeRepository()
+        let actions = try XCTUnwrap(snapshot.suites.items.first)
+        XCTAssertTrue(actions.isActions)
+        XCTAssertEqual(actions.outcome, .failed)
+        guard case let .available(details) = actions.run else { return XCTFail("Expected run details") }
+        XCTAssertEqual(details.destination, try .workflowRun(repository, ForgeWorkflowRunID(777)))
+        XCTAssertEqual(details.title, "Fix the build")
+        XCTAssertEqual(details.event, "pull_request")
+        XCTAssertEqual(actions.jobs.items.map(\.name), ["build", "lint"])
+        XCTAssertEqual(
+            actions.jobs.items.first?.destination,
+            try .workflowJob(repository, run: ForgeWorkflowRunID(777), job: ForgeWorkflowJobID(555))
+        )
+        XCTAssertNil(actions.jobs.items.first?.detailsURL)
+        XCTAssertEqual(
+            ForgeWorkflowPresentationPolicy.rerunFailedEligibility(actions),
+            .openRun(details.destination)
+        )
+
+        let lint = try XCTUnwrap(snapshot.suites.items.last)
+        XCTAssertFalse(lint.isActions)
+        XCTAssertEqual(lint.run, .notRequested)
+        XCTAssertEqual(lint.title, "Lint App")
+        XCTAssertEqual(lint.outcome, .running)
+        XCTAssertNil(lint.jobs.items.first?.destination)
+        XCTAssertEqual(lint.jobs.items.first?.detailsURL?.absoluteString, "https://lint.example/runs/1")
+    }
+
+    func testRefusedWorkflowRunsDegradeToCheckSuitesWithoutFailingTheRead() async throws {
+        let suites = Self.connection("CheckSuiteConnection", nodes: [Self.workflowSuite(workflowRun: nil)])
+        try installGraphQL(data: Self.commitWorkflowRunsData(suites: suites), errors: [[
+            "type": "FORBIDDEN",
+            "message": "Resource not accessible by integration",
+            "path": ["repository", "object", "checkSuites", "nodes", 0, "workflowRun"],
+        ]])
+        let result = try await readWorkflows()
+        XCTAssertEqual(result.completeness, .partial)
+        XCTAssertEqual(result.problems.first?.classification, "FORBIDDEN", "GitHub reports type beside message")
+        XCTAssertTrue(result.value.actionsUnavailable)
+        let suite = try XCTUnwrap(result.value.suites.items.first)
+        XCTAssertEqual(suite.run, .permissionDenied)
+        XCTAssertEqual(suite.title, "GitHub Actions")
+        XCTAssertEqual(ForgeWorkflowPresentationPolicy.rerunFailedEligibility(suite), .unavailable(.runUnknown))
+        XCTAssertEqual(
+            suite.jobs.items.first?.destination,
+            try .workflowJob(makeRepository(), run: ForgeWorkflowRunID(777), job: ForgeWorkflowJobID(555)),
+            "The job's own page still names its run"
+        )
+
+        try installGraphQL(data: Self.commitWorkflowRunsData(suites: suites), errors: [[
+            "message": "Something went wrong",
+            "path": ["repository", "object", "checkSuites", "nodes", 0, "workflowRun"],
+        ]])
+        let unclassified = try await readWorkflows()
+        XCTAssertFalse(unclassified.value.actionsUnavailable, "Only FORBIDDEN means the permission is missing")
+        XCTAssertEqual(unclassified.value.suites.items.first?.run, .notRequested)
+        XCTAssertEqual(unclassified.completeness, .partial)
+    }
+
+    func testWorkflowRunsAreOnlyRequestedWhenAsked() async throws {
+        let capture = GitHubRequestCapture()
+        let body = try JSONSerialization.data(withJSONObject: ["data": Self.commitWorkflowRunsData(
+            suites: Self.connection("CheckSuiteConnection", nodes: [Self.workflowSuite(workflowRun: nil)])
+        )])
+        GitHubStubURLProtocol.setHandler { request in
+            _ = capture.record(request)
+            return StubResponse(status: 200, headers: Self.successHeaders, body: body)
+        }
+        let result = try await readWorkflows(includeWorkflowRuns: false)
+        XCTAssertEqual(result.completeness, .complete)
+        XCTAssertEqual(result.value.suites.items.first?.run, .notRequested)
+        let variables = try XCTUnwrap(Self.requestPayload(XCTUnwrap(capture.requests.first))["variables"] as? [String: Any])
+        XCTAssertEqual(variables["includeWorkflowRuns"] as? Bool, false)
+        XCTAssertEqual(variables["first"] as? Int, 25)
+        XCTAssertEqual(variables["jobFirst"] as? Int, 50)
+    }
+
+    func testEmptySuitesAreSkippedAndMalformedNodesMakeTheReadPartial() async throws {
+        let suites = Self.connection("CheckSuiteConnection", nodes: [
+            Self.workflowSuite(id: "empty", workflowRun: nil, jobs: Self.emptyConnection("CheckRunConnection")),
+            Self.workflowSuite(id: "no-run-id", workflowRun: Self.workflowRunObject(databaseID: nil)),
+            Self.workflowSuite(id: "unknown", status: "FROBNICATING"),
+            Self.workflowSuite(id: "no-jobs", jobs: nil),
+            Self.workflowSuite(id: "ok", jobs: Self.connection("CheckRunConnection", nodes: [
+                Self.workflowJob(name: " "),
+                Self.workflowJob(id: "insecure", detailsURL: "http://example.com/job"),
+            ])),
+        ])
+        try installGraphQLData(Self.commitWorkflowRunsData(suites: suites))
+        let result = try await readWorkflows()
+        XCTAssertEqual(result.completeness, .partial)
+        XCTAssertEqual(result.value.suites.items.map(\.id.value), ["ok"])
+        let job = try XCTUnwrap(result.value.suites.items.first?.jobs.items.first)
+        XCTAssertEqual(job.id.value, "insecure")
+        XCTAssertNotNil(job.destination)
+
+        var appless = Self.workflowSuite(slug: "x", workflowRun: nil)
+        appless["app"] = NSNull()
+        let noApp = Self.connection("CheckSuiteConnection", nodes: [appless])
+        try installGraphQLData(Self.commitWorkflowRunsData(suites: noApp))
+        let checks = try await readWorkflows()
+        XCTAssertEqual(checks.value.suites.items.first?.appName, "Checks")
+        XCTAssertFalse(checks.value.suites.items.first?.isActions ?? true)
+
+        try installGraphQLData(Self.commitWorkflowRunsData(suites: nil))
+        let missing = try await readWorkflows()
+        XCTAssertEqual(missing.completeness, .partial)
+        XCTAssertTrue(missing.value.suites.items.isEmpty)
+    }
+
+    func testWorkflowReadsRejectTheWrongRepositoryCommitOrObject() async throws {
+        var wrongCommit = Self.commitWorkflowRunsData()
+        var repository = try XCTUnwrap(wrongCommit["repository"] as? [String: Any])
+        repository["object"] = ["__typename": "Commit", "oid": "1234567", "checkSuites": NSNull()]
+        wrongCommit["repository"] = repository
+        try installGraphQLData(wrongCommit)
+        await expectMappingFailure { try await self.readWorkflows() }
+
+        repository["object"] = NSNull()
+        try installGraphQLData(["repository": repository])
+        await expectMappingFailure { try await self.readWorkflows() }
+
+        try installGraphQLData(["repository": NSNull()])
+        await expectMappingFailure { try await self.readWorkflows() }
+
+        let other = try ForgeRepositoryIdentity(forge: makeRepository().forge, owner: "other", name: "repo")
+        let suite = try ForgeWorkflowRun(
+            repository: other,
+            id: ForgeObjectID(forge: other.forge, value: "suite-node"),
+            appName: "CI",
+            isActions: true,
+            run: .notRequested,
+            outcome: .failed,
+            jobs: ForgeWorkflowPage(items: [])
+        )
+        do {
+            _ = try await makeAdapter().checkSuiteJobs(repository: makeRepository(), suite: suite, after: nil)
+            XCTFail("A suite of another repository is refused before the network")
+        } catch {
+            XCTAssertEqual(error as? GitHubReadError, .githubDotComRequired)
+        }
+        let job = try ForgeWorkflowJob(repository: other, id: ForgeObjectID(forge: other.forge, value: "job"), name: "build", outcome: .failed)
+        do {
+            _ = try await makeAdapter().workflowJobSteps(repository: makeRepository(), job: job)
+            XCTFail("A job of another repository is refused before the network")
+        } catch {
+            XCTAssertEqual(error as? GitHubReadError, .githubDotComRequired)
+        }
+    }
+
+    func testJobAndStepPagesMapAgainstTheirParent() async throws {
+        let repository = try makeRepository()
+        let runDestination = try ForgeDestination.workflowRun(repository, ForgeWorkflowRunID(777))
+        let details = try ForgeWorkflowRunDetails(destination: runDestination, workflowName: "CI", runNumber: 1, attempt: 1)
+        let suite = try ForgeWorkflowRun(
+            repository: repository,
+            id: ForgeObjectID(forge: repository.forge, value: "suite-node"),
+            appName: "GitHub Actions",
+            isActions: true,
+            run: .available(details),
+            outcome: .failed,
+            jobs: ForgeWorkflowPage(items: [])
+        )
+        var jobs = Self.connection("CheckRunConnection", nodes: [Self.workflowJob(id: "job-2", databaseID: 556, detailsURL: nil)])
+        jobs["pageInfo"] = Self.pageInfo(hasPreviousPage: true, hasNextPage: true, endCursor: "jobs-2")
+        jobs["totalCount"] = 60
+        try installGraphQLData(["node": ["__typename": "CheckSuite", "id": "suite-node", "repository": Self.repositoryIdentity, "checkRuns": jobs]])
+        let page = try await makeAdapter().checkSuiteJobs(repository: repository, suite: suite, after: ForgePageCursor("jobs-1"))
+        XCTAssertEqual(page.completeness, .complete)
+        XCTAssertEqual(page.value.nextCursor?.value, "jobs-2")
+        XCTAssertEqual(page.value.items.first?.destination, try .workflowJob(repository, run: ForgeWorkflowRunID(777), job: ForgeWorkflowJobID(556)))
+
+        let unknownRun = try ForgeWorkflowRun(
+            repository: repository,
+            id: suite.id,
+            appName: "GitHub Actions",
+            isActions: true,
+            run: .permissionDenied,
+            outcome: .failed,
+            jobs: ForgeWorkflowPage(items: [])
+        )
+        let unknownRunPage = try await makeAdapter().checkSuiteJobs(repository: repository, suite: unknownRun, after: nil)
+        XCTAssertNil(unknownRunPage.value.items.first?.destination, "Without a run or a job page there is no destination")
+
+        try installGraphQLData(["node": ["__typename": "CheckSuite", "id": "another-suite", "repository": Self.repositoryIdentity, "checkRuns": jobs]])
+        await expectMappingFailure { try await self.makeAdapter().checkSuiteJobs(repository: repository, suite: suite, after: nil) }
+        try installGraphQLData(["node": ["__typename": "CheckRun", "id": "suite-node"]])
+        await expectMappingFailure { try await self.makeAdapter().checkSuiteJobs(repository: repository, suite: suite, after: nil) }
+
+        let job = try XCTUnwrap(page.value.items.first)
+        let steps = Self.connection("CheckStepConnection", nodes: [
+            ["__typename": "CheckStep", "number": 1, "name": "Set up job", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-07-29T12:00:00Z", "completedAt": "2026-07-29T12:00:05Z"],
+            ["__typename": "CheckStep", "number": 0, "name": "Bad", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": NSNull(), "completedAt": NSNull()],
+            ["__typename": "CheckStep", "number": 2, "name": "Run tests", "status": "IN_PROGRESS", "conclusion": NSNull(), "startedAt": NSNull(), "completedAt": NSNull()],
+        ])
+        try installGraphQLData(["node": ["__typename": "CheckRun", "id": "job-2", "repository": Self.repositoryIdentity, "steps": steps]])
+        let stepPage = try await makeAdapter().workflowJobSteps(repository: repository, job: job)
+        XCTAssertEqual(stepPage.completeness, .partial, "A dropped step makes the page partial")
+        XCTAssertEqual(stepPage.value.items.map(\.name), ["Set up job", "Run tests"])
+        XCTAssertEqual(stepPage.value.items.map(\.outcome), [.succeeded, .running])
+
+        try installGraphQLData(["node": ["__typename": "CheckRun", "id": "job-2", "repository": Self.repositoryIdentity, "steps": NSNull()]])
+        let missingSteps = try await makeAdapter().workflowJobSteps(repository: repository, job: job)
+        XCTAssertEqual(missingSteps.completeness, .partial)
+        XCTAssertTrue(missingSteps.value.items.isEmpty)
+
+        try installGraphQLData(["node": ["__typename": "CheckRun", "id": "another-job", "repository": Self.repositoryIdentity, "steps": NSNull()]])
+        await expectMappingFailure { try await self.makeAdapter().workflowJobSteps(repository: repository, job: job) }
+        try installGraphQLData(["node": NSNull()])
+        await expectMappingFailure { try await self.makeAdapter().workflowJobSteps(repository: repository, job: job) }
+    }
+
+    func testEveryCheckStatusAndConclusionMapsToAWorkflowOutcome() async throws {
+        let cases: [(String, String?, ForgeWorkflowOutcome)] = [
+            ("QUEUED", nil, .queued), ("REQUESTED", nil, .queued), ("PENDING", nil, .queued),
+            ("WAITING", nil, .waiting), ("IN_PROGRESS", "FAILURE", .running),
+            ("COMPLETED", "SUCCESS", .succeeded), ("COMPLETED", "FAILURE", .failed),
+            ("COMPLETED", "STARTUP_FAILURE", .failed), ("COMPLETED", "CANCELLED", .cancelled),
+            ("COMPLETED", "TIMED_OUT", .timedOut), ("COMPLETED", "ACTION_REQUIRED", .actionRequired),
+            ("COMPLETED", "SKIPPED", .skipped), ("COMPLETED", "NEUTRAL", .neutral),
+            ("COMPLETED", "STALE", .neutral), ("COMPLETED", nil, .neutral),
+        ]
+        let jobs = cases.enumerated().map { index, entry in
+            Self.workflowJob(id: "job-\(index)", databaseID: 1000 + index, name: "job \(index)", status: entry.0, conclusion: entry.1)
+        }
+        try installGraphQLData(Self.commitWorkflowRunsData(
+            suites: Self.connection("CheckSuiteConnection", nodes: [Self.workflowSuite(jobs: Self.connection("CheckRunConnection", nodes: jobs))])
+        ))
+        let result = try await readWorkflows()
+        XCTAssertEqual(result.value.suites.items.first?.jobs.items.map(\.outcome), cases.map(\.2))
     }
 }

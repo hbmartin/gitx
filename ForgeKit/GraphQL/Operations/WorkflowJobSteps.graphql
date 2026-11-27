@@ -1,0 +1,24 @@
+query GitHubWorkflowJobSteps($id: ID!, $first: Int!, $after: String) {
+  node(id: $id) {
+    ... on CheckRun {
+      id
+      repository {
+        ...GitHubRepositoryIdentity
+      }
+      steps(first: $first, after: $after) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          number
+          name
+          status
+          conclusion
+          startedAt
+          completedAt
+        }
+      }
+    }
+  }
+}

@@ -68,6 +68,8 @@ type changes are refused before any backup or reset is attempted.
 Recovery of expired objects, recursive submodule reset, and hard-reset handling
 of incomplete or hidden-index previews remain outside this surface. The next
 approved slices are visible history-search modes and shared named searches, and
+passive LFS diagnostics with explicit current-revision downloads. GitHub.com
+Actions inspection through Pull Requests and Attention shipped under ADR 0015.
 GitHub.com Actions inspection and rerun-failed through Pull Requests and
 Attention.
 
@@ -119,11 +121,11 @@ A later, separately approved milestone may add Enterprise Server APIs. It must d
 
 Milestones 0–3 stop at repository linking, read overlays, Pull Request creation and checkout, native review, lifecycle and merge, Attention, and their supporting account/cache/status infrastructure. The following catalog remains future work rather than partially hidden or shipped behind an experimental toggle:
 
-- GitHub Actions workflow/run/job views, native log streaming, rerun-failed, and `workflow_dispatch`;
+- native GitHub Actions log streaming, native rerun-failed and cancellation, and `workflow_dispatch` (read-only Workflow Run, Workflow Job and step inspection, with rerun-failed opening the run on GitHub, shipped under ADR 0015);
 - GitHub Release creation from tags, generated changelogs, prerelease/draft state, and asset uploads;
 - repository/organization code, Pull Request, and Issue search;
 - Gist creation, Projects, Discussions, and security-alert surfaces;
 - native Issue creation, editing, close/reopen, comments, labels, assignees, and milestones; and
 - native reviewer/team mutation after Pull Request creation.
 
-Each future slice needs a new scope and permission review, provider-neutral capability additions, deterministic fixtures, explicit pagination/rate-limit behavior, accessibility and Snow Leopard UI review, coverage ratcheting, and current diagnostic screenshots. The full Milestone 3 permission envelope does not pre-authorize unrelated Actions, workflow, release, security, organization, or Gist authority.
+Each future slice needs a new scope and permission review, provider-neutral capability additions, deterministic fixtures, explicit pagination/rate-limit behavior, accessibility and Snow Leopard UI review, coverage ratcheting, and current diagnostic screenshots. Neither the full Milestone 3 permission envelope nor ADR 0015's Actions: read pre-authorizes Actions writes or unrelated workflow, release, security, organization, or Gist authority.

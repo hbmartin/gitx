@@ -30,6 +30,14 @@ final class ForgeDestinationValueTests: XCTestCase {
         XCTAssertThrowsError(try ForgeLineSelection(line: 0))
         XCTAssertThrowsError(try ForgeLineSelection(start: 5, end: 4))
         XCTAssertThrowsError(try ForgeItemNumber(0))
+        XCTAssertThrowsError(try ForgeWorkflowRunID(0)) {
+            XCTAssertEqual($0 as? ForgeDestinationValidationError, .invalidWorkflowIdentifier)
+        }
+        XCTAssertThrowsError(try ForgeWorkflowJobID(-1))
+        XCTAssertNotNil(ForgeDestinationValidationError.invalidWorkflowIdentifier.errorDescription)
+        XCTAssertLessThan(try ForgeWorkflowRunID(1), try ForgeWorkflowRunID(2))
+        XCTAssertLessThan(try ForgeWorkflowJobID(1), try ForgeWorkflowJobID(2))
+        XCTAssertThrowsError(try JSONDecoder().decode(ForgeWorkflowJobID.self, from: Data("0".utf8)))
     }
 
     func testValidatedDestinationValuesRoundTripThroughCodable() throws {
@@ -47,6 +55,8 @@ final class ForgeDestinationValueTests: XCTestCase {
             .compare(repository, base: .branch(TestSupport.main), head: .commit(TestSupport.commit)),
             .pullRequest(repository, ForgeItemNumber(1)),
             .issue(repository, ForgeItemNumber(2)),
+            .workflowRun(repository, ForgeWorkflowRunID(30_433_642)),
+            .workflowJob(repository, run: ForgeWorkflowRunID(30_433_642), job: ForgeWorkflowJobID(76_543_210_987)),
         ]
         for destination in destinations {
             let data = try JSONEncoder().encode(destination)

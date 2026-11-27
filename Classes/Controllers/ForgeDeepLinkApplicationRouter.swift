@@ -209,6 +209,10 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
                 presentMissingObject(destination, actions: ForgeDeepLinkMissingObjectAction.allCases, in: controller)
                 return
             }
+        case .workflowRun, .workflowJob:
+            // Half Dark deep links never name workflow runs; they open on the forge.
+            openInBrowser(destination)
+            return
         }
         logger.notice("Opened validated x-gitx destination kind=\(destination.kind.rawValue, privacy: .public)")
     }

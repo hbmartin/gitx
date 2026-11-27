@@ -69,6 +69,11 @@ actor ForgeGitHubMutationStateStore {
         promotions.recordAuthoritativeDenial(for: key)
     }
 
+    /// Records what an unverified read proved, such as the first workflow run read (ADR 0015).
+    func recordUnverifiedRead(_ outcome: ForgeCapabilityAttemptOutcome, for attempt: ForgeUnverifiedReadAttempt) {
+        promotions.record(outcome, for: attempt)
+    }
+
     func recordSuccess(
         response: GitHubResponseMetadata,
         credential: ForgeCredentialReference,
@@ -583,7 +588,7 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
             grants = ForgeRepositoryPermission.allCases.map { permission in
                 ForgePermissionGrant(
                     permission: permission,
-                    authority: Self.classicAuthority(
+                    authority: GitHubCapabilityMapper.classicAuthority(
                         permission: permission,
                         scopes: scopes,
                         repositoryIsPublic: repositoryIsPublic
@@ -667,32 +672,10 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
                 capability: capability,
                 explicitConfirmation: ForgeExplicitCapabilityConfirmation(attempt: attempt)
             )
-        case .unavailable:
+        case .unverifiedRead, .unavailable:
+            // An unverified read never authorizes a mutation.
             throw ForgeGitHubPullRequestCompositionError.capabilityUnavailable(key.operation)
         }
-    }
-
-    static func classicAuthority(
-        permission: ForgeRepositoryPermission,
-        scopes: Set<String>,
-        repositoryIsPublic: Bool
-    ) -> ForgePermissionAuthority {
-        let scopes = Set(scopes.map { $0.lowercased() })
-        if scopes.contains("repo") || (repositoryIsPublic && scopes.contains("public_repo")) {
-            switch permission {
-            case .metadata: return .known(.read)
-            case .contents, .pullRequests, .issues: return .known(.write)
-            case .checks: return .known(.read)
-            case .commitStatuses: return .known(.write)
-            }
-        }
-        if permission == .commitStatuses, scopes.contains("repo:status") {
-            return .known(.write)
-        }
-        if repositoryIsPublic {
-            return .known(.read)
-        }
-        return .unknown
     }
 }
 

@@ -667,7 +667,7 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         actions.widthAnchor.constraint(equalToConstant: 704).isActive = true
 
         let permissions = NSTextField(wrappingLabelWithString:
-            "GitHub App permission envelope: Metadata read; Contents, Pull Requests, and Issues write; Checks and Commit Statuses read. Issue features remain read-only through Milestone 3.")
+            "GitHub App permission envelope: Metadata read; Contents, Pull Requests, and Issues write; Actions, Checks, and Commit Statuses read. Issue features remain read-only through Milestone 3, and Actions reruns happen on GitHub.")
         permissions.textColor = .secondaryLabelColor
         permissions.font = .preferredFont(forTextStyle: .footnote, options: [:])
         permissions.maximumNumberOfLines = 3

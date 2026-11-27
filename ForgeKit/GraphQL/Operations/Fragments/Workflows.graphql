@@ -1,0 +1,21 @@
+fragment GitHubWorkflowJob on CheckRun {
+  id
+  databaseId
+  name
+  status
+  conclusion
+  detailsUrl
+  startedAt
+  completedAt
+}
+
+fragment GitHubWorkflowCheckSuite on CheckSuite {
+  id
+  status
+  conclusion
+  updatedAt
+  app {
+    name
+    slug
+  }
+}

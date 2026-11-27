@@ -45,6 +45,12 @@ nonisolated struct ForgeMutationControlPresentation: Equatable, Sendable {
                 isEnabled: true,
                 helpText: "GitHub will verify this fine-grained token’s authority when you confirm \(action)."
             )
+        case .unverifiedRead:
+            ForgeMutationControlPresentation(
+                isVisible: true,
+                isEnabled: true,
+                helpText: "GitHub confirms whether Half Dark may \(action) when Half Dark asks."
+            )
         case let .unavailable(reason):
             ForgeMutationControlPresentation(
                 isVisible: true,

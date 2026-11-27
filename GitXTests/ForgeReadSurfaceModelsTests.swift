@@ -433,6 +433,53 @@ final class ForgeReadSurfaceModelsTests: XCTestCase {
         }
     }
 
+    func testPullRequestInspectorJoinsEveryCheckStateAndSaysNoneWithoutChecks() throws {
+        let repository = try Fixture.repository()
+        let checks = try ForgeCheckState.allCases.enumerated().map { index, state in
+            try ForgeCheck(repository: repository, kind: index.isMultiple(of: 2) ? .check : .commitStatus, name: "check-\(index)", state: state)
+        }
+        func checksRow(_ checks: [ForgeCheck]) throws -> String? {
+            let details = try Fixture.pullRequestDetails(checks: checks)
+            let snapshot = ForgeReadSurfaceDetailsSnapshot(details: .pullRequest(details), fetchedAt: Fixture.date(40))
+            return ForgeReadInspectorPresenter.present(snapshot) { _ in "now" }.metadata.first { $0.title == "Checks" }?.value
+        }
+        XCTAssertEqual(
+            try checksRow(checks),
+            "check-0: Passed, check-1: Failed, check-2: Running, check-3: Attention required, check-4: Neutral"
+        )
+        XCTAssertEqual(try checksRow([]), "None")
+    }
+
+    func testAttentionPresentationNamesAFailedCheckRow() throws {
+        let repository = try Fixture.repository()
+        let accountID = try ForgeAccountID(forge: repository.forge, value: "account")
+        let summary = try Fixture.pullRequest(number: 42, title: "Fix the build")
+        let item = try ForgeAttentionItem(
+            id: ForgeAttentionItemID(
+                accountID: accountID,
+                repository: repository,
+                kind: .failedCheck,
+                subjectID: ForgeAttentionSubjectID("subject-42")
+            ),
+            destination: .pullRequest(repository, summary.number),
+            becameActionableAt: Fixture.date(41)
+        )
+        let entry = try ForgeAttentionInboxEntry(
+            record: ForgeAttentionRecord(
+                item: item,
+                sourceIdentifier: ForgeAttentionSubjectID("failed-check-subject-42"),
+                sourceOccurredAt: Fixture.date(40)
+            ),
+            subject: .pullRequest(summary)
+        )
+        let presentation = ForgeAttentionReadSurfacePresenter.present(
+            entries: [entry],
+            query: ForgeAttentionInboxQuery(accountID: accountID, currentRepository: repository)
+        )
+        XCTAssertEqual(presentation.rows.map(\.kindName), ["Failed check"])
+        XCTAssertEqual(presentation.rows.map(\.readRow.title), ["Fix the build"])
+    }
+
     func testAttentionPresentationReusesReadRowsAndRoutesAccountWideInspectorByRepository() throws {
         let repository = try Fixture.repository()
         let accountID = try ForgeAccountID(forge: repository.forge, value: "account")

@@ -51,6 +51,9 @@ public enum ForgeDeepLinkCodec {
             path += ["pull-request", String(number.rawValue)]
         case let .issue(_, number):
             path += ["issue", String(number.rawValue)]
+        case .workflowRun, .workflowJob:
+            // Workflow runs open on the forge; Half Dark deep links never name them.
+            throw ForgeDeepLinkError.unsupportedRoute
         }
 
         var components = URLComponents()
@@ -315,7 +318,7 @@ public enum ForgeDeepLinkRouter {
         case let .commit(_, commit): [commit]
         case let .file(_, .commit(commit), _, _): [commit]
         case let .compare(_, base, head): Set([base, head].compactMap(\.commitID))
-        case .repository, .branch, .file, .pullRequest, .issue: []
+        case .repository, .branch, .file, .pullRequest, .issue, .workflowRun, .workflowJob: []
         }
     }
 }

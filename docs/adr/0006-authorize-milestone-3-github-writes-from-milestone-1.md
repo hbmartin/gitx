@@ -20,3 +20,5 @@ Unverified Write never overrides a known missing scope, denied repository, inade
 GitX will still derive each feature's availability from the credential's effective permissions and the authenticated user's repository role. Requesting the envelope does not make a mutation eligible: unavailable operations remain disabled, every destructive or consequential action requires its specified confirmation, and rejected installation upgrades remain usable for the capabilities their effective permissions allow.
 
 The Attention Inbox does not request notification permission because it derives actionable state from accessible Pull Requests, reviews, checks, mentions, and assignments rather than using GitHub's classic-PAT-only Notifications API. Selected-repository installation access, one Credential per Forge Account, per-account Keychain storage, and explicit mutation confirmation constrain the broader authorization.
+
+ADR 0015 adds Actions: read to this envelope for read-only Workflow Run inspection; it does not change the write permissions above.

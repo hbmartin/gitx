@@ -1,0 +1,48 @@
+# Read on demand for one commit, never inside PullRequestDetails, so a refused
+# workflowRun field cannot make a pull request read partial (ADR 0015).
+query GitHubCommitWorkflowRuns(
+  $owner: String!
+  $name: String!
+  $oid: GitObjectID!
+  $first: Int!
+  $after: String
+  $jobFirst: Int!
+  $includeWorkflowRuns: Boolean!
+) {
+  repository(owner: $owner, name: $name) {
+    ...GitHubRepositoryIdentity
+    object(oid: $oid) {
+      ... on Commit {
+        oid
+        checkSuites(first: $first, after: $after) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ...GitHubWorkflowCheckSuite
+            workflowRun @include(if: $includeWorkflowRuns) {
+              databaseId
+              runNumber
+              runAttempt
+              event
+              displayTitle
+              workflow {
+                name
+              }
+            }
+            checkRuns(first: $jobFirst, filterBy: { checkType: LATEST }) {
+              totalCount
+              pageInfo {
+                ...GitHubPageInfo
+              }
+              nodes {
+                ...GitHubWorkflowJob
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

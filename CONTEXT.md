@@ -98,6 +98,10 @@ _Avoid_: Account, identity
 A repository capability whose write authority cannot be proven from Credential metadata but may be tested by an explicitly confirmed user operation. It is neither verified permission nor automatic authorization.
 _Avoid_: Allowed, missing permission
 
+**Unverified Read**:
+A read whose required permission cannot be proven from Credential metadata, so GitX asks and lets the Forge decide. An answer that proves access promotes it to verified for the session; an authoritative refusal marks it denied until the Credential changes; any other outcome leaves it unverified.
+_Avoid_: Optimistic read, probe
+
 **Forge Repository Binding**:
 The per-user association among a local repository's Git remote, its Forge Repository, and the preferred Forge Account.
 _Avoid_: Remote, account mapping
@@ -121,6 +125,14 @@ _Avoid_: Git state, remote tracking data
 **Check Rollup**:
 The normalized Forge result for all known checks associated with one commit or Pull Request: Succeeded, Failed, Running, Attention Required, or Neutral.
 _Avoid_: Build status, CI status
+
+**Workflow Run**:
+One execution of a GitHub Actions workflow for a commit, as GitHub groups it in a check suite: its workflow name, run number, attempt and outcome. GitX reads it and opens it on GitHub; reruns happen there.
+_Avoid_: Build, pipeline, CI run
+
+**Workflow Job**:
+One job inside a Workflow Run, or one check run of another app's check suite, with its outcome and steps. Steps load when the job is expanded.
+_Avoid_: Check, task
 
 **Review Rollup**:
 The aggregate Forge review decision for a Pull Request: Approved, Changes Requested, Review Required, or No Decision. Personal review attention is a separate state.

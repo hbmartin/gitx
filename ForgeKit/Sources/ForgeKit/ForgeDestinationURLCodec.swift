@@ -69,6 +69,13 @@ public enum ForgeDestinationURLCodec {
             path += ["-", "issues", String(number.rawValue)]
         case let (.bitbucket, .issue(_, number)):
             path += ["issues", String(number.rawValue)]
+        case let (.github, .workflowRun(_, run)):
+            path += ["actions", "runs", String(run.rawValue)]
+        case let (.github, .workflowJob(_, run, job)):
+            path += ["actions", "runs", String(run.rawValue), "job", String(job.rawValue)]
+        case (.gitLab, .workflowRun), (.gitLab, .workflowJob), (.bitbucket, .workflowRun), (.bitbucket, .workflowJob):
+            // GitX inspects only GitHub Actions workflow runs.
+            throw ForgeDestinationURLCodecError.unsupportedDestination
         }
 
         var components = URLComponents()
@@ -156,7 +163,27 @@ public enum ForgeDestinationURLCodec {
         if path.count == 2, path[0] == "issues" {
             return try .issue(repository, itemNumber(path[1]))
         }
+        if path.count == 3, path[0] == "actions", path[1] == "runs" {
+            return try .workflowRun(repository, workflowRunID(path[2]))
+        }
+        if path.count == 5, path[0] == "actions", path[1] == "runs", path[3] == "job" {
+            return try .workflowJob(repository, run: workflowRunID(path[2]), job: workflowJobID(path[4]))
+        }
         throw ForgeDestinationURLCodecError.unsupportedDestination
+    }
+
+    private static func workflowRunID(_ value: String) throws -> ForgeWorkflowRunID {
+        guard !value.isEmpty, value.utf8.allSatisfy({ (0x30 ... 0x39).contains($0) }), let integer = Int64(value), let identifier = try? ForgeWorkflowRunID(integer) else {
+            throw ForgeDestinationURLCodecError.malformedDestination
+        }
+        return identifier
+    }
+
+    private static func workflowJobID(_ value: String) throws -> ForgeWorkflowJobID {
+        guard !value.isEmpty, value.utf8.allSatisfy({ (0x30 ... 0x39).contains($0) }), let integer = Int64(value), let identifier = try? ForgeWorkflowJobID(integer) else {
+            throw ForgeDestinationURLCodecError.malformedDestination
+        }
+        return identifier
     }
 
     private static func parseGitLab(

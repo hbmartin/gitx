@@ -1424,7 +1424,29 @@
                 error: RepositoryPullRequestServiceError.nativeCreationUnavailable,
                 action: "perform this mutation"
             )
-            return unverifiedPresentation.isEnabled
+            // A read whose permission is unknown is asked, not refused (ADR 0015).
+            let unverifiedRead = ForgeCapabilityEvaluator.capability(
+                account: account,
+                repository: fixture.repository,
+                operation: .readWorkflowRuns,
+                operationSupported: true,
+                credentialAvailability: .available,
+                now: Date(timeIntervalSince1970: 1),
+                permissionEvidence: permissionEvidence,
+                accessEvidence: accessEvidence,
+                promotions: ForgeCapabilityPromotionLedger()
+            )
+            guard case .unverifiedRead = unverifiedRead else { return false }
+            let unverifiedReadPresentation = ForgeMutationControlPresentation.capability(
+                unverifiedRead,
+                action: "read workflow runs"
+            )
+            return unverifiedReadPresentation == ForgeMutationControlPresentation(
+                isVisible: true,
+                isEnabled: true,
+                helpText: "GitHub confirms whether Half Dark may read workflow runs when Half Dark asks."
+            )
+                && unverifiedPresentation.isEnabled
                 && unverifiedPresentation.helpText?.isEmpty == false
                 && unavailable.allSatisfy { !$0.isEnabled && $0.helpText?.isEmpty == false }
                 && !errorPresentation.isEnabled && errorPresentation.helpText?.isEmpty == false
@@ -1589,7 +1611,7 @@
                 )
             }
             let scopeBranches = ForgeRepositoryPermission.allCases.map {
-                ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+                GitHubCapabilityMapper.classicAuthority(
                     permission: $0,
                     scopes: ["repo"],
                     repositoryIsPublic: false

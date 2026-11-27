@@ -402,6 +402,11 @@ public enum GitHubCapabilityMapper {
         ]
     )
 
+    /// The permission ADR 0015 adds to the GitHub App registration so GitX can inspect workflow runs.
+    public static let actionsInspectionAppPermissionRequest = GitHubAppPermissionRequest(
+        permissions: ["actions": .read]
+    )
+
     public static func permissionEvidence(
         credentialMetadata: ForgeCredentialMetadata,
         repository: ForgeRepositoryIdentity,
@@ -518,7 +523,7 @@ public enum GitHubCapabilityMapper {
             return permission(forgePermission, from: snapshot)
         case let .classicPersonalAccessToken(_, _, scopes, repositoryIsPublic),
              let .commandLineBroker(_, _, scopes, repositoryIsPublic):
-            return permission(forgePermission, scopes: scopes, repositoryIsPublic: repositoryIsPublic)
+            return classicAuthority(permission: forgePermission, scopes: scopes, repositoryIsPublic: repositoryIsPublic)
         }
     }
 
@@ -534,6 +539,7 @@ public enum GitHubCapabilityMapper {
         case .issues: key = "issues"
         case .checks: key = "checks"
         case .commitStatuses: key = "statuses"
+        case .actions: key = "actions"
         }
         if let access = snapshot.permissions[key] {
             return access.forgeAuthority
@@ -541,8 +547,11 @@ public enum GitHubCapabilityMapper {
         return snapshot.isComplete ? .known(.unavailable) : .unknown
     }
 
-    private static func permission(
-        _ permission: ForgeRepositoryPermission,
+    /// The authority a classic personal access token's or the GitHub CLI's OAuth scopes give for one permission.
+    /// Scopes do not name every permission, so anything they cannot establish is unknown, except that every
+    /// credential can read a public repository.
+    public static func classicAuthority(
+        permission: ForgeRepositoryPermission,
         scopes originalScopes: Set<String>,
         repositoryIsPublic: Bool
     ) -> ForgePermissionAuthority {
@@ -554,6 +563,7 @@ public enum GitHubCapabilityMapper {
             case .contents, .pullRequests, .issues: return .known(.write)
             case .checks: return .known(.read)
             case .commitStatuses: return .known(.write)
+            case .actions: return .known(.read)
             }
         }
         if permission == .commitStatuses, scopes.contains("repo:status") {

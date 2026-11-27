@@ -1,0 +1,19 @@
+query GitHubCheckSuiteJobs($id: ID!, $first: Int!, $after: String) {
+  node(id: $id) {
+    ... on CheckSuite {
+      id
+      repository {
+        ...GitHubRepositoryIdentity
+      }
+      checkRuns(first: $first, after: $after, filterBy: { checkType: LATEST }) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          ...GitHubWorkflowJob
+        }
+      }
+    }
+  }
+}

@@ -282,28 +282,28 @@
 
         private static func classicScopeProof() -> Bool {
             let repoAuthorities = ForgeRepositoryPermission.allCases.map {
-                ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+                GitHubCapabilityMapper.classicAuthority(
                     permission: $0,
                     scopes: ["RePo"],
                     repositoryIsPublic: false
                 )
             }
-            let publicWrite = ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            let publicWrite = GitHubCapabilityMapper.classicAuthority(
                 permission: .contents,
                 scopes: ["PUBLIC_REPO"],
                 repositoryIsPublic: true
             ) == .known(.write)
-            let statuses = ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            let statuses = GitHubCapabilityMapper.classicAuthority(
                 permission: .commitStatuses,
                 scopes: ["repo:status"],
                 repositoryIsPublic: false
             ) == .known(.write)
-            let publicRead = ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            let publicRead = GitHubCapabilityMapper.classicAuthority(
                 permission: .checks,
                 scopes: [],
                 repositoryIsPublic: true
             ) == .known(.read)
-            let privateUnknown = ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            let privateUnknown = GitHubCapabilityMapper.classicAuthority(
                 permission: .contents,
                 scopes: ["public_repo"],
                 repositoryIsPublic: false

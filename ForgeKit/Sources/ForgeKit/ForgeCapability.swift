@@ -7,6 +7,8 @@ public enum ForgeRepositoryPermission: String, CaseIterable, Codable, Hashable, 
     case issues
     case checks
     case commitStatuses
+    /// Workflow runs and their jobs (GitHub Actions). ADR 0015 requests read access only.
+    case actions
 }
 
 public enum ForgePermissionLevel: Int, Codable, Comparable, Hashable, Sendable {
@@ -130,6 +132,12 @@ public struct ForgePermissionRequestEnvelope: Codable, Hashable, Sendable {
         ForgePermissionRequirement(permission: .checks, level: .read),
         ForgePermissionRequirement(permission: .commitStatuses, level: .read),
     ])
+
+    /// The addition ADR 0015 requests for inspecting workflow runs. Installations approved before it may not
+    /// have granted it yet, so GitX learns whether they did from the first read.
+    public static let actionsInspection = try! ForgePermissionRequestEnvelope(requirements: [
+        ForgePermissionRequirement(permission: .actions, level: .read),
+    ])
 }
 
 public enum ForgeRepositoryRole: Int, Codable, Comparable, Hashable, Sendable {
@@ -201,6 +209,7 @@ public enum ForgeOperation: String, CaseIterable, Codable, Hashable, Sendable {
     case readIssues
     case readChecks
     case readCommitStatuses
+    case readWorkflowRuns
     case createPullRequest
     case editPullRequest
     case syncFork
@@ -224,11 +233,17 @@ public enum ForgeOperation: String, CaseIterable, Codable, Hashable, Sendable {
     public var isWrite: Bool {
         switch self {
         case .readRepositoryMetadata, .listCloneRepositories, .readRepositoryContents,
-             .readPullRequests, .readIssues, .readChecks, .readCommitStatuses:
+             .readPullRequests, .readIssues, .readChecks, .readCommitStatuses, .readWorkflowRuns:
             false
         default:
             true
         }
+    }
+
+    /// A read GitX may attempt while a required permission is unknown, because the forge's answer settles it
+    /// (ADR 0015). Only reads opt in; writes keep their explicit confirmation.
+    public var allowsUnverifiedRead: Bool {
+        self == .readWorkflowRuns
     }
 
     public var permissionRequirements: [ForgePermissionRequirement] {
@@ -245,6 +260,8 @@ public enum ForgeOperation: String, CaseIterable, Codable, Hashable, Sendable {
             [ForgePermissionRequirement(permission: .checks, level: .read)]
         case .readCommitStatuses:
             [ForgePermissionRequirement(permission: .commitStatuses, level: .read)]
+        case .readWorkflowRuns:
+            [ForgePermissionRequirement(permission: .actions, level: .read)]
         case .syncFork, .deleteHeadBranch:
             [ForgePermissionRequirement(permission: .contents, level: .write)]
         case .updatePullRequestBranch, .mergePullRequest:
@@ -311,6 +328,12 @@ public struct ForgeUnverifiedWriteAttempt: Hashable, Sendable {
     public let key: ForgeCapabilityKey
 }
 
+/// A read whose required permission is unknown. Its outcome is recorded in the ledger: success promotes the key
+/// and an authorization denial marks it denied for the session.
+public struct ForgeUnverifiedReadAttempt: Hashable, Sendable {
+    public let key: ForgeCapabilityKey
+}
+
 public struct ForgeExplicitCapabilityConfirmation: Hashable, Sendable {
     public let attempt: ForgeUnverifiedWriteAttempt
     public let identifier: UUID
@@ -324,6 +347,7 @@ public struct ForgeExplicitCapabilityConfirmation: Hashable, Sendable {
 public enum ForgeOperationCapability: Hashable, Sendable {
     case verified(ForgeCapabilityVerification)
     case unverifiedWrite(ForgeUnverifiedWriteAttempt)
+    case unverifiedRead(ForgeUnverifiedReadAttempt)
     case unavailable(ForgeCapabilityUnavailableReason)
 }
 
@@ -337,13 +361,35 @@ public enum ForgeCapabilityAttemptOutcome: String, Codable, Hashable, Sendable {
 
 public struct ForgeCapabilityPromotionLedger: Hashable, Sendable {
     private var promotedKeys: Set<ForgeCapabilityKey>
+    private var deniedReadKeys: Set<ForgeCapabilityKey>
 
     public init() {
         promotedKeys = []
+        deniedReadKeys = []
     }
 
     public func contains(_ key: ForgeCapabilityKey) -> Bool {
         promotedKeys.contains(key)
+    }
+
+    /// Whether the forge refused an unverified read for this key during the session.
+    public func deniesRead(_ key: ForgeCapabilityKey) -> Bool {
+        deniedReadKeys.contains(key)
+    }
+
+    /// Records an unverified read's outcome: success promotes the key, and a denial holds for the session.
+    public mutating func record(_ outcome: ForgeCapabilityAttemptOutcome, for attempt: ForgeUnverifiedReadAttempt) {
+        let key = attempt.key
+        switch outcome {
+        case .success:
+            deniedReadKeys.remove(key)
+            promotedKeys.insert(key)
+        case .authorizationDenied:
+            promotedKeys.remove(key)
+            deniedReadKeys.insert(key)
+        case .nonAuthorizationFailure, .cancelled, .unknownOutcome:
+            break
+        }
     }
 
     public mutating func record(
@@ -363,16 +409,22 @@ public struct ForgeCapabilityPromotionLedger: Hashable, Sendable {
 
     public mutating func recordAuthoritativeDenial(for key: ForgeCapabilityKey) {
         promotedKeys.remove(key)
+        if key.operation.allowsUnverifiedRead {
+            deniedReadKeys.insert(key)
+        }
     }
 
     public mutating func invalidate(credential: ForgeCredentialReference) {
         promotedKeys = promotedKeys.filter { $0.credential != credential }
+        deniedReadKeys = deniedReadKeys.filter { $0.credential != credential }
     }
 
     public mutating func retainOnlyCurrentCredential(for account: ForgeAccount) {
-        promotedKeys = promotedKeys.filter {
+        let isRetained: (ForgeCapabilityKey) -> Bool = {
             $0.credential.accountID != account.id || $0.credential == account.currentCredential.reference
         }
+        promotedKeys = promotedKeys.filter(isRetained)
+        deniedReadKeys = deniedReadKeys.filter(isRetained)
     }
 }
 
@@ -434,6 +486,7 @@ public enum ForgeCapabilityEvaluator {
         }
 
         var hasUnknownRequiredPermission = false
+        var firstUnknownPermission: ForgeRepositoryPermission?
         for requirement in operation.permissionRequirements {
             switch permissionEvidence.authority(for: requirement.permission) {
             case let .known(level) where level < requirement.level:
@@ -442,6 +495,7 @@ public enum ForgeCapabilityEvaluator {
                 break
             case .unknown:
                 hasUnknownRequiredPermission = true
+                firstUnknownPermission = firstUnknownPermission ?? requirement.permission
             }
         }
 
@@ -454,6 +508,11 @@ public enum ForgeCapabilityEvaluator {
            permissionEvidence.freshness != .current || accessEvidence.freshness != .current
         {
             return .unavailable(.authorizationEvidenceNotCurrent)
+        }
+        if operation.allowsUnverifiedRead, promotions.deniesRead(key),
+           let denied = firstUnknownPermission ?? operation.permissionRequirements.first?.permission
+        {
+            return .unavailable(.missingPermission(denied))
         }
         if promotions.contains(key) {
             return .verified(.successfulConfirmedOperation)
@@ -472,6 +531,9 @@ public enum ForgeCapabilityEvaluator {
            hasUnknownRequiredPermission
         {
             return .unverifiedWrite(ForgeUnverifiedWriteAttempt(key: key))
+        }
+        if operation.allowsUnverifiedRead {
+            return .unverifiedRead(ForgeUnverifiedReadAttempt(key: key))
         }
         return .unavailable(.authorizationEvidenceUnavailable)
     }

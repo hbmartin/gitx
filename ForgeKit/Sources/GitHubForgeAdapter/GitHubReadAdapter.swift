@@ -387,6 +387,91 @@ public actor GitHubReadAdapter {
             try mapper.reviewThreadComments(data: data, repository: repository)
         }
     }
+
+    /// Reads the check suites on one commit and, when `includeWorkflowRuns` is true, the workflow run behind
+    /// each GitHub Actions suite. The read runs on demand and never inside a pull request read, so a refused
+    /// workflow run cannot make that read partial (ADR 0015).
+    public func commitWorkflowRuns(
+        repository: ForgeRepositoryIdentity,
+        commit: ForgeCommitID,
+        includeWorkflowRuns: Bool,
+        pageSize: Int = 25,
+        jobPageSize: Int = 50,
+        after: ForgePageCursor? = nil
+    ) async throws -> GitHubReadResult<ForgeCommitWorkflowSnapshot> {
+        let (authentication, permit) = try await validate(repository)
+        let query = try GitHubAPI.GitHubCommitWorkflowRunsQuery(
+            owner: repository.owner,
+            name: repository.name,
+            oid: commit.value,
+            first: pageSizeValue(pageSize),
+            after: nullable(after?.value),
+            jobFirst: pageSizeValue(jobPageSize),
+            includeWorkflowRuns: includeWorkflowRuns
+        )
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data, problems in
+            try mapper.commitWorkflowRuns(
+                data: data,
+                repository: repository,
+                commit: commit,
+                includeWorkflowRuns: includeWorkflowRuns,
+                problems: problems
+            )
+        }
+    }
+
+    /// Reads the next page of a check suite's jobs.
+    public func checkSuiteJobs(
+        repository: ForgeRepositoryIdentity,
+        suite: ForgeWorkflowRun,
+        pageSize: Int = 50,
+        after: ForgePageCursor?
+    ) async throws -> GitHubReadResult<ForgeWorkflowPage<ForgeWorkflowJob>> {
+        let (authentication, permit) = try await validate(repository)
+        guard suite.repository == repository else { throw GitHubReadError.githubDotComRequired }
+        let query = try GitHubAPI.GitHubCheckSuiteJobsQuery(
+            id: suite.id.value,
+            first: pageSizeValue(pageSize),
+            after: nullable(after?.value)
+        )
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data, _ in
+            try mapper.checkSuiteJobs(data: data, repository: repository, suite: suite)
+        }
+    }
+
+    /// Reads a job's steps. Their logs stay on the forge.
+    public func workflowJobSteps(
+        repository: ForgeRepositoryIdentity,
+        job: ForgeWorkflowJob,
+        pageSize: Int = 100,
+        after: ForgePageCursor? = nil
+    ) async throws -> GitHubReadResult<ForgeWorkflowPage<ForgeWorkflowStep>> {
+        let (authentication, permit) = try await validate(repository)
+        guard job.repository == repository else { throw GitHubReadError.githubDotComRequired }
+        let query = try GitHubAPI.GitHubWorkflowJobStepsQuery(
+            id: job.id.value,
+            first: pageSizeValue(pageSize),
+            after: nullable(after?.value)
+        )
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data, _ in
+            try mapper.workflowJobSteps(data: data, repository: repository, job: job)
+        }
+    }
 }
 
 private extension GitHubReadAdapter {

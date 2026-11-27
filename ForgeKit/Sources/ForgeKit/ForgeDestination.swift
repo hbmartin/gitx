@@ -7,6 +7,7 @@ public enum ForgeDestinationValidationError: Error, Equatable, LocalizedError, S
     case invalidLine
     case invalidLineRange
     case invalidItemNumber
+    case invalidWorkflowIdentifier
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ public enum ForgeDestinationValidationError: Error, Equatable, LocalizedError, S
         case .invalidLine: "The Forge line number is invalid."
         case .invalidLineRange: "The Forge line range is invalid."
         case .invalidItemNumber: "The Pull Request or Issue number is invalid."
+        case .invalidWorkflowIdentifier: "The workflow run or job identifier is invalid."
         }
     }
 }
@@ -174,6 +176,56 @@ extension ForgeItemNumber: Codable {
     }
 }
 
+/// A forge's identifier for one workflow run, such as the number in a GitHub Actions run's address.
+public struct ForgeWorkflowRunID: Hashable, Comparable, Sendable {
+    public let rawValue: Int64
+
+    public init(_ rawValue: Int64) throws {
+        guard rawValue > 0 else { throw ForgeDestinationValidationError.invalidWorkflowIdentifier }
+        self.rawValue = rawValue
+    }
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+/// A forge's identifier for one job within a workflow run. GitHub Actions jobs share their check run's identifier.
+public struct ForgeWorkflowJobID: Hashable, Comparable, Sendable {
+    public let rawValue: Int64
+
+    public init(_ rawValue: Int64) throws {
+        guard rawValue > 0 else { throw ForgeDestinationValidationError.invalidWorkflowIdentifier }
+        self.rawValue = rawValue
+    }
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+extension ForgeWorkflowRunID: Codable {
+    public init(from decoder: Decoder) throws {
+        try self.init(decoder.singleValueContainer().decode(Int64.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+extension ForgeWorkflowJobID: Codable {
+    public init(from decoder: Decoder) throws {
+        try self.init(decoder.singleValueContainer().decode(Int64.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 public enum ForgeDestination: Codable, Equatable, Hashable, Sendable {
     case repository(ForgeRepositoryIdentity)
     case branch(ForgeRepositoryIdentity, ForgeRefName)
@@ -182,6 +234,10 @@ public enum ForgeDestination: Codable, Equatable, Hashable, Sendable {
     case compare(ForgeRepositoryIdentity, base: ForgeRevision, head: ForgeRevision)
     case pullRequest(ForgeRepositoryIdentity, ForgeItemNumber)
     case issue(ForgeRepositoryIdentity, ForgeItemNumber)
+    /// A workflow run's page on the forge. GitX shows runs natively only inside a pull request.
+    case workflowRun(ForgeRepositoryIdentity, ForgeWorkflowRunID)
+    /// One job of a workflow run, whose page holds that job's logs.
+    case workflowJob(ForgeRepositoryIdentity, run: ForgeWorkflowRunID, job: ForgeWorkflowJobID)
 
     public var repository: ForgeRepositoryIdentity {
         switch self {
@@ -191,7 +247,9 @@ public enum ForgeDestination: Codable, Equatable, Hashable, Sendable {
              let .file(repository, _, _, _),
              let .compare(repository, _, _),
              let .pullRequest(repository, _),
-             let .issue(repository, _):
+             let .issue(repository, _),
+             let .workflowRun(repository, _),
+             let .workflowJob(repository, _, _):
             repository
         }
     }
@@ -205,6 +263,8 @@ public enum ForgeDestination: Codable, Equatable, Hashable, Sendable {
         case .compare: .compare
         case .pullRequest: .pullRequest
         case .issue: .issue
+        case .workflowRun: .workflowRun
+        case .workflowJob: .workflowJob
         }
     }
 }
@@ -217,4 +277,6 @@ public enum ForgeDestinationKind: String, Codable, CaseIterable, Hashable, Senda
     case compare
     case pullRequest
     case issue
+    case workflowRun
+    case workflowJob
 }

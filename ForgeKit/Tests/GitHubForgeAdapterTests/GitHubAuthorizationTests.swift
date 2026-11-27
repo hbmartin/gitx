@@ -1,4 +1,4 @@
-import ForgeKit
+@testable import ForgeKit
 @testable import GitHubForgeAdapter
 import XCTest
 
@@ -421,6 +421,40 @@ final class GitHubAuthorizationTests: XCTestCase {
         XCTAssertNil(nonfiniteClock.retryAt)
     }
 
+    func testActionsInspectionRequestAndClassicScopesReadWorkflowRuns() throws {
+        XCTAssertEqual(GitHubCapabilityMapper.actionsInspectionAppPermissionRequest.permissions, ["actions": .read])
+        XCTAssertNil(GitHubCapabilityMapper.milestone3AppPermissionRequest.permissions["actions"])
+        for (scopes, isPublic, expected) in [
+            (Set(["repo"]), false, ForgePermissionAuthority.known(.read)),
+            (["public_repo"], true, .known(.read)),
+            (["public_repo"], false, .unknown),
+            (["repo:status"], false, .unknown),
+            ([], true, .known(.read)),
+            ([], false, .unknown),
+        ] {
+            XCTAssertEqual(
+                GitHubCapabilityMapper.classicAuthority(permission: .actions, scopes: scopes, repositoryIsPublic: isPublic),
+                expected,
+                "\(scopes) public=\(isPublic)"
+            )
+        }
+
+        let context = try identityContext()
+        let snapshot = GitHubPermissionSnapshot(permissions: ["actions": .read], isComplete: false)
+        let evidence = try GitHubCapabilityMapper.permissionEvidence(
+            credentialMetadata: metadata(.fineGrainedPersonalAccessToken, reference: context.credential),
+            repository: context.repository,
+            authority: .fineGrainedPersonalAccessToken(credential: context.credential, repository: context.repository, permissions: snapshot)
+        )
+        XCTAssertEqual(evidence.authority(for: .actions), .known(.read))
+        XCTAssertEqual(evidence.authority(for: .checks), .unknown)
+
+        let key = ForgeCapabilityKey(credential: context.credential, repository: context.repository, operation: .readWorkflowRuns)
+        XCTAssertThrowsError(try GitHubMutationAuthorization(key: key, capability: .unverifiedRead(ForgeUnverifiedReadAttempt(key: key)))) {
+            XCTAssertEqual($0 as? GitHubMutationError, .capabilityUnavailable, "An unverified read never authorizes a mutation")
+        }
+    }
+
     func testRequestedAppEnvelopeCannotAuthorizeAndObservedPermissionsMapExactly() throws {
         let request = GitHubCapabilityMapper.milestone3AppPermissionRequest
         XCTAssertEqual(request.permissions["contents"], .write)
@@ -448,6 +482,8 @@ final class GitHubAuthorizationTests: XCTestCase {
             .issues: .known(.write),
             .checks: .known(.read),
             .commitStatuses: .known(.read),
+            // A complete snapshot from an installation approved before ADR 0015 lacks Actions.
+            .actions: .known(.unavailable),
         ]
         let evidence = try GitHubCapabilityMapper.permissionEvidence(
             credentialMetadata: metadata(.forgeApplicationDeviceFlow, reference: context.credential),

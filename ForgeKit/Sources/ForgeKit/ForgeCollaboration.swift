@@ -13,6 +13,8 @@ public enum ForgeCollaborationModelError: Error, Equatable, LocalizedError, Send
     case invalidCheckName
     case mismatchedForge
     case mismatchedRepository
+    case invalidWorkflowNumber
+    case invalidWorkflowDestination
 
     public var errorDescription: String? {
         switch self {
@@ -28,6 +30,8 @@ public enum ForgeCollaborationModelError: Error, Equatable, LocalizedError, Send
         case .invalidCheckName: "The Forge check name is invalid."
         case .mismatchedForge: "The collaboration value belongs to a different Forge."
         case .mismatchedRepository: "The collaboration value belongs to a different Forge Repository."
+        case .invalidWorkflowNumber: "The workflow run, attempt or step number is invalid."
+        case .invalidWorkflowDestination: "The workflow value names the wrong kind of destination."
         }
     }
 }
