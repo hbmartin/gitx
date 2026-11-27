@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import FlowDeltaCore
 import Foundation
@@ -184,23 +185,34 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(files["Modified.swift"]?.new?.text, "let modified = 2\n")
     }
 
-    func testLFSTrackedSourceIsAnalyzedAsItsPointerText() async throws {
+    func testLFSTrackedSourceIsAnalyzedFromItsStoredObjectAndSkippedWithoutOne() async throws {
         let fixture = try RepositoryFixture()
         defer { fixture.remove() }
         func pointer(_ digit: Character) -> String {
             "version https://git-lfs.github.com/spec/v1\noid sha256:\(String(repeating: digit, count: 64))\nsize 4096\n"
         }
+        func store(_ source: String) throws -> String {
+            let content = Data(source.utf8)
+            let oid = SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined()
+            let objects = fixture.url
+                .appendingPathComponent(".git/lfs/objects/\(oid.prefix(2))/\(oid.dropFirst(2).prefix(2))", isDirectory: true)
+            try FileManager.default.createDirectory(at: objects, withIntermediateDirectories: true)
+            try content.write(to: objects.appendingPathComponent(oid))
+            return "version https://git-lfs.github.com/spec/v1\noid sha256:\(oid)\nsize \(content.count)\n"
+        }
         try fixture.write("*.swift filter=lfs diff=lfs merge=lfs -text\n", to: ".gitattributes")
         try fixture.write(pointer("a"), to: "Generated.swift")
+        try fixture.write(store("func stored() -> Int { 1 }\n"), to: "Stored.swift")
         let base = try fixture.commit("base")
         try fixture.write(pointer("b"), to: "Generated.swift")
+        try fixture.write(store("func stored() -> Int { 2 }\n"), to: "Stored.swift")
         let target = try fixture.commit("target")
 
         let comparison = try await successfulComparison(repositoryURL: fixture.url, base: base, target: target)
 
-        XCTAssertEqual(comparison.files.map(\.path), ["Generated.swift"])
-        XCTAssertEqual(comparison.files.first?.old?.text, pointer("a"))
-        XCTAssertEqual(comparison.files.first?.new?.text, pointer("b"))
+        XCTAssertEqual(comparison.files.map(\.path), ["Stored.swift"], "Generated.swift has no stored object, so Flow skips it")
+        XCTAssertEqual(comparison.files.first?.old?.text, "func stored() -> Int { 1 }\n")
+        XCTAssertEqual(comparison.files.first?.new?.text, "func stored() -> Int { 2 }\n")
     }
 
     func testMissingRepositoryIsRejectedBeforeLaunchingGit() async {

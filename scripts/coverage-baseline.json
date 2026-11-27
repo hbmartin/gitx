@@ -182,6 +182,7 @@
     "Classes/git/IndexReferenceTransaction.swift": 0.9774,
     "Classes/git/IndexRefreshCoordinator.swift": 1.0,
     "Classes/git/IndexSnapshot.swift": 0.9859,
+    "Classes/git/LFSPointerInspector.swift": 0.0,
     "Classes/git/PBGitBinary.m": 1.0,
     "Classes/git/PBGitCommit.m": 0.9881,
     "Classes/git/PBGitDefaults.m": 0.8493,

@@ -257,6 +257,14 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		if ((rawPath || safePath) && (![rawPath isKindOfClass:NSData.class] || ![safePath isKindOfClass:NSString.class] || ![PBIndexFilePresentation pathMatchesRawPath:rawPath fullPath:path] || ![path isEqualToString:safePath])) return nil;
 		NSURL *workingTreeURL = imageSource[PBNativeImageSourceWorkingTreeURLKey];
 		NSData *data = [NSData dataWithContentsOfURL:[workingTreeURL URLByAppendingPathComponent:path]];
+		NSString *workingLaunchPath = imageSource[PBNativeImageSourceGitLaunchPathKey];
+		// Pointer text is not an image: show the stored Git LFS object, or nothing when it is not downloaded.
+		if (data.length && workingLaunchPath.length)
+			return [PBLFSContentResolver displayDataForData:data
+													   path:path
+											  gitLaunchPath:workingLaunchPath
+											   gitDirectory:imageSource[PBNativeImageSourceGitDirectoryKey]
+										   workingDirectory:workingTreeURL.path];
 		if (data.length) return data;
 	}
 	NSString *launchPath = imageSource[PBNativeImageSourceGitLaunchPathKey];
@@ -267,7 +275,12 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		NSArray<NSString *> *arguments = @[ [@"--git-dir=" stringByAppendingString:gitDirectory], @"show", object ];
 		PBTask *task = [PBTask taskWithLaunchPath:launchPath arguments:arguments inDirectory:imageSource[PBNativeImageSourceTaskDirectoryKey]];
 		task.separatesStandardError = YES;
-		if ([task launchTask:nil] && task.standardOutputData.length) return task.standardOutputData;
+		if ([task launchTask:nil] && task.standardOutputData.length)
+			return [PBLFSContentResolver displayDataForData:task.standardOutputData
+													   path:path
+											  gitLaunchPath:launchPath
+											   gitDirectory:gitDirectory
+										   workingDirectory:imageSource[PBNativeImageSourceTaskDirectoryKey]];
 	}
 	return nil;
 }
