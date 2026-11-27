@@ -1,5 +1,3 @@
-import Foundation
-
 public enum HistorySearchArgumentIssue: Error, Equatable, Sendable {
     /// A quote opened with `quote` is never closed.
     case unclosedQuote(Character)
