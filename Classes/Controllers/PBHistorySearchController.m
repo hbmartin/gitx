@@ -426,8 +426,15 @@ static os_log_t PBHistorySearchLog(void)
 	NSString *searchString = plan.query;
 	NSArray<NSString *> *searchArguments = plan.arguments;
 
-	backgroundSearchTask = [historyController.repository taskWithArguments:searchArguments];
-	[backgroundSearchTask performTaskWithCompletionHandler:^(NSData *readData, NSError *taskError) {
+	PBTask *searchTask = [historyController.repository taskWithArguments:searchArguments];
+	backgroundSearchTask = searchTask;
+	[searchTask performTaskWithCompletionHandler:^(NSData *readData, NSError *taskError) {
+		// A newer search or a malformed query replaced this one; its results no longer apply,
+		// even when it exited successfully before the termination signal arrived.
+		if (self->backgroundSearchTask != searchTask) {
+			os_log_info(PBHistorySearchLog(), "Ignoring the result of a superseded history search");
+			return;
+		}
 		if (taskError.domain == PBTaskErrorDomain && taskError.code == PBTaskCaughtSignalError) {
 			/* Silently ignore task termination */
 			return;
