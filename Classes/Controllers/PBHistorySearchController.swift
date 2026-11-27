@@ -1,4 +1,5 @@
 import AppKit
+import GitXCore
 import ObjectiveGit
 
 // SwiftLint analyze misclassifies this import; Logger requires it at compile time.
@@ -22,7 +23,7 @@ final class PBHistorySearchController: NSObject {
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "HistorySearch")
     private static let rewindPanelSize: CGFloat = 125
     private static let rewindPanelImageViewTag = 1234
-    private static let menuModes: [PBHistorySearchMode] = [.basic, .pickaxe, .regex, .path, .raw]
+    private static let menuModes = HistorySearchMenu.modes.map { PBSearchModeForInteger($0.rawValue) }
 
     @IBOutlet weak var historyController: PBGitHistoryController?
     @IBOutlet weak var commitController: NSArrayController?
@@ -40,6 +41,8 @@ final class PBHistorySearchController: NSObject {
     @objc private(set) var backgroundSearchTask: PBTask?
     private var rewindPanel: NSPanel?
     private var arrangedObjectsObservation: NSKeyValueObservation?
+    /// App-wide recent searches, read from application preferences when first needed.
+    private lazy var searchStore = SavedHistorySearchStore()
 
     @objc dynamic var searchMode: PBHistorySearchMode {
         get { storedSearchMode }
@@ -107,14 +110,37 @@ final class PBHistorySearchController: NSObject {
         }
     }
 
-    /// Ignores a nil or empty search string; otherwise selects the mode and submits the text.
+    /// Ignores a nil or empty search string; otherwise selects the mode, submits the text and remembers it as
+    /// a recent search.
     @objc(setHistorySearch:mode:)
     func setHistorySearch(_ searchString: String?, mode: PBHistorySearchMode) {
         guard let searchString, !searchString.isEmpty else { return }
         searchMode = mode
         searchField?.stringValue = searchString
-        // performClick: makes the search field save the text as a recent search.
         searchField?.performClick(self)
+        recordCurrentSearch()
+    }
+
+    /// Runs the chosen recent search in the mode it was made in.
+    @objc func selectRecentSearch(_ sender: Any) {
+        let queries = searchStore.recents.queries
+        guard let index = ((sender as? NSMenuItem)?.representedObject as? NSNumber)?.intValue,
+              queries.indices.contains(index)
+        else {
+            Self.logger.error("Ignored a recent history search that is no longer listed")
+            rebuildSearchMenu()
+            return
+        }
+        let query = queries[index]
+        Self.logger.info("Running recent history search \(query.text, privacy: .private) in mode \(query.mode.rawValue)")
+        searchMode = PBSearchModeForInteger(query.mode.rawValue)
+        searchField?.stringValue = query.text
+        updateSearch(self)
+        recordCurrentSearch()
+    }
+
+    @objc func clearRecentSearches(_: Any?) {
+        searchStore.clearRecents()
     }
 
     override nonisolated func awakeFromNib() {
@@ -126,8 +152,17 @@ final class PBHistorySearchController: NSObject {
     }
 
     private func finishAwakingFromNib() {
-        setupSearchMenuTemplate()
+        // Recents are kept with their modes by the search store, not by the search field.
+        searchField?.recentsAutosaveName = nil
+        searchField?.maximumRecents = 0
+        rebuildSearchMenu()
         setupModePopUp()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(recentSearchesDidChange(_:)),
+            name: .historySearchRecentsDidChange,
+            object: nil
+        )
         searchMode = PBSearchModeForInteger(PBGitDefaults.historySearchMode())
         updateUI()
         arrangedObjectsObservation = commitController?.observe(\.arrangedObjects, options: []) { [weak self] _, _ in
@@ -208,53 +243,78 @@ final class PBHistorySearchController: NSObject {
         updateUI()
     }
 
-    private func setupSearchMenuTemplate() {
+    @objc private func recentSearchesDidChange(_: Notification) {
+        rebuildSearchMenu()
+    }
+
+    private func recordCurrentSearch() {
+        guard let text = searchField?.stringValue else { return }
+        searchStore.recordRecent(HistorySearchQuery(mode: Self.coreMode(searchMode), text: text))
+    }
+
+    /// Builds the search field menu: the modes, then the recent searches with their modes.
+    private func rebuildSearchMenu() {
         let searchMenu = NSMenu(title: NSLocalizedString("Search Menu", comment: "Title of the Search menu."))
-        for mode in Self.menuModes {
-            let item = NSMenuItem(title: Self.label(for: mode), action: #selector(selectSearchMode(_:)), keyEquivalent: "")
+        let rows = HistorySearchMenu.rows(selectedMode: Self.coreMode(searchMode), recents: searchStore.recents)
+        for row in rows {
+            searchMenu.addItem(menuItem(for: row))
+        }
+        searchFieldCell?.searchMenuTemplate = searchMenu
+        Self.logger.debug("Rebuilt the history search menu with \(rows.count) rows")
+    }
+
+    private func menuItem(for row: HistorySearchMenuRow) -> NSMenuItem {
+        switch row {
+        case let .mode(mode, isSelected):
+            let pbMode = PBSearchModeForInteger(mode.rawValue)
+            let item = NSMenuItem(title: Self.label(for: pbMode), action: #selector(selectSearchMode(_:)), keyEquivalent: "")
             item.target = self
             item.tag = mode.rawValue
-            searchMenu.addItem(item)
-        }
-        searchMenu.addItem(.separator())
-
-        let recentsTitle = NSMenuItem(
-            title: NSLocalizedString(
+            item.state = isSelected ? .on : .off
+            return item
+        case .separator:
+            return .separator()
+        case .recentSearchesHeader:
+            return Self.headerItem(NSLocalizedString(
                 "Recent Searches",
                 comment: "Searches menu: title of inactive headline item for Recent Searches section"
-            ),
-            action: nil,
-            keyEquivalent: ""
-        )
-        recentsTitle.tag = NSSearchField.recentsTitleMenuItemTag
-        searchMenu.addItem(recentsTitle)
-
-        let recents = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        recents.tag = NSSearchField.recentsMenuItemTag
-        searchMenu.addItem(recents)
-
-        searchMenu.addItem(.separator())
-
-        let clearRecents = NSMenuItem(
-            title: NSLocalizedString("Clear Recent Searches", comment: "Searches menu: title of clear recent searches item"),
-            action: nil,
-            keyEquivalent: ""
-        )
-        clearRecents.tag = NSSearchField.clearRecentsMenuItemTag
-        searchMenu.addItem(clearRecents)
-
-        let noRecents = NSMenuItem(
-            title: NSLocalizedString(
+            ))
+        case let .recentSearch(index, query):
+            let title = String(
+                format: NSLocalizedString("%@ — %@", comment: "Searches menu: a recent search, as its text and its mode"),
+                HistorySearchMenu.displayText(for: query.text),
+                Self.label(for: PBSearchModeForInteger(query.mode.rawValue))
+            )
+            let item = NSMenuItem(title: title, action: #selector(selectRecentSearch(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSNumber(value: index)
+            item.toolTip = query.text
+            item.identifier = NSUserInterfaceItemIdentifier("GitX.History.Search.Recent.\(index)")
+            return item
+        case .noRecentSearches:
+            return Self.headerItem(NSLocalizedString(
                 "No Recent Searches",
                 comment: "Searches menu: title of dummy item displayed in recent searches section when there are no recent searches"
-            ),
-            action: nil,
-            keyEquivalent: ""
-        )
-        noRecents.tag = NSSearchField.noRecentsMenuItemTag
-        searchMenu.addItem(noRecents)
+            ))
+        case .clearRecentSearches:
+            let item = NSMenuItem(
+                title: NSLocalizedString("Clear Recent Searches", comment: "Searches menu: title of clear recent searches item"),
+                action: #selector(clearRecentSearches(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.identifier = NSUserInterfaceItemIdentifier("GitX.History.Search.ClearRecents")
+            return item
+        }
+    }
 
-        searchFieldCell?.searchMenuTemplate = searchMenu
+    /// An inactive menu item: menus disable items that have no action.
+    private static func headerItem(_ title: String) -> NSMenuItem {
+        NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    }
+
+    private static func coreMode(_ mode: PBHistorySearchMode) -> HistorySearchMode {
+        HistorySearchPolicy.validatedMode(rawValue: mode.rawValue)
     }
 
     private func setupModePopUp() {
@@ -563,6 +623,16 @@ final class PBHistorySearchController: NSObject {
         } else {
             Task { @MainActor [weak self] in self?.clearSearch() }
         }
+    }
+}
+
+extension PBHistorySearchController: NSSearchFieldDelegate {
+    /// Return submits the search and remembers it; typing alone does not add recent searches.
+    func control(_: NSControl, textView _: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            recordCurrentSearch()
+        }
+        return false
     }
 }
 

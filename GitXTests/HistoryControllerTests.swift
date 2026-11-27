@@ -6064,73 +6064,136 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try attachScreenshot(of: XCTUnwrap(popUp.superview), named: "PR2-History-Search-Mode-Scope-Bar")
     }
 
-    func testSearchMenuTemplateTagsExactlyOneRecentsTitleItem() throws {
-        let searchField = try XCTUnwrap(historyController.searchController.searchField)
-        let searchFieldCell = try XCTUnwrap(searchField.cell as? NSSearchFieldCell)
-        let menu = try XCTUnwrap(searchFieldCell.searchMenuTemplate)
-
-        let titleItems = menu.items.filter { $0.tag == NSSearchField.recentsTitleMenuItemTag }
-        XCTAssertEqual(titleItems.count, 1)
-        XCTAssertEqual(titleItems.first?.title, "Recent Searches")
-        XCTAssertFalse(titleItems.first?.isSeparatorItem ?? true)
-        XCTAssertTrue(menu.items.filter(\.isSeparatorItem).allSatisfy { $0.tag == 0 })
+    /// Keeps the app-wide recents preferences of the test host intact around a recents test.
+    private func preservingHistorySearchRecents(_ body: () throws -> Void) rethrows {
+        let defaults = UserDefaults.standard
+        let keys = ["PBHistorySearchRecents", "Recent History Searches", "PBHistorySearchMode"]
+        let original = keys.map { defaults.object(forKey: $0) }
+        defer {
+            for (key, value) in zip(keys, original) {
+                defaults.set(value, forKey: key)
+            }
+        }
+        for key in keys {
+            defaults.removeObject(forKey: key)
+        }
+        try body()
     }
 
-    func testHistorySearchRecentsCharacterizeSubmissionNavigationDedupAndClearing() throws {
-        let searchController = historyController.searchController
-        let searchField = try XCTUnwrap(searchController.searchField)
-        let originalAutosaveName = searchField.recentsAutosaveName
-        let originalRecents = searchField.recentSearches
-        let autosaveName = "GitX History Search Tests \(UUID().uuidString)"
-        defer {
-            searchField.recentSearches = []
-            searchField.recentsAutosaveName = originalAutosaveName
-            searchField.recentSearches = originalRecents
-            UserDefaults.standard.removeObject(forKey: autosaveName)
+    private func searchMenuTitles() throws -> [String] {
+        let searchFieldCell = try XCTUnwrap(historyController.searchController.searchField?.cell as? NSSearchFieldCell)
+        return try XCTUnwrap(searchFieldCell.searchMenuTemplate).items.map { $0.isSeparatorItem ? "---" : $0.title }
+    }
+
+    private func searchMenuItem(_ identifier: String) throws -> NSMenuItem {
+        let searchFieldCell = try XCTUnwrap(historyController.searchController.searchField?.cell as? NSSearchFieldCell)
+        return try XCTUnwrap(
+            searchFieldCell.searchMenuTemplate?.items.first { $0.identifier?.rawValue == identifier },
+            "Missing search menu item \(identifier)"
+        )
+    }
+
+    func testSearchMenuListsModesAndRecentSearchesWithoutAppKitRecentsTags() throws {
+        try preservingHistorySearchRecents {
+            let searchController = historyController.searchController
+            let searchField = try XCTUnwrap(searchController.searchField)
+            searchController.clearRecentSearches(nil)
+
+            XCTAssertNil(searchField.recentsAutosaveName)
+            XCTAssertEqual(searchField.maximumRecents, 0)
+            XCTAssertEqual(try searchMenuTitles(), [
+                "Subject, Author, SHA", "Commit (pickaxe)", "Commit (pickaxe regex)", "File path", "Raw",
+                "---", "Recent Searches", "No Recent Searches",
+            ])
+            let menu = try XCTUnwrap((searchField.cell as? NSSearchFieldCell)?.searchMenuTemplate)
+            let appKitTags = [
+                NSSearchField.recentsTitleMenuItemTag, NSSearchField.recentsMenuItemTag,
+                NSSearchField.clearRecentsMenuItemTag, NSSearchField.noRecentsMenuItemTag,
+            ]
+            XCTAssertTrue(menu.items.allSatisfy { !appKitTags.contains($0.tag) })
+            XCTAssertTrue(menu.items.filter { $0.title.hasSuffix("Recent Searches") }.allSatisfy { $0.action == nil })
         }
+    }
 
-        // The history nib's autosave name is the defaults key that holds the legacy text-only recents.
-        XCTAssertEqual(originalAutosaveName, "Recent History Searches")
-        searchField.recentsAutosaveName = autosaveName
-        searchField.recentSearches = []
+    func testRecentSearchesRememberTheirModesAndRunAgainInThem() throws {
+        try preservingHistorySearchRecents {
+            let searchController = historyController.searchController
+            let searchField = try XCTUnwrap(searchController.searchField)
+            let originalMode = searchController.searchMode
+            defer {
+                searchController.clearSearch()
+                searchController.searchMode = originalMode
+            }
+            searchController.clearRecentSearches(nil)
 
-        searchField.stringValue = "unchanged"
-        searchController.setHistorySearch("", mode: .raw)
-        XCTAssertEqual(searchField.stringValue, "unchanged")
-        XCTAssertTrue(searchField.recentSearches.isEmpty)
+            // Scripted searches are remembered with their modes; empty and whitespace-only text is not.
+            searchController.setHistorySearch("", mode: .raw)
+            searchController.setHistorySearch("  alpha  ", mode: .basic)
+            searchController.setHistorySearch("beta", mode: .pickaxe)
+            searchController.setHistorySearch("  alpha  ", mode: .basic)
+            searchController.setHistorySearch("   ", mode: .basic)
+            XCTAssertEqual(try Array(searchMenuTitles().dropFirst(6)), [
+                "Recent Searches", "  alpha   — Subject, Author, SHA", "beta — Commit (pickaxe)",
+                "---", "Clear Recent Searches",
+            ])
 
-        searchController.setHistorySearch("  alpha  ", mode: .basic)
-        searchController.setHistorySearch("beta", mode: .basic)
-        searchController.setHistorySearch("  alpha  ", mode: .basic)
-        XCTAssertEqual(searchField.recentSearches, ["  alpha  ", "beta"])
+            // Typing searches without remembering them; Return remembers the submitted text and mode.
+            searchController.searchMode = .raw
+            searchField.stringValue = "--author=GitX"
+            searchController.updateSearch(self)
+            XCTAssertEqual(try searchMenuTitles().count, 11)
+            let delegate = try XCTUnwrap(searchField.delegate)
+            XCTAssertEqual(
+                delegate.control?(searchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.moveUp(_:))),
+                false
+            )
+            XCTAssertEqual(try searchMenuTitles().count, 11)
+            XCTAssertEqual(
+                delegate.control?(searchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))),
+                false
+            )
+            XCTAssertEqual(try searchMenuTitles()[7], "--author=GitX — Raw")
 
-        searchController.setHistorySearch("   ", mode: .basic)
-        let submittedRecents = ["   ", "  alpha  ", "beta"]
-        XCTAssertEqual(searchField.recentSearches, submittedRecents)
+            // Choosing a recent search restores its mode and text and makes it the newest.
+            let beta = try searchMenuItem("GitX.History.Search.Recent.2")
+            XCTAssertEqual(beta.toolTip, "beta")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(beta.action), to: beta.target, from: beta))
+            XCTAssertEqual(searchController.searchMode, .pickaxe)
+            XCTAssertEqual(searchField.stringValue, "beta")
+            XCTAssertEqual(searchController.modePopUp?.titleOfSelectedItem, "Commit (pickaxe)")
+            XCTAssertEqual(try searchMenuTitles()[7], "beta — Commit (pickaxe)")
 
-        searchController.clearSearch()
-        XCTAssertEqual(searchField.stringValue, "")
-        XCTAssertEqual(searchField.recentSearches, submittedRecents)
+            // A menu item from an outdated menu is ignored.
+            let outdated = NSMenuItem(title: "outdated", action: nil, keyEquivalent: "")
+            outdated.representedObject = NSNumber(value: 40)
+            searchController.selectRecentSearch(outdated)
+            XCTAssertEqual(searchField.stringValue, "beta")
 
-        let restoredField = NSSearchField()
-        restoredField.recentsAutosaveName = autosaveName
-        XCTAssertEqual(restoredField.recentSearches, submittedRecents)
-        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: autosaveName), submittedRecents)
+            try attachDiagnosticText(searchMenuTitles().joined(separator: "\n"), named: "PR2-History-Search-Recents-Menu")
 
-        searchField.recentSearches = []
-        let clearedField = NSSearchField()
-        clearedField.recentsAutosaveName = autosaveName
-        XCTAssertTrue(clearedField.recentSearches.isEmpty)
+            // Clearing empties the menu for every history window, and cleared recents stay cleared.
+            let clear = try searchMenuItem("GitX.History.Search.ClearRecents")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(clear.action), to: clear.target, from: clear))
+            XCTAssertEqual(try Array(searchMenuTitles().suffix(2)), ["Recent Searches", "No Recent Searches"])
+            let stored = try XCTUnwrap(UserDefaults.standard.data(forKey: "PBHistorySearchRecents"))
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: stored) as? [String: Any])
+            XCTAssertEqual(payload["version"] as? Int, 1)
+            XCTAssertEqual((payload["recents"] as? [Any])?.count, 0)
+        }
+    }
 
-        searchField.stringValue = "init"
-        searchController.updateSearch(self)
-        searchField.stringValue = "initial"
-        searchController.updateSearch(self)
-        searchController.selectNextResult()
-        XCTAssertTrue(searchField.recentSearches.isEmpty)
+    func testLegacyTextOnlyRecentsAppearWithTheSavedSearchMode() throws {
+        try preservingHistorySearchRecents {
+            UserDefaults.standard.set(["older text", "  "], forKey: "Recent History Searches")
+            UserDefaults.standard.set(PBHistorySearchMode.regex.rawValue, forKey: "PBHistorySearchMode")
 
-        searchField.performClick(self)
-        XCTAssertEqual(searchField.recentSearches, ["initial"])
+            NotificationCenter.default.post(name: Notification.Name("PBHistorySearchRecentsDidChangeNotification"), object: nil)
+
+            XCTAssertEqual(try Array(searchMenuTitles().suffix(4)), [
+                "Recent Searches", "older text — Commit (pickaxe regex)", "---", "Clear Recent Searches",
+            ])
+            XCTAssertEqual(UserDefaults.standard.stringArray(forKey: "Recent History Searches"), ["older text", "  "])
+        }
     }
 
     func testHistorySearchPastePreservesFullWhitespaceAndUnicode() throws {
