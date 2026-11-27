@@ -1,4 +1,5 @@
 import AppKit
+import GitXCore
 
 // Objective-C callers are not visible to SwiftLint's analyzer.
 // swiftlint:disable unused_declaration
@@ -299,12 +300,45 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
         "\(sha ?? ""):\(fullPath ?? "")"
     }
 
+    /// The object's LFS resolution, read once per object: a blob too large to be a pointer costs one size query.
+    private var lfsCache: (objectSpec: String, size: Int64, resolution: LFSPointerInspector.Resolution)?
+
+    private var lfs: (size: Int64, resolution: LFSPointerInspector.Resolution) {
+        if let lfsCache, lfsCache.objectSpec == objectSpec {
+            return (lfsCache.size, lfsCache.resolution)
+        }
+        let size = output(["cat-file", "-s", objectSpec]).flatMap(Int64.init) ?? -1
+        var resolution = LFSPointerInspector.Resolution.ordinary
+        if size >= 0, size < LFSPointer.maximumSize, let inspector = LFSPointerInspector(repository: repository) {
+            let command = task(["cat-file", "blob", objectSpec])
+            command.separatesStandardError = true
+            if (try? command.launch()) != nil {
+                resolution = inspector.resolve(command.standardOutputData, path: fullPath ?? "")
+            }
+        }
+        lfsCache = (objectSpec, size, resolution)
+        return (size, resolution)
+    }
+
     override var contents: String! {
         guard canPreview else { return "This filename cannot be represented for preview." }
         if hasCurrentPreview, let previewPath, let data = try? Data(contentsOf: URL(fileURLWithPath: previewPath)) {
             return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
         }
-        return output(["show", objectSpec])
+        switch lfs.resolution {
+        case .ordinary:
+            return output(["show", objectSpec])
+        case let .stored(_, url):
+            guard var text = (try? Data(contentsOf: url)).flatMap({ String(data: $0, encoding: .utf8) ?? String(data: $0, encoding: .isoLatin1) }) else {
+                return output(["show", objectSpec])
+            }
+            if text.utf16.count > 1, text.hasSuffix("\n") {
+                text.removeLast()
+            }
+            return text
+        case let resolution:
+            return resolution.placeholder
+        }
     }
 
     private var unavailableText: String? {
@@ -332,7 +366,7 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
 
     override func textContents() -> String! {
         guard canPreview else { return contents }
-        return unavailableText ?? checkedText(contents)
+        return lfs.resolution.placeholder ?? unavailableText ?? checkedText(contents)
     }
 
     override func blame() -> String! {
@@ -350,10 +384,19 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
         if hasCurrentPreview, let previewPath {
             return previewPath
         }
+        let resolution = lfs.resolution
+        if resolution.placeholder != nil {
+            NSLog("[GitX] History preview unavailable for %@: its Git LFS object is not downloaded", fullPath ?? "")
+            return nil
+        }
         let command = task(["show", objectSpec])
         command.separatesStandardError = true
         do {
             try command.launch()
+            var contents = command.standardOutputData
+            if case let .stored(_, url) = resolution {
+                contents = try Data(contentsOf: url, options: .mappedIfSafe)
+            }
             let destination: URL
             if let previewPath {
                 destination = URL(fileURLWithPath: previewPath)
@@ -362,7 +405,7 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 destination = directory.appendingPathComponent((fullPath as NSString).lastPathComponent)
             }
-            try command.standardOutputData.write(to: destination, options: .atomic)
+            try contents.write(to: destination, options: .atomic)
             previewPath = destination.path
             previewModificationDate = (try? FileManager.default.attributesOfItem(atPath: destination.path))?[.modificationDate] as? Date
             return previewPath
@@ -372,9 +415,11 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
         }
     }
 
+    /// The size of the content, which for an LFS pointer is the size of its object.
     override func fileSize() -> Int64 {
         guard canPreview else { return 0 }
-        return output(["cat-file", "-s", objectSpec]).flatMap(Int64.init) ?? -1
+        let lfs = lfs
+        return lfs.size < 0 ? -1 : lfs.resolution.contentSize(ofBlobSize: lfs.size)
     }
 }
 

@@ -70,6 +70,34 @@ of incomplete or hidden-index previews remain outside this surface. The next
 approved slices are visible history-search modes and shared named searches, and
 passive LFS diagnostics with explicit current-revision downloads. GitHub.com
 Actions inspection through Pull Requests and Attention shipped under ADR 0015.
+GitHub.com Actions inspection and rerun-failed through Pull Requests and
+Attention.
+
+## Git LFS Boundary
+
+GitX reads Git LFS repositories passively and downloads LFS Objects only for
+the current checkout, on request (ADR 0014). The status bar reports Not
+Downloaded paths and a missing or outdated git-lfs. History and staging show
+a placeholder or the verified stored object, Quick Look export refuses content
+that is not downloaded, and Flow analyzes the stored object or leaves the file
+out.
+
+Still outside this surface: file locking, pushing LFS Objects, fetching objects
+for revisions other than the checkout, `git lfs prune` and `migrate`, progress
+for `file://` remotes (git-lfs writes none), and downloading a single path
+whose name contains a comma. GitX's own checkout, reset and stash commands keep
+running whatever filters the repository configures.
+approved slices are passive LFS diagnostics with explicit current-revision
+downloads, and GitHub.com Actions inspection and rerun-failed through Pull
+Requests and Attention.
+
+## History Search Boundary
+
+Visible history-search modes, Recent Searches that remember their mode, and
+app-wide Saved Searches have shipped. A saved search runs from the search menu,
+the Saved Searches sheet, `gitx --saved-search=<name>`, and the AppleScript
+`search named` parameter. Syncing saved searches between Macs and per-repository
+saved searches remain outside this surface.
 
 ## Deferred History Rendering Concurrency Work
 

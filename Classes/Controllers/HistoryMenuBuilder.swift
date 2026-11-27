@@ -35,7 +35,11 @@ final class HistoryMenuBuilder: NSObject {
         let checkout = item(multiple ? "Checkout files" : "Checkout file", action: NSSelectorFromString("checkoutFiles:"), enabled: hasCommit)
         let finder = item("Reveal in Finder", action: #selector(PBGitWindowController.revealInFinder(_:)))
         let open = item(multiple ? "Open Files" : "Open File", action: #selector(PBGitWindowController.openFiles(_:)))
-        let items = [history, diff, checkout, finder, open]
+        var items = [history, diff, checkout, finder, open]
+        if hasCommit, isHead {
+            // The window hides this outside checkouts that use Git LFS and enables it for content not downloaded.
+            items.append(item("Download LFS Content", action: #selector(PBGitWindowController.downloadLFSContent(_:))))
+        }
         items.forEach { $0.representedObject = filePaths }
         return items
     }

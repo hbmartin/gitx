@@ -45,9 +45,9 @@ final nonisolated class HistorySearchArgumentSyntaxAdapter: NSObject { // swiftl
 }
 
 @objc(PBHistorySearchPolicy)
-final nonisolated class HistorySearchPolicyAdapter: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class HistorySearchPolicyAdapter: NSObject {
     @objc(planForQuery:mode:)
-    static func plan(query: String, mode: Int) -> HistorySearchPlan { // swiftlint:disable:this unused_declaration
+    static func plan(query: String, mode: Int) -> HistorySearchPlan {
         let execution = GitXCore.HistorySearchPolicy.execution(
             query: query,
             mode: GitXCore.HistorySearchPolicy.validatedMode(rawValue: mode)

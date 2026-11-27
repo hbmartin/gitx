@@ -4,6 +4,8 @@
 #import "PBGitRepository.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBTask.h"
+#import "PBGitBinary.h"
+#import "GitX-Swift.h"
 
 @interface PBWebDiffController () <PBNativeContentViewDelegate>
 @end
@@ -29,7 +31,14 @@
 	if (!commit.SHA.length) return nil;
 	PBTask *task = [commit.repository taskWithArguments:@[ @"show", [NSString stringWithFormat:@"%@:%@", commit.SHA, path] ]];
 	if (![task launchTask:nil]) return nil;
-	return [[NSImage alloc] initWithData:task.standardOutputData];
+	NSString *launchPath = [PBGitBinary path];
+	NSData *data = launchPath ? [PBLFSContentResolver displayDataForData:task.standardOutputData
+																	path:path
+														   gitLaunchPath:launchPath
+															gitDirectory:commit.repository.gitURL.path
+														workingDirectory:commit.repository.workingDirectoryURL.path] :
+								task.standardOutputData;
+	return data ? [[NSImage alloc] initWithData:data] : nil;
 }
 
 - (void)didLoad

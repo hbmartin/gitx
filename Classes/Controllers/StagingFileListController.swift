@@ -760,6 +760,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         menu.addItem(.separator())
         add(NSLocalizedString("Reveal in Finder", comment: "Staging context menu item"), NSSelectorFromString("revealInFinder:"))
         add(NSLocalizedString("Move to Trash…", comment: "Staging context menu item"), NSSelectorFromString("moveToTrash:"))
+        // Hidden outside checkouts that use Git LFS.
+        add(NSLocalizedString("Download LFS Content", comment: "Staging context menu item"), NSSelectorFromString("downloadLFSContent:"))
         return menu
     }
 }

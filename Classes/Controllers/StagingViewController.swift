@@ -762,6 +762,15 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         windowController?.revealURLs(inFinder: urls)
     }
 
+    /// Downloads the Git LFS content of the selected files that are not downloaded (ADR 0014).
+    @objc func downloadLFSContent(_ sender: Any?) {
+        windowController?.downloadLFSContent(forSelectedPaths: lfsSelectionPaths(contextualMenu: (sender as? NSMenuItem)?.menu))
+    }
+
+    private func lfsSelectionPaths(contextualMenu: NSMenu?) -> [String] {
+        fileListController.resolvedSelection(for: .open, contextualMenu: contextualMenu).files.compactMap(\.safePath)
+    }
+
     @objc func moveToTrash(_ sender: Any?) {
         guard mutationControlsEnabled else { return }
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
@@ -1018,6 +1027,13 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         if action == #selector(changeListLayout(_:)) {
             menuItem.state = fileListController.layout.rawValue == menuItem.tag ? .on : .off
             return true
+        }
+        if action == #selector(downloadLFSContent(_:)) {
+            guard let windowController else {
+                menuItem.isHidden = true
+                return false
+            }
+            return windowController.validateLFSDownload(menuItem, selectedPaths: lfsSelectionPaths(contextualMenu: menuItem.menu))
         }
         let stagingAction = stagingFileAction(for: action)
         let selection = stagingAction.map {

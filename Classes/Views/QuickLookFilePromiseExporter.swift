@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import GitXCore
 
 // SwiftLint analyze misclassifies this import; Logger and privacy interpolation require it at compile time.
 // swiftlint:disable:next unused_import
@@ -129,6 +130,7 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
     case unrepresentablePath
     case missingTree(String)
     case filesystem(path: String, code: Int32)
+    case lfsObjectNotDownloaded(path: String, size: Int64)
 
     var errorDescription: String? {
         switch self {
@@ -152,6 +154,9 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
             "Git could not find any files below \(path)."
         case let .filesystem(path, code):
             "Half Dark could not access \(path): \(NSError(domain: NSPOSIXErrorDomain, code: Int(code)).localizedDescription)."
+        case let .lfsObjectNotDownloaded(path, size):
+            "Half Dark cannot export \(path) because its Git LFS content (\(LFSPresentation.byteCount(size))) "
+                + "is not downloaded. Download it, then try again."
         }
     }
 }
@@ -533,7 +538,17 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
                     }
                 }
             }
-            let regular = targets.filter { $0.mode != "120000" }
+            let lfsTracked = try lfsTrackedPaths(targets.filter { $0.mode != "120000" }.map(\.path), repository: repository)
+            var regular: [GitBatchBlobWriter.Target] = []
+            for target in targets where target.mode != "120000" {
+                guard lfsTracked.contains(target.path) else {
+                    regular.append(target)
+                    continue
+                }
+                let data = try runGit(repository: repository, arguments: ["cat-file", "blob", target.objectIdentifier], path: target.path)
+                let content = try lfsContent(data, path: target.path, repository: repository, trackedByLFS: true)
+                try writer.write(content, to: target.outputPath, permissions: target.mode == "100755" ? 0o755 : 0o644)
+            }
             let links = targets.filter { $0.mode == "120000" }
             try exportCommittedBlobs(regular + links, repository: repository, path: path, writer: writer)
         case let .workingFile(repository, entry):
@@ -608,6 +623,18 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             existingType = nil
         }
         if let existingType {
+            if existingType == mode_t(S_IFREG),
+               let size = (try? fileManager.attributesOfItem(atPath: entry.fileURL.path)[.size] as? NSNumber)?.intValue,
+               size < LFSPointer.maximumSize,
+               let data = try? Data(contentsOf: entry.fileURL),
+               LFSPointer.parse(data) != nil
+            {
+                let content = try lfsContent(data, path: entry.repositoryPath, repository: repository)
+                let executable = (try? fileManager.attributesOfItem(atPath: entry.fileURL.path)[.posixPermissions] as? NSNumber)
+                    .map { $0.uint16Value & 0o111 != 0 } ?? false
+                try writer.write(content, to: outputPath, permissions: executable ? 0o755 : 0o644)
+                return
+            }
             try copyWorkingItem(at: entry.fileURL, kind: existingType, writer: writer, outputPath: outputPath)
             return
         }
@@ -630,7 +657,66 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             try writer.createSymbolicLink(outputPath, destination: destination)
             return
         }
-        try writer.write(data, to: outputPath, permissions: indexEntry.mode == "100755" ? 0o755 : 0o644)
+        let content = try lfsContent(data, path: entry.repositoryPath, repository: repository)
+        try writer.write(content, to: outputPath, permissions: indexEntry.mode == "100755" ? 0o755 : 0o644)
+    }
+
+    // MARK: Git LFS
+
+    /// The bytes to export for a blob: itself, or its stored LFS object. A pointer whose object is not downloaded
+    /// would export as pointer text, so the export fails instead.
+    private func lfsContent(
+        _ data: Data,
+        path: String,
+        repository: QuickLookGitRepositoryDescriptor,
+        trackedByLFS: Bool? = nil
+    ) throws -> Data {
+        guard data.count < LFSPointer.maximumSize, LFSPointer.parse(data) != nil else { return data }
+        let inspector = LFSPointerInspector(
+            executablePath: repository.executablePath,
+            gitDirectoryPath: repository.gitDirectoryPath,
+            workingDirectoryPath: repository.workingDirectoryPath
+        )
+        switch inspector.resolve(data, path: path, trackedByLFS: trackedByLFS) {
+        case .ordinary:
+            return data
+        case let .stored(pointer, url):
+            quickLookExportLogger.info("Exporting stored Git LFS object \(pointer.abbreviatedOID, privacy: .public) for \(path, privacy: .public)")
+            return try Data(contentsOf: url, options: .mappedIfSafe)
+        case let .pointer(pointer, _):
+            quickLookExportLogger.error("Refused to export \(path, privacy: .public): its Git LFS object is not downloaded")
+            throw QuickLookExportError.lfsObjectNotDownloaded(path: path, size: pointer.size)
+        }
+    }
+
+    /// The paths Git LFS tracks, from one `check-attr` for the whole set.
+    private func lfsTrackedPaths(_ paths: [String], repository: QuickLookGitRepositoryDescriptor) throws -> Set<String> {
+        guard !paths.isEmpty else { return [] }
+        let task = makeGitTask(repository: repository, arguments: ["check-attr", "-z", "--stdin", "filter"])
+        var input = Data()
+        for path in paths {
+            input.append(Data(path.utf8))
+            input.append(0)
+        }
+        task.standardInputData = input
+        do {
+            try task.launch()
+        } catch {
+            throw QuickLookExportError.commandFailed(path: paths[0], detail: commandFailureDetail(task, error: error))
+        }
+        let fields = task.standardOutputData.split(separator: 0, omittingEmptySubsequences: false)
+        var tracked = Set<String>()
+        var index = 0
+        while index + 2 < fields.count {
+            if fields[index + 2].elementsEqual("lfs".utf8), let path = String(data: Data(fields[index]), encoding: .utf8) {
+                tracked.insert(path)
+            }
+            index += 3
+        }
+        if !tracked.isEmpty {
+            quickLookExportLogger.info("Checking \(tracked.count) Git LFS files before streaming the export")
+        }
+        return tracked
     }
 
     private func workingEntries(
@@ -753,7 +839,10 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         guard entry.type == "blob", ["100644", "100755", "120000"].contains(entry.mode),
               validObjectIdentifier(entry.objectIdentifier.utf8)
         else { throw QuickLookExportError.malformedTreeEntry }
-        let data = try runGit(repository: repository, arguments: ["cat-file", "blob", entry.objectIdentifier], path: entry.path)
+        var data = try runGit(repository: repository, arguments: ["cat-file", "blob", entry.objectIdentifier], path: entry.path)
+        if entry.mode != "120000" {
+            data = try lfsContent(data, path: entry.path, repository: repository)
+        }
         if entry.mode == "120000" {
             guard !data.isEmpty, data.count <= 4096, !data.contains(0),
                   let destination = String(data: data, encoding: .utf8)

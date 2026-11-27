@@ -17,7 +17,6 @@
 #import "PBGitGradientBarView.h"
 #import "PBDiffWindowController.h"
 #import "PBGitDefaults.h"
-#import "PBHistorySearchController.h"
 #import "PBGitRepositoryWatcher.h"
 #import "PBQLTextView.h"
 #import "GLFileView.h"

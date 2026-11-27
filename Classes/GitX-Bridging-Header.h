@@ -35,7 +35,7 @@
 #endif
 #import "PBGitRevisionCell.h"
 #import "PBWebController.h"
-#import "PBHistorySearchController.h"
+#import "PBHistorySearchMode.h"
 #import "PBGitHistoryController.h"
 #import "PBViewController.h"
 #import "PBGitCommit.h"

@@ -6,8 +6,6 @@
   "unannotatedHeaders": [
     "Classes/Controllers/DBPrefsWindowController.h",
     "Classes/Controllers/OpenRecentController.h",
-    "Classes/Controllers/PBHistorySearchController.h",
-    "Classes/Controllers/PBHistorySearchMode.h",
     "Classes/Controllers/PBOpenShallowRepositoryErrorRecoveryAttempter.h",
     "Classes/Controllers/PBPrefsWindowController.h",
     "Classes/Controllers/PBServicesController.h",

@@ -553,15 +553,34 @@ open class PBWebHistoryController: PBWebController, PBNativeContentViewDelegate 
            let data = try? Data(contentsOf: workingTreeURL.appendingPathComponent(path)),
            !data.isEmpty
         {
-            return data
+            return lfsDisplayData(data, path: path, imageSource: imageSource, workingTree: workingTreeURL.path)
         }
         for revision in imageSource[PBNativeImageSourceRevisionsKey] as? [String] ?? [] {
             let object = revision == ":" ? ":\(path)" : "\(revision):\(path)"
             if let data = data(forGitObject: object, imageSource: imageSource), !data.isEmpty {
-                return data
+                return lfsDisplayData(data, path: path, imageSource: imageSource, workingTree: nil)
             }
         }
         return nil
+    }
+
+    /// Pointer text is not an image: show the stored Git LFS object, or nothing when it is not downloaded.
+    private nonisolated func lfsDisplayData(
+        _ data: Data,
+        path: String,
+        imageSource: [String: Any],
+        workingTree: String?
+    ) -> Data? {
+        guard let launchPath = imageSource[PBNativeImageSourceGitLaunchPathKey] as? String, !launchPath.isEmpty else {
+            return data
+        }
+        return LFSContentResolver.displayData(
+            data,
+            path: path,
+            gitLaunchPath: launchPath,
+            gitDirectory: imageSource[PBNativeImageSourceGitDirectoryKey] as? String,
+            workingDirectory: workingTree ?? imageSource[PBNativeImageSourceTaskDirectoryKey] as? String
+        )
     }
 
     @objc dynamic func presentationChanged(_ sender: NSSegmentedControl) {

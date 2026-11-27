@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Darwin
 import ForgeKit
 import ObjectiveC.runtime
@@ -3176,6 +3177,36 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(image, Data(contents.utf8))
     }
 
+    func testStagingImageCallbackShowsAGitLFSImageOnlyOnceItsObjectIsStored() throws {
+        let missing = "version https://git-lfs.github.com/spec/v1\noid sha256:\(String(repeating: "c", count: 64))\nsize 2048\n"
+        let image = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x2A])
+        let oid = SHA256.hash(data: image).map { String(format: "%02x", $0) }.joined()
+        let objects = URL(fileURLWithPath: fixture.path)
+            .appendingPathComponent(".git/lfs/objects/\(oid.prefix(2))/\(oid.dropFirst(2).prefix(2))", isDirectory: true)
+        try FileManager.default.createDirectory(at: objects, withIntermediateDirectories: true)
+        try image.write(to: objects.appendingPathComponent(oid))
+        try fixture.write("*.png filter=lfs diff=lfs merge=lfs -text\n", to: ".gitattributes")
+        try fixture.write(missing, to: "lfs-logo.png")
+        try fixture.write("version https://git-lfs.github.com/spec/v1\noid sha256:\(oid)\nsize \(image.count)\n", to: "lfs-stored.png")
+        try fixture.git(["add", "--", ".gitattributes", "lfs-logo.png", "lfs-stored.png"])
+        let pane = try openStagingPane()
+        let view = pane.diffPaneController.contentView
+
+        let logo = try XCTUnwrap(repository.index.indexChanges.first { $0.path == "lfs-logo.png" })
+        try selectDiffFile(logo, staged: true, in: pane)
+        XCTAssertTrue(waitForCondition { view.textView.string.contains("+oid sha256:\(String(repeating: "c", count: 64))") })
+        let delegate = try XCTUnwrap(view.delegate)
+        XCTAssertNil(
+            delegate.nativeContentView?(view, imageDataForPath: "lfs-logo.png", section: 0, imageSource: [:]),
+            "Pointer text is not an image"
+        )
+
+        let stored = try XCTUnwrap(repository.index.indexChanges.first { $0.path == "lfs-stored.png" })
+        try selectDiffFile(stored, staged: true, in: pane)
+        XCTAssertTrue(waitForCondition { view.textView.string.contains("+oid sha256:\(oid)") })
+        XCTAssertEqual(delegate.nativeContentView?(view, imageDataForPath: "lfs-stored.png", section: 0, imageSource: [:]), image)
+    }
+
     func testBOMFilesystemActionsAddressTheExactSelectedFilename() throws {
         let names = ["notes.txt", "\u{FEFF}notes.txt", "\u{FEFF}"]
         for name in names {
@@ -5877,7 +5908,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(matches.isHidden)
         XCTAssertEqual(matches.stringValue, "Unclosed quote")
         XCTAssertEqual(matches.toolTip, "Close the single quote or escape it with a backslash.")
-        XCTAssertTrue(searchController.stepper.isHidden)
+        XCTAssertEqual(searchController.stepper?.isHidden, true)
         XCTAssertEqual(announcements, ["Unclosed quote. Close the single quote or escape it with a backslash."])
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Search-Unclosed-Quote")
 
@@ -5911,25 +5942,26 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try searchResultRows(for: "initial", mode: .basic).count, 1)
         XCTAssertTrue(searchController.hasSearchResults())
         XCTAssertEqual(searchField.stringValue, "initial")
-        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "1 match")
+        XCTAssertEqual(searchController.numberOfMatchesField?.stringValue, "1 match")
 
         let basicWithOuterWhitespace = " \tinitial\n"
         XCTAssertTrue(try searchResultRows(for: basicWithOuterWhitespace, mode: .basic).isEmpty)
         XCTAssertFalse(searchController.hasSearchResults())
         XCTAssertEqual(searchField.stringValue, basicWithOuterWhitespace)
-        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "Not found")
+        XCTAssertEqual(searchController.numberOfMatchesField?.stringValue, "Not found")
 
         XCTAssertEqual(
             try searchResultRows(for: "GitX Tests", mode: .basic).count,
             arrangedCount
         )
         XCTAssertEqual(searchField.stringValue, "GitX Tests")
-        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "\(arrangedCount) matches")
+        XCTAssertEqual(searchController.numberOfMatchesField?.stringValue, "\(arrangedCount) matches")
         historyController.commitList.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
-        searchController.stepper.selectedSegment = 0
-        searchController.stepperPressed(searchController.stepper)
-        searchController.stepper.selectedSegment = 1
-        searchController.stepperPressed(searchController.stepper)
+        let stepper = try XCTUnwrap(searchController.stepper)
+        stepper.selectedSegment = 0
+        searchController.stepperPressed(stepper)
+        stepper.selectedSegment = 1
+        searchController.stepperPressed(stepper)
 
         let unicodeQuery = "東京 crème"
         XCTAssertTrue(try searchResultRows(for: unicodeQuery, mode: .basic).isEmpty)
@@ -5959,8 +5991,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertTrue(try searchResultRows(for: whitespace, mode: .basic).isEmpty)
         XCTAssertEqual(searchField.stringValue, whitespace)
-        XCTAssertFalse(searchController.numberOfMatchesField.isHidden)
-        XCTAssertFalse(searchController.stepper.isHidden)
+        XCTAssertEqual(searchController.numberOfMatchesField?.isHidden, false)
+        XCTAssertEqual(searchController.stepper?.isHidden, false)
 
         for mode in [
             PBHistorySearchMode.pickaxe,
@@ -5970,8 +6002,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         ] {
             XCTAssertTrue(try searchResultRows(for: whitespace, mode: mode).isEmpty)
             XCTAssertEqual(searchField.stringValue, "")
-            XCTAssertTrue(searchController.numberOfMatchesField.isHidden)
-            XCTAssertTrue(searchController.stepper.isHidden)
+            XCTAssertEqual(searchController.numberOfMatchesField?.isHidden, true)
+            XCTAssertEqual(searchController.stepper?.isHidden, true)
         }
     }
 
@@ -6023,70 +6055,277 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(formatter.string(for: Date().addingTimeInterval(-600)), "10 minutes ago")
     }
 
-    func testSearchMenuTemplateTagsExactlyOneRecentsTitleItem() throws {
-        let searchField = try XCTUnwrap(historyController.searchController.searchField)
-        let searchFieldCell = try XCTUnwrap(searchField.cell as? NSSearchFieldCell)
-        let menu = try XCTUnwrap(searchFieldCell.searchMenuTemplate)
-
-        let titleItems = menu.items.filter { $0.tag == NSSearchField.recentsTitleMenuItemTag }
-        XCTAssertEqual(titleItems.count, 1)
-        XCTAssertEqual(titleItems.first?.title, "Recent Searches")
-        XCTAssertFalse(titleItems.first?.isSeparatorItem ?? true)
-        XCTAssertTrue(menu.items.filter(\.isSeparatorItem).allSatisfy { $0.tag == 0 })
-    }
-
-    func testHistorySearchRecentsCharacterizeSubmissionNavigationDedupAndClearing() throws {
+    func testScopeBarSearchModePopUpMirrorsTheSearchMenuPlaceholderAndPreference() throws {
         let searchController = historyController.searchController
-        let searchField = try XCTUnwrap(searchController.searchField)
-        let originalAutosaveName = searchField.recentsAutosaveName
-        let originalRecents = searchField.recentSearches
-        let autosaveName = "GitX History Search Tests \(UUID().uuidString)"
+        let popUp = try XCTUnwrap(searchController.modePopUp)
+        let searchFieldCell = try XCTUnwrap(searchController.searchField?.cell as? NSSearchFieldCell)
+        let menu = try XCTUnwrap(searchFieldCell.searchMenuTemplate)
+        let originalMode = searchController.searchMode
         defer {
-            searchField.recentSearches = []
-            searchField.recentsAutosaveName = originalAutosaveName
-            searchField.recentSearches = originalRecents
-            UserDefaults.standard.removeObject(forKey: autosaveName)
+            searchController.clearSearch()
+            searchController.searchMode = originalMode
         }
 
-        searchField.recentsAutosaveName = autosaveName
-        searchField.recentSearches = []
+        XCTAssertTrue(popUp.superview is PBGitGradientBarView)
+        XCTAssertEqual(popUp.accessibilityIdentifier(), "GitX.History.SearchMode")
+        XCTAssertEqual(popUp.accessibilityLabel(), "Search Mode")
+        XCTAssertEqual(
+            popUp.itemTitles,
+            ["Subject, Author, SHA", "Commit (pickaxe)", "Commit (pickaxe regex)", "File path", "Raw"]
+        )
+        XCTAssertEqual(popUp.itemArray.map(\.tag), [1, 2, 3, 4, 5])
+        XCTAssertEqual(popUp.selectedTag(), originalMode.rawValue)
 
-        searchField.stringValue = "unchanged"
-        searchController.setHistorySearch("", mode: .raw)
-        XCTAssertEqual(searchField.stringValue, "unchanged")
-        XCTAssertTrue(searchField.recentSearches.isEmpty)
+        // Choosing in the pop-up checks the same mode in the search field menu and saves it.
+        popUp.selectItem(withTag: PBHistorySearchMode.path.rawValue)
+        XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(popUp.action), to: popUp.target, from: popUp))
+        XCTAssertEqual(searchController.searchMode, .path)
+        XCTAssertEqual(searchFieldCell.placeholderString, "File path")
+        XCTAssertEqual(menu.items.filter { $0.state == .on }.map(\.tag), [PBHistorySearchMode.path.rawValue])
+        XCTAssertEqual(PBGitDefaults.historySearchMode(), PBHistorySearchMode.path.rawValue)
 
-        searchController.setHistorySearch("  alpha  ", mode: .basic)
-        searchController.setHistorySearch("beta", mode: .basic)
-        searchController.setHistorySearch("  alpha  ", mode: .basic)
-        XCTAssertEqual(searchField.recentSearches, ["  alpha  ", "beta"])
+        // Choosing in the search field menu, or a scripted search, moves the pop-up.
+        try searchController.selectSearchMode(XCTUnwrap(menu.item(withTag: PBHistorySearchMode.raw.rawValue)))
+        XCTAssertEqual(popUp.titleOfSelectedItem, "Raw")
+        searchController.setHistorySearch("needle", mode: .pickaxe)
+        XCTAssertEqual(popUp.titleOfSelectedItem, "Commit (pickaxe)")
+        XCTAssertEqual(PBGitDefaults.historySearchMode(), PBHistorySearchMode.pickaxe.rawValue)
+        XCTAssertGreaterThan(popUp.frame.width, popUp.intrinsicContentSize.width - 1)
 
-        searchController.setHistorySearch("   ", mode: .basic)
-        let submittedRecents = ["   ", "  alpha  ", "beta"]
-        XCTAssertEqual(searchField.recentSearches, submittedRecents)
+        try attachScreenshot(of: XCTUnwrap(popUp.superview), named: "PR2-History-Search-Mode-Scope-Bar")
+    }
 
-        searchController.clearSearch()
-        XCTAssertEqual(searchField.stringValue, "")
-        XCTAssertEqual(searchField.recentSearches, submittedRecents)
+    /// Keeps the app-wide saved and recent search preferences of the test host intact around a test.
+    private func preservingHistorySearchRecents(_ body: () throws -> Void) rethrows {
+        let defaults = UserDefaults.standard
+        let keys = ["PBHistorySearchRecents", "Recent History Searches", "PBHistorySearchMode", "PBSavedHistorySearches"]
+        let original = keys.map { defaults.object(forKey: $0) }
+        defer {
+            for (key, value) in zip(keys, original) {
+                defaults.set(value, forKey: key)
+            }
+        }
+        for key in keys {
+            defaults.removeObject(forKey: key)
+        }
+        try body()
+    }
 
-        let restoredField = NSSearchField()
-        restoredField.recentsAutosaveName = autosaveName
-        XCTAssertEqual(restoredField.recentSearches, submittedRecents)
+    private func searchMenuTitles() throws -> [String] {
+        let searchFieldCell = try XCTUnwrap(historyController.searchController.searchField?.cell as? NSSearchFieldCell)
+        return try XCTUnwrap(searchFieldCell.searchMenuTemplate).items.map { $0.isSeparatorItem ? "---" : $0.title }
+    }
 
-        searchField.recentSearches = []
-        let clearedField = NSSearchField()
-        clearedField.recentsAutosaveName = autosaveName
-        XCTAssertTrue(clearedField.recentSearches.isEmpty)
+    private func searchMenuItem(_ identifier: String) throws -> NSMenuItem {
+        let searchFieldCell = try XCTUnwrap(historyController.searchController.searchField?.cell as? NSSearchFieldCell)
+        return try XCTUnwrap(
+            searchFieldCell.searchMenuTemplate?.items.first { $0.identifier?.rawValue == identifier },
+            "Missing search menu item \(identifier)"
+        )
+    }
 
-        searchField.stringValue = "init"
-        searchController.updateSearch(self)
-        searchField.stringValue = "initial"
-        searchController.updateSearch(self)
-        searchController.selectNextResult()
-        XCTAssertTrue(searchField.recentSearches.isEmpty)
+    func testSearchMenuListsModesAndRecentSearchesWithoutAppKitRecentsTags() throws {
+        try preservingHistorySearchRecents {
+            let searchController = historyController.searchController
+            let searchField = try XCTUnwrap(searchController.searchField)
+            searchController.clearRecentSearches(nil)
 
-        searchField.performClick(self)
-        XCTAssertEqual(searchField.recentSearches, ["initial"])
+            XCTAssertNil(searchField.recentsAutosaveName)
+            XCTAssertEqual(searchField.maximumRecents, 0)
+            XCTAssertEqual(searchField.accessibilityIdentifier(), "GitX.History.SearchField")
+            XCTAssertEqual(
+                (searchField.cell as? NSSearchFieldCell)?.searchButtonCell?.accessibilityIdentifier(),
+                "GitX.History.SearchMenuButton"
+            )
+            XCTAssertEqual(searchController.numberOfMatchesField?.accessibilityIdentifier(), "GitX.History.SearchMatches")
+            XCTAssertEqual(try searchMenuTitles(), [
+                "Subject, Author, SHA", "Commit (pickaxe)", "Commit (pickaxe regex)", "File path", "Raw",
+                "---", "Recent Searches", "No Recent Searches",
+            ])
+            let menu = try XCTUnwrap((searchField.cell as? NSSearchFieldCell)?.searchMenuTemplate)
+            let appKitTags = [
+                NSSearchField.recentsTitleMenuItemTag, NSSearchField.recentsMenuItemTag,
+                NSSearchField.clearRecentsMenuItemTag, NSSearchField.noRecentsMenuItemTag,
+            ]
+            XCTAssertTrue(menu.items.allSatisfy { !appKitTags.contains($0.tag) })
+            XCTAssertTrue(menu.items.filter { $0.title.hasSuffix("Recent Searches") }.allSatisfy { $0.action == nil })
+        }
+    }
+
+    func testRecentSearchesRememberTheirModesAndRunAgainInThem() throws {
+        try preservingHistorySearchRecents {
+            let searchController = historyController.searchController
+            let searchField = try XCTUnwrap(searchController.searchField)
+            let originalMode = searchController.searchMode
+            defer {
+                searchController.clearSearch()
+                searchController.searchMode = originalMode
+            }
+            searchController.clearRecentSearches(nil)
+
+            // Scripted searches are remembered with their modes; empty and whitespace-only text is not.
+            searchController.setHistorySearch("", mode: .raw)
+            searchController.setHistorySearch("  alpha  ", mode: .basic)
+            searchController.setHistorySearch("beta", mode: .pickaxe)
+            searchController.setHistorySearch("  alpha  ", mode: .basic)
+            searchController.setHistorySearch("   ", mode: .basic)
+            XCTAssertEqual(try Array(searchMenuTitles().dropFirst(6)), [
+                "Recent Searches", "  alpha   — Subject, Author, SHA", "beta — Commit (pickaxe)",
+                "---", "Clear Recent Searches",
+            ])
+
+            // Typing searches without remembering them; Return remembers the submitted text and mode.
+            searchController.searchMode = .raw
+            searchField.stringValue = "--author=GitX"
+            searchController.updateSearch(self)
+            XCTAssertEqual(try searchMenuTitles().count, 11)
+            let delegate = try XCTUnwrap(searchField.delegate)
+            XCTAssertEqual(
+                delegate.control?(searchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.moveUp(_:))),
+                false
+            )
+            XCTAssertEqual(try searchMenuTitles().count, 11)
+            XCTAssertEqual(
+                delegate.control?(searchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))),
+                false
+            )
+            XCTAssertEqual(try searchMenuTitles()[7], "--author=GitX — Raw")
+
+            // Choosing a recent search restores its mode and text and makes it the newest.
+            let beta = try searchMenuItem("GitX.History.Search.Recent.2")
+            XCTAssertEqual(beta.toolTip, "beta")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(beta.action), to: beta.target, from: beta))
+            XCTAssertEqual(searchController.searchMode, .pickaxe)
+            XCTAssertEqual(searchField.stringValue, "beta")
+            XCTAssertEqual(searchController.modePopUp?.titleOfSelectedItem, "Commit (pickaxe)")
+            XCTAssertEqual(try searchMenuTitles()[7], "beta — Commit (pickaxe)")
+
+            // A menu item from an outdated menu is ignored.
+            let outdated = NSMenuItem(title: "outdated", action: nil, keyEquivalent: "")
+            outdated.representedObject = NSNumber(value: 40)
+            searchController.selectRecentSearch(outdated)
+            XCTAssertEqual(searchField.stringValue, "beta")
+
+            try attachDiagnosticText(searchMenuTitles().joined(separator: "\n"), named: "PR2-History-Search-Recents-Menu")
+
+            // Clearing empties the menu for every history window, and cleared recents stay cleared.
+            let clear = try searchMenuItem("GitX.History.Search.ClearRecents")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(clear.action), to: clear.target, from: clear))
+            XCTAssertEqual(try Array(searchMenuTitles().suffix(2)), ["Recent Searches", "No Recent Searches"])
+            let stored = try XCTUnwrap(UserDefaults.standard.data(forKey: "PBHistorySearchRecents"))
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: stored) as? [String: Any])
+            XCTAssertEqual(payload["version"] as? Int, 1)
+            XCTAssertEqual((payload["recents"] as? [Any])?.count, 0)
+        }
+    }
+
+    func testSavedSearchesAppearInTheSearchMenuAndRunInTheirModes() throws {
+        try preservingHistorySearchRecents {
+            let searchController = historyController.searchController
+            let searchField = try XCTUnwrap(searchController.searchField)
+            let originalMode = searchController.searchMode
+            defer {
+                searchController.clearSearch()
+                searchController.searchMode = originalMode
+            }
+            UserDefaults.standard.set(Data("""
+            {"version":1,"searches":[{"id":"\(UUID().uuidString)","mode":5,"name":"Ada","text":"--author=GitX"}]}
+            """.utf8), forKey: "PBSavedHistorySearches")
+            NotificationCenter.default.post(name: Notification.Name("PBSavedHistorySearchesDidChangeNotification"), object: nil)
+
+            XCTAssertEqual(try Array(searchMenuTitles()[5 ..< 11]), [
+                "---", "Saved Searches", "Ada", "Save Search As…", "Manage Saved Searches…", "---",
+            ])
+            let validation = try XCTUnwrap(searchController as AnyObject as? NSMenuItemValidation)
+            let saveAs = try searchMenuItem("GitX.History.Search.SaveAs")
+            let manage = try searchMenuItem("GitX.History.Search.ManageSaved")
+            searchField.stringValue = ""
+            XCTAssertFalse(validation.validateMenuItem(saveAs))
+            XCTAssertTrue(validation.validateMenuItem(manage))
+            searchField.stringValue = "needle"
+            XCTAssertTrue(validation.validateMenuItem(saveAs))
+            XCTAssertTrue(try validation.validateMenuItem(searchMenuItem("GitX.History.Search.Saved.Ada")))
+
+            // Choosing a saved search runs it in its mode and remembers it as a recent search.
+            let ada = try searchMenuItem("GitX.History.Search.Saved.Ada")
+            XCTAssertEqual(ada.toolTip, "--author=GitX — Raw")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(ada.action), to: ada.target, from: ada))
+            XCTAssertEqual(searchController.searchMode, .raw)
+            XCTAssertEqual(searchField.stringValue, "--author=GitX")
+            XCTAssertEqual(searchController.modePopUp?.titleOfSelectedItem, "Raw")
+            XCTAssertTrue(try searchMenuTitles().contains("--author=GitX — Raw"))
+
+            // A saved search removed elsewhere is ignored, and the menu catches up.
+            UserDefaults.standard.removeObject(forKey: "PBSavedHistorySearches")
+            searchField.stringValue = "kept"
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(ada.action), to: ada.target, from: ada))
+            XCTAssertEqual(searchField.stringValue, "kept")
+            XCTAssertEqual(try Array(searchMenuTitles()[6 ..< 8]), ["Saved Searches", "No Saved Searches"])
+            XCTAssertFalse(try validation.validateMenuItem(searchMenuItem("GitX.History.Search.ManageSaved")))
+        }
+    }
+
+    func testSaveAndManageSavedSearchesOpenSheetsOnTheHistoryWindow() throws {
+        try preservingHistorySearchRecents {
+            let searchController = historyController.searchController
+            let searchField = try XCTUnwrap(searchController.searchField)
+            let window = try XCTUnwrap(searchField.window)
+            defer {
+                while let sheet = window.attachedSheet {
+                    window.endSheet(sheet)
+                    sheet.orderOut(nil)
+                }
+                searchController.clearSearch()
+            }
+
+            // Nothing to save: no sheet.
+            searchField.stringValue = ""
+            let emptySaveAs = try searchMenuItem("GitX.History.Search.SaveAs")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(emptySaveAs.action), to: emptySaveAs.target, from: emptySaveAs))
+            XCTAssertNil(window.attachedSheet)
+
+            searchController.searchMode = .pickaxe
+            searchField.stringValue = "needle"
+            let saveAs = try searchMenuItem("GitX.History.Search.SaveAs")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(saveAs.action), to: saveAs.target, from: saveAs))
+            let saveSheet = try XCTUnwrap(window.attachedSheet)
+            XCTAssertNil(NSApp.modalWindow)
+            let nameField = try XCTUnwrap(descendant(identifier: "GitX.SavedSearches.Name", in: saveSheet.contentView) as? NSTextField)
+            nameField.stringValue = "Needles"
+            window.endSheet(saveSheet, returnCode: .alertFirstButtonReturn)
+            saveSheet.orderOut(nil)
+            XCTAssertEqual(try Array(searchMenuTitles()[6 ..< 8]), ["Saved Searches", "Needles"])
+
+            searchField.stringValue = "something else"
+            searchController.searchMode = .basic
+            let manage = try searchMenuItem("GitX.History.Search.ManageSaved")
+            XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(manage.action), to: manage.target, from: manage))
+            let manageSheet = try XCTUnwrap(window.attachedSheet)
+            XCTAssertEqual(manageSheet.accessibilityIdentifier(), "GitX.SavedSearches.Sheet")
+            let table = try XCTUnwrap(descendant(identifier: "GitX.SavedSearches.Table", in: manageSheet.contentView) as? NSTableView)
+            XCTAssertEqual(table.numberOfRows, 1)
+            table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            let apply = try XCTUnwrap(descendant(identifier: "GitX.SavedSearches.Apply", in: manageSheet.contentView) as? NSButton)
+            apply.performClick(nil)
+
+            XCTAssertNil(window.attachedSheet)
+            XCTAssertEqual(searchController.searchMode, .pickaxe)
+            XCTAssertEqual(searchField.stringValue, "needle")
+        }
+    }
+
+    func testLegacyTextOnlyRecentsAppearWithTheSavedSearchMode() throws {
+        try preservingHistorySearchRecents {
+            UserDefaults.standard.set(["older text", "  "], forKey: "Recent History Searches")
+            UserDefaults.standard.set(PBHistorySearchMode.regex.rawValue, forKey: "PBHistorySearchMode")
+
+            NotificationCenter.default.post(name: Notification.Name("PBHistorySearchRecentsDidChangeNotification"), object: nil)
+
+            XCTAssertEqual(try Array(searchMenuTitles().suffix(4)), [
+                "Recent Searches", "older text — Commit (pickaxe regex)", "---", "Clear Recent Searches",
+            ])
+            XCTAssertEqual(UserDefaults.standard.stringArray(forKey: "Recent History Searches"), ["older text", "  "])
+        }
     }
 
     func testHistorySearchPastePreservesFullWhitespaceAndUnicode() throws {
@@ -6119,6 +6358,200 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(searchField.stringValue, "prefix  東京 crème  ")
     }
 
+    func testSupersededSearchResultsCannotReplaceTheNewerQueryState() throws {
+        let restoreWatcher = try disableRepositoryWatcher()
+        defer { restoreWatcher() }
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let started = testArtifactDirectory.appendingPathComponent("stale-search-started")
+        let terminated = testArtifactDirectory.appendingPathComponent("stale-search-terminated")
+        let wrapper = try installStaleHistorySearchGitWrapper(started: started, terminated: terminated)
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let matches = try XCTUnwrap(searchController.numberOfMatchesField)
+        func startStaleSearch() {
+            for marker in [started, terminated] {
+                try? FileManager.default.removeItem(at: marker)
+            }
+            searchController.searchMode = .raw
+            searchField.stringValue = "--grep=GitXStaleHistorySearch"
+            searchController.updateSearch(self)
+            XCTAssertTrue(
+                waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: started.path) },
+                "The superseded history search never started"
+            )
+        }
+        func waitForStaleSearchToFinish() {
+            XCTAssertTrue(
+                waitForCondition(timeout: 10) {
+                    FileManager.default.fileExists(atPath: terminated.path)
+                        && searchController.value(forKey: "backgroundSearchTask") == nil
+                },
+                "The superseded history search did not finish"
+            )
+            // Let the superseded task's completion reach the main queue.
+            pumpRunLoop(for: 0.5)
+        }
+
+        // The running search exits successfully with a match after it is terminated; the newer
+        // malformed query keeps its explanation.
+        startStaleSearch()
+        searchField.stringValue = "--grep='unclosed"
+        searchController.updateSearch(self)
+        XCTAssertEqual(matches.stringValue, "Unclosed quote")
+        waitForStaleSearchToFinish()
+        XCTAssertEqual(matches.stringValue, "Unclosed quote")
+        XCTAssertFalse(searchController.hasSearchResults())
+
+        // A newer valid query keeps its own results.
+        startStaleSearch()
+        searchField.stringValue = "--grep=NoCommitHasThisSubject"
+        searchController.updateSearch(self)
+        waitForStaleSearchToFinish()
+        XCTAssertEqual(matches.stringValue, "Not found")
+        XCTAssertFalse(searchController.hasSearchResults())
+    }
+
+    func testSearchNavigationWrapsInBothDirectionsAndShowsTheRewindOverlay() throws {
+        let searchController = historyController.searchController
+        let commitList = historyController.commitList
+        let window = try XCTUnwrap(windowController.window)
+        let rows = try searchResultRows(for: "GitX Tests", mode: .basic)
+        let lastRow = try XCTUnwrap(rows.last)
+        XCTAssertEqual(rows, IndexSet(integersIn: 0 ... lastRow))
+        XCTAssertGreaterThanOrEqual(lastRow, 2)
+        func rewindPanels() -> [NSWindow] {
+            (window.childWindows ?? []).filter { $0.styleMask == .borderless && $0.ignoresMouseEvents }
+        }
+        func waitForRewindPanelToClose(file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertTrue(
+                waitForCondition(timeout: 5) { rewindPanels().isEmpty },
+                "The rewind overlay did not close",
+                file: file,
+                line: line
+            )
+        }
+
+        // Without a selected row, Next starts at the first match, while Previous wraps to the last
+        // match and shows the overlay.
+        commitList.deselectAll(nil)
+        searchController.selectNextResult()
+        XCTAssertEqual(commitList.selectedRow, 0)
+        XCTAssertTrue(rewindPanels().isEmpty)
+        commitList.deselectAll(nil)
+        searchController.selectPreviousResult()
+        XCTAssertEqual(commitList.selectedRow, lastRow)
+        XCTAssertEqual(rewindPanels().count, 1)
+        waitForRewindPanelToClose()
+
+        commitList.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        let stepper = NSSegmentedControl(labels: ["Previous", "Next"], trackingMode: .selectOne, target: nil, action: nil)
+        stepper.selectedSegment = 0
+        searchController.stepperPressed(stepper)
+        XCTAssertEqual(commitList.selectedRow, 0)
+        XCTAssertTrue(rewindPanels().isEmpty)
+
+        // Previous from the first match wraps to the last one; wrapping again while the overlay
+        // is still fading reuses that overlay.
+        searchController.selectPreviousResult()
+        XCTAssertEqual(commitList.selectedRow, lastRow)
+        XCTAssertEqual(rewindPanels().count, 1)
+        stepper.selectedSegment = 1
+        searchController.stepperPressed(stepper)
+        XCTAssertEqual(commitList.selectedRow, 0)
+        let panels = rewindPanels()
+        XCTAssertEqual(panels.count, 1)
+        let imageView = try XCTUnwrap(panels.first?.contentView?.viewWithTag(1234) as? NSImageView)
+        let image = try XCTUnwrap(imageView.image)
+        XCTAssertEqual(image.size, NSImage(named: "rewindImage")?.size)
+        XCTAssertNotNil(image.tiffRepresentation)
+        waitForRewindPanelToClose()
+    }
+
+    func testBackgroundSearchShowsProgressIgnoresSupersededTasksAndClearsWhenTheQueryEmptiesFirst() throws {
+        let restoreWatcher = try disableRepositoryWatcher()
+        defer { restoreWatcher() }
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let started = testArtifactDirectory.appendingPathComponent("slow-search-started")
+        let terminated = testArtifactDirectory.appendingPathComponent("slow-search-terminated")
+        let wrapper = try installSlowHistorySearchGitWrapper(started: started, terminated: terminated)
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let matches = try XCTUnwrap(searchController.numberOfMatchesField)
+        let progress = try XCTUnwrap(searchController.progressIndicator)
+        let stepper = try XCTUnwrap(searchController.stepper)
+        let errorWindow = try XCTUnwrap(windowController as? HistoryWindowController)
+        let shownErrorCount = errorWindow.shownErrors.count
+        func backgroundSearchFinished() -> Bool {
+            searchController.value(forKey: "backgroundSearchTask") == nil
+        }
+
+        searchController.searchMode = .raw
+        searchField.stringValue = "--grep=GitXSlowHistorySearch"
+        searchController.updateSearch(self)
+        XCTAssertTrue(matches.isHidden)
+        XCTAssertTrue(stepper.isHidden)
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: started.path) },
+            "The slow history search never started"
+        )
+        XCTAssertTrue(waitForCondition(timeout: 5) { !progress.isHidden }, "The search progress indicator never appeared")
+
+        // A new query terminates the running search; its signal is not reported as a failure.
+        searchField.stringValue = "--author=GitX"
+        searchController.updateSearch(self)
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                FileManager.default.fileExists(atPath: terminated.path) && backgroundSearchFinished()
+            },
+            "The superseded search was not terminated, or the replacement did not finish"
+        )
+        pumpRunLoop(for: 0.2)
+        XCTAssertEqual(errorWindow.shownErrors.count, shownErrorCount)
+        XCTAssertTrue(searchController.hasSearchResults())
+        XCTAssertFalse(matches.isHidden)
+        XCTAssertNotEqual(matches.stringValue, "Not found")
+        XCTAssertTrue(progress.isHidden)
+
+        // Results that arrive after the query was emptied clear the search instead of showing a count.
+        searchField.stringValue = "--author=GitX"
+        searchController.updateSearch(self)
+        searchField.stringValue = ""
+        XCTAssertTrue(waitForCondition(timeout: 10) { backgroundSearchFinished() }, "The background search did not finish")
+        XCTAssertFalse(searchController.hasSearchResults())
+        XCTAssertTrue(matches.isHidden)
+        XCTAssertTrue(stepper.isHidden)
+        XCTAssertTrue(progress.isHidden)
+        XCTAssertEqual(errorWindow.shownErrors.count, shownErrorCount)
+    }
+
+    func testSearchModeChangesWithoutAMenuTemplateStillUpdateThePlaceholderAndPreference() throws {
+        let defaults = UserDefaults.standard
+        let oldStoredMode = defaults.object(forKey: "PBHistorySearchMode")
+        defer {
+            if let oldStoredMode {
+                defaults.set(oldStoredMode, forKey: "PBHistorySearchMode")
+            } else {
+                defaults.removeObject(forKey: "PBHistorySearchMode")
+            }
+        }
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let searchFieldCell = try XCTUnwrap(searchField.cell as? NSSearchFieldCell)
+        let template = searchFieldCell.searchMenuTemplate
+        defer { searchFieldCell.searchMenuTemplate = template }
+        searchFieldCell.searchMenuTemplate = nil
+
+        searchController.searchMode = .regex
+
+        XCTAssertNil(searchFieldCell.searchMenuTemplate)
+        XCTAssertEqual(searchField.placeholderString, "Commit (pickaxe regex)")
+        XCTAssertEqual(defaults.integer(forKey: "PBHistorySearchMode"), PBHistorySearchMode.regex.rawValue)
+    }
+
     func testPathMenuDisablesCommitActionsWithoutSelection() throws {
         historyController.selectedCommits = []
 
@@ -6136,6 +6569,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(history.isEnabled)
         XCTAssertTrue(finder.isEnabled)
         XCTAssertTrue(open.isEnabled)
+    }
+
+    func testPathMenuOffersGitLFSDownloadOnlyForTheCheckedOutCommit() throws {
+        let commits = loadedCommits()
+        let head = try XCTUnwrap(commits.first { $0.oid == repository.headOID() })
+        historyController.selectedCommits = [head]
+        let items = historyController.menuItems(forPaths: ["nested/tracked.txt"])
+        let download = try XCTUnwrap(items.first { $0.title == "Download LFS Content" })
+        XCTAssertEqual(download.action, NSSelectorFromString("downloadLFSContent:"))
+        XCTAssertEqual(download.representedObject as? [String], ["nested/tracked.txt"])
+
+        let older = try XCTUnwrap(commits.first { $0.oid != head.oid })
+        historyController.selectedCommits = [older]
+        XCTAssertFalse(historyController.menuItems(forPaths: ["nested/tracked.txt"]).contains { $0.title == "Download LFS Content" })
     }
 
     func testWorkingStateTextDragPreservesPasteboard() throws {
@@ -7023,6 +7470,57 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 while true; do
                     sleep 1
                 done
+            fi
+        done
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return wrapper
+    }
+
+    /// Blocks only the raw history search for `--grep=GitXStaleHistorySearch`. When terminated it still
+    /// prints the newest commit and exits successfully, like a search that finished just before the signal.
+    private func installStaleHistorySearchGitWrapper(started: URL, terminated: URL) throws -> URL {
+        let wrapper = testArtifactDirectory.appendingPathComponent("git-stale-history-search-wrapper")
+        let startedPath = shellSingleQuoted(started.path)
+        let terminatedPath = shellSingleQuoted(terminated.path)
+        let script = """
+        #!/bin/bash
+        for argument in "$@"; do
+            if [[ "$argument" == "--grep=GitXStaleHistorySearch" ]]; then
+                trap '/usr/bin/git log -1 --pretty=format:%H; : > \(terminatedPath); exit 0' TERM
+                : > \(startedPath)
+                /bin/sleep 30 &
+                wait $!
+                exit 0
+            fi
+        done
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return wrapper
+    }
+
+    /// Blocks only the raw history search for `--grep=GitXSlowHistorySearch` until it is terminated,
+    /// then dies from the same SIGTERM so PBTask reports a caught signal; other Git work runs normally.
+    private func installSlowHistorySearchGitWrapper(started: URL, terminated: URL) throws -> URL {
+        for marker in [started, terminated] {
+            try? FileManager.default.removeItem(at: marker)
+        }
+        let wrapper = testArtifactDirectory.appendingPathComponent("git-slow-history-search-wrapper")
+        let startedPath = shellSingleQuoted(started.path)
+        let terminatedPath = shellSingleQuoted(terminated.path)
+        let script = """
+        #!/bin/bash
+        for argument in "$@"; do
+            if [[ "$argument" == "--grep=GitXSlowHistorySearch" ]]; then
+                trap ': > \(terminatedPath); trap - TERM; kill -TERM $$' TERM
+                : > \(startedPath)
+                /bin/sleep 30 &
+                wait $!
+                exit 0
             fi
         done
         exec /usr/bin/git "$@"

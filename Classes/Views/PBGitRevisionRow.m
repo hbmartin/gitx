@@ -8,7 +8,7 @@
 #import "PBGitRevisionRow.h"
 #import "PBGitCommit.h"
 #import "PBGraphCellInfo.h"
-#import "PBHistorySearchController.h"
+#import "GitX-Swift.h"
 
 NS_ASSUME_NONNULL_BEGIN
 

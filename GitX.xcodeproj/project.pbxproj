@@ -42,6 +42,7 @@
 		C0D085A00000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */; };
 		C0DE90010000000000000001 /* StagingImageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90010000000000000002 /* StagingImageReader.swift */; };
 		FED3AAE90EE43C10492BA56A /* HistoryFileIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */; };
+		BBED428442F74BB1BF05B24B /* LFSPointerPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56C5D602737BBCF7F819E7A7 /* LFSPointerPresentationTests.swift */; };
 		00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */; };
 		DC57A0CECB698C04E264BFCD /* IndexMutationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */; };
 		C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */; };
@@ -93,7 +94,13 @@
 		4A5D76E614A9A9CC00DF6C68 /* PBGitHistoryController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */; };
 		4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.swift */; };
 		4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */; };
-		4A5D76EA14A9A9CC00DF6C68 /* PBHistorySearchController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763914A9A9CC00DF6C68 /* PBHistorySearchController.m */; };
+		C0DE5EA0000000000000B001 /* PBHistorySearchController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */; };
+		C0DE5EA0000000000000B002 /* SavedHistorySearchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */; };
+		C0DE5EA0000000000000B007 /* PBGitRepositoryDocument+HistorySearchScripting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F007 /* PBGitRepositoryDocument+HistorySearchScripting.swift */; };
+		C0DE5EA0000000000000B003 /* SavedHistorySearchStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F003 /* SavedHistorySearchStoreTests.swift */; };
+		C0DE5EA0000000000000B004 /* SavedHistorySearchSavePrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */; };
+		C0DE5EA0000000000000B005 /* SavedHistorySearchesSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */; };
+		C0DE5EA0000000000000B006 /* SavedHistorySearchSheetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F006 /* SavedHistorySearchSheetTests.swift */; };
 		4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763B14A9A9CC00DF6C68 /* PBPrefsWindowController.m */; };
 		4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763F14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift */; };
 		4A5D76EE14A9A9CC00DF6C68 /* PBServicesController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764114A9A9CC00DF6C68 /* PBServicesController.m */; };
@@ -483,6 +490,8 @@
 		4F3BDC0D4DDA469895258C70 /* RepositoryWorktreeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F51E192AB871481CA7B9BEDC /* RepositoryWorktreeService.swift */; };
 		66FB4AEA1AD547DA9AD0FA7F /* RepositoryWatchPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = C022FA47ADE04E199C4B8478 /* RepositoryWatchPaths.swift */; };
 		FD274204D1E94E89A0BDFD51 /* PBGitWindowController+Worktrees.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */; };
+		78328EEFB737B131B75F473A /* PBGitWindowController+LFS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472BD1E7FFF862B5C993CAEE /* PBGitWindowController+LFS.swift */; };
+		F076BD7ECCD0E941FB1A826F /* RepositoryLFSSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68A260D519D8CA41046E4B92 /* RepositoryLFSSheets.swift */; };
 		CA188AFDFFFC45379B27A394 /* PBSourceViewGitWorktreeItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3302FF498D74DF0BA771862 /* PBSourceViewGitWorktreeItem.swift */; };
 		26A1958F255949DCBBB012A3 /* PBGitRefLabelColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */; };
 		11F86FC6AB4A474ABE9F1445 /* WorktreeBranchTemplate.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */; };
@@ -494,10 +503,12 @@
 		A737A36FF55A40128B79FB09 /* ForgeRegistrationDeliveryGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */; };
 		F7F05374F3D84792A303E64E /* ReflogRecoveryCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */; };
 		D0F31FE952CA4482B2A2A86D /* RepositoryReflogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */; };
+		77AC4A0AC633A29778C1E547 /* RepositoryLFSDownloadOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3D2A18613CB720CCB36E23 /* RepositoryLFSDownloadOperation.swift */; };
 		2121ECC761624F0383A1B36D /* ReflogServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F810AB2DBCE74FB9AEEFCB78 /* ReflogServiceTests.swift */; };
 		4C584BD1CCD5441E9FC66115 /* ReflogBrowserController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F70CA399F3A642658072C91E /* ReflogBrowserController.swift */; };
 		5D8C48E3584A4A8980BC33AA /* ReflogBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */; };
 		C38599D0B4BF490F8D4C1F0E /* ReflogWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */; };
+		C0DE5EA0000000000000B008 /* HistorySearchWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F008 /* HistorySearchWorkflowUITests.swift */; };
 		0A0FB43E40544AE5B725A0EB /* NativePullRequestCompletionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45121CC71B4E4DD68BA5FA68 /* NativePullRequestCompletionTests.swift */; };
 		6E885A6FDA734E5EA28AF939 /* NativeLocalMutationLifetimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6325439A81D468EB3D1F5D2 /* NativeLocalMutationLifetimeTests.swift */; };
 		3568F55D52884EF588770583 /* NativeRecoveryMoveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88CAE775693545A7B87AF730 /* NativeRecoveryMoveTests.swift */; };
@@ -506,7 +517,11 @@
 		BEFFB929AAFD4F7FB71F87D3 /* NativeRecoverySessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D008256DBA224AF98AA56EE1 /* NativeRecoverySessionTests.swift */; };
 		1F27FFE59EFA4B67AC6EAFF5 /* RepositoryTerminationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 996BB515630540599989CA23 /* RepositoryTerminationCoordinator.swift */; };
 		EDF69AE864A24C16A749BE33 /* RepositoryLocalMutationRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */; };
+		F1983487779E638803FE3FD9 /* RepositoryLFSStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73371F66A0B2E98BC8F5E847 /* RepositoryLFSStatus.swift */; };
+		B2AA972491AA513D19F24575 /* LFSPointerInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53921BC79137F61E3A2903DA /* LFSPointerInspector.swift */; };
 		070BD02A56C340F4B69FA9E3 /* RepositoryLocalMutationRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */; };
+		FF9A7963791A3B54F2A169F1 /* RepositoryLFSStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73371F66A0B2E98BC8F5E847 /* RepositoryLFSStatus.swift */; };
+		E22C70D89EA53F3B4D54992F /* LFSPointerInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53921BC79137F61E3A2903DA /* LFSPointerInspector.swift */; };
 		E685F5129E634CFCA57FF291 /* RepositoryTerminationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B091A2D38E0540DB916EBB76 /* RepositoryTerminationTests.swift */; };
 		E66001916A6A43AA8453EC67 /* NativeTerminationIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E16460105E444C89FF67782 /* NativeTerminationIntegrationTests.swift */; };
 /* End PBXBuildFile section */
@@ -763,6 +778,7 @@
 		C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXFixtureRepositoryPolicyTests.swift; sourceTree = "<group>"; };
 		C0DE90010000000000000002 /* StagingImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingImageReader.swift; sourceTree = "<group>"; };
 		8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFileIdentityTests.swift; sourceTree = "<group>"; };
+		56C5D602737BBCF7F819E7A7 /* LFSPointerPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LFSPointerPresentationTests.swift; sourceTree = "<group>"; };
 		D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinatorTests.swift; sourceTree = "<group>"; };
 		0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinator.swift; sourceTree = "<group>"; };
 		42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexReferenceTransactionTests.swift; sourceTree = "<group>"; };
@@ -824,8 +840,13 @@
 		4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PBGitSidebarController.swift; sourceTree = "<group>"; };
 		4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitWindowController.h; sourceTree = "<group>"; };
 		4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; lineEnding = 0; path = PBGitWindowController.swift; sourceTree = "<group>"; };
-		4A5D763814A9A9CC00DF6C68 /* PBHistorySearchController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBHistorySearchController.h; sourceTree = "<group>"; };
-		4A5D763914A9A9CC00DF6C68 /* PBHistorySearchController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBHistorySearchController.m; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBHistorySearchController.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchStore.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F007 /* PBGitRepositoryDocument+HistorySearchScripting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitRepositoryDocument+HistorySearchScripting.swift"; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F003 /* SavedHistorySearchStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchStoreTests.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchSavePrompt.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchesSheetController.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F006 /* SavedHistorySearchSheetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchSheetTests.swift; sourceTree = "<group>"; };
 		4A5D763A14A9A9CC00DF6C68 /* PBPrefsWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBPrefsWindowController.h; sourceTree = "<group>"; };
 		4A5D763B14A9A9CC00DF6C68 /* PBPrefsWindowController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBPrefsWindowController.m; sourceTree = "<group>"; };
 		4A5D763F14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBRepositoryDocumentController.swift; sourceTree = "<group>"; };
@@ -1117,6 +1138,7 @@
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
 		C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitWindowControllerCompatibility.h; sourceTree = "<group>"; };
 		C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarControllerCompatibility.h; sourceTree = "<group>"; };
+		C0DEC5EA00000000000000C1 /* PBHistorySearchControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBHistorySearchControllerCompatibility.h; sourceTree = "<group>"; };
 		C0DEC0000000000000000005 /* PBWebHistoryControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBWebHistoryControllerCompatibility.h; sourceTree = "<group>"; };
 		C0DEC0000000000000000006 /* PBRepositoryDocumentControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBRepositoryDocumentControllerCompatibility.h; sourceTree = "<group>"; };
 		C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryActionContextResolver.swift; sourceTree = "<group>"; };
@@ -1255,6 +1277,8 @@
 		F51E192AB871481CA7B9BEDC /* RepositoryWorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWorktreeService.swift; sourceTree = "<group>"; };
 		C022FA47ADE04E199C4B8478 /* RepositoryWatchPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWatchPaths.swift; sourceTree = "<group>"; };
 		1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitWindowController+Worktrees.swift"; sourceTree = "<group>"; };
+		472BD1E7FFF862B5C993CAEE /* PBGitWindowController+LFS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitWindowController+LFS.swift"; sourceTree = "<group>"; };
+		68A260D519D8CA41046E4B92 /* RepositoryLFSSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLFSSheets.swift; sourceTree = "<group>"; };
 		E3302FF498D74DF0BA771862 /* PBSourceViewGitWorktreeItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBSourceViewGitWorktreeItem.swift; sourceTree = "<group>"; };
 		5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBGitRefLabelColors.swift; sourceTree = "<group>"; };
 		75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = WorktreeBranchTemplate.pdf; sourceTree = "<group>"; };
@@ -1266,10 +1290,12 @@
 		49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRegistrationDeliveryGate.swift; sourceTree = "<group>"; };
 		D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogRecoveryCharacterizationTests.swift; sourceTree = "<group>"; };
 		50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryReflogService.swift; sourceTree = "<group>"; };
+		BB3D2A18613CB720CCB36E23 /* RepositoryLFSDownloadOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLFSDownloadOperation.swift; sourceTree = "<group>"; };
 		F810AB2DBCE74FB9AEEFCB78 /* ReflogServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogServiceTests.swift; sourceTree = "<group>"; };
 		F70CA399F3A642658072C91E /* ReflogBrowserController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserController.swift; sourceTree = "<group>"; };
 		83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserTests.swift; sourceTree = "<group>"; };
 		70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogWorkflowUITests.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F008 /* HistorySearchWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistorySearchWorkflowUITests.swift; sourceTree = "<group>"; };
 		45121CC71B4E4DD68BA5FA68 /* NativePullRequestCompletionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePullRequestCompletionTests.swift; sourceTree = "<group>"; };
 		B6325439A81D468EB3D1F5D2 /* NativeLocalMutationLifetimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalMutationLifetimeTests.swift; sourceTree = "<group>"; };
 		88CAE775693545A7B87AF730 /* NativeRecoveryMoveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRecoveryMoveTests.swift; sourceTree = "<group>"; };
@@ -1277,6 +1303,8 @@
 		D008256DBA224AF98AA56EE1 /* NativeRecoverySessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRecoverySessionTests.swift; sourceTree = "<group>"; };
 		996BB515630540599989CA23 /* RepositoryTerminationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryTerminationCoordinator.swift; sourceTree = "<group>"; };
 		F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLocalMutationRegistry.swift; sourceTree = "<group>"; };
+		73371F66A0B2E98BC8F5E847 /* RepositoryLFSStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLFSStatus.swift; sourceTree = "<group>"; };
+		53921BC79137F61E3A2903DA /* LFSPointerInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LFSPointerInspector.swift; sourceTree = "<group>"; };
 		B091A2D38E0540DB916EBB76 /* RepositoryTerminationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryTerminationTests.swift; sourceTree = "<group>"; };
 		2E16460105E444C89FF67782 /* NativeTerminationIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTerminationIntegrationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -1621,6 +1649,8 @@
 				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
 				C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */,
 				1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */,
+				472BD1E7FFF862B5C993CAEE /* PBGitWindowController+LFS.swift */,
+				68A260D519D8CA41046E4B92 /* RepositoryLFSSheets.swift */,
 				C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */,
 				C0DEC6000000000000000011 /* HistoryTreePresentation.swift */,
 				C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */,
@@ -1657,8 +1687,11 @@
 				C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */,
 				C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */,
 				C0DED0000000000000000017 /* PBGitWindowController+Dialogs.swift */,
-				4A5D763814A9A9CC00DF6C68 /* PBHistorySearchController.h */,
-				4A5D763914A9A9CC00DF6C68 /* PBHistorySearchController.m */,
+				C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */,
+				C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */,
+				C0DE5EA0000000000000F007 /* PBGitRepositoryDocument+HistorySearchScripting.swift */,
+				C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */,
+				C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */,
 				6C5244021E00C33F0051DE20 /* PBHistorySearchMode.h */,
 				6C5244121E00C66E0051DE20 /* PBHistorySearchMode.m */,
 				4A5D763A14A9A9CC00DF6C68 /* PBPrefsWindowController.h */,
@@ -1688,6 +1721,7 @@
 			isa = PBXGroup;
 			children = (
 				50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */,
+				BB3D2A18613CB720CCB36E23 /* RepositoryLFSDownloadOperation.swift */,
 				C0DEAC0F0000000000000012 /* GitOutputFormatting.swift */,
 				C0DE10000000000000000005 /* PBHistoryArrayController.h */,
 				C0DE10000000000000000006 /* PBHistoryArrayController.swift */,
@@ -1735,6 +1769,8 @@
 				C05900000000000000000013 /* RepositoryIgnoreFileService.swift */,
 				C0DEE0000000000000000011 /* IndexSnapshot.swift */,
 				F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */,
+				73371F66A0B2E98BC8F5E847 /* RepositoryLFSStatus.swift */,
+				53921BC79137F61E3A2903DA /* LFSPointerInspector.swift */,
 				C0DEE0000000000000000013 /* IndexCommandRunning.swift */,
 				C0DEE0000000000000000014 /* IndexMutationService.swift */,
 				C0DEE0000000000000000016 /* IndexCommitService.swift */,
@@ -1947,6 +1983,7 @@
 				C0DE91000000000000000003 /* PBQLOutlineViewCompatibility.h */,
 				C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */,
 				C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */,
+				C0DEC5EA00000000000000C1 /* PBHistorySearchControllerCompatibility.h */,
 				C0DEC0000000000000000005 /* PBWebHistoryControllerCompatibility.h */,
 				C0DEC0000000000000000006 /* PBRepositoryDocumentControllerCompatibility.h */,
 				C0DE1000000000000000000B /* PBAutoFetchManagerCompatibility.h */,
@@ -1972,6 +2009,7 @@
 				C0DEE0000000000000000017 /* IndexCommitServiceTests.swift */,
 				42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */,
 				8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */,
+				56C5D602737BBCF7F819E7A7 /* LFSPointerPresentationTests.swift */,
 				D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */,
 				20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */,
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
@@ -1989,6 +2027,8 @@
 				FB3B555D89634B23ACA1C3D3 /* HistoryIndexWriterObservation.swift */,
 				AB1020010000000000000002 /* SidebarLifecycleTestSupport.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
+				C0DE5EA0000000000000F003 /* SavedHistorySearchStoreTests.swift */,
+				C0DE5EA0000000000000F006 /* SavedHistorySearchSheetTests.swift */,
 				C0DEC0000000000000000002 /* WindowControllerTests.m */,
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
 				284FF6D365052CB33482C14E /* RepositoryPushRecoveryCharacterizationTests.swift */,
@@ -2057,6 +2097,7 @@
 			isa = PBXGroup;
 			children = (
 				70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */,
+				C0DE5EA0000000000000F008 /* HistorySearchWorkflowUITests.swift */,
 				F0BA93000000000000000002 /* WorktreeGitProxy.sh */,
 				C0DE90260000000000000004 /* GitDiscoveryProxy.sh */,
 				D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */,
@@ -2507,9 +2548,12 @@
 			files = (
 				4C584BD1CCD5441E9FC66115 /* ReflogBrowserController.swift in Sources */,
 				D0F31FE952CA4482B2A2A86D /* RepositoryReflogService.swift in Sources */,
+				77AC4A0AC633A29778C1E547 /* RepositoryLFSDownloadOperation.swift in Sources */,
 				26A1958F255949DCBBB012A3 /* PBGitRefLabelColors.swift in Sources */,
 				CA188AFDFFFC45379B27A394 /* PBSourceViewGitWorktreeItem.swift in Sources */,
 				FD274204D1E94E89A0BDFD51 /* PBGitWindowController+Worktrees.swift in Sources */,
+				78328EEFB737B131B75F473A /* PBGitWindowController+LFS.swift in Sources */,
+				F076BD7ECCD0E941FB1A826F /* RepositoryLFSSheets.swift in Sources */,
 				66FB4AEA1AD547DA9AD0FA7F /* RepositoryWatchPaths.swift in Sources */,
 				4F3BDC0D4DDA469895258C70 /* RepositoryWorktreeService.swift in Sources */,
 				C0DEAC0F0000000000000002 /* GitOutputFormatting.swift in Sources */,
@@ -2541,6 +2585,8 @@
 				C05900000000000000000002 /* RepositoryIgnoreFileService.swift in Sources */,
 				C0DEE0000000000000000001 /* IndexSnapshot.swift in Sources */,
 				EDF69AE864A24C16A749BE33 /* RepositoryLocalMutationRegistry.swift in Sources */,
+				F1983487779E638803FE3FD9 /* RepositoryLFSStatus.swift in Sources */,
+				B2AA972491AA513D19F24575 /* LFSPointerInspector.swift in Sources */,
 				C0DEE0000000000000000003 /* IndexCommandRunning.swift in Sources */,
 				C0DEE0000000000000000004 /* IndexMutationService.swift in Sources */,
 				C0DEE0000000000000000006 /* IndexCommitService.swift in Sources */,
@@ -2657,7 +2703,11 @@
 				508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.swift in Sources */,
 				4DECFBB21E662962004C3A6F /* ObjectiveGit+PBCategories.m in Sources */,
 				4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */,
-				4A5D76EA14A9A9CC00DF6C68 /* PBHistorySearchController.m in Sources */,
+				C0DE5EA0000000000000B001 /* PBHistorySearchController.swift in Sources */,
+				C0DE5EA0000000000000B002 /* SavedHistorySearchStore.swift in Sources */,
+				C0DE5EA0000000000000B007 /* PBGitRepositoryDocument+HistorySearchScripting.swift in Sources */,
+				C0DE5EA0000000000000B004 /* SavedHistorySearchSavePrompt.swift in Sources */,
+				C0DE5EA0000000000000B005 /* SavedHistorySearchesSheetController.swift in Sources */,
 				4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */,
 				6C4855C81D57DCFC0027A7B4 /* PBTerminalUtil.m in Sources */,
 				4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.swift in Sources */,
@@ -2791,6 +2841,7 @@
 				C0DEE0000000000000000007 /* IndexCommitServiceTests.swift in Sources */,
 				C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */,
 				FED3AAE90EE43C10492BA56A /* HistoryFileIdentityTests.swift in Sources */,
+				BBED428442F74BB1BF05B24B /* LFSPointerPresentationTests.swift in Sources */,
 				00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */,
 				63A735203E9919B6FC5B1938 /* IndexCommitPublicationTests.swift in Sources */,
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
@@ -2806,6 +2857,8 @@
                 AAB112000000000000000001 /* InspectorActionGeometryTests.swift in Sources */,
                 AAB112000000000000000002 /* InspectorActionViewport.swift in Sources */,
 				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
+				C0DE5EA0000000000000B003 /* SavedHistorySearchStoreTests.swift in Sources */,
+				C0DE5EA0000000000000B006 /* SavedHistorySearchSheetTests.swift in Sources */,
 				C0DEC0000000000000000001 /* WindowControllerTests.m in Sources */,
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
 				A132C8818C83B2A9E118B05E /* RepositoryPushRecoveryCharacterizationTests.swift in Sources */,
@@ -2887,6 +2940,8 @@
 				F0F200000000000000000020 /* Milestone2DiagnosticPresenters.swift in Sources */,
 				51764F8050D047A1A7C8823D /* RepositoryPullRequestRecoverySession.swift in Sources */,
 				070BD02A56C340F4B69FA9E3 /* RepositoryLocalMutationRegistry.swift in Sources */,
+				FF9A7963791A3B54F2A169F1 /* RepositoryLFSStatus.swift in Sources */,
+				E22C70D89EA53F3B4D54992F /* LFSPointerInspector.swift in Sources */,
 				F0F200000000000000000021 /* RepositoryPullRequestUIController.swift in Sources */,
 				F0F300000000000000000003 /* ForgeMutationQuitCoordinator.swift in Sources */,
 				F0F300000000000000000004 /* ForgeUnknownMutationOutcomeStore.swift in Sources */,
@@ -2924,6 +2979,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C38599D0B4BF490F8D4C1F0E /* ReflogWorkflowUITests.swift in Sources */,
+				C0DE5EA0000000000000B008 /* HistorySearchWorkflowUITests.swift in Sources */,
 				B6547E1495BE465AA156AFAF /* WorktreeWorkflowUITests.swift in Sources */,
 				D0C700000000000000000001 /* GitXUIActivationPreflightTests.swift in Sources */,
 				D0C700000000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */,

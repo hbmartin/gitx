@@ -10,6 +10,7 @@
 #ifndef PBHistorySearchMode_h
 #define PBHistorySearchMode_h
 
+NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, PBHistorySearchMode) {
 	PBHistorySearchModeBasic = 1,
@@ -23,5 +24,6 @@ typedef NS_ENUM(NSInteger, PBHistorySearchMode) {
 
 PBHistorySearchMode PBSearchModeForInteger(NSInteger modeInteger);
 
+NS_ASSUME_NONNULL_END
 
 #endif /* PBHistorySearchMode_h */

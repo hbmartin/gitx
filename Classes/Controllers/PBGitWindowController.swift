@@ -165,6 +165,9 @@ private final class RepositoryWindowLifetime {
     let identity: RepositoryWindowOwnership.Identity
     var focus: RepositoryFocusRefreshCoordinator?
     var status: RepositoryLocalStatusLoader?
+    var lfs: RepositoryLFSStatusLoader?
+    /// Closing the window cancels a fetch; a checkout that has started finishes (ADR 0014).
+    var lfsDownload: RepositoryLFSDownloadOperation?
     var statusCoalescer: RefreshCoalescer?
     var forgeMetadataCoalescer: RefreshCoalescer?
     var referenceStatusRefresh = RepositoryStatusReferenceRefreshPolicy()
@@ -190,6 +193,11 @@ private final class RepositoryWindowLifetime {
         PBRepositoryWorktreeService.cancelPreparations(forOwner: worktreeOwner, in: services)
         focus?.cancel()
         status?.cancel()
+        lfs?.cancel()
+        lfs = nil
+        let download = lfsDownload
+        lfsDownload = nil
+        download?.cancel()
         statusCoalescer?.cancel()
         statusCoalescer = nil
         forgeMetadataCoalescer?.cancel()
@@ -295,6 +303,31 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private final var repositoryLocalStatusLoader: RepositoryLocalStatusLoader? {
         get { lifetime?.status }
         set { lifetime?.status = newValue }
+    }
+
+    private final var repositoryLFSStatusLoader: RepositoryLFSStatusLoader? {
+        get { lifetime?.lfs }
+        set { lifetime?.lfs = newValue }
+    }
+
+    final var currentLFSStatusSnapshot: RepositoryLFSStatusSnapshot {
+        repositoryLFSStatusLoader?.snapshot ?? .none
+    }
+
+    final var activeLFSDownload: RepositoryLFSDownloadOperation? {
+        get { lifetime?.lfsDownload }
+        set { lifetime?.lfsDownload = newValue }
+    }
+
+    /// A download changed the working tree and index; reload them and every status that reads them.
+    final func refreshAfterLFSDownload() {
+        guard !ownership.closed else {
+            NSLog("[GitX] Skipping the Git LFS refresh for a closed window")
+            return
+        }
+        NSLog("[GitX] Refreshing after a Git LFS download")
+        repository?.index.refresh()
+        refreshLocalRepositoryContent()
     }
 
     private var repositoryLocalStatusSnapshot = RepositoryLocalStatusSnapshot.unavailable
@@ -560,8 +593,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         lifetime?.statusCoalescer = nil
         focusRefreshCoordinator?.cancel()
         repositoryLocalStatusLoader?.cancel()
+        repositoryLFSStatusLoader?.cancel()
         focusRefreshCoordinator = nil
         repositoryLocalStatusLoader = nil
+        repositoryLFSStatusLoader = nil
         repositoryLocalStatusSnapshot = .unavailable
         gitLoaderSelection = nil
         if isWindowLoaded {
@@ -603,12 +638,17 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             self.repositoryLocalStatusSnapshot = snapshot
             self.updateStatus()
         }
+        repositoryLFSStatusLoader = RepositoryLFSStatusLoader(repository: repository, gitExecutablePath: selection.path) { [weak self] snapshot in
+            guard let self, self.acceptsGitLoaderResult(generation: generation, identity: identity) else { return }
+            self.repositoryStatusBarController?.updateLFS(snapshot)
+        }
         gitLoaderLifecycle.didInstall(identity)
         gitLoaderSelection = selection
         NSLog("[GitX] Installed both Git loaders generation %llu, repository %@, executable %@", generation, String(describing: identity.repository), selection.path)
         let captureInitialFocus = RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation()
         focusRefreshCoordinator?.updatePreference(enabled: captureInitialFocus)
         repositoryLocalStatusLoader?.refresh()
+        repositoryLFSStatusLoader?.refresh()
         updateStatus()
         return captureInitialFocus
     }
@@ -998,6 +1038,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 guard let self, let scope, self.ownership.accepts(scope.identity, generation: generation),
                       self.currentOwnerIdentity() == scope.identity else { return }
                 self.repositoryLocalStatusLoader?.refresh()
+                self.repositoryLFSStatusLoader?.refresh()
             }
         }
         scope.statusCoalescer?.requestRefresh()
@@ -1242,6 +1283,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if menuItem.action == #selector(toggleRepositoryStatusBar(_:)) {
             menuItem.state = ApplicationSettings.repositoryStatusBarVisible ? .on : .off
             return true
+        }
+        if menuItem.action == #selector(downloadLFSContent(_:)) {
+            return validateLFSDownload(menuItem)
         }
         let context = queryContext()
         let previous = synchronousQueryContext
@@ -2111,6 +2155,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repository?.refreshWorktrees()
         contentController?.refresh(self)
         repositoryLocalStatusLoader?.refresh()
+        repositoryLFSStatusLoader?.refresh()
         synchronizeWindowTitleWithDocumentName()
         NSLog("[GitX] Manual refresh synchronized window title: %@", window?.title ?? "")
     }
@@ -2191,6 +2236,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repositoryStatusBarController = controller
         controller.failureDetails = { [weak self] in self?.showOperationFailure($0) }
         controller.failureDismissed = { [weak self] in self?.dismissOperationFailure($0) }
+        controller.lfsDetails = { [weak self] in self?.showLFSDetails($0) }
+        if let snapshot = repositoryLFSStatusLoader?.snapshot {
+            controller.updateLFS(snapshot)
+        }
         controller.updateFailure(operationFailures.first)
         controller.install(visible: ApplicationSettings.repositoryStatusBarVisible)
         updateStatus()
