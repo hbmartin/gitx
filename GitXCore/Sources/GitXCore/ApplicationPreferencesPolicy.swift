@@ -31,6 +31,11 @@ public enum ApplicationPreferenceKey: String, CaseIterable, Sendable {
     case autoFetchScope = "PBAutoFetchScope"
     case autoFetchIntervalMinutes = "PBAutoFetchIntervalMinutes"
     case applicationIconStyle = "PBApplicationIconStyle"
+    case historyFlowPresentation = "PBHistoryFlowPresentation"
+    case historyFlowSliceDirection = "PBHistoryFlowSliceDirection"
+    case historyFlowNoiseLevel = "PBHistoryFlowNoiseLevel"
+    case historyFlowGroupsByConcern = "PBHistoryFlowGroupsByConcern"
+    case historyFlowExportFormat = "PBHistoryFlowExportFormat"
 }
 
 public enum ApplicationPreferencePolicy {
