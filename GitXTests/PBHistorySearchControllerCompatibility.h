@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (weak, nullable) IBOutlet NSSegmentedControl *stepper;
 @property (weak, nullable) IBOutlet NSTextField *numberOfMatchesField;
 @property (weak, nullable) IBOutlet NSProgressIndicator *progressIndicator;
+@property (weak, nullable) IBOutlet NSPopUpButton *modePopUp;
 
 @property PBHistorySearchMode searchMode;
 

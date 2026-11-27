@@ -30,6 +30,8 @@ final class PBHistorySearchController: NSObject {
     @IBOutlet weak var stepper: NSSegmentedControl?
     @IBOutlet weak var numberOfMatchesField: NSTextField?
     @IBOutlet weak var progressIndicator: NSProgressIndicator?
+    /// The scope bar's visible search mode control; it mirrors the search field menu's mode checkmarks.
+    @IBOutlet weak var modePopUp: NSPopUpButton?
 
     private var storedSearchMode: PBHistorySearchMode = .basic
     private var results: IndexSet?
@@ -62,8 +64,12 @@ final class PBHistorySearchController: NSObject {
     }
 
     @objc func selectSearchMode(_ sender: Any) {
-        let tag = (sender as? NSMenuItem)?.tag ?? (sender as? NSView)?.tag ?? 0
+        let tag = (sender as? NSPopUpButton)?.selectedTag()
+            ?? (sender as? NSMenuItem)?.tag
+            ?? (sender as? NSView)?.tag
+            ?? 0
         searchMode = PBSearchModeForInteger(tag)
+        Self.logger.info("Selected history search mode \(searchMode.rawValue)")
         updateSearch(self)
     }
 
@@ -121,6 +127,7 @@ final class PBHistorySearchController: NSObject {
 
     private func finishAwakingFromNib() {
         setupSearchMenuTemplate()
+        setupModePopUp()
         searchMode = PBSearchModeForInteger(PBGitDefaults.historySearchMode())
         updateUI()
         arrangedObjectsObservation = commitController?.observe(\.arrangedObjects, options: []) { [weak self] _, _ in
@@ -250,13 +257,36 @@ final class PBHistorySearchController: NSObject {
         searchFieldCell?.searchMenuTemplate = searchMenu
     }
 
+    private func setupModePopUp() {
+        guard let modePopUp else { return }
+        modePopUp.removeAllItems()
+        for mode in Self.menuModes {
+            modePopUp.addItem(withTitle: Self.label(for: mode))
+            modePopUp.lastItem?.tag = mode.rawValue
+        }
+        modePopUp.target = self
+        modePopUp.action = #selector(selectSearchMode(_:))
+        modePopUp.setAccessibilityIdentifier("GitX.History.SearchMode")
+        modePopUp.setAccessibilityLabel(
+            NSLocalizedString("Search Mode", comment: "Accessibility label of the history search mode pop-up button")
+        )
+        modePopUp.toolTip = NSLocalizedString(
+            "Choose what the search field matches",
+            comment: "Tooltip of the history search mode pop-up button"
+        )
+        modePopUp.sizeToFit()
+    }
+
     private func updateSearchMenuState() {
+        if let modePopUp, modePopUp.selectedTag() != searchMode.rawValue {
+            modePopUp.selectItem(withTag: searchMode.rawValue)
+            modePopUp.sizeToFit()
+        }
         guard let searchFieldCell, let searchMenu = searchFieldCell.searchMenuTemplate else { return }
         for mode in Self.menuModes {
             searchMenu.item(withTag: mode.rawValue)?.state = mode == searchMode ? .on : .off
         }
         searchFieldCell.searchMenuTemplate = searchMenu
-        PBGitDefaults.setHistorySearchMode(searchMode.rawValue)
     }
 
     private func updateSearchPlaceholderString() {

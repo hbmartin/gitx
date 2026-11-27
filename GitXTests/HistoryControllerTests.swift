@@ -6024,6 +6024,46 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(formatter.string(for: Date().addingTimeInterval(-600)), "10 minutes ago")
     }
 
+    func testScopeBarSearchModePopUpMirrorsTheSearchMenuPlaceholderAndPreference() throws {
+        let searchController = historyController.searchController
+        let popUp = try XCTUnwrap(searchController.modePopUp)
+        let searchFieldCell = try XCTUnwrap(searchController.searchField?.cell as? NSSearchFieldCell)
+        let menu = try XCTUnwrap(searchFieldCell.searchMenuTemplate)
+        let originalMode = searchController.searchMode
+        defer {
+            searchController.clearSearch()
+            searchController.searchMode = originalMode
+        }
+
+        XCTAssertTrue(popUp.superview is PBGitGradientBarView)
+        XCTAssertEqual(popUp.accessibilityIdentifier(), "GitX.History.SearchMode")
+        XCTAssertEqual(popUp.accessibilityLabel(), "Search Mode")
+        XCTAssertEqual(
+            popUp.itemTitles,
+            ["Subject, Author, SHA", "Commit (pickaxe)", "Commit (pickaxe regex)", "File path", "Raw"]
+        )
+        XCTAssertEqual(popUp.itemArray.map(\.tag), [1, 2, 3, 4, 5])
+        XCTAssertEqual(popUp.selectedTag(), originalMode.rawValue)
+
+        // Choosing in the pop-up checks the same mode in the search field menu and saves it.
+        popUp.selectItem(withTag: PBHistorySearchMode.path.rawValue)
+        XCTAssertTrue(try NSApp.sendAction(XCTUnwrap(popUp.action), to: popUp.target, from: popUp))
+        XCTAssertEqual(searchController.searchMode, .path)
+        XCTAssertEqual(searchFieldCell.placeholderString, "File path")
+        XCTAssertEqual(menu.items.filter { $0.state == .on }.map(\.tag), [PBHistorySearchMode.path.rawValue])
+        XCTAssertEqual(PBGitDefaults.historySearchMode(), PBHistorySearchMode.path.rawValue)
+
+        // Choosing in the search field menu, or a scripted search, moves the pop-up.
+        try searchController.selectSearchMode(XCTUnwrap(menu.item(withTag: PBHistorySearchMode.raw.rawValue)))
+        XCTAssertEqual(popUp.titleOfSelectedItem, "Raw")
+        searchController.setHistorySearch("needle", mode: .pickaxe)
+        XCTAssertEqual(popUp.titleOfSelectedItem, "Commit (pickaxe)")
+        XCTAssertEqual(PBGitDefaults.historySearchMode(), PBHistorySearchMode.pickaxe.rawValue)
+        XCTAssertGreaterThan(popUp.frame.width, popUp.intrinsicContentSize.width - 1)
+
+        try attachScreenshot(of: XCTUnwrap(popUp.superview), named: "PR2-History-Search-Mode-Scope-Bar")
+    }
+
     func testSearchMenuTemplateTagsExactlyOneRecentsTitleItem() throws {
         let searchField = try XCTUnwrap(historyController.searchController.searchField)
         let searchFieldCell = try XCTUnwrap(searchField.cell as? NSSearchFieldCell)
