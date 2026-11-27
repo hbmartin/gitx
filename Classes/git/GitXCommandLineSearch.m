@@ -57,7 +57,12 @@ NSString *GitXCommandLineSearchQuotedArgument(NSString *argument)
 	});
 	if (argument.length > 0 && [argument rangeOfCharacterFromSet:special].location == NSNotFound)
 		return argument;
-	NSString *escaped = [argument stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
+	// A literal search also finds quotes followed by combining marks, which the search tokenizer
+	// reads as separate Unicode scalars.
+	NSString *escaped = [argument stringByReplacingOccurrencesOfString:@"'"
+															withString:@"'\\''"
+															   options:NSLiteralSearch
+																 range:NSMakeRange(0, argument.length)];
 	return [NSString stringWithFormat:@"'%@'", escaped];
 }
 

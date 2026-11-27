@@ -355,6 +355,37 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 	[self waitForExpectations:@[ notification ] timeout:2.0];
 }
 
+- (void)testWatcherCallbackReportsSharedReferenceEventsDeterministically
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	[watcher stop];
+	PBGitRepositoryWatcherCallbackContext *context =
+		[[PBGitRepositoryWatcherCallbackContext alloc] initWithWatcher:watcher];
+	// References live in the common Git directory, so they report as shared repository events.
+	NSString *referencePath = [[watcher valueForKey:@"commonDir"] stringByAppendingPathComponent:@"refs/heads/shared"];
+	NSArray<NSString *> *eventPaths = @[ referencePath ];
+	FSEventStreamEventFlags eventFlags[] = {kFSEventStreamEventFlagNone};
+	FSEventStreamEventId eventIds[] = {3};
+	XCTestExpectation *notification =
+		[self expectationForNotification:PBGitRepositoryEventNotification
+								  object:self.repository
+								 handler:^BOOL(NSNotification *note) {
+									 NSUInteger eventType =
+										 [note.userInfo[kPBGitRepositoryEventTypeUserInfoKey] unsignedIntegerValue];
+									 NSArray<NSString *> *paths = note.userInfo[kPBGitRepositoryEventPathsUserInfoKey];
+									 return (eventType & PBGitRepositoryWatcherEventTypeGitDirectory) != 0 && [paths containsObject:referencePath];
+								 }];
+
+	PBGitRepositoryWatcherCallback(NULL,
+								   (__bridge void *)context,
+								   eventPaths.count,
+								   (__bridge void *)eventPaths,
+								   eventFlags,
+								   eventIds);
+
+	[self waitForExpectations:@[ notification ] timeout:2.0];
+}
+
 - (void)testWorkDirectoryCallbackIgnoresOutsideAndInitiallyIgnoredPaths
 {
 	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];

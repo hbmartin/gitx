@@ -40,6 +40,18 @@ final class HistorySearchArgumentSyntaxTests: XCTestCase {
         XCTAssertEqual(arguments(#"a "" b"#), .failure(.emptyArgument(index: 1)))
     }
 
+    func testDelimitersFollowedByCombiningMarksAreStillRecognized() {
+        // Swift groups a delimiter and a following combining mark into one Character, so the
+        // syntax is read as Unicode scalars.
+        XCTAssertEqual(arguments("'\u{0301} notes.txt'"), .success(["\u{0301} notes.txt"]))
+        XCTAssertEqual(arguments("\"\u{0301}x\""), .success(["\u{0301}x"]))
+        XCTAssertEqual(arguments("one \u{0301}two"), .success(["one", "\u{0301}two"]))
+        XCTAssertEqual(arguments("a\\'\u{0301}"), .success(["a'\u{0301}"]))
+        XCTAssertEqual(arguments("don'\u{0301}t"), .failure(.unclosedQuote("'")))
+        XCTAssertEqual(HistorySearchArgumentSyntax.quoted("it'\u{0301}s"), "'it'\\''\u{0301}s'")
+        XCTAssertEqual(HistorySearchArgumentSyntax.quoted("a\u{0301}b"), "a\u{0301}b")
+    }
+
     func testQuotedAndJoinedRoundTripThroughTheParser() {
         let corpus = [
             "plain",
@@ -51,6 +63,12 @@ final class HistorySearchArgumentSyntaxTests: XCTestCase {
             "東京 crème",
             "--author=GitX Tests",
             "nested/tracked.txt",
+            "\u{0301} notes.txt",
+            "it'\u{0301}s",
+            "\u{0301}",
+            " \u{0301}",
+            "\\\u{0301}",
+            "\"\u{0301}",
         ]
 
         XCTAssertEqual(HistorySearchArgumentSyntax.quoted("plain"), "plain")

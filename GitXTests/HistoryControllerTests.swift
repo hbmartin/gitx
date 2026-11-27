@@ -6119,6 +6119,61 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(searchField.stringValue, "prefix  東京 crème  ")
     }
 
+    func testSupersededSearchResultsCannotReplaceTheNewerQueryState() throws {
+        let restoreWatcher = try disableRepositoryWatcher()
+        defer { restoreWatcher() }
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let started = testArtifactDirectory.appendingPathComponent("stale-search-started")
+        let terminated = testArtifactDirectory.appendingPathComponent("stale-search-terminated")
+        let wrapper = try installStaleHistorySearchGitWrapper(started: started, terminated: terminated)
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let matches = try XCTUnwrap(searchController.numberOfMatchesField)
+        func startStaleSearch() {
+            for marker in [started, terminated] {
+                try? FileManager.default.removeItem(at: marker)
+            }
+            searchController.searchMode = .raw
+            searchField.stringValue = "--grep=GitXStaleHistorySearch"
+            searchController.updateSearch(self)
+            XCTAssertTrue(
+                waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: started.path) },
+                "The superseded history search never started"
+            )
+        }
+        func waitForStaleSearchToFinish() {
+            XCTAssertTrue(
+                waitForCondition(timeout: 10) {
+                    FileManager.default.fileExists(atPath: terminated.path)
+                        && searchController.value(forKey: "backgroundSearchTask") == nil
+                },
+                "The superseded history search did not finish"
+            )
+            // Let the superseded task's completion reach the main queue.
+            pumpRunLoop(for: 0.5)
+        }
+
+        // The running search exits successfully with a match after it is terminated; the newer
+        // malformed query keeps its explanation.
+        startStaleSearch()
+        searchField.stringValue = "--grep='unclosed"
+        searchController.updateSearch(self)
+        XCTAssertEqual(matches.stringValue, "Unclosed quote")
+        waitForStaleSearchToFinish()
+        XCTAssertEqual(matches.stringValue, "Unclosed quote")
+        XCTAssertFalse(searchController.hasSearchResults())
+
+        // A newer valid query keeps its own results.
+        startStaleSearch()
+        searchField.stringValue = "--grep=NoCommitHasThisSubject"
+        searchController.updateSearch(self)
+        waitForStaleSearchToFinish()
+        XCTAssertEqual(matches.stringValue, "Not found")
+        XCTAssertFalse(searchController.hasSearchResults())
+    }
+
     func testPathMenuDisablesCommitActionsWithoutSelection() throws {
         historyController.selectedCommits = []
 
@@ -7023,6 +7078,30 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 while true; do
                     sleep 1
                 done
+            fi
+        done
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return wrapper
+    }
+
+    /// Blocks only the raw history search for `--grep=GitXStaleHistorySearch`. When terminated it still
+    /// prints the newest commit and exits successfully, like a search that finished just before the signal.
+    private func installStaleHistorySearchGitWrapper(started: URL, terminated: URL) throws -> URL {
+        let wrapper = testArtifactDirectory.appendingPathComponent("git-stale-history-search-wrapper")
+        let startedPath = shellSingleQuoted(started.path)
+        let terminatedPath = shellSingleQuoted(terminated.path)
+        let script = """
+        #!/bin/bash
+        for argument in "$@"; do
+            if [[ "$argument" == "--grep=GitXStaleHistorySearch" ]]; then
+                trap '/usr/bin/git log -1 --pretty=format:%H; : > \(terminatedPath); exit 0' TERM
+                : > \(startedPath)
+                /bin/sleep 30 &
+                wait $!
+                exit 0
             fi
         done
         exec /usr/bin/git "$@"
