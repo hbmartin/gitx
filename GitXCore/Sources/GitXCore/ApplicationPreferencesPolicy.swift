@@ -25,6 +25,8 @@ public enum ApplicationPreferenceKey: String, CaseIterable, Sendable {
     case patchExportMode = "PBPatchExportMode"
     case branchFilter = "PBBranchFilter"
     case historySearchMode = "PBHistorySearchMode"
+    case savedHistorySearches = "PBSavedHistorySearches"
+    case historySearchRecents = "PBHistorySearchRecents"
     case appearance = "PBAppearancePreference"
     case autoFetchScope = "PBAutoFetchScope"
     case autoFetchIntervalMinutes = "PBAutoFetchIntervalMinutes"
