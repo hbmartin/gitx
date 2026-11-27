@@ -3871,7 +3871,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
                     )
                     for permission in ForgeRepositoryPermission.allCases {
                         XCTAssertEqual(
-                            ForgeGitHubPullRequestDependencyProvider.classicAuthority(permission: permission, scopes: scopes, repositoryIsPublic: isPublic),
+                            GitHubCapabilityMapper.classicAuthority(permission: permission, scopes: scopes, repositoryIsPublic: isPublic),
                             evidence.authority(for: permission),
                             "\(source) \(scopes.sorted()) public=\(isPublic) \(permission)"
                         )
@@ -3883,7 +3883,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
 
     func testClassicScopeMappingUsesKnownScopeAndRepositoryVisibilityWithoutGuessing() {
         XCTAssertEqual(
-            ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            GitHubCapabilityMapper.classicAuthority(
                 permission: .pullRequests,
                 scopes: ["repo"],
                 repositoryIsPublic: false
@@ -3891,7 +3891,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
             .known(.write)
         )
         XCTAssertEqual(
-            ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            GitHubCapabilityMapper.classicAuthority(
                 permission: .contents,
                 scopes: ["public_repo"],
                 repositoryIsPublic: true
@@ -3899,7 +3899,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
             .known(.write)
         )
         XCTAssertEqual(
-            ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            GitHubCapabilityMapper.classicAuthority(
                 permission: .contents,
                 scopes: ["public_repo"],
                 repositoryIsPublic: false
@@ -3907,7 +3907,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
             .unknown
         )
         XCTAssertEqual(
-            ForgeGitHubPullRequestDependencyProvider.classicAuthority(
+            GitHubCapabilityMapper.classicAuthority(
                 permission: .pullRequests,
                 scopes: [],
                 repositoryIsPublic: true

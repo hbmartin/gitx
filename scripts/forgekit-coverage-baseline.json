@@ -30,6 +30,7 @@
     "ForgeKit/Sources/ForgeKit/ForgeSQLitePersistence.swift": 0.9966,
     "ForgeKit/Sources/ForgeKit/ForgeStatusPresentation.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeWebURLPolicy.swift": 0.9777,
+    "ForgeKit/Sources/ForgeKit/ForgeWorkflow.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAnonymousRESTAdapter.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAttentionSnapshotFetcher.swift": 0.9827,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthentication.swift": 1.0,
@@ -45,6 +46,7 @@
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationResult.swift": 0.9951,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationSessionGate.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadAdapter.swift": 0.9916,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadResult.swift": 0.9923
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadResult.swift": 0.9923,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubWorkflowMapping.swift": 0.9968
   }
 }

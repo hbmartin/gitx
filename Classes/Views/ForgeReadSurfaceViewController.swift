@@ -216,6 +216,11 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         listController.setVisibleColumns(columns)
     }
 
+    /// Shows workflow runs in the pull request inspector (ADR 0015).
+    func setWorkflowInspector(_ service: ForgeWorkflowInspectionService?) {
+        inspectorController.workflowInspector = service
+    }
+
     func updateEditPullRequestControl(
         _ presentation: ForgeMutationControlPresentation,
         handler: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?
@@ -1156,6 +1161,9 @@ final class ForgeReadInspectorViewController: NSViewController {
     var onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?
     var onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)?
     var editPullRequestControl = ForgeMutationControlPresentation.hidden
+    /// Reads a pull request's workflow runs; without it the inspector lists checks as one Details row.
+    var workflowInspector: ForgeWorkflowInspectionService?
+    private(set) weak var workflowChecksView: ForgeWorkflowChecksView?
 
     private let markdownRenderer: any ForgeReadMarkdownRendering
     private let avatarRenderer: any ForgeReadAvatarRendering
@@ -1401,10 +1409,30 @@ final class ForgeReadInspectorViewController: NSViewController {
             freshnessView = freshness
         }
 
+        workflowChecksView = nil
+        let workflowPullRequest: ForgePullRequestSummary? = if let workflowInspector,
+                                                               case let .pullRequest(summary) = presentation.item,
+                                                               workflowInspector.canInspect(summary)
+        {
+            summary
+        } else {
+            nil
+        }
         contentStack.addArrangedSubview(separator())
         contentStack.addArrangedSubview(sectionTitle("Details"))
-        for entry in presentation.metadata {
+        for entry in presentation.metadata where workflowPullRequest == nil || entry.title != "Checks" {
             contentStack.addArrangedSubview(metadataRow(entry))
+        }
+        if let workflowPullRequest, let workflowInspector {
+            contentStack.addArrangedSubview(separator())
+            contentStack.addArrangedSubview(sectionTitle("Checks"))
+            let checks = ForgeWorkflowChecksView(service: workflowInspector, pullRequest: workflowPullRequest)
+            checks.openTarget = { [weak self] target in self?.openWorkflowTarget(target) }
+            checks.translatesAutoresizingMaskIntoConstraints = false
+            contentStack.addArrangedSubview(checks)
+            checks.widthAnchor.constraint(equalTo: contentStack.widthAnchor, constant: -28).isActive = true
+            workflowChecksView = checks
+            checks.start()
         }
 
         contentStack.addArrangedSubview(separator())
@@ -1457,7 +1485,7 @@ final class ForgeReadInspectorViewController: NSViewController {
             continuationButtons.append(button)
             contentStack.addArrangedSubview(button)
         }
-        if presentation.nextCheckCursor != nil {
+        if presentation.nextCheckCursor != nil, workflowPullRequest == nil {
             let button = NSButton(title: "Load More Checks", target: self, action: #selector(loadMoreChecks(_:)))
             button.bezelStyle = .rounded
             button.setAccessibilityIdentifier("ForgeInspectorLoadMoreChecks")
@@ -1810,6 +1838,20 @@ final class ForgeReadInspectorViewController: NSViewController {
     @objc private func openInBrowser(_: Any?) {
         guard let routedDestination else { return }
         destinationRouter.openInBrowser(destination: routedDestination)
+    }
+
+    /// Opens a workflow run or job on GitHub, or another app's check page through the link policy, which
+    /// confirms an untrusted origin first.
+    func openWorkflowTarget(_ target: ForgeWorkflowLinkTarget) {
+        switch target {
+        case let .destination(destination):
+            destinationRouter.openInBrowser(destination: destination)
+        case let .url(url):
+            guard let router = destinationRouter as? any ForgeMarkdownNavigationRouting,
+                  let link = try? ForgeHTTPSLink(url.absoluteString)
+            else { return }
+            router.activateMarkdownLink(.https(link))
+        }
     }
 
     @objc private func editPullRequest(_: Any?) {

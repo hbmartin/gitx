@@ -20,6 +20,17 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
     private let columnsPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let markUnseenButton = NSButton(title: "Mark Unseen", target: nil, action: nil)
     private let markAllSeenButton = NSButton(title: "Mark All Seen", target: nil, action: nil)
+    private let showFailedJobsButton = NSButton(title: "Show Failed Jobs…", target: nil, action: nil)
+    private var failedJobsSheet: ForgeWorkflowChecksSheet?
+
+    /// Reads pull requests' workflow runs in the bound repository; set once the window's credential is known.
+    var workflowInspection: ForgeWorkflowInspectionService? {
+        didSet {
+            inspectorController.workflowInspector = workflowInspection
+            updateActionState()
+        }
+    }
+
     private let inspectorController: ForgeReadInspectorViewController
     private var state: ForgeAttentionViewState
     private var repositoryViewState: RepositoryForgeAttentionViewState
@@ -280,7 +291,12 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         markAllSeenButton.action = #selector(markAllSeen(_:))
         markAllSeenButton.bezelStyle = .rounded
         markAllSeenButton.setAccessibilityIdentifier("ForgeAttentionMarkAllSeen")
-        let footer = NSStackView(views: [progress, statusLabel, NSView(), refreshButton, markUnseenButton, markAllSeenButton])
+        showFailedJobsButton.target = self
+        showFailedJobsButton.action = #selector(showFailedJobs(_:))
+        showFailedJobsButton.bezelStyle = .rounded
+        showFailedJobsButton.setAccessibilityIdentifier("ForgeAttentionShowFailedJobs")
+        showFailedJobsButton.toolTip = "Shows the selected pull request’s workflow runs and their failed jobs."
+        let footer = NSStackView(views: [progress, statusLabel, NSView(), showFailedJobsButton, refreshButton, markUnseenButton, markAllSeenButton])
         footer.orientation = .horizontal
         footer.alignment = .centerY
         footer.spacing = 8
@@ -599,6 +615,29 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         let selected = rows.indices.contains(tableView.selectedRow)
         markUnseenButton.isEnabled = selected
         markAllSeenButton.isEnabled = !rows.isEmpty
+        showFailedJobsButton.isHidden = workflowInspection == nil
+        showFailedJobsButton.isEnabled = selectedFailedCheckPullRequest != nil
+    }
+
+    /// The selected row's pull request when the row is a failed check GitX can inspect.
+    var selectedFailedCheckPullRequest: ForgePullRequestSummary? {
+        guard let workflowInspection, rows.indices.contains(tableView.selectedRow) else { return nil }
+        let itemID = rows[tableView.selectedRow].itemID
+        guard itemID.kind == .failedCheck,
+              let entry = entries.first(where: { $0.record.item.id == itemID }),
+              case let .pullRequest(summary) = entry.subject,
+              workflowInspection.canInspect(summary)
+        else { return nil }
+        return summary
+    }
+
+    @objc func showFailedJobs(_: Any?) {
+        guard let workflowInspection, let pullRequest = selectedFailedCheckPullRequest, let window = view.window else { return }
+        Self.logger.info("Showing failed jobs for an Attention item")
+        let sheet = ForgeWorkflowChecksSheet(service: workflowInspection, pullRequest: pullRequest)
+        sheet.checks.openTarget = { [weak self] target in self?.inspectorController.openWorkflowTarget(target) }
+        failedJobsSheet = sheet
+        sheet.present(for: window) { [weak self] in self?.failedJobsSheet = nil }
     }
 
     private func persistAttentionSelection(_ itemID: ForgeAttentionItemID?) {

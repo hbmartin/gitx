@@ -15,7 +15,9 @@ extension GraphQLError {
             case let .index(index): String(index)
             }
         } ?? []
-        let reportedClassification = (extensions?["type"] as? String)
+        // GitHub.com reports `type` beside `message`; other GraphQL servers nest it in `extensions`.
+        let reportedClassification = (self["type"] as? String)
+            ?? (extensions?["type"] as? String)
             ?? (extensions?["code"] as? String)
         let safeClassifications: Set = [
             "FORBIDDEN", "NOT_FOUND", "PARTIAL", "RATE_LIMITED", "UNAUTHORIZED",

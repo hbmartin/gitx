@@ -23,7 +23,8 @@ public struct GitHubMutationAuthorization: Hashable, Sendable {
             else {
                 throw GitHubMutationError.explicitConfirmationRequired
             }
-        case .unavailable:
+        case .unverifiedRead, .unavailable:
+            // An unverified read never authorizes a mutation.
             throw GitHubMutationError.capabilityUnavailable
         }
         self.key = key

@@ -65,6 +65,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private var pullRequestReviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)?
     private var attentionController: ForgeAttentionViewController?
     private var attentionSession: RepositoryAttentionSession?
+    /// Reads pull requests' workflow runs for the signed-in credential (ADR 0015).
+    private(set) var workflowInspection: ForgeWorkflowInspectionService?
     private var nativeOpener: RepositoryForgeNativeDestinationOpener?
     private var destinationRouter: ForgeCentralDestinationRouter?
     private var repositoryFacts: ForgeRepositoryFacts?
@@ -359,6 +361,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
         repositoryFacts = nil
         readCapabilities = nil
         pullRequestMutationService = nil
+        workflowInspection?.invalidate()
+        workflowInspection = nil
         createPullRequestControl = .hidden
         editPullRequestControl = .hidden
         syncForkControl = .hidden
@@ -557,6 +561,15 @@ final class RepositoryForgeCollaborationController: PBViewController {
             reviewApplicationSession: reviewApplicationSession,
             reviewAccountID: account.id
         )
+        let workflows = ForgeWorkflowInspectionService(reader: ForgeGitHubWorkflowReader(
+            adapter: adapter,
+            accountID: account.id,
+            repository: binding.primaryRepository,
+            capabilities: pullRequestMutationService ?? UnavailableRepositoryPullRequestMutationService(),
+            state: services.githubMutationState
+        ))
+        workflowInspection = workflows
+        readController?.setWorkflowInspector(workflows)
         let session = try RepositoryAttentionSession(
             account: account,
             repositoryIdentity: binding.primaryRepository,
@@ -584,12 +597,14 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 )
             }
         )
+        attentionController?.workflowInspection = workflows
         session.start()
         Self.logger.notice("Started exact-account GitHub collaboration session")
     }
 
     private func installPublic(binding: ForgeRepositoryBinding) {
         pullRequestMutationService = nil
+        workflowInspection = nil
         createPullRequestControl = .publicReadOnly(action: "create a Pull Request")
         editPullRequestControl = .publicReadOnly(action: "edit this Pull Request")
         syncForkControl = .publicReadOnly(action: "synchronize this fork")

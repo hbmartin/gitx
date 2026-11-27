@@ -7,7 +7,8 @@ final class ForgeCapabilityTests: XCTestCase {
         let levels = Dictionary(uniqueKeysWithValues: ForgePermissionRequestEnvelope.milestone3.requirements.map {
             ($0.permission, $0.level)
         })
-        XCTAssertEqual(Set(levels.keys), Set(ForgeRepositoryPermission.allCases))
+        XCTAssertEqual(Set(levels.keys), Set(ForgeRepositoryPermission.allCases).subtracting([.actions]))
+        XCTAssertNil(levels[.actions], "Actions is ADR 0015's separate addition")
         XCTAssertEqual(levels[.metadata], .read)
         XCTAssertEqual(levels[.contents], .write)
         XCTAssertEqual(levels[.pullRequests], .write)
@@ -25,6 +26,18 @@ final class ForgeCapabilityTests: XCTestCase {
             ),
             ForgePermissionRequestEnvelope.milestone3
         )
+    }
+
+    func testActionsInspectionRequestsOnlyReadingWorkflowRuns() {
+        XCTAssertEqual(
+            ForgePermissionRequestEnvelope.actionsInspection.requirements,
+            [ForgePermissionRequirement(permission: .actions, level: .read)]
+        )
+        let requested = Set(
+            (ForgePermissionRequestEnvelope.milestone3.requirements + ForgePermissionRequestEnvelope.actionsInspection.requirements)
+                .map(\.permission)
+        )
+        XCTAssertEqual(requested, Set(ForgeRepositoryPermission.allCases))
     }
 
     func testPermissionContainersRejectDuplicateEvidenceAndTreatMissingAsUnknown() throws {
@@ -100,7 +113,7 @@ final class ForgeCapabilityTests: XCTestCase {
     func testEveryOperationHasTheAcceptedPermissionAndRoleContract() {
         let readOperations: Set<ForgeOperation> = [
             .readRepositoryMetadata, .listCloneRepositories, .readRepositoryContents,
-            .readPullRequests, .readIssues, .readChecks, .readCommitStatuses,
+            .readPullRequests, .readIssues, .readChecks, .readCommitStatuses, .readWorkflowRuns,
         ]
         XCTAssertEqual(Set(ForgeOperation.allCases.filter { !$0.isWrite }), readOperations)
         XCTAssertEqual(Set(ForgeOperation.allCases.filter(\.isWrite)).count, 19)
@@ -116,6 +129,8 @@ final class ForgeCapabilityTests: XCTestCase {
         XCTAssertEqual(requirements(.readIssues), [.issues: .read])
         XCTAssertEqual(requirements(.readChecks), [.checks: .read])
         XCTAssertEqual(requirements(.readCommitStatuses), [.commitStatuses: .read])
+        XCTAssertEqual(requirements(.readWorkflowRuns), [.actions: .read])
+        XCTAssertEqual(ForgeOperation.allCases.filter(\.allowsUnverifiedRead), [.readWorkflowRuns])
         XCTAssertEqual(requirements(.syncFork), [.contents: .write])
         XCTAssertEqual(requirements(.deleteHeadBranch), [.contents: .write])
         XCTAssertEqual(requirements(.updatePullRequestBranch), [.contents: .write, .pullRequests: .write])
@@ -144,6 +159,78 @@ final class ForgeCapabilityTests: XCTestCase {
         XCTAssertEqual(
             try capability(context: context, operation: .mergePullRequest, role: .known(.write)),
             .verified(.knownAuthority)
+        )
+    }
+
+    func testWorkflowRunReadsAreUnverifiedUntilTheForgeAnswers() throws {
+        let context = try makeContext()
+        let attempt = ForgeUnverifiedReadAttempt(key: key(context, .readWorkflowRuns))
+        XCTAssertEqual(try capability(context: context, operation: .readWorkflowRuns), .unverifiedRead(attempt))
+        XCTAssertEqual(
+            try capability(context: context, operation: .readWorkflowRuns, permissionFreshness: .stale, accessFreshness: .cached),
+            .unverifiedRead(attempt),
+            "Reads do not need current evidence"
+        )
+        XCTAssertEqual(
+            try capability(context: context, operation: .readWorkflowRuns, accessStatus: .unknown, role: .unknown),
+            .unverifiedRead(attempt)
+        )
+
+        let granted = try ForgePermissionEvidence(
+            credential: context.credential,
+            repository: context.repository,
+            freshness: .current,
+            grants: observedMilestone3Grants() + [ForgePermissionGrant(permission: .actions, authority: .known(.read))]
+        )
+        XCTAssertEqual(try capability(context: context, operation: .readWorkflowRuns, permissionEvidence: granted), .verified(.knownAuthority))
+        let revoked = try evidence(context, permission: .actions, authority: .known(.unavailable))
+        XCTAssertEqual(
+            try capability(context: context, operation: .readWorkflowRuns, permissionEvidence: revoked),
+            .unavailable(.missingPermission(.actions))
+        )
+
+        var ledger = ForgeCapabilityPromotionLedger()
+        for outcome in [ForgeCapabilityAttemptOutcome.nonAuthorizationFailure, .cancelled, .unknownOutcome] {
+            ledger.record(outcome, for: attempt)
+        }
+        XCTAssertEqual(ledger, ForgeCapabilityPromotionLedger(), "Only success and denial settle the read")
+        ledger.record(.success, for: attempt)
+        XCTAssertEqual(try capability(context: context, operation: .readWorkflowRuns, promotions: ledger), .verified(.successfulConfirmedOperation))
+        ledger.record(.authorizationDenied, for: attempt)
+        XCTAssertTrue(ledger.deniesRead(attempt.key))
+        XCTAssertFalse(ledger.contains(attempt.key))
+        XCTAssertEqual(
+            try capability(context: context, operation: .readWorkflowRuns, promotions: ledger),
+            .unavailable(.missingPermission(.actions))
+        )
+        XCTAssertEqual(
+            try capability(context: context, operation: .readWorkflowRuns, permissionEvidence: granted, promotions: ledger),
+            .unavailable(.missingPermission(.actions)),
+            "A denial from the forge outranks stored evidence for the session"
+        )
+        ledger.record(.success, for: attempt)
+        XCTAssertFalse(ledger.deniesRead(attempt.key))
+
+        var authoritative = ForgeCapabilityPromotionLedger()
+        authoritative.recordAuthoritativeDenial(for: attempt.key)
+        authoritative.recordAuthoritativeDenial(for: key(context, .readPullRequests))
+        XCTAssertTrue(authoritative.deniesRead(attempt.key))
+        XCTAssertFalse(authoritative.deniesRead(key(context, .readPullRequests)), "Other reads keep their evidence rules")
+        authoritative.invalidate(credential: context.credential)
+        XCTAssertFalse(authoritative.deniesRead(attempt.key))
+
+        var retained = ForgeCapabilityPromotionLedger()
+        retained.record(.authorizationDenied, for: attempt)
+        retained.retainOnlyCurrentCredential(for: context.account)
+        XCTAssertTrue(retained.deniesRead(attempt.key))
+        try retained.retainOnlyCurrentCredential(for: makeContext(generation: 2).account)
+        XCTAssertFalse(retained.deniesRead(attempt.key), "A replaced credential's denials are forgotten")
+
+        let unknownPullRequests = try evidence(context, permission: .pullRequests, authority: .unknown)
+        XCTAssertEqual(
+            try capability(context: context, operation: .readPullRequests, permissionEvidence: unknownPullRequests),
+            .unavailable(.authorizationEvidenceUnavailable),
+            "Reads that do not opt in still need evidence"
         )
     }
 

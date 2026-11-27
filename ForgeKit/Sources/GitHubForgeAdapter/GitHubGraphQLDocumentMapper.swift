@@ -425,7 +425,8 @@ struct GitHubGraphQLDocumentMapper {
     }
 #endif
 
-private extension GitHubGraphQLDocumentMapper {
+/// Internal so the workflow mapping (GitHubWorkflowMapping.swift) shares the same helpers.
+extension GitHubGraphQLDocumentMapper {
     struct NodeMapping<Value> {
         let values: [Value]
         let isPartial: Bool

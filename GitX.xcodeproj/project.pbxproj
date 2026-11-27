@@ -381,10 +381,13 @@
 		F0B100000000000000000009 /* ForgeApplicationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000014 /* ForgeApplicationServices.swift */; };
 		F0C100000000000000000001 /* ForgeReadSurfaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */; };
 		F0C100000000000000000002 /* ForgeReadSurfaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */; };
+		73B2EFC9F6D679513DBF4461 /* ForgeWorkflowChecksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40065101B369F58A7F9507A /* ForgeWorkflowChecksView.swift */; };
 		F0C100000000000000000003 /* ForgeReadSurfaceModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */; };
+		87B662FE9EA2DD1C4453BB2D /* ForgeWorkflowInspectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73C072F52F4AC041FE03F057 /* ForgeWorkflowInspectionTests.swift */; };
 		F0C100000000000000000004 /* ForgeReadSurfaceViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */; };
 		F0C100000000000000000005 /* ForgeReadSurfaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */; };
 		F0C100000000000000000006 /* ForgeReadSurfaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */; };
+		0C99E371CF008F544F45DA13 /* ForgeWorkflowChecksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40065101B369F58A7F9507A /* ForgeWorkflowChecksView.swift */; };
 		D8F800000000000000000001 /* ForgeApplicationNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000101 /* ForgeApplicationNotifications.swift */; };
 		D8F800000000000000000002 /* ForgeApplicationNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000101 /* ForgeApplicationNotifications.swift */; };
 		D8F800000000000000000003 /* ForgeReadSurfaceRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000102 /* ForgeReadSurfaceRendering.swift */; };
@@ -401,6 +404,8 @@
 		92E0C27A01C81AC5884CEC49 /* WindowModalPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49113795A92D208CD09AB5CC /* WindowModalPresenter.swift */; };
 		F0D100000000000000000002 /* ForgeExternalLinkRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */; };
 		1252ABBBD338AB1340162E55 /* WindowModalPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49113795A92D208CD09AB5CC /* WindowModalPresenter.swift */; };
+		7BC1BE0CB70ED632E8D46AD7 /* ForgeWorkflowInspectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78532209F7EB954BBF1B0F17 /* ForgeWorkflowInspectionService.swift */; };
+		DADE47C5B2E3924DCB5B5DE4 /* ForgeWorkflowInspectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78532209F7EB954BBF1B0F17 /* ForgeWorkflowInspectionService.swift */; };
 		F0D100000000000000000003 /* ForgeExternalLinkRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */; };
 		F0E100000000000000000001 /* ForgeAccountsPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0E100000000000000000011 /* ForgeAccountsPreferences.swift */; };
 		F0E100000000000000000002 /* ForgeAccountsPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0E100000000000000000011 /* ForgeAccountsPreferences.swift */; };
@@ -1156,7 +1161,9 @@
 		F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationCompositionTests.swift; sourceTree = "<group>"; };
 		F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceModels.swift; sourceTree = "<group>"; };
 		F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceViewController.swift; sourceTree = "<group>"; };
+		C40065101B369F58A7F9507A /* ForgeWorkflowChecksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeWorkflowChecksView.swift; sourceTree = "<group>"; };
 		F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceModelsTests.swift; sourceTree = "<group>"; };
+		73C072F52F4AC041FE03F057 /* ForgeWorkflowInspectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeWorkflowInspectionTests.swift; sourceTree = "<group>"; };
 		F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceViewControllerTests.swift; sourceTree = "<group>"; };
 		D8F800000000000000000101 /* ForgeApplicationNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationNotifications.swift; sourceTree = "<group>"; };
 		D8F800000000000000000102 /* ForgeReadSurfaceRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceRendering.swift; sourceTree = "<group>"; };
@@ -1166,6 +1173,7 @@
 		D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeCollaborationController.swift; sourceTree = "<group>"; };
 		F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeExternalLinkRouting.swift; sourceTree = "<group>"; };
 		49113795A92D208CD09AB5CC /* WindowModalPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowModalPresenter.swift; sourceTree = "<group>"; };
+		78532209F7EB954BBF1B0F17 /* ForgeWorkflowInspectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeWorkflowInspectionService.swift; sourceTree = "<group>"; };
 		F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeExternalLinkRoutingTests.swift; sourceTree = "<group>"; };
 		F0E100000000000000000011 /* ForgeAccountsPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountsPreferences.swift; sourceTree = "<group>"; };
 		F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestWorkflow.swift; sourceTree = "<group>"; };
@@ -1571,6 +1579,7 @@
 				D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */,
 				F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */,
 				49113795A92D208CD09AB5CC /* WindowModalPresenter.swift */,
+				78532209F7EB954BBF1B0F17 /* ForgeWorkflowInspectionService.swift */,
 				F0E100000000000000000011 /* ForgeAccountsPreferences.swift */,
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
 				FD2000000000000000000011 /* FlowDeltaAdapters.swift */,
@@ -1826,6 +1835,7 @@
 				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
 				F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */,
 				F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */,
+				C40065101B369F58A7F9507A /* ForgeWorkflowChecksView.swift */,
 				D8F800000000000000000102 /* ForgeReadSurfaceRendering.swift */,
 				D8F800000000000000000105 /* ForgeAttentionViewController.swift */,
 				F0F200000000000000000105 /* ForgePullRequestSheetController.swift */,
@@ -2015,6 +2025,7 @@
 				F0B100000000000000000015 /* ForgeAccountLifecycleTests.swift */,
 				F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */,
 				F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */,
+				73C072F52F4AC041FE03F057 /* ForgeWorkflowInspectionTests.swift */,
 				F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */,
 				F0B200000000000000000012 /* GitHubReadCompositionTests.swift */,
 				F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */,
@@ -2543,6 +2554,7 @@
 				C0DAA2000000000000000001 /* ForgeAvatarLoading.swift in Sources */,
 				F0C100000000000000000001 /* ForgeReadSurfaceModels.swift in Sources */,
 				F0C100000000000000000002 /* ForgeReadSurfaceViewController.swift in Sources */,
+				73B2EFC9F6D679513DBF4461 /* ForgeWorkflowChecksView.swift in Sources */,
 				D8F800000000000000000001 /* ForgeApplicationNotifications.swift in Sources */,
 				D8F800000000000000000003 /* ForgeReadSurfaceRendering.swift in Sources */,
 				D8F800000000000000000005 /* GitHubAnonymousReadSurfaceService.swift in Sources */,
@@ -2599,6 +2611,7 @@
 				F0B200000000000000000003 /* GitHubReadComposition.swift in Sources */,
 				F0D100000000000000000001 /* ForgeExternalLinkRouting.swift in Sources */,
 				92E0C27A01C81AC5884CEC49 /* WindowModalPresenter.swift in Sources */,
+				7BC1BE0CB70ED632E8D46AD7 /* ForgeWorkflowInspectionService.swift in Sources */,
 				F0E100000000000000000001 /* ForgeAccountsPreferences.swift in Sources */,
 				F0F200000000000000000001 /* RepositoryPullRequestWorkflow.swift in Sources */,
 				F0F200000000000000000002 /* RepositoryPullRequestGitOperations.swift in Sources */,
@@ -2839,9 +2852,11 @@
 				F0B100000000000000000005 /* ForgeAccountLifecycleTests.swift in Sources */,
 				F0B100000000000000000006 /* ForgeApplicationCompositionTests.swift in Sources */,
 				F0C100000000000000000003 /* ForgeReadSurfaceModelsTests.swift in Sources */,
+				87B662FE9EA2DD1C4453BB2D /* ForgeWorkflowInspectionTests.swift in Sources */,
 				F0C100000000000000000004 /* ForgeReadSurfaceViewControllerTests.swift in Sources */,
 				F0C100000000000000000005 /* ForgeReadSurfaceModels.swift in Sources */,
 				F0C100000000000000000006 /* ForgeReadSurfaceViewController.swift in Sources */,
+				0C99E371CF008F544F45DA13 /* ForgeWorkflowChecksView.swift in Sources */,
 				D8F800000000000000000002 /* ForgeApplicationNotifications.swift in Sources */,
 				D8F800000000000000000004 /* ForgeReadSurfaceRendering.swift in Sources */,
 				D8F800000000000000000006 /* GitHubAnonymousReadSurfaceService.swift in Sources */,
@@ -2855,6 +2870,7 @@
 				F0B200000000000000000004 /* GitHubReadComposition.swift in Sources */,
 				F0D100000000000000000002 /* ForgeExternalLinkRouting.swift in Sources */,
 				1252ABBBD338AB1340162E55 /* WindowModalPresenter.swift in Sources */,
+				DADE47C5B2E3924DCB5B5DE4 /* ForgeWorkflowInspectionService.swift in Sources */,
 				F0D100000000000000000003 /* ForgeExternalLinkRoutingTests.swift in Sources */,
 				F0F200000000000000000011 /* RepositoryPullRequestWorkflow.swift in Sources */,
 				F0F200000000000000000012 /* RepositoryPullRequestGitOperations.swift in Sources */,

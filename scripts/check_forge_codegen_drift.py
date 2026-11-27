@@ -43,6 +43,8 @@ OPERATION_DEFINITION = re.compile(
 EXPECTED_READ_OPERATIONS = frozenset(
     {
         "GitHubAttentionCandidates",
+        "GitHubCheckSuiteJobs",
+        "GitHubCommitWorkflowRuns",
         "GitHubHistoryOverlay",
         "GitHubIssueDetails",
         "GitHubIssueList",
@@ -52,6 +54,7 @@ EXPECTED_READ_OPERATIONS = frozenset(
         "GitHubPullRequestReviewThreads",
         "GitHubRepositoryFacts",
         "GitHubRepositoryItemSearch",
+        "GitHubWorkflowJobSteps",
     }
 )
 EXPECTED_MUTATION_PREFLIGHT_OPERATIONS = frozenset(
@@ -136,6 +139,17 @@ EXPECTED_CONNECTIONS_BY_DEFINITION = {
             "reviewThreads", (("first", ":", "$", "reviewThreadFirst"),)
         ),
     ),
+    "GitHubCheckSuiteJobs": (
+        ConnectionExpectation(
+            "checkRuns", (("first", ":", "$", "first"), ("after", ":", "$", "after"))
+        ),
+    ),
+    "GitHubCommitWorkflowRuns": (
+        ConnectionExpectation(
+            "checkSuites", (("first", ":", "$", "first"), ("after", ":", "$", "after"))
+        ),
+        ConnectionExpectation("checkRuns", (("first", ":", "$", "jobFirst"),)),
+    ),
     "GitHubHistoryOverlay": (
         ConnectionExpectation(
             "associatedPullRequests",
@@ -215,6 +229,11 @@ EXPECTED_CONNECTIONS_BY_DEFINITION = {
     "GitHubRepositoryItemSearch": (
         ConnectionExpectation(
             "search", (("first", ":", "$", "first"), ("after", ":", "$", "after"))
+        ),
+    ),
+    "GitHubWorkflowJobSteps": (
+        ConnectionExpectation(
+            "steps", (("first", ":", "$", "first"), ("after", ":", "$", "after"))
         ),
     ),
     "GitHubPullRequestSummary": (
