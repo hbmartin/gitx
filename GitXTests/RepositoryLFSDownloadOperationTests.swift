@@ -4,22 +4,33 @@ import XCTest
 
 /// The two-phase Git LFS download (ADR 0014): a fetch that Cancel stops, then a checkout that always finishes.
 @MainActor
-final class RepositoryLFSDownloadOperationTests: XCTestCase {
+// swift6-safety-justification: XCTest's nonisolated setup and teardown enter MainActor synchronously; every fixture access stays on main.
+final class RepositoryLFSDownloadOperationTests: XCTestCase, @unchecked Sendable {
     private typealias Phase = GitX.RepositoryLFSDownloadOperation.Phase
 
     private var directory: URL!
 
-    override func setUpWithError() throws {
+    override nonisolated func setUpWithError() throws {
         try super.setUpWithError()
+        // swift6-safety-justification: App-hosted XCTest invokes setup on the main thread, where the fixture directory is MainActor-isolated.
+        try MainActor.assumeIsolated { try prepareFixture() }
+    }
+
+    override nonisolated func tearDownWithError() throws {
+        // swift6-safety-justification: App-hosted XCTest invokes teardown on the main thread, where the fixture directory is MainActor-isolated.
+        MainActor.assumeIsolated { removeFixture() }
+        try super.tearDownWithError()
+    }
+
+    private func prepareFixture() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXLFSDownload-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
-    override func tearDownWithError() throws {
+    private func removeFixture() {
         if let directory {
             try? FileManager.default.removeItem(at: directory)
         }
-        try super.tearDownWithError()
     }
 
     // MARK: Fake git-lfs
