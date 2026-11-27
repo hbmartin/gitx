@@ -13,11 +13,14 @@ static NSString *const GitXShortRegexSearch = @"-r";
 static NSString *const GitXRegexSearch = @"--regex=";
 static NSString *const GitXShortPathSearch = @"-p";
 static NSString *const GitXPathSearch = @"--path=";
+// Raw and saved searches have no short forms: -r is the regex search, and git log owns -n and -R.
+static NSString *const GitXRawSearch = @"--raw-search=";
+static NSString *const GitXSavedSearch = @"--saved-search=";
 
 NSArray<NSString *> *GitXCommandLineSearchPrefixes(void)
 {
 	return @[ GitXShortBasicSearch, GitXBasicSearch, GitXShortPickaxeSearch, GitXPickaxeSearch,
-			  GitXShortRegexSearch, GitXRegexSearch, GitXShortPathSearch, GitXPathSearch ];
+			  GitXShortRegexSearch, GitXRegexSearch, GitXShortPathSearch, GitXPathSearch, GitXRawSearch ];
 }
 
 PBHistorySearchMode GitXCommandLineSearchModeForArgument(NSString *argument)
@@ -34,7 +37,20 @@ PBHistorySearchMode GitXCommandLineSearchModeForArgument(NSString *argument)
 	if ([argument hasPrefix:GitXShortPathSearch] || [argument hasPrefix:GitXPathSearch])
 		return PBHistorySearchModePath;
 
+	if ([argument hasPrefix:GitXRawSearch])
+		return PBHistorySearchModeRaw;
+
 	return 0;
+}
+
+NSString *_Nullable GitXCommandLineSavedSearchName(NSArray<NSString *> *arguments)
+{
+	NSString *first = arguments.firstObject;
+	if (![first hasPrefix:GitXSavedSearch])
+		return nil;
+	NSMutableArray<NSString *> *words = [arguments mutableCopy];
+	words[0] = [first substringFromIndex:GitXSavedSearch.length];
+	return [[words componentsJoinedByString:@" "] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
 static NSString *GitXCommandLineSearchRemovingPrefix(NSString *string)
@@ -57,7 +73,12 @@ NSString *GitXCommandLineSearchQuotedArgument(NSString *argument)
 	});
 	if (argument.length > 0 && [argument rangeOfCharacterFromSet:special].location == NSNotFound)
 		return argument;
-	NSString *escaped = [argument stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
+	// A literal search also finds quotes followed by combining marks, which the search tokenizer
+	// reads as separate Unicode scalars.
+	NSString *escaped = [argument stringByReplacingOccurrencesOfString:@"'"
+															withString:@"'\\''"
+															   options:NSLiteralSearch
+																 range:NSMakeRange(0, argument.length)];
 	return [NSString stringWithFormat:@"'%@'", escaped];
 }
 

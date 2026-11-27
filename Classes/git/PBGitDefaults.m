@@ -7,7 +7,7 @@
 //
 
 #import "PBGitDefaults.h"
-#import "PBHistorySearchController.h"
+#import "PBHistorySearchMode.h"
 #import "GitX-Swift.h"
 
 #define kEnableGist @"PBEnableGist"

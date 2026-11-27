@@ -45,7 +45,7 @@
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9574,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
-    "Classes/Controllers/PBHistorySearchController.m": 0.9338,
+    "Classes/Controllers/PBHistorySearchController.swift": 0.9338,
     "Classes/Controllers/PBHistorySearchMode.m": 1.0,
     "Classes/Controllers/PBOpenShallowRepositoryErrorRecoveryAttempter.m": 0.5789,
     "Classes/Controllers/PBPrefsWindowController.m": 0.8057,

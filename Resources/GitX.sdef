@@ -410,13 +410,16 @@
 			<result type="text" description="The provider-native destination URL."/>
 		</command>
 
-		<command name="search" code="GitXSrch" description="Highlight commits that match the given search string.">
+		<command name="search" code="GitXSrch" description="Highlight commits that match the given search string, or run a saved search by name.">
 			<direct-parameter type="specifier" description="The repository document to search."/>
 			<parameter name="string" code="SRCH" type="text" optional="yes" description="The string to search for.">
 				<cocoa key="searchString"/>
 			</parameter>
-			<parameter name="in mode" code="Mode" type="integer" optional="yes" description="The type of search (defalts to basic [Subject, Author, SHA]).">
+			<parameter name="in mode" code="Mode" type="integer" optional="yes" description="The type of search: 1 Subject, Author, SHA (the default); 2 pickaxe; 3 pickaxe regex; 4 file path; 5 raw git log arguments.">
 				<cocoa key="inMode"/>
+			</parameter>
+			<parameter name="named" code="SNam" type="text" optional="yes" description="The name of a saved search to run with its own string and mode. Names ignore case and diacritics. An unknown name is an error.">
+				<cocoa key="savedSearchName"/>
 			</parameter>
 		</command>
 

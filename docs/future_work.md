@@ -85,6 +85,17 @@ for revisions other than the checkout, `git lfs prune` and `migrate`, progress
 for `file://` remotes (git-lfs writes none), and downloading a single path
 whose name contains a comma. GitX's own checkout, reset and stash commands keep
 running whatever filters the repository configures.
+approved slices are passive LFS diagnostics with explicit current-revision
+downloads, and GitHub.com Actions inspection and rerun-failed through Pull
+Requests and Attention.
+
+## History Search Boundary
+
+Visible history-search modes, Recent Searches that remember their mode, and
+app-wide Saved Searches have shipped. A saved search runs from the search menu,
+the Saved Searches sheet, `gitx --saved-search=<name>`, and the AppleScript
+`search named` parameter. Syncing saved searches between Macs and per-repository
+saved searches remain outside this surface.
 
 ## Deferred History Rendering Concurrency Work
 

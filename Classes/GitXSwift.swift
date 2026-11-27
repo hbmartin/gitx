@@ -69,7 +69,7 @@ final nonisolated class PerformanceBudgets: NSObject { // swiftlint:disable:this
 
 /// A single layer-backed surface for the transient search-wrap indicator.
 @objc(PBRewindOverlayView)
-final class RewindOverlayView: NSView { // swiftlint:disable:this unused_declaration
+final class RewindOverlayView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         configureLayer()

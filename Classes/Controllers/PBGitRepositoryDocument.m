@@ -12,7 +12,6 @@
 #import "PBGitWindowController.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitBinary.h"
-#import "GitXScriptingConstants.h"
 #import "PBGitDefaults.h"
 #import "PBOpenShallowRepositoryErrorRecoveryAttempter.h"
 #import "PBError.h"
@@ -238,18 +237,6 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 		[self.windowController showHistoryView:self];
 	}
 	[self handleRevListArguments:options.revisionArguments];
-}
-
-// for the scripting bridge
-- (void)findInModeScriptCommand:(NSScriptCommand *)command
-{
-	NSDictionary *arguments = [command arguments];
-	NSString *searchString = [arguments objectForKey:kGitXFindSearchStringKey];
-	if (searchString) {
-		[self.windowController showHistoryView:self];
-		PBHistorySearchMode mode = PBSearchModeForInteger([[arguments objectForKey:kGitXFindInModeKey] integerValue]);
-		[self.windowController setHistorySearch:searchString mode:mode];
-	}
 }
 
 #pragma mark - NSFilePresenter

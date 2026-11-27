@@ -60,6 +60,18 @@ _Avoid_: Repository preferences, repository settings
 Per-user presentation state remembered separately for each repository.
 _Avoid_: Repository configuration, repository preferences
 
+**History Search Mode**:
+How the History View interprets search text: Subject, Author, SHA; Commit (pickaxe); Commit (pickaxe regex); File path; or Raw git log arguments.
+_Avoid_: Search type, search scope
+
+**Recent Search**:
+A history search GitX remembers with its History Search Mode after it runs, offered again from the search menu of every repository window.
+_Avoid_: Search history, recents
+
+**Saved Search**:
+A named history search and its History Search Mode, kept in Application Preferences and run by name from any repository window, the `gitx` tool, or AppleScript.
+_Avoid_: Bookmark, favorite search, smart search
+
 ## Forge Integration
 
 **Forge**:
