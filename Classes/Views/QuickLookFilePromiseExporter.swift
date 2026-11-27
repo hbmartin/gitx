@@ -915,6 +915,11 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         path: String,
         writer: StagedFileWriter
     ) throws {
+        // Every file may already be written, for example a folder holding only Git LFS content.
+        guard !targets.isEmpty else {
+            quickLookExportLogger.info("No committed blobs left to stream for \(path, privacy: .public)")
+            return
+        }
         let task = makeGitTask(repository: repository, arguments: ["cat-file", "--batch"])
         task.capturesStandardOutput = false
         task.standardInputData = Data((targets.map(\.objectIdentifier).joined(separator: "\n") + "\n").utf8)

@@ -130,7 +130,7 @@ final class RepositoryLFSDownloadOperationTests: XCTestCase {
         XCTAssertEqual(result.operation.phase, .finished(.checkedOut))
         XCTAssertFalse(result.operation.isCancellable)
         XCTAssertEqual(fake.invocations, [plan.fetchArguments, plan.checkoutArguments])
-        XCTAssertEqual(plan.checkoutArguments, ["lfs", "checkout", "--", "/a.bin", "/b\\ c.bin"])
+        XCTAssertEqual(plan.checkoutArguments, ["lfs", "checkout", "--", "/a.bin", "/b c.bin"], "A space is literal in a git-lfs pattern")
 
         let environment = fake.environment
         XCTAssertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
@@ -165,9 +165,16 @@ final class RepositoryLFSDownloadOperationTests: XCTestCase {
         } onPhase: { phase, operation in
             guard case .fetching = phase else { return }
             XCTAssertTrue(operation.isCancellable)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                operation.cancel()
+            // Cancel once the fake git has recorded the fetch, so a slow process start cannot race the assertion below.
+            let deadline = Date().addingTimeInterval(5)
+            @MainActor func cancelOnceTheFetchRuns() {
+                guard fake.invocations.isEmpty, Date() < deadline else {
+                    operation.cancel()
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { cancelOnceTheFetchRuns() }
             }
+            cancelOnceTheFetchRuns()
         }
 
         XCTAssertEqual(result.phases.last, .cancelled)
@@ -260,23 +267,29 @@ final class RepositoryLFSDownloadOperationTests: XCTestCase {
     // MARK: Real git-lfs
 
     func testRealGitLFSDownloadsTheCheckoutsContentFromAFileRemote() throws {
+        // The test host's PATH omits package-manager directories; GitX's own tasks search them for git-lfs.
+        let environment = GitX.PBProcessEnvironment.preparedEnvironment(ProcessInfo.processInfo.environment, homeDirectory: NSHomeDirectory())
+        @discardableResult
+        func lfsGit(_ arguments: [String], in directory: URL) throws -> GitXTestGitFixtureOutput {
+            try GitXTestGitFixture.run(arguments, in: directory, inheritedEnvironment: environment)
+        }
         let origin = directory.appendingPathComponent("origin")
         let clone = directory.appendingPathComponent("clone")
         try FileManager.default.createDirectory(at: origin, withIntermediateDirectories: true)
-        try GitXTestGitFixture.run(["init", "-q", "-b", "main"], in: origin)
-        let version = (try? GitXTestGitFixture.run(["lfs", "version"], in: origin).standardOutput) ?? ""
+        try lfsGit(["init", "-q", "-b", "main"], in: origin)
+        let version = (try? lfsGit(["lfs", "version"], in: origin).standardOutput) ?? ""
         guard case .available = LFSToolPolicy.status(terminationStatus: 0, output: version) else {
             throw XCTSkip("git-lfs \(LFSToolPolicy.minimumMajorVersion).0 or later is not installed: \(version)")
         }
-        try GitXTestGitFixture.run(["lfs", "install", "--local"], in: origin)
-        try GitXTestGitFixture.run(["lfs", "track", "*.bin"], in: origin)
+        try lfsGit(["lfs", "install", "--local"], in: origin)
+        try lfsGit(["lfs", "track", "*.bin"], in: origin)
         let content = String(repeating: "real model weights\n", count: 64)
         try content.write(to: origin.appendingPathComponent("model.bin"), atomically: true, encoding: .utf8)
-        try GitXTestGitFixture.run(["add", "-A"], in: origin)
-        try GitXTestGitFixture.run(["commit", "-q", "-m", "Add a model"], in: origin)
+        try lfsGit(["add", "-A"], in: origin)
+        try lfsGit(["commit", "-q", "-m", "Add a model"], in: origin)
         // Without a global filter.lfs, the clone checks out the pointer text.
-        try GitXTestGitFixture.run(["clone", "-q", "file://\(origin.path)", clone.path], in: directory)
-        try GitXTestGitFixture.run(["lfs", "install", "--local"], in: clone)
+        try lfsGit(["clone", "-q", "file://\(origin.path)", clone.path], in: directory)
+        try lfsGit(["lfs", "install", "--local"], in: clone)
         let pointer = try String(contentsOf: clone.appendingPathComponent("model.bin"), encoding: .utf8)
         XCTAssertNotNil(LFSPointer.parse(Data(pointer.utf8)))
 
@@ -295,7 +308,7 @@ final class RepositoryLFSDownloadOperationTests: XCTestCase {
         let after = try XCTUnwrap(RepositoryLFSStatusScan(executablePath: "/usr/bin/git", workingDirectory: clone.path, knownTool: before.tool).run())
         XCTAssertEqual(after.summary.pointerCount, 1)
         XCTAssertEqual(after.summary.notDownloadedPaths, [])
-        let status = try GitXTestGitFixture.run(["status", "--porcelain"], in: clone).standardOutput
+        let status = try lfsGit(["status", "--porcelain"], in: clone).standardOutput
         XCTAssertEqual(status, "", "The checkout leaves the index clean")
     }
 }

@@ -130,10 +130,15 @@ nonisolated struct LFSPointerInspector: Sendable {
         defer { try? handle.close() }
         var hasher = SHA256()
         while true {
-            guard let chunk = try? handle.read(upToCount: 1 << 20) else { return nil }
-            if chunk.isEmpty {
-                break
+            // `read(upToCount:)` returns nil or empty data at the end of the file, and throws only on a read error.
+            let chunk: Data?
+            do {
+                chunk = try handle.read(upToCount: 1 << 20)
+            } catch {
+                Self.logger.error("Could not read a Git LFS object to verify it: \(error.localizedDescription, privacy: .public)")
+                return nil
             }
+            guard let chunk, !chunk.isEmpty else { break }
             hasher.update(data: chunk)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
