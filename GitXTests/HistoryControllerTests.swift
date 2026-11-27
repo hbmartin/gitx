@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Darwin
 import ForgeKit
 import ObjectiveC.runtime
@@ -3174,6 +3175,36 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let delegate = try XCTUnwrap(view.delegate)
         let image = delegate.nativeContentView?(view, imageDataForPath: path, section: 0, imageSource: [:])
         XCTAssertEqual(image, Data(contents.utf8))
+    }
+
+    func testStagingImageCallbackShowsAGitLFSImageOnlyOnceItsObjectIsStored() throws {
+        let missing = "version https://git-lfs.github.com/spec/v1\noid sha256:\(String(repeating: "c", count: 64))\nsize 2048\n"
+        let image = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x2A])
+        let oid = SHA256.hash(data: image).map { String(format: "%02x", $0) }.joined()
+        let objects = URL(fileURLWithPath: fixture.path)
+            .appendingPathComponent(".git/lfs/objects/\(oid.prefix(2))/\(oid.dropFirst(2).prefix(2))", isDirectory: true)
+        try FileManager.default.createDirectory(at: objects, withIntermediateDirectories: true)
+        try image.write(to: objects.appendingPathComponent(oid))
+        try fixture.write("*.png filter=lfs diff=lfs merge=lfs -text\n", to: ".gitattributes")
+        try fixture.write(missing, to: "lfs-logo.png")
+        try fixture.write("version https://git-lfs.github.com/spec/v1\noid sha256:\(oid)\nsize \(image.count)\n", to: "lfs-stored.png")
+        try fixture.git(["add", "--", ".gitattributes", "lfs-logo.png", "lfs-stored.png"])
+        let pane = try openStagingPane()
+        let view = pane.diffPaneController.contentView
+
+        let logo = try XCTUnwrap(repository.index.indexChanges.first { $0.path == "lfs-logo.png" })
+        try selectDiffFile(logo, staged: true, in: pane)
+        XCTAssertTrue(waitForCondition { view.textView.string.contains("+oid sha256:\(String(repeating: "c", count: 64))") })
+        let delegate = try XCTUnwrap(view.delegate)
+        XCTAssertNil(
+            delegate.nativeContentView?(view, imageDataForPath: "lfs-logo.png", section: 0, imageSource: [:]),
+            "Pointer text is not an image"
+        )
+
+        let stored = try XCTUnwrap(repository.index.indexChanges.first { $0.path == "lfs-stored.png" })
+        try selectDiffFile(stored, staged: true, in: pane)
+        XCTAssertTrue(waitForCondition { view.textView.string.contains("+oid sha256:\(oid)") })
+        XCTAssertEqual(delegate.nativeContentView?(view, imageDataForPath: "lfs-stored.png", section: 0, imageSource: [:]), image)
     }
 
     func testBOMFilesystemActionsAddressTheExactSelectedFilename() throws {
@@ -6538,6 +6569,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(history.isEnabled)
         XCTAssertTrue(finder.isEnabled)
         XCTAssertTrue(open.isEnabled)
+    }
+
+    func testPathMenuOffersGitLFSDownloadOnlyForTheCheckedOutCommit() throws {
+        let commits = loadedCommits()
+        let head = try XCTUnwrap(commits.first { $0.oid == repository.headOID() })
+        historyController.selectedCommits = [head]
+        let items = historyController.menuItems(forPaths: ["nested/tracked.txt"])
+        let download = try XCTUnwrap(items.first { $0.title == "Download LFS Content" })
+        XCTAssertEqual(download.action, NSSelectorFromString("downloadLFSContent:"))
+        XCTAssertEqual(download.representedObject as? [String], ["nested/tracked.txt"])
+
+        let older = try XCTUnwrap(commits.first { $0.oid != head.oid })
+        historyController.selectedCommits = [older]
+        XCTAssertFalse(historyController.menuItems(forPaths: ["nested/tracked.txt"]).contains { $0.title == "Download LFS Content" })
     }
 
     func testWorkingStateTextDragPreservesPasteboard() throws {

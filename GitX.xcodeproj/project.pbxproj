@@ -42,6 +42,7 @@
 		C0D085A00000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C700000000000000000004 /* GitXUITestFixtureWorkspace.swift */; };
 		C0DE90010000000000000001 /* StagingImageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90010000000000000002 /* StagingImageReader.swift */; };
 		FED3AAE90EE43C10492BA56A /* HistoryFileIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */; };
+		BBED428442F74BB1BF05B24B /* LFSPointerPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56C5D602737BBCF7F819E7A7 /* LFSPointerPresentationTests.swift */; };
 		00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */; };
 		DC57A0CECB698C04E264BFCD /* IndexMutationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */; };
 		C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */; };
@@ -484,6 +485,8 @@
 		4F3BDC0D4DDA469895258C70 /* RepositoryWorktreeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F51E192AB871481CA7B9BEDC /* RepositoryWorktreeService.swift */; };
 		66FB4AEA1AD547DA9AD0FA7F /* RepositoryWatchPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = C022FA47ADE04E199C4B8478 /* RepositoryWatchPaths.swift */; };
 		FD274204D1E94E89A0BDFD51 /* PBGitWindowController+Worktrees.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */; };
+		78328EEFB737B131B75F473A /* PBGitWindowController+LFS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472BD1E7FFF862B5C993CAEE /* PBGitWindowController+LFS.swift */; };
+		F076BD7ECCD0E941FB1A826F /* RepositoryLFSSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68A260D519D8CA41046E4B92 /* RepositoryLFSSheets.swift */; };
 		CA188AFDFFFC45379B27A394 /* PBSourceViewGitWorktreeItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3302FF498D74DF0BA771862 /* PBSourceViewGitWorktreeItem.swift */; };
 		26A1958F255949DCBBB012A3 /* PBGitRefLabelColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */; };
 		11F86FC6AB4A474ABE9F1445 /* WorktreeBranchTemplate.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */; };
@@ -495,6 +498,7 @@
 		A737A36FF55A40128B79FB09 /* ForgeRegistrationDeliveryGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */; };
 		F7F05374F3D84792A303E64E /* ReflogRecoveryCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */; };
 		D0F31FE952CA4482B2A2A86D /* RepositoryReflogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */; };
+		77AC4A0AC633A29778C1E547 /* RepositoryLFSDownloadOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3D2A18613CB720CCB36E23 /* RepositoryLFSDownloadOperation.swift */; };
 		2121ECC761624F0383A1B36D /* ReflogServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F810AB2DBCE74FB9AEEFCB78 /* ReflogServiceTests.swift */; };
 		4C584BD1CCD5441E9FC66115 /* ReflogBrowserController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F70CA399F3A642658072C91E /* ReflogBrowserController.swift */; };
 		5D8C48E3584A4A8980BC33AA /* ReflogBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */; };
@@ -508,7 +512,11 @@
 		BEFFB929AAFD4F7FB71F87D3 /* NativeRecoverySessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D008256DBA224AF98AA56EE1 /* NativeRecoverySessionTests.swift */; };
 		1F27FFE59EFA4B67AC6EAFF5 /* RepositoryTerminationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 996BB515630540599989CA23 /* RepositoryTerminationCoordinator.swift */; };
 		EDF69AE864A24C16A749BE33 /* RepositoryLocalMutationRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */; };
+		F1983487779E638803FE3FD9 /* RepositoryLFSStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73371F66A0B2E98BC8F5E847 /* RepositoryLFSStatus.swift */; };
+		B2AA972491AA513D19F24575 /* LFSPointerInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53921BC79137F61E3A2903DA /* LFSPointerInspector.swift */; };
 		070BD02A56C340F4B69FA9E3 /* RepositoryLocalMutationRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */; };
+		FF9A7963791A3B54F2A169F1 /* RepositoryLFSStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73371F66A0B2E98BC8F5E847 /* RepositoryLFSStatus.swift */; };
+		E22C70D89EA53F3B4D54992F /* LFSPointerInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53921BC79137F61E3A2903DA /* LFSPointerInspector.swift */; };
 		E685F5129E634CFCA57FF291 /* RepositoryTerminationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B091A2D38E0540DB916EBB76 /* RepositoryTerminationTests.swift */; };
 		E66001916A6A43AA8453EC67 /* NativeTerminationIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E16460105E444C89FF67782 /* NativeTerminationIntegrationTests.swift */; };
 /* End PBXBuildFile section */
@@ -765,6 +773,7 @@
 		C0D085A00000000000000002 /* GitXFixtureRepositoryPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXFixtureRepositoryPolicyTests.swift; sourceTree = "<group>"; };
 		C0DE90010000000000000002 /* StagingImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingImageReader.swift; sourceTree = "<group>"; };
 		8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFileIdentityTests.swift; sourceTree = "<group>"; };
+		56C5D602737BBCF7F819E7A7 /* LFSPointerPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LFSPointerPresentationTests.swift; sourceTree = "<group>"; };
 		D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinatorTests.swift; sourceTree = "<group>"; };
 		0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinator.swift; sourceTree = "<group>"; };
 		42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexReferenceTransactionTests.swift; sourceTree = "<group>"; };
@@ -1260,6 +1269,8 @@
 		F51E192AB871481CA7B9BEDC /* RepositoryWorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWorktreeService.swift; sourceTree = "<group>"; };
 		C022FA47ADE04E199C4B8478 /* RepositoryWatchPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWatchPaths.swift; sourceTree = "<group>"; };
 		1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitWindowController+Worktrees.swift"; sourceTree = "<group>"; };
+		472BD1E7FFF862B5C993CAEE /* PBGitWindowController+LFS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitWindowController+LFS.swift"; sourceTree = "<group>"; };
+		68A260D519D8CA41046E4B92 /* RepositoryLFSSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLFSSheets.swift; sourceTree = "<group>"; };
 		E3302FF498D74DF0BA771862 /* PBSourceViewGitWorktreeItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBSourceViewGitWorktreeItem.swift; sourceTree = "<group>"; };
 		5CE39DE90E814696AAAAB5D0 /* PBGitRefLabelColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBGitRefLabelColors.swift; sourceTree = "<group>"; };
 		75F0674286294B9580ED3916 /* WorktreeBranchTemplate.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = WorktreeBranchTemplate.pdf; sourceTree = "<group>"; };
@@ -1271,6 +1282,7 @@
 		49208F07DCC545B4A598F8CF /* ForgeRegistrationDeliveryGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRegistrationDeliveryGate.swift; sourceTree = "<group>"; };
 		D64F65A8B879413CA83C3729 /* ReflogRecoveryCharacterizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogRecoveryCharacterizationTests.swift; sourceTree = "<group>"; };
 		50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryReflogService.swift; sourceTree = "<group>"; };
+		BB3D2A18613CB720CCB36E23 /* RepositoryLFSDownloadOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLFSDownloadOperation.swift; sourceTree = "<group>"; };
 		F810AB2DBCE74FB9AEEFCB78 /* ReflogServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogServiceTests.swift; sourceTree = "<group>"; };
 		F70CA399F3A642658072C91E /* ReflogBrowserController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserController.swift; sourceTree = "<group>"; };
 		83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserTests.swift; sourceTree = "<group>"; };
@@ -1283,6 +1295,8 @@
 		D008256DBA224AF98AA56EE1 /* NativeRecoverySessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRecoverySessionTests.swift; sourceTree = "<group>"; };
 		996BB515630540599989CA23 /* RepositoryTerminationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryTerminationCoordinator.swift; sourceTree = "<group>"; };
 		F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLocalMutationRegistry.swift; sourceTree = "<group>"; };
+		73371F66A0B2E98BC8F5E847 /* RepositoryLFSStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLFSStatus.swift; sourceTree = "<group>"; };
+		53921BC79137F61E3A2903DA /* LFSPointerInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LFSPointerInspector.swift; sourceTree = "<group>"; };
 		B091A2D38E0540DB916EBB76 /* RepositoryTerminationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryTerminationTests.swift; sourceTree = "<group>"; };
 		2E16460105E444C89FF67782 /* NativeTerminationIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTerminationIntegrationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -1626,6 +1640,8 @@
 				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
 				C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */,
 				1B9FE902FF834C2EA1B707CA /* PBGitWindowController+Worktrees.swift */,
+				472BD1E7FFF862B5C993CAEE /* PBGitWindowController+LFS.swift */,
+				68A260D519D8CA41046E4B92 /* RepositoryLFSSheets.swift */,
 				C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */,
 				C0DEC6000000000000000011 /* HistoryTreePresentation.swift */,
 				C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */,
@@ -1696,6 +1712,7 @@
 			isa = PBXGroup;
 			children = (
 				50FDFF2B9FAB4454A6D91166 /* RepositoryReflogService.swift */,
+				BB3D2A18613CB720CCB36E23 /* RepositoryLFSDownloadOperation.swift */,
 				C0DEAC0F0000000000000012 /* GitOutputFormatting.swift */,
 				C0DE10000000000000000005 /* PBHistoryArrayController.h */,
 				C0DE10000000000000000006 /* PBHistoryArrayController.swift */,
@@ -1743,6 +1760,8 @@
 				C05900000000000000000013 /* RepositoryIgnoreFileService.swift */,
 				C0DEE0000000000000000011 /* IndexSnapshot.swift */,
 				F7369B36722D4D3891B6784F /* RepositoryLocalMutationRegistry.swift */,
+				73371F66A0B2E98BC8F5E847 /* RepositoryLFSStatus.swift */,
+				53921BC79137F61E3A2903DA /* LFSPointerInspector.swift */,
 				C0DEE0000000000000000013 /* IndexCommandRunning.swift */,
 				C0DEE0000000000000000014 /* IndexMutationService.swift */,
 				C0DEE0000000000000000016 /* IndexCommitService.swift */,
@@ -1980,6 +1999,7 @@
 				C0DEE0000000000000000017 /* IndexCommitServiceTests.swift */,
 				42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */,
 				8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */,
+				56C5D602737BBCF7F819E7A7 /* LFSPointerPresentationTests.swift */,
 				D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */,
 				20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */,
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
@@ -2517,9 +2537,12 @@
 			files = (
 				4C584BD1CCD5441E9FC66115 /* ReflogBrowserController.swift in Sources */,
 				D0F31FE952CA4482B2A2A86D /* RepositoryReflogService.swift in Sources */,
+				77AC4A0AC633A29778C1E547 /* RepositoryLFSDownloadOperation.swift in Sources */,
 				26A1958F255949DCBBB012A3 /* PBGitRefLabelColors.swift in Sources */,
 				CA188AFDFFFC45379B27A394 /* PBSourceViewGitWorktreeItem.swift in Sources */,
 				FD274204D1E94E89A0BDFD51 /* PBGitWindowController+Worktrees.swift in Sources */,
+				78328EEFB737B131B75F473A /* PBGitWindowController+LFS.swift in Sources */,
+				F076BD7ECCD0E941FB1A826F /* RepositoryLFSSheets.swift in Sources */,
 				66FB4AEA1AD547DA9AD0FA7F /* RepositoryWatchPaths.swift in Sources */,
 				4F3BDC0D4DDA469895258C70 /* RepositoryWorktreeService.swift in Sources */,
 				C0DEAC0F0000000000000002 /* GitOutputFormatting.swift in Sources */,
@@ -2551,6 +2574,8 @@
 				C05900000000000000000002 /* RepositoryIgnoreFileService.swift in Sources */,
 				C0DEE0000000000000000001 /* IndexSnapshot.swift in Sources */,
 				EDF69AE864A24C16A749BE33 /* RepositoryLocalMutationRegistry.swift in Sources */,
+				F1983487779E638803FE3FD9 /* RepositoryLFSStatus.swift in Sources */,
+				B2AA972491AA513D19F24575 /* LFSPointerInspector.swift in Sources */,
 				C0DEE0000000000000000003 /* IndexCommandRunning.swift in Sources */,
 				C0DEE0000000000000000004 /* IndexMutationService.swift in Sources */,
 				C0DEE0000000000000000006 /* IndexCommitService.swift in Sources */,
@@ -2803,6 +2828,7 @@
 				C0DEE0000000000000000007 /* IndexCommitServiceTests.swift in Sources */,
 				C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */,
 				FED3AAE90EE43C10492BA56A /* HistoryFileIdentityTests.swift in Sources */,
+				BBED428442F74BB1BF05B24B /* LFSPointerPresentationTests.swift in Sources */,
 				00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */,
 				63A735203E9919B6FC5B1938 /* IndexCommitPublicationTests.swift in Sources */,
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
@@ -2898,6 +2924,8 @@
 				F0F200000000000000000020 /* Milestone2DiagnosticPresenters.swift in Sources */,
 				51764F8050D047A1A7C8823D /* RepositoryPullRequestRecoverySession.swift in Sources */,
 				070BD02A56C340F4B69FA9E3 /* RepositoryLocalMutationRegistry.swift in Sources */,
+				FF9A7963791A3B54F2A169F1 /* RepositoryLFSStatus.swift in Sources */,
+				E22C70D89EA53F3B4D54992F /* LFSPointerInspector.swift in Sources */,
 				F0F200000000000000000021 /* RepositoryPullRequestUIController.swift in Sources */,
 				F0F300000000000000000003 /* ForgeMutationQuitCoordinator.swift in Sources */,
 				F0F300000000000000000004 /* ForgeUnknownMutationOutcomeStore.swift in Sources */,

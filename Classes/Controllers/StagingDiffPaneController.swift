@@ -53,15 +53,25 @@ private final nonisolated class StagingImageLookup: @unchecked Sendable {
     private let workingFileURL: URL?
     private let indexTask: PBTask
     private let cancellation: StagingReadCancellation
+    private let path: String
+    private let lfs: LFSPointerInspector?
 
-    init(workingFileURL: URL?, indexTask: PBTask, cancellation: StagingReadCancellation) {
+    init(workingFileURL: URL?, indexTask: PBTask, cancellation: StagingReadCancellation, path: String, lfs: LFSPointerInspector?) {
         self.workingFileURL = workingFileURL
         self.indexTask = indexTask
         self.cancellation = cancellation
+        self.path = path
+        self.lfs = lfs
     }
 
     func data() -> Data? {
         NSLog("[GitX] Reading staging image data on %@", Thread.isMainThread ? "main" : "renderer queue")
+        guard let data = readData() else { return nil }
+        // Pointer text is not an image: show the stored Git LFS object, or nothing when it is not downloaded.
+        return lfs.map { $0.displayData(for: data, path: path) } ?? data
+    }
+
+    private func readData() -> Data? {
         if let workingFileURL {
             do {
                 return try StagingImageReader.shared.read(workingFileURL, shouldCancel: { self.cancellation.isCancelled }).data
@@ -897,7 +907,8 @@ final class StagingDiffPaneController: NSObject {
         task.separatesStandardError = true
         return StagingImageLookup(
             workingFileURL: displayedRequests[sectionIndex].staged ? nil : repository.workingDirectoryURL()?.appendingPathComponent(path),
-            indexTask: task, cancellation: imageCancellation
+            indexTask: task, cancellation: imageCancellation,
+            path: path, lfs: LFSPointerInspector(repository: repository)
         )
     }
 }

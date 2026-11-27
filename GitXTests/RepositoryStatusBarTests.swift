@@ -313,9 +313,12 @@ final class RepositoryStatusBarTests: XCTestCase {
                 showsAheadBehind: true,
                 showsLocalCounts: true,
                 showsForgeAccount: true,
-                showsForgeFreshness: true
+                showsForgeFreshness: true,
+                showsLFS: true
             )
         )
+        XCTAssertTrue(RepositoryStatusBarLayout.presentation(forWidth: 600).showsLFS)
+        XCTAssertFalse(RepositoryStatusBarLayout.presentation(forWidth: 599).showsLFS)
         XCTAssertFalse(RepositoryStatusBarLayout.presentation(forWidth: 899).showsLocalCounts)
         XCTAssertFalse(RepositoryStatusBarLayout.presentation(forWidth: 819).showsForgeAccount)
         XCTAssertFalse(RepositoryStatusBarLayout.presentation(forWidth: 759).showsAheadBehind)

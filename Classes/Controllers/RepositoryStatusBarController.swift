@@ -103,6 +103,9 @@ final class RepositoryStatusBarView: NSView {
     let countsLabel = NSTextField(labelWithString: "Clean")
     let localProgress = NSProgressIndicator()
     let operationLabel = NSTextField(labelWithString: "")
+    let lfsLabel = NSTextField(labelWithString: "")
+    let lfsDetailsButton = NSButton(title: "Details", target: nil, action: nil)
+    private var lfsText: String?
     let forgeRepositoryLabel = NSTextField(labelWithString: "No Forge Repository")
     let forgeAccountLabel = NSTextField(labelWithString: "")
     let forgeProgress = NSProgressIndicator()
@@ -188,7 +191,19 @@ final class RepositoryStatusBarView: NSView {
         needsLayout = true
     }
 
+    /// The orange Git LFS label and its Details button, hidden when the repository needs no attention.
+    func apply(lfs text: String?) {
+        lfsText = text
+        lfsLabel.stringValue = text ?? ""
+        lfsLabel.toolTip = text
+        lfsLabel.isHidden = text == nil || !RepositoryStatusBarLayout.presentation(forWidth: bounds.width).showsLFS
+        lfsDetailsButton.isHidden = lfsLabel.isHidden
+        needsLayout = true
+    }
+
     func apply(layout: RepositoryStatusBarLayout) {
+        lfsLabel.isHidden = !layout.showsLFS || lfsText == nil
+        lfsDetailsButton.isHidden = lfsLabel.isHidden
         aheadBehindLabel.isHidden = !layout.showsAheadBehind || aheadBehindLabel.stringValue.isEmpty
         countsLabel.isHidden = !layout.showsLocalCounts
         forgeAccountLabel.isHidden = !layout.showsForgeAccount || forgeAccountLabel.stringValue.isEmpty
@@ -205,6 +220,7 @@ final class RepositoryStatusBarView: NSView {
             forgeAccountLabel,
             forgeFreshnessLabel,
             forgeDiagnosticLabel,
+            lfsLabel,
         ]
         for label in labels {
             label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -227,6 +243,9 @@ final class RepositoryStatusBarView: NSView {
         forgeAccountLabel.setAccessibilityIdentifier("GitX.RepositoryStatusBar.ForgeAccount")
         forgeFreshnessLabel.setAccessibilityIdentifier("GitX.RepositoryStatusBar.ForgeFreshness")
         forgeDiagnosticLabel.setAccessibilityIdentifier("GitX.RepositoryStatusBar.ForgeDiagnostic")
+        lfsLabel.textColor = .systemOrange
+        lfsLabel.isHidden = true
+        lfsLabel.setAccessibilityIdentifier("GitX.RepositoryStatusBar.LFS")
     }
 
     private func configureProgressIndicators() {
@@ -259,10 +278,18 @@ final class RepositoryStatusBarView: NSView {
         detailsButton.setAccessibilityIdentifier("GitX.RepositoryStatusBar.ForgeDetails")
         detailsButton.setAccessibilityLabel("Forge status details")
         detailsButton.isHidden = true
+
+        lfsDetailsButton.bezelStyle = .inline
+        lfsDetailsButton.controlSize = .small
+        lfsDetailsButton.setAccessibilityIdentifier("GitX.RepositoryStatusBar.LFSDetails")
+        lfsDetailsButton.setAccessibilityLabel("Git LFS status details")
+        lfsDetailsButton.isHidden = true
     }
 
     private func installContents() {
-        let local = NSStackView(views: [branchLabel, aheadBehindLabel, countsLabel, localProgress, operationLabel])
+        let local = NSStackView(views: [
+            branchLabel, aheadBehindLabel, countsLabel, localProgress, operationLabel, lfsLabel, lfsDetailsButton,
+        ])
         local.orientation = .horizontal
         local.alignment = .centerY
         local.spacing = 7
@@ -373,6 +400,9 @@ final class RepositoryStatusBarController: NSObject {
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryStatusBar")
 
     var presentationDidChange: ((ForgeRepositoryStatusPresentation) -> Void)?
+    /// Shows the Git LFS details sheet for the snapshot on screen.
+    var lfsDetails: ((RepositoryLFSStatusSnapshot) -> Void)?
+    private(set) var lfsSnapshot = RepositoryLFSStatusSnapshot.none
 
     init(splitView: NSView, contentView: NSView, now: @escaping () -> Date = Date.init) {
         self.splitView = splitView
@@ -387,6 +417,19 @@ final class RepositoryStatusBarController: NSObject {
         view.failureDetailsButton.action = #selector(showOperationFailure(_:))
         view.failureDismissButton.target = self
         view.failureDismissButton.action = #selector(dismissOperationFailure(_:))
+        view.lfsDetailsButton.target = self
+        view.lfsDetailsButton.action = #selector(showLFSDetails(_:))
+    }
+
+    func updateLFS(_ snapshot: RepositoryLFSStatusSnapshot) {
+        lfsSnapshot = snapshot
+        view.apply(lfs: snapshot.statusText)
+        logger.info("Updated Git LFS status visible=\(snapshot.statusText != nil, privacy: .public)")
+    }
+
+    @objc private func showLFSDetails(_: Any?) {
+        logger.info("Requested Git LFS status details")
+        lfsDetails?(lfsSnapshot)
     }
 
     deinit {

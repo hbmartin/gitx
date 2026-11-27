@@ -51,7 +51,7 @@ The table uses a deliberately conservative notation: **Yes** is a marketed or do
 | Built-in conflict-resolution workflow | Terminal | **Yes** | Partial | **Yes** | **Yes** | Yes | Yes | **Yes** | Yes | Terminal |
 | Reflog / recovery surface | **Yes** | **Yes** | Partial | Partial | Yes | Yes | Partial | Yes | Yes | Terminal |
 | Worktree management | Open linked worktrees; management is limited | Yes | Partial | Yes | Yes | Yes | Partial | Yes | Yes | Terminal |
-| LFS operations | Terminal | Yes | Partial | Yes | Yes | Yes | Yes | Yes | Yes | Terminal |
+| LFS operations | Partial: status, placeholders, current-checkout downloads | Yes | Partial | Yes | Yes | Yes | Yes | Yes | Yes | Terminal |
 | Forge pull-request workflow | Limited / evolving | Yes | **Yes** (GitHub) | Partial | Yes | Yes | Bitbucket-oriented | Yes | Partial | Terminal |
 | Mercurial support | No | No | No | No | No | No | **Yes** | No | No | No |
 | Cross-platform | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Varies |

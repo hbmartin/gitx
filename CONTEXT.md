@@ -184,6 +184,20 @@ _Avoid_: Reopened repository, rebound editor
 A recovery outcome in which Git may have changed the checkout but GitX cannot establish that the confirmed destination and replaced Commit match the Reset Preview.
 _Avoid_: No changes made, safely rolled back
 
+## Git LFS
+
+**LFS Pointer**:
+The small text file Git stores in place of a Git LFS-tracked file's content, naming that content's SHA-256 digest and size. GitX recognizes one only at a path whose `filter` attribute is `lfs`.
+_Avoid_: LFS file, stub
+
+**LFS Object**:
+The content an LFS Pointer names, kept in the repository's local Git LFS store once downloaded. GitX uses a stored object only after checking its size and digest.
+_Avoid_: Blob, pointer
+
+**Not Downloaded**:
+The state of a checkout path whose working-tree file is still its LFS Pointer, so GitX shows a placeholder until an explicit download writes the LFS Object into the checkout.
+_Avoid_: Missing, deleted, corrupt
+
 ## Verification
 
 **Integration Candidate**:

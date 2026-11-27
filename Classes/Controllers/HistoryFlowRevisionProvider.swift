@@ -14,6 +14,8 @@ nonisolated enum HistoryFlowRevisionProviderError: Error, Equatable, Sendable, C
     case errorOutputLimitExceeded(context: String, limit: Int)
     case outputLimitExceeded(context: String, limit: Int)
     case unsupportedSourcePath(String)
+    /// The file stores a Git LFS pointer whose object is not in the local store.
+    case lfsObjectNotDownloaded(String)
 
     var description: String {
         switch self {
@@ -29,6 +31,8 @@ nonisolated enum HistoryFlowRevisionProviderError: Error, Equatable, Sendable, C
             "Git returned more than \(limit) bytes for \(context)."
         case let .unsupportedSourcePath(path):
             "\(path) is not in a language Flow can analyze."
+        case let .lfsObjectNotDownloaded(path):
+            "\(path): \(LFSPresentation.flowSkipReason)."
         }
     }
 }
@@ -96,15 +100,20 @@ nonisolated struct HistoryFlowRevisionProvider: RevisionProvider {
         var files: [FileComparison] = []
         files.reserveCapacity(changedFiles.count)
         for file in changedFiles {
-            var oldSnapshot: SourceSnapshot?
-            if let path = file.oldPath {
-                oldSnapshot = try await snapshot(path: path, revision: canonicalBase, in: repositoryURL, limits: limits)
+            do {
+                var oldSnapshot: SourceSnapshot?
+                if let path = file.oldPath {
+                    oldSnapshot = try await snapshot(path: path, revision: canonicalBase, in: repositoryURL, limits: limits)
+                }
+                var newSnapshot: SourceSnapshot?
+                if let path = file.newPath {
+                    newSnapshot = try await snapshot(path: path, revision: canonicalTarget, in: repositoryURL, limits: limits)
+                }
+                files.append(FileComparison(old: oldSnapshot, new: newSnapshot))
+            } catch let HistoryFlowRevisionProviderError.lfsObjectNotDownloaded(path) {
+                // Pointer text is not source; analyzing it would report a meaningless change.
+                Self.logger.notice("Skipping \(path, privacy: .private): \(LFSPresentation.flowSkipReason, privacy: .public)")
             }
-            var newSnapshot: SourceSnapshot?
-            if let path = file.newPath {
-                newSnapshot = try await snapshot(path: path, revision: canonicalTarget, in: repositoryURL, limits: limits)
-            }
-            files.append(FileComparison(old: oldSnapshot, new: newSnapshot))
         }
 
         Self.logger.notice(
@@ -180,10 +189,37 @@ nonisolated struct HistoryFlowRevisionProvider: RevisionProvider {
                 actual: max(blobSize, limits.maximumBlobBytes + 1)
             )
         }
-        guard let text = String(data: data, encoding: .utf8) else {
+        let source = try lfsSource(data, path: path, in: repositoryURL, limits: limits)
+        guard let text = String(data: source, encoding: .utf8) else {
             throw GitRevisionProviderError.invalidUTF8(context: path)
         }
         return SourceSnapshot(path: path, revision: RevisionIdentity(revision), language: language, text: text)
+    }
+
+    /// The source a blob stands for: itself, or its stored Git LFS object within the blob limit.
+    private func lfsSource(_ data: Data, path: String, in repositoryURL: URL, limits: AnalysisLimits) throws -> Data {
+        guard data.count < LFSPointer.maximumSize, LFSPointer.parse(data) != nil else { return data }
+        let inspector = LFSPointerInspector(
+            executablePath: gitExecutableURL.path,
+            gitDirectoryPath: nil,
+            workingDirectoryPath: repositoryURL.path
+        )
+        switch inspector.resolve(data, path: path) {
+        case .ordinary:
+            return data
+        case let .stored(pointer, url):
+            guard pointer.size <= Int64(limits.maximumBlobBytes) else {
+                throw GitRevisionProviderError.blobLimitExceeded(
+                    path: path,
+                    limit: limits.maximumBlobBytes,
+                    actual: Int(clamping: pointer.size)
+                )
+            }
+            Self.logger.info("Analyzing the stored Git LFS object for \(path, privacy: .private)")
+            return try Data(contentsOf: url)
+        case .pointer:
+            throw HistoryFlowRevisionProviderError.lfsObjectNotDownloaded(path)
+        }
     }
 
     /// Runs one git command, terminating it if the surrounding task is cancelled.
