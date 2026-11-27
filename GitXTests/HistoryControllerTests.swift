@@ -6101,6 +6101,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
             XCTAssertNil(searchField.recentsAutosaveName)
             XCTAssertEqual(searchField.maximumRecents, 0)
+            XCTAssertEqual(searchField.accessibilityIdentifier(), "GitX.History.SearchField")
+            XCTAssertEqual(
+                (searchField.cell as? NSSearchFieldCell)?.searchButtonCell?.accessibilityIdentifier(),
+                "GitX.History.SearchMenuButton"
+            )
+            XCTAssertEqual(searchController.numberOfMatchesField?.accessibilityIdentifier(), "GitX.History.SearchMatches")
             XCTAssertEqual(try searchMenuTitles(), [
                 "Subject, Author, SHA", "Commit (pickaxe)", "Commit (pickaxe regex)", "File path", "Raw",
                 "---", "Recent Searches", "No Recent Searches",

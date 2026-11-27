@@ -198,6 +198,9 @@ final class PBHistorySearchController: NSObject {
         // Recents are kept with their modes by the search store, not by the search field.
         searchField?.recentsAutosaveName = nil
         searchField?.maximumRecents = 0
+        searchField?.setAccessibilityIdentifier("GitX.History.SearchField")
+        (searchField?.cell as? NSSearchFieldCell)?.searchButtonCell?.setAccessibilityIdentifier("GitX.History.SearchMenuButton")
+        numberOfMatchesField?.setAccessibilityIdentifier("GitX.History.SearchMatches")
         rebuildSearchMenu()
         setupModePopUp()
         for name in [Notification.Name.historySearchRecentsDidChange, .savedHistorySearchesDidChange] {

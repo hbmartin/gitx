@@ -499,6 +499,7 @@
 		4C584BD1CCD5441E9FC66115 /* ReflogBrowserController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F70CA399F3A642658072C91E /* ReflogBrowserController.swift */; };
 		5D8C48E3584A4A8980BC33AA /* ReflogBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */; };
 		C38599D0B4BF490F8D4C1F0E /* ReflogWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */; };
+		C0DE5EA0000000000000B008 /* HistorySearchWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F008 /* HistorySearchWorkflowUITests.swift */; };
 		0A0FB43E40544AE5B725A0EB /* NativePullRequestCompletionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45121CC71B4E4DD68BA5FA68 /* NativePullRequestCompletionTests.swift */; };
 		6E885A6FDA734E5EA28AF939 /* NativeLocalMutationLifetimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6325439A81D468EB3D1F5D2 /* NativeLocalMutationLifetimeTests.swift */; };
 		3568F55D52884EF588770583 /* NativeRecoveryMoveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88CAE775693545A7B87AF730 /* NativeRecoveryMoveTests.swift */; };
@@ -1274,6 +1275,7 @@
 		F70CA399F3A642658072C91E /* ReflogBrowserController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserController.swift; sourceTree = "<group>"; };
 		83CE4A252DCB425DB373A9E2 /* ReflogBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogBrowserTests.swift; sourceTree = "<group>"; };
 		70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflogWorkflowUITests.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F008 /* HistorySearchWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistorySearchWorkflowUITests.swift; sourceTree = "<group>"; };
 		45121CC71B4E4DD68BA5FA68 /* NativePullRequestCompletionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePullRequestCompletionTests.swift; sourceTree = "<group>"; };
 		B6325439A81D468EB3D1F5D2 /* NativeLocalMutationLifetimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalMutationLifetimeTests.swift; sourceTree = "<group>"; };
 		88CAE775693545A7B87AF730 /* NativeRecoveryMoveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRecoveryMoveTests.swift; sourceTree = "<group>"; };
@@ -2064,6 +2066,7 @@
 			isa = PBXGroup;
 			children = (
 				70DB5064CACD43EEA1C89BAF /* ReflogWorkflowUITests.swift */,
+				C0DE5EA0000000000000F008 /* HistorySearchWorkflowUITests.swift */,
 				F0BA93000000000000000002 /* WorktreeGitProxy.sh */,
 				C0DE90260000000000000004 /* GitDiscoveryProxy.sh */,
 				D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */,
@@ -2932,6 +2935,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C38599D0B4BF490F8D4C1F0E /* ReflogWorkflowUITests.swift in Sources */,
+				C0DE5EA0000000000000B008 /* HistorySearchWorkflowUITests.swift in Sources */,
 				B6547E1495BE465AA156AFAF /* WorktreeWorkflowUITests.swift in Sources */,
 				D0C700000000000000000001 /* GitXUIActivationPreflightTests.swift in Sources */,
 				D0C700000000000000000003 /* GitXUITestFixtureWorkspace.swift in Sources */,
