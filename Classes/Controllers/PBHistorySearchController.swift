@@ -72,7 +72,8 @@ final class PBHistorySearchController: NSObject {
             ?? (sender as? NSView)?.tag
             ?? 0
         searchMode = PBSearchModeForInteger(tag)
-        Self.logger.info("Selected history search mode \(searchMode.rawValue)")
+        let mode = searchMode.rawValue
+        Self.logger.info("Selected history search mode \(mode)")
         updateSearch(self)
     }
 

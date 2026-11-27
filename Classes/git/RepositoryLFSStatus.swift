@@ -219,7 +219,7 @@ final class RepositoryLFSStatusLoader: NSObject {
         let scan = RepositoryLFSStatusScan(executablePath: gitExecutablePath, workingDirectory: directory, knownTool: knownTool)
         self.scan = scan
         Self.logger.debug("Loading Git LFS status generation=\(requested, privacy: .public)")
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             let result = scan.run()
             DispatchQueue.main.async { [weak self] in
                 // swift6-safety-justification: DispatchQueue.main runs this block on the main thread.

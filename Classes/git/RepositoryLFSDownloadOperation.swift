@@ -95,7 +95,8 @@ final class RepositoryLFSDownloadOperation: NSObject {
     }
 
     func start() {
-        Self.logger.notice("Downloading Git LFS content for \(plan.paths?.count ?? -1) paths (-1 is all)")
+        let pathCount = plan.paths?.count ?? -1
+        Self.logger.notice("Downloading Git LFS content for \(pathCount) paths (-1 is all)")
         let task = makeTask(plan.fetchArguments)
         task.timeout = 0
         task.separatesStandardError = true
@@ -123,9 +124,11 @@ final class RepositoryLFSDownloadOperation: NSObject {
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
         set(.fetching(fraction: nil, detail: nil))
+        // The completion identifies its task without capturing it: PBTask isn't Sendable.
+        let taskID = ObjectIdentifier(task)
         task.perform(on: .main, outputChunkHandler: nil) { [weak self] _, error in
             // swift6-safety-justification: PBTask's `.main` completion queue runs this on the main actor.
-            MainActor.assumeIsolated { self?.fetchFinished(task: task, error: error) }
+            MainActor.assumeIsolated { self?.fetchFinished(taskID: taskID, error: error) }
         }
     }
 
@@ -145,8 +148,8 @@ final class RepositoryLFSDownloadOperation: NSObject {
 
     // MARK: Fetch
 
-    private func fetchFinished(task: PBTask, error: Error?) {
-        guard fetchTask === task else { return }
+    private func fetchFinished(taskID: ObjectIdentifier, error: Error?) {
+        guard let task = fetchTask, ObjectIdentifier(task) == taskID else { return }
         fetchTask = nil
         pollProgress()
         stopPolling()
@@ -200,7 +203,7 @@ final class RepositoryLFSDownloadOperation: NSObject {
         let writer = writer
         let mutations = mutations
         let box = CheckoutBox(task: task)
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = box.run(writer: writer, mutations: mutations)
             DispatchQueue.main.async { [weak self] in
                 // swift6-safety-justification: DispatchQueue.main runs this block on the main thread.
