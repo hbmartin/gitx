@@ -95,6 +95,7 @@
 		4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */; };
 		C0DE5EA0000000000000B001 /* PBHistorySearchController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */; };
 		C0DE5EA0000000000000B002 /* SavedHistorySearchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */; };
+		C0DE5EA0000000000000B007 /* PBGitRepositoryDocument+HistorySearchScripting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F007 /* PBGitRepositoryDocument+HistorySearchScripting.swift */; };
 		C0DE5EA0000000000000B003 /* SavedHistorySearchStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F003 /* SavedHistorySearchStoreTests.swift */; };
 		C0DE5EA0000000000000B004 /* SavedHistorySearchSavePrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */; };
 		C0DE5EA0000000000000B005 /* SavedHistorySearchesSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */; };
@@ -826,6 +827,7 @@
 		4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; lineEnding = 0; path = PBGitWindowController.swift; sourceTree = "<group>"; };
 		C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBHistorySearchController.swift; sourceTree = "<group>"; };
 		C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchStore.swift; sourceTree = "<group>"; };
+		C0DE5EA0000000000000F007 /* PBGitRepositoryDocument+HistorySearchScripting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitRepositoryDocument+HistorySearchScripting.swift"; sourceTree = "<group>"; };
 		C0DE5EA0000000000000F003 /* SavedHistorySearchStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchStoreTests.swift; sourceTree = "<group>"; };
 		C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchSavePrompt.swift; sourceTree = "<group>"; };
 		C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedHistorySearchesSheetController.swift; sourceTree = "<group>"; };
@@ -1660,6 +1662,7 @@
 				C0DED0000000000000000017 /* PBGitWindowController+Dialogs.swift */,
 				C0DE5EA0000000000000F001 /* PBHistorySearchController.swift */,
 				C0DE5EA0000000000000F002 /* SavedHistorySearchStore.swift */,
+				C0DE5EA0000000000000F007 /* PBGitRepositoryDocument+HistorySearchScripting.swift */,
 				C0DE5EA0000000000000F004 /* SavedHistorySearchSavePrompt.swift */,
 				C0DE5EA0000000000000F005 /* SavedHistorySearchesSheetController.swift */,
 				6C5244021E00C33F0051DE20 /* PBHistorySearchMode.h */,
@@ -2661,6 +2664,7 @@
 				4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */,
 				C0DE5EA0000000000000B001 /* PBHistorySearchController.swift in Sources */,
 				C0DE5EA0000000000000B002 /* SavedHistorySearchStore.swift in Sources */,
+				C0DE5EA0000000000000B007 /* PBGitRepositoryDocument+HistorySearchScripting.swift in Sources */,
 				C0DE5EA0000000000000B004 /* SavedHistorySearchSavePrompt.swift in Sources */,
 				C0DE5EA0000000000000B005 /* SavedHistorySearchesSheetController.swift in Sources */,
 				4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */,

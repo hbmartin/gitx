@@ -35,7 +35,7 @@ typedef enum GitXForgeRevisionKind GitXForgeRevisionKind;
 - (void) delete;  // Delete an object.
 - (void) duplicateTo:(SBObject *)to withProperties:(NSDictionary *)withProperties;  // Copy an object.
 - (void) moveTo:(SBObject *)to;  // Move an object to a new location.
-- (void) searchString:(NSString *)string inMode:(NSInteger)inMode;  // Highlight commits that match the given search string.
+- (void) searchString:(NSString *)string inMode:(NSInteger)inMode named:(NSString *)named;  // Highlight commits that match the given search string, or run a saved search by name.
 
 @end
 

@@ -2,6 +2,7 @@ import AppKit
 import ForgeKit
 import GitHubForgeAdapter
 @testable import GitX
+import GitXCore
 import ObjectiveGit
 import Synchronization
 import XCTest
@@ -1651,6 +1652,56 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         command.arguments = ["inMode": 4]
         document.find(inModeScriptCommand: command)
         XCTAssertTrue(window.actions.isEmpty)
+    }
+
+    func testSearchCommandRunsASavedSearchByNameAndReportsUnknownNames() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let defaults = UserDefaults.standard
+        let originalLibrary = defaults.object(forKey: "PBSavedHistorySearches")
+        defer { defaults.set(originalLibrary, forKey: "PBSavedHistorySearches") }
+        defaults.removeObject(forKey: "PBSavedHistorySearches")
+        _ = try GitX.SavedHistorySearchStore().save(
+            name: "Ada’s work",
+            query: HistorySearchQuery(mode: .raw, text: "--author=Ada")
+        ).get()
+        let descriptions = try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "Standard Suite"))
+        let command = try NSScriptCommand(commandDescription: XCTUnwrap(descriptions["open"]))
+
+        // The saved search's own string and mode win over the ones in the command.
+        command.arguments = ["searchString": "ignored", "inMode": 2, "savedSearchName": " ADA’S WORK "]
+        document.find(inModeScriptCommand: command)
+        XCTAssertEqual(window.actions, ["history", "search:--author=Ada:5"])
+        XCTAssertEqual(command.scriptErrorNumber, 0)
+
+        window.actions = []
+        command.arguments = ["searchString": "needle", "savedSearchName": "Missing"]
+        document.find(inModeScriptCommand: command)
+        XCTAssertTrue(window.actions.isEmpty)
+        XCTAssertEqual(command.scriptErrorNumber, -1728)
+        XCTAssertEqual(command.scriptErrorString, "There is no saved search named “Missing”.")
+    }
+
+    func testSearchCommandDefinitionKeepsItsParametersAndAddsNamed() throws {
+        let description = try XCTUnwrap(try NSScriptSuiteRegistry.shared().commandDescription(
+            withAppleEventClass: fourCharacterCode("GitX"),
+            andAppleEventCode: fourCharacterCode("Srch")
+        ))
+        XCTAssertEqual(description.commandName, "search")
+        XCTAssertEqual(Set(description.argumentNames), ["searchString", "inMode", "savedSearchName"])
+        for name in description.argumentNames {
+            XCTAssertTrue(description.isOptionalArgument(withName: name), name)
+        }
+        XCTAssertEqual(description.typeForArgument(withName: "searchString"), "NSString")
+        XCTAssertEqual(description.typeForArgument(withName: "savedSearchName"), "NSString")
+        XCTAssertTrue(description.typeForArgument(withName: "inMode")?.hasPrefix("NSNumber") == true)
+        XCTAssertEqual(description.appleEventCodeForArgument(withName: "savedSearchName"), try fourCharacterCode("SNam"))
+    }
+
+    private func fourCharacterCode(_ text: String) throws -> FourCharCode {
+        let scalars = Array(text.unicodeScalars)
+        XCTAssertEqual(scalars.count, 4)
+        return scalars.reduce(0) { ($0 << 8) | FourCharCode($1.value) }
     }
 
     func testSearchCommandAndFilePresenterCallbacks() throws {
