@@ -6049,6 +6049,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             UserDefaults.standard.removeObject(forKey: autosaveName)
         }
 
+        // The history nib's autosave name is the defaults key that holds the legacy text-only recents.
+        XCTAssertEqual(originalAutosaveName, "Recent History Searches")
         searchField.recentsAutosaveName = autosaveName
         searchField.recentSearches = []
 
@@ -6073,6 +6075,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let restoredField = NSSearchField()
         restoredField.recentsAutosaveName = autosaveName
         XCTAssertEqual(restoredField.recentSearches, submittedRecents)
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: autosaveName), submittedRecents)
 
         searchField.recentSearches = []
         let clearedField = NSSearchField()
