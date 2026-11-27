@@ -203,7 +203,8 @@
 
 - (void)showCommitsFromTree:(id)sender
 {
-	NSString *searchString = [(NSArray *)[sender representedObject] componentsJoinedByString:@" "];
+	// Quote each path so the path-search tokenizer recovers names containing spaces or quotes.
+	NSString *searchString = [PBHistorySearchArgumentSyntax joinedArguments:(NSArray<NSString *> *)[sender representedObject]];
 	[self setHistorySearch:searchString mode:PBHistorySearchModePath];
 }
 

@@ -96,6 +96,10 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositorySidebar")
+    /// Saves a chosen Forge Repository Binding. Tests replace it to exercise a failed save.
+    static var saveForgeBinding: @MainActor (RepositoryForgeCoordinator, RepositoryForgeBindingCandidate) throws -> Void = {
+        _ = try $0.select(candidate: $1)
+    }
 
     @IBOutlet private weak var window: NSWindow?
     @IBOutlet open private(set) dynamic weak var sourceView: NSOutlineView?
@@ -670,13 +674,14 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
 
         populateList()
-        if !restoreReflogSelection(selectedReflog), !restoreWorktreeSelection(selectedWorktree), !restoreForgeSelection(selectedForgeSurface),
-           let viewedRevision,
-           let item = item(for: viewedRevision)
-        {
+        var restored = restoreReflogSelection(selectedReflog) || restoreWorktreeSelection(selectedWorktree)
+            || restoreForgeSelection(selectedForgeSurface)
+        if !restored, let viewedRevision, let item = item(for: viewedRevision) {
             expandItemAndParents(item)
             select(item)
+            restored = true
         }
+        fallBackIfViewedReferenceDisappeared(restored: restored, viewedRevision: viewedRevision, checkedOut: newHead)
 
         let previousHeadName = lastKnownHeadRef?.simpleRef() ?? "(none)"
         let newHeadName = newHead?.simpleRef() ?? "(none)"
@@ -684,6 +689,38 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
             "Refreshed sidebar refs: HEAD \(previousHeadName, privacy: .public) -> \(newHeadName, privacy: .public), followed=\(followHead, privacy: .public)"
         )
         lastKnownHeadRef = newHead
+    }
+
+    /// A viewed reference deleted outside GitX falls back to the checked-out branch. Selection
+    /// restoration stays passive, so mounted inspector and Forge content remain in place.
+    final func fallBackIfViewedReferenceDisappeared(
+        restored: Bool,
+        viewedRevision: PBGitRevSpecifier?,
+        checkedOut: PBGitRevSpecifier?
+    ) {
+        guard let repository else { return }
+        let viewedRef = viewedRevision.flatMap { $0.isSimpleRef ? $0.ref() : nil }
+        let fallback = SidebarSelectionFallbackPolicy.resolve(
+            restoredSelection: restored,
+            viewedReferenceName: viewedRef?.ref,
+            viewedReferenceSurvives: viewedRef.map { repository.refExists($0) } ?? false,
+            checkedOutReferenceName: checkedOut?.simpleRef()
+        )
+        switch fallback {
+        case .keep:
+            return
+        case .none:
+            Self.logger.notice("Viewed reference disappeared without a checked-out reference to select")
+        case let .checkedOutBranch(announcement):
+            guard let checkedOut else { return }
+            repository.currentBranch = checkedOut
+            if let item = item(for: checkedOut) ?? add(revision: checkedOut) {
+                expandItemAndParents(item)
+                select(item)
+            }
+            Self.logger.info("Viewed reference disappeared; selected the checked-out branch")
+            AccessibilityAnnouncer.announce(announcement, from: sourceView)
+        }
     }
 
     @objc private dynamic func synchronizeConfiguredRemotes() {
@@ -904,10 +941,11 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         presenter.chooseBinding(from: resolution.candidates) { [weak self] candidate in
             guard let self, !self.hasClosed, let candidate else { return }
             do {
-                _ = try coordinator.select(candidate: candidate)
+                try Self.saveForgeBinding(coordinator, candidate)
                 self.collaborationController?.repositoryBindingDidChange()
                 self.populateList()
             } catch {
+                Self.logger.error("Could not save the chosen Forge Repository Binding")
                 self.windowController?.showErrorSheet(error)
             }
         }

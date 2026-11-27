@@ -1,8 +1,8 @@
 #import <Quartz/Quartz.h>
 // Import the app bridge explicitly before @testable consumers; compatibility refinements remain categories.
 #import "GitX-Bridging-Header.h"
-#import "GitXRelativeDateFormatter.h"
 #import "PBRepositoryFinder.h"
+#import "GitXCommandLineSearch.h"
 #import "PBMacros.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitDefaults.h"
@@ -212,16 +212,31 @@ typedef NS_ENUM(NSInteger, PBBranchSortMode) {
 	PBBranchSortModeRecentCommit,
 };
 
+@interface GitXRelativeDateFormatter : NSFormatter
+@end
+
+@interface GitXAccessibilityAnnouncer : NSObject
+@property (class, nonatomic, copy) void (^_Nonnull post)(NSString *_Nonnull message, id _Nonnull element);
++ (void)announce:(NSString *_Nonnull)message from:(nullable id)element;
+@end
+
 typedef NS_ENUM(NSInteger, PBHistorySearchExecutionKind) {
 	PBHistorySearchExecutionKindClear,
 	PBHistorySearchExecutionKindBasic,
 	PBHistorySearchExecutionKindBackground,
+	PBHistorySearchExecutionKindInvalid,
 };
 
 @interface PBHistorySearchPlan : NSObject
 @property (nonatomic, readonly) PBHistorySearchExecutionKind kind;
 @property (nonatomic, copy, readonly) NSString *query;
 @property (nonatomic, copy, readonly) NSArray<NSString *> *arguments;
+@property (nonatomic, copy, readonly) NSString *summary;
+@property (nonatomic, copy, readonly) NSString *message;
+@end
+
+@interface PBHistorySearchArgumentSyntax : NSObject
++ (NSString *)joinedArguments:(NSArray<NSString *> *)arguments;
 @end
 
 @interface PBHistorySearchPolicy : NSObject

@@ -110,6 +110,72 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(plan.arguments.isEmpty)
     }
 
+    func testRawAndPathHistorySearchPlansPreviewArgumentsAndExplainMalformedQueries() {
+        let path = PBHistorySearchPolicy.plan(query: #" "dir name/it's.txt" "#, mode: PBHistorySearchMode.path.rawValue)
+        XCTAssertEqual(path.kind, .background)
+        XCTAssertEqual(path.query, #""dir name/it's.txt""#)
+        XCTAssertEqual(path.arguments, ["log", "--pretty=format:%H", "--no-textconv", "--", "dir name/it's.txt"])
+        XCTAssertEqual(path.summary, "")
+        XCTAssertEqual(path.message, "Git arguments: [--] [dir name/it's.txt]")
+        XCTAssertEqual(
+            PBHistorySearchPolicy.plan(query: "needle", mode: PBHistorySearchMode.pickaxe.rawValue).message,
+            "Git arguments: [-Sneedle]"
+        )
+
+        let invalid = PBHistorySearchPolicy.plan(query: " don't ", mode: PBHistorySearchMode.raw.rawValue)
+        XCTAssertEqual(invalid.kind, .invalid)
+        XCTAssertEqual(invalid.query, "don't")
+        XCTAssertTrue(invalid.arguments.isEmpty)
+        XCTAssertEqual(invalid.summary, "Unclosed quote")
+        XCTAssertEqual(invalid.message, "Close the single quote or escape it with a backslash.")
+
+        XCTAssertEqual(
+            PBHistorySearchArgumentSyntax.joinedArguments(["plain", "dir name/it's.txt"]),
+            #"plain 'dir name/it'\''s.txt'"#
+        )
+    }
+
+    func testCommandLineSearchFlagsSelectModesAndQuotePathAndRawArguments() {
+        XCTAssertEqual(GitXCommandLineSearchPrefixes(), ["-s", "--search=", "-S", "--Search=", "-r", "--regex=", "-p", "--path="])
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("-sneedle"), .basic)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("--search=needle"), .basic)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("-Sneedle"), .pickaxe)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("--Search=needle"), .pickaxe)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("-r"), .regex)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("--regex=a.b"), .regex)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("-p"), .path)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("--path=a"), .path)
+        XCTAssertEqual(GitXCommandLineSearchModeForArgument("--all").rawValue, 0)
+
+        XCTAssertEqual(GitXCommandLineSearchQuotedArgument("plain/file.txt"), "plain/file.txt")
+        XCTAssertEqual(GitXCommandLineSearchQuotedArgument(""), "''")
+        XCTAssertEqual(GitXCommandLineSearchQuotedArgument("a b"), "'a b'")
+        XCTAssertEqual(GitXCommandLineSearchQuotedArgument("tab\there"), "'tab\there'")
+        XCTAssertEqual(GitXCommandLineSearchQuotedArgument("it's"), #"'it'\''s'"#)
+        XCTAssertEqual(GitXCommandLineSearchQuotedArgument(#"say"hi""#), #"'say"hi"'"#)
+        XCTAssertEqual(GitXCommandLineSearchQuotedArgument(#"back\slash"#), #"'back\slash'"#)
+
+        XCTAssertEqual(GitXCommandLineSearchQuery(["-p", "dir name/it's.txt", "plain"], .path), #"'dir name/it'\''s.txt' plain"#)
+        XCTAssertEqual(GitXCommandLineSearchQuery(["--path=dir name/a.txt"], .path), "'dir name/a.txt'")
+        XCTAssertEqual(GitXCommandLineSearchQuery(["--grep=two words"], .raw), "'--grep=two words'")
+        XCTAssertEqual(GitXCommandLineSearchQuery([], .path), "")
+        XCTAssertEqual(GitXCommandLineSearchQuery(["-s", "two", "words"], .basic), " two words")
+        XCTAssertEqual(GitXCommandLineSearchQuery(["--Search=needle"], .pickaxe), "needle")
+
+        let roundTrip = PBHistorySearchPolicy.plan(
+            query: GitXCommandLineSearchQuery(["-p", "dir name/it's.txt", "back\\slash"], .path),
+            mode: PBHistorySearchMode.path.rawValue
+        )
+        XCTAssertEqual(roundTrip.kind, .background)
+        XCTAssertEqual(Array(roundTrip.arguments.dropFirst(3)), ["--", "dir name/it's.txt", "back\\slash"])
+    }
+
+    func testRepositoryMenuNamesRepositoryConfiguration() throws {
+        let repositoryMenu = try XCTUnwrap(NSApp.mainMenu?.item(withTitle: "Repository")?.submenu)
+        let item = try XCTUnwrap(repositoryMenu.items.first { $0.action == NSSelectorFromString("showRepositorySettings:") })
+        XCTAssertEqual(item.title, "Repository Configuration…")
+    }
+
     func testWindowControllerObjectiveCCompatibilitySurfaceBeforeConversion() {
         let controller = PBGitWindowController()
 

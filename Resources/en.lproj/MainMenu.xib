@@ -382,7 +382,7 @@
                                     <action selector="showUncommittedChanges:" target="-1" id="codex-repository-commit-action"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Repository Settings…" id="codex-repository-settings">
+                            <menuItem title="Repository Configuration…" id="codex-repository-settings">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="showRepositorySettings:" target="-1" id="codex-repository-settings-action"/>

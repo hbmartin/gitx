@@ -23,8 +23,6 @@
 #import "NSColor+RGB.h"
 // NSSplitView+GitX.swift owns the implementation.
 #import "NSSplitView+GitX.h"
-// GitXRelativeDateFormatter.swift owns the implementation.
-#import "GitXRelativeDateFormatter.h"
 // PBHistoryArrayController.swift owns the implementation.
 #import "PBHistoryArrayController.h"
 #endif

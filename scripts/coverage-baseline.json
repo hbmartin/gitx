@@ -1,5 +1,6 @@
 {
   "files": {
+    "Classes/Controllers/AccessibilityAnnouncer.swift": 1.0,
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.9446,
     "Classes/Controllers/ApplicationIcon.swift": 1.0,
@@ -17,7 +18,7 @@
     "Classes/Controllers/ForgeCredentialStore.swift": 0.9892,
     "Classes/Controllers/ForgeDeepLinkApplicationRouter.swift": 0.7162,
     "Classes/Controllers/ForgeDestinationScriptCommand.swift": 0.9585,
-    "Classes/Controllers/ForgeExternalLinkRouting.swift": 0.9548,
+    "Classes/Controllers/ForgeExternalLinkRouting.swift": 0.9753,
     "Classes/Controllers/ForgeMutationQuitCoordinator.swift": 0.9317,
     "Classes/Controllers/ForgeUnknownMutationOutcomeStore.swift": 0.9141,
     "Classes/Controllers/GitHubAnonymousReadSurfaceService.swift": 0.709,
@@ -38,12 +39,12 @@
     "Classes/Controllers/PBGitHistoryController+UI.m": 0.9234,
     "Classes/Controllers/PBGitHistoryController.m": 1.0,
     "Classes/Controllers/PBGitRepositoryDocument.m": 0.9911,
-    "Classes/Controllers/PBGitSidebarController.swift": 0.9985,
+    "Classes/Controllers/PBGitSidebarController.swift": 0.9986,
     "Classes/Controllers/PBGitWindowController+Dialogs.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+Worktrees.swift": 0.9574,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
-    "Classes/Controllers/PBHistorySearchController.m": 0.9285,
+    "Classes/Controllers/PBHistorySearchController.m": 0.9338,
     "Classes/Controllers/PBHistorySearchMode.m": 1.0,
     "Classes/Controllers/PBOpenShallowRepositoryErrorRecoveryAttempter.m": 0.5789,
     "Classes/Controllers/PBPrefsWindowController.m": 0.8057,
@@ -60,7 +61,7 @@
     "Classes/Controllers/RepositoryFocusRefreshCoordinator.swift": 0.9936,
     "Classes/Controllers/RepositoryForgeCollaborationController.swift": 0.9188,
     "Classes/Controllers/RepositoryForgeCoordinator.swift": 0.966,
-    "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
+    "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9814,
     "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.9129,
     "Classes/Controllers/RepositoryForgeRemoteDescriptorLoader.swift": 1.0,
     "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7813,
@@ -89,8 +90,9 @@
     "Classes/Controllers/StagingImageReader.swift": 0.9619,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
     "Classes/Controllers/StagingViewController.swift": 0.942,
+    "Classes/Controllers/WindowModalPresenter.swift": 0.9487,
     "Classes/Controllers/WorkspaceActionCoordinator.swift": 0.9805,
-    "Classes/GitXRelativeDateFormatter.m": 0.6666,
+    "Classes/GitXRelativeDateFormatter.swift": 1.0,
     "Classes/GitXSwift.swift": 1.0,
     "Classes/NSAppearance+PBDarkMode.m": 0.9473,
     "Classes/NSColor+RGB.m": 1.0,
@@ -171,6 +173,7 @@
     "Classes/git/GitCommandRunning.swift": 1.0,
     "Classes/git/GitDiscoveryProbe.swift": 1.0,
     "Classes/git/GitOutputFormatting.swift": 1.0,
+    "Classes/git/GitXCommandLineSearch.m": 1.0,
     "Classes/git/IndexCommandRunning.swift": 1.0,
     "Classes/git/IndexCommitCoordinator.swift": 1.0,
     "Classes/git/IndexCommitService.swift": 0.9692,
@@ -229,7 +232,7 @@
         "Classes/Controllers/ApplicationPreferencesUI.swift",
         "Classes/Controllers/TerminalIntegration.swift"
       ],
-      "minimumLineCoverage": 0.9089
+      "minimumLineCoverage": 0.9521
     },
     "Repository Configuration surfaces": {
       "files": [
@@ -237,10 +240,10 @@
         "Classes/Controllers/RepositorySettingsController.swift",
         "Classes/Controllers/RepositoryPresentationPolicies.swift"
       ],
-      "minimumLineCoverage": 0.8714
+      "minimumLineCoverage": 0.9546
     }
   },
-  "minimumLineCoverage": 0.9408,
+  "minimumLineCoverage": 0.9426,
   "target": "Half Dark.app",
   "version": 1
 }

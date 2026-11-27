@@ -37,7 +37,7 @@ final class RepositoryConfigurationPolicyTests: XCTestCase {
         )
         XCTAssertEqual(
             RepositoryConfigurationIssuePresenter.message(for: .commitRuleInvalidRegularExpression(line: 3)),
-            "Commit message replacement rule 3 is not a valid regular expression."
+            "Commit message replacement rule on line 3 is not a valid regular expression."
         )
         XCTAssertEqual(
             RepositoryConfigurationIssuePresenter.message(for: .diffSuppressionInvalidRegularExpression(line: 5)),
@@ -73,5 +73,46 @@ final class RepositoryConfigurationPolicyTests: XCTestCase {
             }
             XCTAssertEqual(line, 1)
         }
+    }
+
+    func testValidationIssuesIdentifyTheirFieldAndLine() {
+        let cases: [(RepositoryConfigurationValidationIssue, RepositoryConfigurationField, Int?)] = [
+            (.webURLTemplateMustUseHTTPS, .webURLTemplate, nil),
+            (.commitRuleMissingSeparator(line: 2), .commitRules, 2),
+            (.commitRuleInvalidRegularExpression(line: 3), .commitRules, 3),
+            (.diffSuppressionInvalidRegularExpression(line: 4), .diffSuppressionPatterns, 4),
+        ]
+        for (issue, field, line) in cases {
+            XCTAssertEqual(issue.field, field)
+            XCTAssertEqual(issue.line, line)
+        }
+        XCTAssertEqual(RepositoryConfigurationField.allCases.count, 3)
+    }
+
+    func testCharacterRangeNumbersLinesExactlyAsValidationDoes() {
+        let text = "a\nb\r\nc"
+        XCTAssertEqual(RepositoryConfigurationTextLines.characterRange(ofLine: 1, in: text), NSRange(location: 0, length: 1))
+        XCTAssertEqual(RepositoryConfigurationTextLines.characterRange(ofLine: 2, in: text), NSRange(location: 2, length: 1))
+        XCTAssertEqual(RepositoryConfigurationTextLines.characterRange(ofLine: 3, in: text), NSRange(location: 4, length: 0))
+        XCTAssertEqual(RepositoryConfigurationTextLines.characterRange(ofLine: 4, in: text), NSRange(location: 5, length: 1))
+        XCTAssertNil(RepositoryConfigurationTextLines.characterRange(ofLine: 5, in: text))
+        XCTAssertNil(RepositoryConfigurationTextLines.characterRange(ofLine: 0, in: text))
+        XCTAssertEqual(RepositoryConfigurationTextLines.characterRange(ofLine: 1, in: ""), NSRange(location: 0, length: 0))
+
+        let rules = "\u{1F600}x => y\nbad("
+        XCTAssertEqual(
+            RepositoryConfigurationPolicy.validate(webURLTemplate: "", commitRules: rules, diffSuppressionPatterns: ""),
+            .commitRuleMissingSeparator(line: 2)
+        )
+        XCTAssertEqual(RepositoryConfigurationTextLines.characterRange(ofLine: 2, in: rules), NSRange(location: 9, length: 4))
+        let crlf = "a => b\r\nbad("
+        XCTAssertEqual(
+            RepositoryConfigurationPolicy.validate(webURLTemplate: "", commitRules: crlf, diffSuppressionPatterns: ""),
+            .commitRuleMissingSeparator(line: 3)
+        )
+        XCTAssertEqual(
+            (crlf as NSString).substring(with: RepositoryConfigurationTextLines.characterRange(ofLine: 3, in: crlf) ?? NSRange()),
+            "bad("
+        )
     }
 }

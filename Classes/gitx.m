@@ -11,6 +11,7 @@
 #import "GitXScriptingConstants.h"
 #import "GitX.h"
 #import "PBHistorySearchController.h"
+#import "GitXCommandLineSearch.h"
 
 #import <mach-o/dyld.h>
 #import <sys/param.h>
@@ -202,37 +203,6 @@ void handleClone(NSURL *repositoryURL, NSMutableArray *arguments)
 	exit(0);
 }
 
-#define kShortBasicSearch @"-s"
-#define kBasicSearch @"--search="
-#define kShortPickaxeSearch @"-S"
-#define kPickaxeSearch @"--Search="
-#define kShortRegexSearch @"-r"
-#define kRegexSearch @"--regex="
-#define kShortPathSearch @"-p"
-#define kPathSearch @"--path="
-
-NSArray *commandLineSearchPrefixes(void)
-{
-	return [NSArray arrayWithObjects:kShortBasicSearch, kBasicSearch, kShortPickaxeSearch, kPickaxeSearch, kShortRegexSearch, kRegexSearch, kShortPathSearch, kPathSearch, nil];
-}
-
-PBHistorySearchMode searchModeForCommandLineArgument(NSString *argument)
-{
-	if ([argument hasPrefix:kShortBasicSearch] || [argument hasPrefix:kBasicSearch])
-		return PBHistorySearchModeBasic;
-
-	if ([argument hasPrefix:kShortPickaxeSearch] || [argument hasPrefix:kPickaxeSearch])
-		return PBHistorySearchModePickaxe;
-
-	if ([argument hasPrefix:kShortRegexSearch] || [argument hasPrefix:kRegexSearch])
-		return PBHistorySearchModeRegex;
-
-	if ([argument hasPrefix:kShortPathSearch] || [argument hasPrefix:kPathSearch])
-		return PBHistorySearchModePath;
-
-	return 0;
-}
-
 GitXDocument *documentForURL(SBElementArray *documents, NSURL *theURL)
 {
 	for (GitXDocument *document in documents) {
@@ -246,15 +216,7 @@ GitXDocument *documentForURL(SBElementArray *documents, NSURL *theURL)
 
 void handleGitXSearch(NSURL *repositoryURL, PBHistorySearchMode mode, NSMutableArray *arguments)
 {
-	NSString *searchString = [arguments componentsJoinedByString:@" "];
-
-	// remove the prefix from search string before sending it
-	NSArray *prefixes = commandLineSearchPrefixes();
-	for (NSString *prefix in prefixes)
-		if ([searchString hasPrefix:prefix]) {
-			searchString = [searchString substringFromIndex:[prefix length]];
-			break;
-		}
+	NSString *searchString = GitXCommandLineSearchQuery(arguments, mode);
 
 	if ([searchString isEqualToString:@""])
 		exit(0);
@@ -410,7 +372,7 @@ int main(int argc, const char **argv)
 			}
 
 			PBHistorySearchMode mode;
-			if ((mode = searchModeForCommandLineArgument(firstArgument))) {
+			if ((mode = GitXCommandLineSearchModeForArgument(firstArgument))) {
 				handleGitXSearch(wdURL, mode, arguments);
 			}
 

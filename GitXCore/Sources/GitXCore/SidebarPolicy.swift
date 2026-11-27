@@ -207,3 +207,34 @@ public enum SidebarRevisionPolicy {
         return SidebarRevisionPlan(placement: .unsupported)
     }
 }
+
+public enum SidebarSelectionFallback: Equatable, Sendable {
+    /// Restoration succeeded or nothing was being viewed; leave the sidebar as it is.
+    case keep
+    /// The viewed reference disappeared; select the checked-out branch and announce why.
+    case checkedOutBranch(announcement: String)
+    /// The viewed reference disappeared and there is no checked-out reference to fall back to.
+    case none
+}
+
+public enum SidebarSelectionFallbackPolicy {
+    public static func resolve(
+        restoredSelection: Bool,
+        viewedReferenceName: String?,
+        viewedReferenceSurvives: Bool,
+        checkedOutReferenceName: String?
+    ) -> SidebarSelectionFallback {
+        guard !restoredSelection, let viewedReferenceName, !viewedReferenceSurvives else { return .keep }
+        guard let checkedOutReferenceName else { return .none }
+        return .checkedOutBranch(
+            announcement: "\(displayName(viewedReferenceName)) no longer exists. Showing \(displayName(checkedOutReferenceName))."
+        )
+    }
+
+    private static func displayName(_ reference: String) -> String {
+        for prefix in ["refs/heads/", "refs/remotes/", "refs/tags/"] where reference.hasPrefix(prefix) {
+            return String(reference.dropFirst(prefix.count))
+        }
+        return reference
+    }
+}

@@ -169,18 +169,28 @@ final class RepositoryRemoteURLCoordinator: NSObject {
     // swiftlint:disable:next unused_declaration
     func viewRemote(repository: PBGitRepository, presenting window: NSWindow?) {
         let coordinator = RepositoryForgeCoordinator(repository: repository)
-        guard let binding = chooseBinding(
-            coordinator: coordinator,
-            presenting: window
-        ) else {
-            present(
-                title: "No Web Remote Available",
-                message: "Configure a Git remote or a custom web URL template in Repository Settings.",
-                window: window
-            )
-            return
+        chooseBinding(coordinator: coordinator, presenting: window) { [self] choice in
+            switch choice {
+            case let .chosen(binding):
+                openRemote(binding: binding, coordinator: coordinator, repository: repository, presenting: window)
+            case .unavailable:
+                present(
+                    title: "No Web Remote Available",
+                    message: "Configure a Git remote or a custom web URL template in Repository Configuration.",
+                    window: window
+                )
+            case .cancelled:
+                logger.info("View Remote cancelled at the forge repository choice")
+            }
         }
+    }
 
+    private func openRemote(
+        binding: ForgeRepositoryBinding,
+        coordinator: RepositoryForgeCoordinator,
+        repository: PBGitRepository,
+        presenting window: NSWindow?
+    ) {
         let head = repository.headRef()?.ref()
         let branch = head?.isBranch == true ? head?.shortName() ?? "" : ""
         let sha = (try? repository.outputOfTask(withArguments: ["rev-parse", "HEAD"]))?
@@ -214,7 +224,7 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         guard let url else {
             present(
                 title: "Remote URL Is Invalid",
-                message: "Check the remote and custom template in Repository Settings.",
+                message: "Check the remote and custom template in Repository Configuration.",
                 window: window
             )
             return
@@ -260,16 +270,26 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         return tracking.remoteName
     }
 
+    private enum BindingChoice {
+        case chosen(ForgeRepositoryBinding)
+        case unavailable
+        case cancelled
+    }
+
+    /// Completes with the primary forge repository, asking on `window` when several remotes qualify.
     private func chooseBinding(
         coordinator: RepositoryForgeCoordinator,
-        presenting _: NSWindow?
-    ) -> ForgeRepositoryBinding? {
+        presenting window: NSWindow?,
+        completion: @escaping (BindingChoice) -> Void
+    ) {
         let resolution = coordinator.resolveBinding()
         if let binding = resolution.binding {
-            return binding
+            completion(.chosen(binding))
+            return
         }
         guard resolution.kind == .requiresChoice, !resolution.candidates.isEmpty else {
-            return nil
+            completion(.unavailable)
+            return
         }
         let alert = NSAlert()
         alert.messageText = "Choose a Primary Forge Repository"
@@ -281,15 +301,21 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         alert.accessoryView = popup
         alert.addButton(withTitle: "View Remote")
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn,
-              resolution.candidates.indices.contains(popup.indexOfSelectedItem),
-              let binding = try? coordinator.select(
-                  candidate: resolution.candidates[popup.indexOfSelectedItem]
-              ).binding
-        else {
-            return nil
+        WindowModalPresenter.present(alert, for: window) { response in
+            guard response == .alertFirstButtonReturn else {
+                completion(.cancelled)
+                return
+            }
+            guard resolution.candidates.indices.contains(popup.indexOfSelectedItem),
+                  let binding = try? coordinator.select(
+                      candidate: resolution.candidates[popup.indexOfSelectedItem]
+                  ).binding
+            else {
+                completion(.unavailable)
+                return
+            }
+            completion(.chosen(binding))
         }
-        return binding
     }
 
     private func remoteURL(for remoteName: String?, repository: PBGitRepository) -> String? {
@@ -303,11 +329,7 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        if let window {
-            alert.beginSheetModal(for: window)
-        } else {
-            alert.runModal()
-        }
+        WindowModalPresenter.present(alert, for: window)
     }
 }
 

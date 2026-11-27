@@ -242,13 +242,11 @@ private final class SettingsPaneView: NSView {
     }
 
     @objc func chooseRaycastDirectory(_ sender: Any?) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.prompt = "Choose"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        ApplicationSettings.raycastScriptsDirectory = url.path
-        logger.info("Raycast scripts directory selected")
+        WindowModalPresenter.chooseDirectory(prompt: "Choose", for: window) { [weak self] url in
+            guard let url else { return }
+            ApplicationSettings.raycastScriptsDirectory = url.path
+            self?.logger.info("Raycast scripts directory selected")
+        }
     }
 
     @objc func installRaycastScripts(_ sender: Any?) {
@@ -426,7 +424,7 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
     static func generalView(legacyView: NSView) -> NSView {
         let view = SettingsPaneView(
             title: "General",
-            detail: "Choose the default repository browsing behavior. Repository-specific choices live in Repository Settings."
+            detail: "Choose the default repository browsing behavior. Repository-specific choices live in Repository Configuration."
         )
         _ = view.addCheckbox(
             "Show only changed files in commit tree views",
