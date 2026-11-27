@@ -5877,7 +5877,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(matches.isHidden)
         XCTAssertEqual(matches.stringValue, "Unclosed quote")
         XCTAssertEqual(matches.toolTip, "Close the single quote or escape it with a backslash.")
-        XCTAssertTrue(searchController.stepper.isHidden)
+        XCTAssertEqual(searchController.stepper?.isHidden, true)
         XCTAssertEqual(announcements, ["Unclosed quote. Close the single quote or escape it with a backslash."])
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Search-Unclosed-Quote")
 
@@ -5911,25 +5911,26 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try searchResultRows(for: "initial", mode: .basic).count, 1)
         XCTAssertTrue(searchController.hasSearchResults())
         XCTAssertEqual(searchField.stringValue, "initial")
-        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "1 match")
+        XCTAssertEqual(searchController.numberOfMatchesField?.stringValue, "1 match")
 
         let basicWithOuterWhitespace = " \tinitial\n"
         XCTAssertTrue(try searchResultRows(for: basicWithOuterWhitespace, mode: .basic).isEmpty)
         XCTAssertFalse(searchController.hasSearchResults())
         XCTAssertEqual(searchField.stringValue, basicWithOuterWhitespace)
-        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "Not found")
+        XCTAssertEqual(searchController.numberOfMatchesField?.stringValue, "Not found")
 
         XCTAssertEqual(
             try searchResultRows(for: "GitX Tests", mode: .basic).count,
             arrangedCount
         )
         XCTAssertEqual(searchField.stringValue, "GitX Tests")
-        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "\(arrangedCount) matches")
+        XCTAssertEqual(searchController.numberOfMatchesField?.stringValue, "\(arrangedCount) matches")
         historyController.commitList.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
-        searchController.stepper.selectedSegment = 0
-        searchController.stepperPressed(searchController.stepper)
-        searchController.stepper.selectedSegment = 1
-        searchController.stepperPressed(searchController.stepper)
+        let stepper = try XCTUnwrap(searchController.stepper)
+        stepper.selectedSegment = 0
+        searchController.stepperPressed(stepper)
+        stepper.selectedSegment = 1
+        searchController.stepperPressed(stepper)
 
         let unicodeQuery = "東京 crème"
         XCTAssertTrue(try searchResultRows(for: unicodeQuery, mode: .basic).isEmpty)
@@ -5959,8 +5960,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertTrue(try searchResultRows(for: whitespace, mode: .basic).isEmpty)
         XCTAssertEqual(searchField.stringValue, whitespace)
-        XCTAssertFalse(searchController.numberOfMatchesField.isHidden)
-        XCTAssertFalse(searchController.stepper.isHidden)
+        XCTAssertEqual(searchController.numberOfMatchesField?.isHidden, false)
+        XCTAssertEqual(searchController.stepper?.isHidden, false)
 
         for mode in [
             PBHistorySearchMode.pickaxe,
@@ -5970,8 +5971,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         ] {
             XCTAssertTrue(try searchResultRows(for: whitespace, mode: mode).isEmpty)
             XCTAssertEqual(searchField.stringValue, "")
-            XCTAssertTrue(searchController.numberOfMatchesField.isHidden)
-            XCTAssertTrue(searchController.stepper.isHidden)
+            XCTAssertEqual(searchController.numberOfMatchesField?.isHidden, true)
+            XCTAssertEqual(searchController.stepper?.isHidden, true)
         }
     }
 
@@ -6172,6 +6173,145 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         waitForStaleSearchToFinish()
         XCTAssertEqual(matches.stringValue, "Not found")
         XCTAssertFalse(searchController.hasSearchResults())
+    }
+
+    func testSearchNavigationWrapsInBothDirectionsAndShowsTheRewindOverlay() throws {
+        let searchController = historyController.searchController
+        let commitList = historyController.commitList
+        let window = try XCTUnwrap(windowController.window)
+        let rows = try searchResultRows(for: "GitX Tests", mode: .basic)
+        let lastRow = try XCTUnwrap(rows.last)
+        XCTAssertEqual(rows, IndexSet(integersIn: 0 ... lastRow))
+        XCTAssertGreaterThanOrEqual(lastRow, 2)
+        func rewindPanels() -> [NSWindow] {
+            (window.childWindows ?? []).filter { $0.styleMask == .borderless && $0.ignoresMouseEvents }
+        }
+        func waitForRewindPanelToClose(file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertTrue(
+                waitForCondition(timeout: 5) { rewindPanels().isEmpty },
+                "The rewind overlay did not close",
+                file: file,
+                line: line
+            )
+        }
+
+        // Without a selected row, Next starts at the first match, while Previous wraps to the last
+        // match and shows the overlay.
+        commitList.deselectAll(nil)
+        searchController.selectNextResult()
+        XCTAssertEqual(commitList.selectedRow, 0)
+        XCTAssertTrue(rewindPanels().isEmpty)
+        commitList.deselectAll(nil)
+        searchController.selectPreviousResult()
+        XCTAssertEqual(commitList.selectedRow, lastRow)
+        XCTAssertEqual(rewindPanels().count, 1)
+        waitForRewindPanelToClose()
+
+        commitList.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        let stepper = NSSegmentedControl(labels: ["Previous", "Next"], trackingMode: .selectOne, target: nil, action: nil)
+        stepper.selectedSegment = 0
+        searchController.stepperPressed(stepper)
+        XCTAssertEqual(commitList.selectedRow, 0)
+        XCTAssertTrue(rewindPanels().isEmpty)
+
+        // Previous from the first match wraps to the last one; wrapping again while the overlay
+        // is still fading reuses that overlay.
+        searchController.selectPreviousResult()
+        XCTAssertEqual(commitList.selectedRow, lastRow)
+        XCTAssertEqual(rewindPanels().count, 1)
+        stepper.selectedSegment = 1
+        searchController.stepperPressed(stepper)
+        XCTAssertEqual(commitList.selectedRow, 0)
+        let panels = rewindPanels()
+        XCTAssertEqual(panels.count, 1)
+        let imageView = try XCTUnwrap(panels.first?.contentView?.viewWithTag(1234) as? NSImageView)
+        let image = try XCTUnwrap(imageView.image)
+        XCTAssertEqual(image.size, NSImage(named: "rewindImage")?.size)
+        XCTAssertNotNil(image.tiffRepresentation)
+        waitForRewindPanelToClose()
+    }
+
+    func testBackgroundSearchShowsProgressIgnoresSupersededTasksAndClearsWhenTheQueryEmptiesFirst() throws {
+        let restoreWatcher = try disableRepositoryWatcher()
+        defer { restoreWatcher() }
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let started = testArtifactDirectory.appendingPathComponent("slow-search-started")
+        let terminated = testArtifactDirectory.appendingPathComponent("slow-search-terminated")
+        let wrapper = try installSlowHistorySearchGitWrapper(started: started, terminated: terminated)
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let matches = try XCTUnwrap(searchController.numberOfMatchesField)
+        let progress = try XCTUnwrap(searchController.progressIndicator)
+        let stepper = try XCTUnwrap(searchController.stepper)
+        let errorWindow = try XCTUnwrap(windowController as? HistoryWindowController)
+        let shownErrorCount = errorWindow.shownErrors.count
+        func backgroundSearchFinished() -> Bool {
+            searchController.value(forKey: "backgroundSearchTask") == nil
+        }
+
+        searchController.searchMode = .raw
+        searchField.stringValue = "--grep=GitXSlowHistorySearch"
+        searchController.updateSearch(self)
+        XCTAssertTrue(matches.isHidden)
+        XCTAssertTrue(stepper.isHidden)
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: started.path) },
+            "The slow history search never started"
+        )
+        XCTAssertTrue(waitForCondition(timeout: 5) { !progress.isHidden }, "The search progress indicator never appeared")
+
+        // A new query terminates the running search; its signal is not reported as a failure.
+        searchField.stringValue = "--author=GitX"
+        searchController.updateSearch(self)
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                FileManager.default.fileExists(atPath: terminated.path) && backgroundSearchFinished()
+            },
+            "The superseded search was not terminated, or the replacement did not finish"
+        )
+        pumpRunLoop(for: 0.2)
+        XCTAssertEqual(errorWindow.shownErrors.count, shownErrorCount)
+        XCTAssertTrue(searchController.hasSearchResults())
+        XCTAssertFalse(matches.isHidden)
+        XCTAssertNotEqual(matches.stringValue, "Not found")
+        XCTAssertTrue(progress.isHidden)
+
+        // Results that arrive after the query was emptied clear the search instead of showing a count.
+        searchField.stringValue = "--author=GitX"
+        searchController.updateSearch(self)
+        searchField.stringValue = ""
+        XCTAssertTrue(waitForCondition(timeout: 10) { backgroundSearchFinished() }, "The background search did not finish")
+        XCTAssertFalse(searchController.hasSearchResults())
+        XCTAssertTrue(matches.isHidden)
+        XCTAssertTrue(stepper.isHidden)
+        XCTAssertTrue(progress.isHidden)
+        XCTAssertEqual(errorWindow.shownErrors.count, shownErrorCount)
+    }
+
+    func testSearchModeChangesWithoutAMenuTemplateStillUpdateThePlaceholderAndPreference() throws {
+        let defaults = UserDefaults.standard
+        let oldStoredMode = defaults.object(forKey: "PBHistorySearchMode")
+        defer {
+            if let oldStoredMode {
+                defaults.set(oldStoredMode, forKey: "PBHistorySearchMode")
+            } else {
+                defaults.removeObject(forKey: "PBHistorySearchMode")
+            }
+        }
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let searchFieldCell = try XCTUnwrap(searchField.cell as? NSSearchFieldCell)
+        let template = searchFieldCell.searchMenuTemplate
+        defer { searchFieldCell.searchMenuTemplate = template }
+        searchFieldCell.searchMenuTemplate = nil
+
+        searchController.searchMode = .regex
+
+        XCTAssertNil(searchFieldCell.searchMenuTemplate)
+        XCTAssertEqual(searchField.placeholderString, "Commit (pickaxe regex)")
+        XCTAssertEqual(defaults.integer(forKey: "PBHistorySearchMode"), PBHistorySearchMode.regex.rawValue)
     }
 
     func testPathMenuDisablesCommitActionsWithoutSelection() throws {
@@ -7098,6 +7238,33 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         for argument in "$@"; do
             if [[ "$argument" == "--grep=GitXStaleHistorySearch" ]]; then
                 trap '/usr/bin/git log -1 --pretty=format:%H; : > \(terminatedPath); exit 0' TERM
+                : > \(startedPath)
+                /bin/sleep 30 &
+                wait $!
+                exit 0
+            fi
+        done
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return wrapper
+    }
+
+    /// Blocks only the raw history search for `--grep=GitXSlowHistorySearch` until it is terminated,
+    /// then dies from the same SIGTERM so PBTask reports a caught signal; other Git work runs normally.
+    private func installSlowHistorySearchGitWrapper(started: URL, terminated: URL) throws -> URL {
+        for marker in [started, terminated] {
+            try? FileManager.default.removeItem(at: marker)
+        }
+        let wrapper = testArtifactDirectory.appendingPathComponent("git-slow-history-search-wrapper")
+        let startedPath = shellSingleQuoted(started.path)
+        let terminatedPath = shellSingleQuoted(terminated.path)
+        let script = """
+        #!/bin/bash
+        for argument in "$@"; do
+            if [[ "$argument" == "--grep=GitXSlowHistorySearch" ]]; then
+                trap ': > \(terminatedPath); trap - TERM; kill -TERM $$' TERM
                 : > \(startedPath)
                 /bin/sleep 30 &
                 wait $!

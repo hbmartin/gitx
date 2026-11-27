@@ -9,24 +9,26 @@
 #import <Cocoa/Cocoa.h>
 #import "PBHistorySearchMode.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
 @class PBGitHistoryController;
 @class PBTask;
 
 @interface PBHistorySearchController : NSObject {
 	PBHistorySearchMode searchMode;
-	NSIndexSet *results;
-	NSTimer *searchTimer;
-	PBTask *backgroundSearchTask;
-	NSPanel *rewindPanel;
+	NSIndexSet *_Nullable results;
+	NSTimer *_Nullable searchTimer;
+	PBTask *_Nullable backgroundSearchTask;
+	NSPanel *_Nullable rewindPanel;
 }
 
-@property (weak) IBOutlet PBGitHistoryController *historyController;
-@property (weak) IBOutlet NSArrayController *commitController;
+@property (weak, nullable) IBOutlet PBGitHistoryController *historyController;
+@property (weak, nullable) IBOutlet NSArrayController *commitController;
 
-@property (weak) IBOutlet NSSearchField *searchField;
-@property (weak) IBOutlet NSSegmentedControl *stepper;
-@property (weak) IBOutlet NSTextField *numberOfMatchesField;
-@property (weak) IBOutlet NSProgressIndicator *progressIndicator;
+@property (weak, nullable) IBOutlet NSSearchField *searchField;
+@property (weak, nullable) IBOutlet NSSegmentedControl *stepper;
+@property (weak, nullable) IBOutlet NSTextField *numberOfMatchesField;
+@property (weak, nullable) IBOutlet NSProgressIndicator *progressIndicator;
 
 @property PBHistorySearchMode searchMode;
 
@@ -41,8 +43,11 @@
 - (IBAction)stepperPressed:(id)sender;
 
 - (void)clearSearch;
-- (IBAction)updateSearch:(id)sender;
+- (IBAction)updateSearch:(nullable id)sender;
 
-- (void)setHistorySearch:(NSString *)searchString mode:(PBHistorySearchMode)mode;
+/// Ignores a nil or empty search string; otherwise selects the mode and submits the text.
+- (void)setHistorySearch:(nullable NSString *)searchString mode:(PBHistorySearchMode)mode;
 
 @end
+
+NS_ASSUME_NONNULL_END
