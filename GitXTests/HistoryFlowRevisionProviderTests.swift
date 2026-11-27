@@ -184,6 +184,25 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(files["Modified.swift"]?.new?.text, "let modified = 2\n")
     }
 
+    func testLFSTrackedSourceIsAnalyzedAsItsPointerText() async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        func pointer(_ digit: Character) -> String {
+            "version https://git-lfs.github.com/spec/v1\noid sha256:\(String(repeating: digit, count: 64))\nsize 4096\n"
+        }
+        try fixture.write("*.swift filter=lfs diff=lfs merge=lfs -text\n", to: ".gitattributes")
+        try fixture.write(pointer("a"), to: "Generated.swift")
+        let base = try fixture.commit("base")
+        try fixture.write(pointer("b"), to: "Generated.swift")
+        let target = try fixture.commit("target")
+
+        let comparison = try await successfulComparison(repositoryURL: fixture.url, base: base, target: target)
+
+        XCTAssertEqual(comparison.files.map(\.path), ["Generated.swift"])
+        XCTAssertEqual(comparison.files.first?.old?.text, pointer("a"))
+        XCTAssertEqual(comparison.files.first?.new?.text, pointer("b"))
+    }
+
     func testMissingRepositoryIsRejectedBeforeLaunchingGit() async {
         let repositoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitx-missing-history-flow-repository-\(UUID().uuidString)")

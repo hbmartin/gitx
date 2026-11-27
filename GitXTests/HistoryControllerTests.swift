@@ -3176,6 +3176,21 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(image, Data(contents.utf8))
     }
 
+    func testStagingImageCallbackReturnsGitLFSPointerBytesForUndownloadedImages() throws {
+        let path = "lfs-logo.png"
+        let pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:\(String(repeating: "c", count: 64))\nsize 2048\n"
+        try fixture.write("*.png filter=lfs diff=lfs merge=lfs -text\n", to: ".gitattributes")
+        try fixture.write(pointer, to: path)
+        try fixture.git(["add", "--", ".gitattributes", path])
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
+        try selectDiffFile(file, staged: true, in: pane)
+        let view = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { view.textView.string.contains("+version https://git-lfs.github.com/spec/v1") })
+        let delegate = try XCTUnwrap(view.delegate)
+        XCTAssertEqual(delegate.nativeContentView?(view, imageDataForPath: path, section: 0, imageSource: [:]), Data(pointer.utf8))
+    }
+
     func testBOMFilesystemActionsAddressTheExactSelectedFilename() throws {
         let names = ["notes.txt", "\u{FEFF}notes.txt", "\u{FEFF}"]
         for name in names {
