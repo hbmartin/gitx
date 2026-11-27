@@ -110,7 +110,7 @@ final class SavedHistorySearchStoreTests: XCTestCase {
         XCTAssertEqual(defaults.data(forKey: "PBSavedHistorySearches"), newer)
         XCTAssertEqual(
             GitX.SavedHistorySearchStoreIssue.unsupportedLibrary.message,
-            "A newer version of GitX saved these searches, so they can’t be changed in this version."
+            "A newer version of Half Dark saved these searches, so they can’t be changed in this version."
         )
         XCTAssertEqual(
             GitX.SavedHistorySearchStoreIssue.library(.emptyName).message,

@@ -23,7 +23,7 @@ enum SavedHistorySearchStoreIssue: Error, Equatable {
         case let .library(issue):
             issue.message
         case .unsupportedLibrary:
-            "A newer version of GitX saved these searches, so they can’t be changed in this version."
+            "A newer version of Half Dark saved these searches, so they can’t be changed in this version."
         }
     }
 }

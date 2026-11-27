@@ -295,7 +295,7 @@ final class SavedHistorySearchSheetTests: XCTestCase, @unchecked Sendable {
         sheet.removeSelected(nil)
         XCTAssertEqual(
             sheet.messageField.stringValue,
-            "A newer version of GitX saved these searches, so they can’t be changed in this version."
+            "A newer version of Half Dark saved these searches, so they can’t be changed in this version."
         )
     }
 }
