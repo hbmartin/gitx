@@ -1627,6 +1627,32 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
         XCTAssertNil(actual.gitLoaderSelection, "A closed owner must not report an installation")
     }
 
+    func testSearchCommandShowsHistoryForAnyStringAndFallsBackToBasicForUnknownModes() throws {
+        try prepareFixture()
+        defer { try? removeFixture() }
+        let descriptions = try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "Standard Suite"))
+        let command = try NSScriptCommand(commandDescription: XCTUnwrap(descriptions["open"]))
+
+        command.arguments = ["searchString": "", "inMode": 5]
+        document.find(inModeScriptCommand: command)
+        XCTAssertEqual(window.actions, ["history", "search::5"])
+
+        window.actions = []
+        command.arguments = ["searchString": "--all", "inMode": 99]
+        document.find(inModeScriptCommand: command)
+        XCTAssertEqual(window.actions, ["history", "search:--all:1"])
+
+        window.actions = []
+        command.arguments = ["searchString": "docs/", "inMode": 4]
+        document.find(inModeScriptCommand: command)
+        XCTAssertEqual(window.actions, ["history", "search:docs/:4"])
+
+        window.actions = []
+        command.arguments = ["inMode": 4]
+        document.find(inModeScriptCommand: command)
+        XCTAssertTrue(window.actions.isEmpty)
+    }
+
     func testSearchCommandAndFilePresenterCallbacks() throws {
         try prepareFixture()
         defer { try? removeFixture() }
