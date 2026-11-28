@@ -57,7 +57,8 @@ final class SavedHistorySearchSavePrompt: NSObject, NSTextFieldDelegate {
         alert.accessoryView = makeAccessoryView()
         alert.window.initialFirstResponder = nameField
         updateFeedback()
-        Self.logger.info("Asking for a name for history search \(query.text, privacy: .private)")
+        let text = query.text
+        Self.logger.info("Asking for a name for history search \(text, privacy: .private)")
         WindowModalPresenter.present(alert, for: window) { [self] response in
             finishNaming(response)
         }

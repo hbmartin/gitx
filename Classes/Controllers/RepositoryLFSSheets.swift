@@ -40,7 +40,8 @@ final class RepositoryLFSDetailsSheet: NSObject {
     /// Completes with true when the user chose Download All….
     func present(for window: NSWindow?, completion: @escaping (Bool) -> Void) {
         presentedSelf = self
-        Self.logger.info("Showing Git LFS details: \(snapshot.summary.notDownloadedPaths.count) files not downloaded")
+        let notDownloaded = snapshot.summary.notDownloadedPaths.count
+        Self.logger.info("Showing Git LFS details: \(notDownloaded) files not downloaded")
         let finish: (NSApplication.ModalResponse) -> Void = { [self] response in
             presentedSelf = nil
             completion(canDownloadAll && response == .alertFirstButtonReturn)

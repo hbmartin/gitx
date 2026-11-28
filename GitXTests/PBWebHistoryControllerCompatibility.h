@@ -16,6 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)scrollPageUp;
 - (void)scrollPageDown;
 - (void)refreshDisplayedContent;
+- (nullable NSData *)dataForGitObject:(NSString *)object imageSource:(NSDictionary<NSString *, id> *)imageSource;
 - (NSUInteger)beginContentGeneration;
 - (NSArray<NSDictionary<NSString *, id> *> *)sections:(NSArray<NSDictionary<NSString *, id> *> *)sections
 										  applyingDiffLayout:(NSInteger)layout;

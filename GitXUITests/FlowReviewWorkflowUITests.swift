@@ -32,12 +32,13 @@ final class FlowReviewWorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(app.buttons["FlowDelta.Review.HiddenNoise"].waitForExistence(timeout: 5))
         screenshot("FlowReview-Default-Hides-Cosmetic-Noise")
 
-        let presentation = app.segmentedControls["FlowDelta.Review.Presentation"]
+        // macOS 26 doesn't report which segment is selected to XCUITest, so the review's saved presentation, which
+        // GitX reads back from FlowDelta, shows each choice took effect; the screenshot shows the segment.
         choose("GitX.FlowReview.Calls", in: app)
-        wait(for: presentation.buttons["Calls"], "selected == true")
+        waitForSavedPreference("PBHistoryFlowPresentation", "calls", in: home)
         screenshot("FlowReview-Calls-From-Menu")
         app.typeKey("1", modifierFlags: [.control, .command])
-        wait(for: presentation.buttons["Delta"], "selected == true")
+        waitForSavedPreference("PBHistoryFlowPresentation", "delta", in: home)
 
         choose("GitX.FlowReview.ShowAllChanges", in: app)
         wait(for: noise, "value == 'Show All Changes'")
@@ -102,14 +103,18 @@ final class FlowReviewWorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(XCTWaiter.wait(for: [condition], timeout: timeout), .completed, "\(element) never matched \(format)")
     }
 
-    /// Waits until GitX has written `key` to its preferences in `home`, so terminating cannot lose it.
-    private func waitForSavedPreference(_ key: String, in home: URL) {
+    /// Waits until GitX has written `key` to its preferences in `home`, as `value` when one is given, so terminating
+    /// cannot lose it.
+    private func waitForSavedPreference(_ key: String, _ value: String? = nil, in home: URL) {
         let preferences = home.appendingPathComponent("Library/Preferences", isDirectory: true)
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let files = (try? FileManager.default.contentsOfDirectory(at: preferences, includingPropertiesForKeys: nil)) ?? []
-            return files.contains { NSDictionary(contentsOf: $0)?[key] != nil }
+            return files.contains { file in
+                guard let saved = NSDictionary(contentsOf: file)?[key] else { return false }
+                return value == nil || saved as? String == value
+            }
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed, "GitX never saved \(key)")
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed, "GitX never saved \(key) \(value ?? "")")
     }
 
     private func makeFixture() throws -> URL {

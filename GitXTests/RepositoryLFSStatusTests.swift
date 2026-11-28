@@ -4,24 +4,35 @@ import XCTest
 
 /// The passive Git LFS status scan behind the status bar (ADR 0014): local reads only, never a smudge.
 @MainActor
-final class RepositoryLFSStatusTests: XCTestCase {
+// swift6-safety-justification: XCTest's nonisolated setup and teardown enter MainActor synchronously; every fixture access stays on main.
+final class RepositoryLFSStatusTests: XCTestCase, @unchecked Sendable {
     private static let oid = "28720365c5e7476a011e4f43ac003ee5f16247a263b9d623aa85ed311d73bf39"
     private static let fiveByteOID = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 
     private var directory: URL!
 
-    override func setUpWithError() throws {
+    override nonisolated func setUpWithError() throws {
         try super.setUpWithError()
+        // swift6-safety-justification: App-hosted XCTest invokes setup on the main thread, where the repository fixture is MainActor-isolated.
+        try MainActor.assumeIsolated { try prepareFixture() }
+    }
+
+    override nonisolated func tearDownWithError() throws {
+        // swift6-safety-justification: App-hosted XCTest invokes teardown on the main thread, where the repository fixture is MainActor-isolated.
+        MainActor.assumeIsolated { removeFixture() }
+        try super.tearDownWithError()
+    }
+
+    private func prepareFixture() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXLFSStatus-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try git(["init", "-q", "-b", "main"])
     }
 
-    override func tearDownWithError() throws {
+    private func removeFixture() {
         if let directory {
             try? FileManager.default.removeItem(at: directory)
         }
-        try super.tearDownWithError()
     }
 
     @discardableResult

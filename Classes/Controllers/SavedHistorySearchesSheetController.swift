@@ -58,7 +58,8 @@ final class SavedHistorySearchesSheetController: NSObject {
             name: .savedHistorySearchesDidChange,
             object: nil
         )
-        Self.logger.info("Showing \(searches.count) saved history searches")
+        let count = searches.count
+        Self.logger.info("Showing \(count) saved history searches")
         window.beginSheet(panel) { [self] _ in
             notificationCenter.removeObserver(self, name: .savedHistorySearchesDidChange, object: nil)
             presentedSelf = nil

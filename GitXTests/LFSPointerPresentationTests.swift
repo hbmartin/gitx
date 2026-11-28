@@ -6,7 +6,8 @@ import XCTest
 /// and the object itself once the local store holds it. `git show` and `git cat-file` never run the smudge filter,
 /// so none of this contacts a remote.
 @MainActor
-final class LFSPointerPresentationTests: XCTestCase {
+// swift6-safety-justification: XCTest's nonisolated setup and teardown enter MainActor synchronously; every fixture access stays on main.
+final class LFSPointerPresentationTests: XCTestCase, @unchecked Sendable {
     private static let oid = "28720365c5e7476a011e4f43ac003ee5f16247a263b9d623aa85ed311d73bf39"
     private static let pointerText = "version https://git-lfs.github.com/spec/v1\noid sha256:\(oid)\nsize 12400000\n"
     private static let placeholder = "Git LFS object not downloaded — 12.4 MB (sha256 28720365…)"
@@ -16,8 +17,19 @@ final class LFSPointerPresentationTests: XCTestCase {
     private var directory: URL!
     private var repository: GitXTestGitRepository!
 
-    override func setUpWithError() throws {
+    override nonisolated func setUpWithError() throws {
         try super.setUpWithError()
+        // swift6-safety-justification: App-hosted XCTest invokes setup on the main thread, where the repository fixture is MainActor-isolated.
+        try MainActor.assumeIsolated { try prepareFixture() }
+    }
+
+    override nonisolated func tearDownWithError() throws {
+        // swift6-safety-justification: App-hosted XCTest invokes teardown on the main thread, where the repository fixture is MainActor-isolated.
+        MainActor.assumeIsolated { removeFixture() }
+        try super.tearDownWithError()
+    }
+
+    private func prepareFixture() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXLFSPointer-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try git(["init", "-q", "-b", "main"])
@@ -33,13 +45,12 @@ final class LFSPointerPresentationTests: XCTestCase {
         repository = try XCTUnwrap(GitXTestGitRepository(url: directory))
     }
 
-    override func tearDownWithError() throws {
+    private func removeFixture() {
         repository?.revisionList?.cleanup()
         repository = nil
         if let directory {
             try? FileManager.default.removeItem(at: directory)
         }
-        try super.tearDownWithError()
     }
 
     @discardableResult

@@ -281,13 +281,9 @@
         }
 
         private static func classicScopeProof() -> Bool {
-            let repoAuthorities = ForgeRepositoryPermission.allCases.map {
-                GitHubCapabilityMapper.classicAuthority(
-                    permission: $0,
-                    scopes: ["RePo"],
-                    repositoryIsPublic: false
-                )
-            }
+            let repoAuthorities = Dictionary(uniqueKeysWithValues: ForgeRepositoryPermission.allCases.map {
+                ($0, GitHubCapabilityMapper.classicAuthority(permission: $0, scopes: ["RePo"], repositoryIsPublic: false))
+            })
             let publicWrite = GitHubCapabilityMapper.classicAuthority(
                 permission: .contents,
                 scopes: ["PUBLIC_REPO"],
@@ -309,12 +305,13 @@
                 repositoryIsPublic: false
             ) == .unknown
             return repoAuthorities == [
-                .known(.read),
-                .known(.write),
-                .known(.write),
-                .known(.write),
-                .known(.read),
-                .known(.write),
+                .metadata: .known(.read),
+                .contents: .known(.write),
+                .pullRequests: .known(.write),
+                .issues: .known(.write),
+                .checks: .known(.read),
+                .commitStatuses: .known(.write),
+                .actions: .known(.read),
             ] && publicWrite && statuses && publicRead && privateUnknown
         }
 

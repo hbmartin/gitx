@@ -3,7 +3,8 @@ import GitXCore
 import XCTest
 
 @MainActor
-final class SavedHistorySearchStoreTests: XCTestCase {
+// swift6-safety-justification: XCTest's nonisolated setup and teardown enter MainActor synchronously; every fixture access stays on main.
+final class SavedHistorySearchStoreTests: XCTestCase, @unchecked Sendable {
     private var suiteName = ""
     private var defaults = UserDefaults()
     private var notificationCenter = NotificationCenter()
@@ -11,8 +12,19 @@ final class SavedHistorySearchStoreTests: XCTestCase {
     private let pickaxe = HistorySearchQuery(mode: .pickaxe, text: "needle")
     private let raw = HistorySearchQuery(mode: .raw, text: "--author='Ada Lovelace'")
 
-    override func setUp() {
+    override nonisolated func setUp() {
         super.setUp()
+        // swift6-safety-justification: App-hosted XCTest invokes setup on the main thread, where the store is MainActor-isolated.
+        MainActor.assumeIsolated { prepareStore() }
+    }
+
+    override nonisolated func tearDown() {
+        // swift6-safety-justification: App-hosted XCTest invokes teardown on the main thread, where the store is MainActor-isolated.
+        MainActor.assumeIsolated { removeStore() }
+        super.tearDown()
+    }
+
+    private func prepareStore() {
         suiteName = "GitXTests.SavedHistorySearchStore.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defaults.removePersistentDomain(forName: suiteName)
@@ -20,10 +32,9 @@ final class SavedHistorySearchStoreTests: XCTestCase {
         store = makeStore()
     }
 
-    override func tearDown() {
+    private func removeStore() {
         defaults.removePersistentDomain(forName: suiteName)
         store = nil
-        super.tearDown()
     }
 
     private func makeStore() -> GitX.SavedHistorySearchStore {

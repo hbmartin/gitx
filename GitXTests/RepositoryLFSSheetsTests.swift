@@ -133,8 +133,8 @@ final class RepositoryLFSSheetsTests: XCTestCase {
     // MARK: Window eligibility
 
     func testWindowHidesDownloadOutsideCheckoutsThatUseGitLFS() {
-        let controller = PBGitWindowController(window: NSWindow())
-        let item = NSMenuItem(title: "Download LFS Content", action: #selector(PBGitWindowController.downloadLFSContent(_:)), keyEquivalent: "")
+        let controller = GitX.PBGitWindowController(window: NSWindow())
+        let item = NSMenuItem(title: "Download LFS Content", action: #selector(GitX.PBGitWindowController.downloadLFSContent(_:)), keyEquivalent: "")
         item.representedObject = ["a.bin"]
         XCTAssertEqual(controller.lfsStatusSnapshot, Snapshot.none)
         XCTAssertFalse(controller.validateLFSDownload(item))
