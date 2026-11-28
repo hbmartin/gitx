@@ -6163,6 +6163,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         return try XCTUnwrap(searchFieldCell.searchMenuTemplate).items.map { $0.isSeparatorItem ? "---" : $0.title }
     }
 
+    /// The search menu's titles from its Recent Searches heading on, after the modes and saved searches.
+    private func recentSearchMenuTitles() throws -> [String] {
+        let titles = try searchMenuTitles()
+        return try Array(titles[XCTUnwrap(titles.firstIndex(of: "Recent Searches"))...])
+    }
+
     private func searchMenuItem(_ identifier: String) throws -> NSMenuItem {
         let searchFieldCell = try XCTUnwrap(historyController.searchController.searchField?.cell as? NSSearchFieldCell)
         return try XCTUnwrap(
@@ -6187,6 +6193,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(searchController.numberOfMatchesField?.accessibilityIdentifier(), "GitX.History.SearchMatches")
             XCTAssertEqual(try searchMenuTitles(), [
                 "Subject, Author, SHA", "Commit (pickaxe)", "Commit (pickaxe regex)", "File path", "Raw",
+                "---", "Saved Searches", "No Saved Searches", "Save Search As…", "Manage Saved Searches…",
                 "---", "Recent Searches", "No Recent Searches",
             ])
             let menu = try XCTUnwrap((searchField.cell as? NSSearchFieldCell)?.searchMenuTemplate)
@@ -6216,7 +6223,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             searchController.setHistorySearch("beta", mode: .pickaxe)
             searchController.setHistorySearch("  alpha  ", mode: .basic)
             searchController.setHistorySearch("   ", mode: .basic)
-            XCTAssertEqual(try Array(searchMenuTitles().dropFirst(6)), [
+            XCTAssertEqual(try recentSearchMenuTitles(), [
                 "Recent Searches", "  alpha   — Subject, Author, SHA", "beta — Commit (pickaxe)",
                 "---", "Clear Recent Searches",
             ])
@@ -6225,18 +6232,18 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             searchController.searchMode = .raw
             searchField.stringValue = "--author=GitX"
             searchController.updateSearch(self)
-            XCTAssertEqual(try searchMenuTitles().count, 11)
+            XCTAssertEqual(try recentSearchMenuTitles().count, 5)
             let delegate = try XCTUnwrap(searchField.delegate)
             XCTAssertEqual(
                 delegate.control?(searchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.moveUp(_:))),
                 false
             )
-            XCTAssertEqual(try searchMenuTitles().count, 11)
+            XCTAssertEqual(try recentSearchMenuTitles().count, 5)
             XCTAssertEqual(
                 delegate.control?(searchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))),
                 false
             )
-            XCTAssertEqual(try searchMenuTitles()[7], "--author=GitX — Raw")
+            XCTAssertEqual(try recentSearchMenuTitles()[1], "--author=GitX — Raw")
 
             // Choosing a recent search restores its mode and text and makes it the newest.
             let beta = try searchMenuItem("GitX.History.Search.Recent.2")
@@ -6245,7 +6252,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(searchController.searchMode, .pickaxe)
             XCTAssertEqual(searchField.stringValue, "beta")
             XCTAssertEqual(searchController.modePopUp?.titleOfSelectedItem, "Commit (pickaxe)")
-            XCTAssertEqual(try searchMenuTitles()[7], "beta — Commit (pickaxe)")
+            XCTAssertEqual(try recentSearchMenuTitles()[1], "beta — Commit (pickaxe)")
 
             // A menu item from an outdated menu is ignored.
             let outdated = NSMenuItem(title: "outdated", action: nil, keyEquivalent: "")

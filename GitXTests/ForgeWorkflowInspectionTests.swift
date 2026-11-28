@@ -715,10 +715,12 @@ final class ForgeWorkflowInspectionTests: XCTestCase {
         XCTAssertEqual(router.browser, try [.workflowRun(WorkflowFixture.repository, ForgeWorkflowRunID(777))])
         try controller.openWorkflowTarget(.url(XCTUnwrap(URL(string: "https://lint.example/1"))))
         XCTAssertEqual(router.links.count, 1)
+        let window = host(controller.view, size: NSSize(width: 420, height: 640))
         try attachScreenshot(of: controller.view, named: "Workflow Checks - Pull Request Inspector")
 
         try controller.apply(presentation(WorkflowFixture.pullRequest(repository: WorkflowFixture.other)))
         XCTAssertNil(controller.workflowChecksView, "Another repository's pull request keeps the Details row")
+        window.close()
     }
 }
 

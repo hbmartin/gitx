@@ -1688,14 +1688,18 @@ final class RepositoryDocumentScriptingCharacterizationTests: XCTestCase {
             andAppleEventCode: fourCharacterCode("Srch")
         ))
         XCTAssertEqual(description.commandName, "search")
-        XCTAssertEqual(Set(description.argumentNames), ["searchString", "inMode", "savedSearchName"])
-        for name in description.argumentNames {
+        // Cocoa scripting lists the direct parameter, the document, under an empty name, and reports the sdef's types.
+        XCTAssertEqual(Set(description.argumentNames), ["", "searchString", "inMode", "savedSearchName"])
+        XCTAssertFalse(description.isOptionalArgument(withName: ""), "A search names its document")
+        for (name, code, type) in [
+            ("searchString", "SRCH", "text"),
+            ("inMode", "Mode", "integer"),
+            ("savedSearchName", "SNam", "text"),
+        ] {
             XCTAssertTrue(description.isOptionalArgument(withName: name), name)
+            XCTAssertEqual(description.appleEventCodeForArgument(withName: name), try fourCharacterCode(code), name)
+            XCTAssertEqual(description.typeForArgument(withName: name), type, name)
         }
-        XCTAssertEqual(description.typeForArgument(withName: "searchString"), "NSString")
-        XCTAssertEqual(description.typeForArgument(withName: "savedSearchName"), "NSString")
-        XCTAssertTrue(description.typeForArgument(withName: "inMode")?.hasPrefix("NSNumber") == true)
-        XCTAssertEqual(description.appleEventCodeForArgument(withName: "savedSearchName"), try fourCharacterCode("SNam"))
     }
 
     private func fourCharacterCode(_ text: String) throws -> FourCharCode {
